@@ -1,9 +1,7 @@
 # Native `list_files` tool
 
-This page is the normative contract for the fifth bounded Milestone 03 slice.
-`list_files` is a library capability in `machine-god-native`; the current CLI
-does not construct an engine, register the tool, prompt for permission, or load
-a provider.
+`list_files` is a bounded native capability in `machine-god-native`, registered
+by the reference host.
 
 ## Workspace authority and platform scope
 
@@ -11,8 +9,27 @@ The host roots each tool in one explicitly selected absolute workspace path. On
 the supported Linux and macOS Unix targets, construction opens that path and
 retains the resulting directory descriptor as its authority. It rejects a
 relative root, a final root symlink, or a non-directory. It does not discover a
-workspace from process state. Model input and preflight never select, reopen,
-canonicalize, or inspect the workspace root.
+workspace from process state. Model input and preflight never reopen,
+canonicalize, or inspect a workspace root.
+
+On Linux and macOS, a host may attach `with_workspace_contexts` to select the
+exact live turn's captured scope. Omission and relative paths select only the
+primary root; absolute paths select exactly one active captured root, with no
+fallback to another root. The capability, prepared `path`, and successful result
+`path` use the same normalized logical identity: primary-relative for relative
+input, canonical absolute for absolute input. Selecting an absolute root itself
+returns that identity without a trailing `/.`. Entry names remain basenames;
+there is no cross-root union or per-root budget multiplication.
+
+Scoped `prepare_for_turn` performs only bounded lexical projection and retained
+scope lookup, without duplicating descriptors or inspecting the filesystem.
+Execution requires that exact session incarnation and turn, duplicates the
+selected retained descriptor only after polling, and checks scope liveness and
+cancellation before traversal and before success. An unpolled future is inert.
+A stale, foreign, absent, or closed context fails as
+`PermissionDenied / workspace_context_unavailable`, without falling back to the
+constructor's root. A captured root retains its identity after pathname rename
+or replacement; a later turn observes the then-current installed scope.
 
 Before opening a root path, construction rebuilds the injected host path from
 its lexical components. This removes redundant separators and `.` components
@@ -48,7 +65,9 @@ field is a string `path`:
 ```
 
 The `path` property description is
-`Workspace-relative directory path; defaults to the workspace root`. Omission
+`Workspace-relative directory path; defaults to the workspace root` for a
+single-root tool. With contexts, it advertises primary-relative or absolute
+active-workspace directories and a primary-root default. Omission
 selects `.`. A present path must be a JSON string; `null` and every additional
 field are invalid. Both the requested string and normalized path are bounded to
 4,096 UTF-8 bytes.
@@ -61,7 +80,7 @@ exercise the retained directory authority.
 Lexical handling joins ordinary components into a normalized
 workspace-relative path. It removes `.` components and collapses repeated `/`
 separators; a path that denotes the workspace root normalizes to `.`. It rejects
-an absolute path rooted at `/`, any `..` component, an empty present path, C0 or
+an absolute path rooted at `/` in single-root mode, any `..` component, an empty present path, C0 or
 C1 control characters, Unicode line or paragraph separators, and Unicode
 bidirectional-formatting characters. On supported Unix targets, backslash and
 space are ordinary literal filename characters rather than separators or
@@ -144,6 +163,11 @@ error-status envelope yields at most 44,130 serialized bytes. A host may
 configure a lower core result limit, in which case core's ordinary
 post-execution limit handling still applies.
 
+Scoped absolute results use these same bounds: the complete logical directory
+path is at most 4,096 bytes, and basename entries still consume the original
+100-entry and 16 KiB aggregate-name budgets. No qualified prefix is added to
+each basename or appended after output-budget checks.
+
 ## Errors and cancellation
 
 `ListFilesTool::open` returns this complete fixed taxonomy:
@@ -162,6 +186,7 @@ values. `Display` is always `<code>: <message>`.
 | --- | --- | --- | --- |
 | `InvalidInput` | `list_files_invalid_arguments` | `list_files arguments are invalid` | `false` |
 | `InvalidInput` | `list_files_invalid_path` | `list_files path is invalid` | `false` |
+| `PermissionDenied` | `workspace_context_unavailable` | `workspace context is unavailable` | `false` |
 | `Unavailable` | `list_files_unsupported_platform` | `native list_files is unsupported on this platform` | `false` |
 | `Unavailable` | `list_files_not_found` | `requested directory is unavailable` | `false` |
 | `PermissionDenied` | `list_files_permission_denied` | `requested directory cannot be listed` | `false` |

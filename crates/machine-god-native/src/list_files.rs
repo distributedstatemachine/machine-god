@@ -94,6 +94,8 @@ impl Error for ListFilesToolOpenError {}
 pub struct ListFilesTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
@@ -101,7 +103,22 @@ pub struct ListFilesTool {
 impl ListFilesTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self {
+            root,
+            workspace_contexts: None,
+        }
+    }
+
+    /// Routes paths through the exact turn's captured workspace scope. Relative
+    /// paths remain primary-relative; absolute paths select one active root.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -163,6 +180,13 @@ impl fmt::Debug for ListFilesTool {
 
 impl Tool for ListFilesTool {
     fn spec(&self) -> ToolSpec {
+        let path_description = "Workspace-relative directory path; defaults to the workspace root";
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let path_description = if self.workspace_contexts.is_some() {
+            "Primary-relative directory or absolute directory within an active workspace root; defaults to the primary root"
+        } else {
+            path_description
+        };
         ToolSpec {
             name: list_files_name(),
             description: "List one directory within the configured workspace".to_owned(),
@@ -171,7 +195,7 @@ impl Tool for ListFilesTool {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Workspace-relative directory path; defaults to the workspace root"
+                        "description": path_description
                     }
                 },
                 "additionalProperties": false
@@ -202,13 +226,31 @@ impl Tool for ListFilesTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(contexts) = &self.workspace_contexts {
+                return workspace::execute(contexts, &context, arguments, &cancellation);
+            }
+            let _ = context;
             let path = decode_execution_arguments(arguments)?;
             let normalized = normalize_relative_path(&path)?;
             if normalized != path {
@@ -228,6 +270,14 @@ impl Tool for ListFilesTool {
         })
     }
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "list_files_workspace.rs"]
+mod workspace;
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[path = "workspace_enumeration_fixture.rs"]
+pub(crate) mod enumeration_fixture;
 
 fn decode_requested_arguments(arguments: Value) -> Result<Option<String>, ToolError> {
     let Value::Object(mut object) = arguments else {
@@ -261,6 +311,15 @@ impl ListFilesTool {
     fn execute_unix(
         &self,
         normalized: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        self.execute_unix_logical(normalized, normalized, cancellation)
+    }
+
+    fn execute_unix_logical(
+        &self,
+        normalized: &str,
+        logical: &str,
         cancellation: &CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(cancellation)?;
@@ -341,7 +400,7 @@ impl ListFilesTool {
         });
         check_cancellation(cancellation)?;
         Ok(ToolOutput::success(json!({
-            "path": normalized,
+            "path": logical,
             "entries": entries,
             "truncated": truncated,
         })))

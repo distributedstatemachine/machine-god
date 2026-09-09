@@ -1,8 +1,7 @@
 # Native `glob_files` tool
 
-`glob_files` is a Linux/macOS library capability in `machine-god-native`. The
-current CLI does not construct an engine, register or invoke this tool, prompt
-for its permission, or change any accepted invocation or output byte.
+`glob_files` is a Linux/macOS library capability in `machine-god-native`,
+registered by the reference host.
 
 ## Workspace authority and platform scope
 
@@ -13,6 +12,24 @@ tools, then retains that directory descriptor as the continuing authority. A
 relative root, final root symlink, non-directory, or unavailable root fails
 with a fixed redacted construction error. The tool does not discover a
 workspace from process state.
+
+A host may attach `with_workspace_contexts` to route through the exact live
+turn's captured workspace scope. Default `.` and relative search paths select
+only primary; an absolute search path selects exactly one active captured root.
+No union search, fallback root, or multiplied per-root budget is introduced.
+The capability, prepared arguments, and successful result `path` retain one
+logical identity: normalized primary-relative for relative input, canonical
+absolute for absolute input. An absolute root itself has no trailing `/.`.
+
+Scoped `prepare_for_turn` is a bounded lexical projection over retained scope
+metadata, with no descriptor duplication or filesystem access. After the future
+is polled, execution requires the exact session incarnation and turn, retains
+the selected root descriptor, and checks scope liveness and cancellation before
+traversal and before success. A stale, foreign, absent, or closed context fails
+as `PermissionDenied / workspace_context_unavailable`; it never falls back to
+the constructor's root. An unpolled future remains inert. Captured descriptors
+do not retarget on pathname replacement, while later turns observe the current
+installed scope.
 
 Lexical host-root cleanup rebuilds the injected path from its components. It
 removes redundant separators and `.` components while preserving `..`; it does
@@ -92,11 +109,15 @@ spelling is invalid. The fixed property descriptions are:
   root`
 - `mode`: `Return matching paths or an exact count; defaults to matches`
 
+When contexts are attached, the `path` description instead advertises
+primary-relative or absolute active-workspace directories and a primary-root
+default. Pattern grammar and mode descriptions do not change.
+
 Both the requested and normalized `path` are independently bounded to 4,096
 UTF-8 bytes. Path normalization is exactly the [`file_info`](file-info.md)
 lexical rule: collapse repeated `/` separators, remove `.` components, join
 ordinary components, and normalize current-directory forms to `.`. It rejects
-an empty present string, `/`-rooted path, any `..` component, C0 or C1 control
+an empty present string, `/`-rooted path in single-root mode, any `..` component, C0 or C1 control
 character, Unicode line or paragraph separator, or Unicode bidirectional-
 formatting character. Backslash and space are literal Unix filename
 characters. Windows-looking input is a confined Unix name, not an external
@@ -198,11 +219,20 @@ objects are ignored as candidates but still consume scan budgets. The tool
 reads no file or symlink-target content, performs no symlink descent, applies no
 ignore or Git rule, and starts no subprocess.
 
-Candidate output paths are normalized full workspace-relative paths. A search
+Candidate output paths are normalized full workspace-relative paths for
+relative input. A search
 under `docs` therefore returns `docs/report.md`, not `report.md` or an external
 absolute spelling. Constructing any regular-file or final-symlink candidate
 whose full workspace-relative path exceeds 4,096 UTF-8 bytes fails the entire
 call with `glob_files_scan_limit`; it is never silently omitted or truncated.
+
+For a scoped absolute search, candidate output paths are canonical absolute
+paths beneath that selected root. The absolute prefix is included before
+candidate validation, matching accounting, retention, and rendering: every
+candidate, including a nonmatch, must fit the same 4,096-byte full path bound
+in both modes. The matcher itself remains relative to the selected search root;
+absolute qualification does not change slashful pattern meaning. Final symlinks
+remain link paths and are never canonicalized through their targets.
 
 ## Complete scan budgets
 
@@ -253,6 +283,12 @@ of aggregate raw path bytes. If the next ordered path would exceed the byte
 budget, that path and all later paths are omitted; the tool does not skip a long
 path to admit a later short one. `matches` is always bytewise sorted and is the
 globally smallest prefix, not a filesystem-iteration-dependent sample.
+
+For absolute searches, ordering and byte accounting use complete qualified
+paths. The existing bounded 100-path retention heap and 16 KiB emitted-prefix
+budget are unchanged; prefixes are never appended after those checks. A path
+that exceeds the per-candidate bound fails the complete scan rather than being
+lossily shortened or silently omitted.
 
 `truncated` is `true` if and only if at least one observed match is omitted from
 the emitted prefix, equivalently when the total observed match count exceeds
@@ -316,6 +352,7 @@ values. `Display` is always `<code>: <message>`.
 | `InvalidInput` | `glob_files_invalid_arguments` | `glob_files arguments are invalid` | `false` |
 | `InvalidInput` | `glob_files_invalid_path` | `glob_files path is invalid` | `false` |
 | `InvalidInput` | `glob_files_invalid_pattern` | `glob_files pattern is invalid` | `false` |
+| `PermissionDenied` | `workspace_context_unavailable` | `workspace context is unavailable` | `false` |
 | `Unavailable` | `glob_files_unsupported_platform` | `native glob_files is unsupported on this platform` | `false` |
 | `Unavailable` | `glob_files_not_found` | `requested search root is unavailable` | `false` |
 | `PermissionDenied` | `glob_files_permission_denied` | `requested search root cannot be enumerated` | `false` |

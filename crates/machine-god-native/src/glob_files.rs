@@ -21,7 +21,7 @@ pub const MAX_GLOB_FILES_PATTERN_BYTES: usize = 4 * 1024;
 /// Maximum number of UTF-8 bytes accepted in a requested search-root path.
 pub const MAX_GLOB_FILES_PATH_BYTES: usize = 4 * 1024;
 
-/// Maximum number of UTF-8 bytes in one returned workspace-relative path.
+/// Maximum number of UTF-8 bytes in one returned logical path.
 pub const MAX_GLOB_FILES_RESULT_PATH_BYTES: usize = 4 * 1024;
 
 /// Maximum number of paths returned by [`GlobFilesTool`].
@@ -123,6 +123,8 @@ impl Error for GlobFilesToolOpenError {}
 pub struct GlobFilesTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
@@ -130,7 +132,22 @@ pub struct GlobFilesTool {
 impl GlobFilesTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self {
+            root,
+            workspace_contexts: None,
+        }
+    }
+
+    /// Routes searches through the exact turn's captured workspace scope.
+    /// Relative paths search only primary; absolute paths select one active root.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -219,10 +236,21 @@ struct ExecutionArguments {
 
 impl Tool for GlobFilesTool {
     fn spec(&self) -> ToolSpec {
+        let schema = glob_files_input_schema();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let schema = if self.workspace_contexts.is_some() {
+            let mut schema = schema;
+            schema["properties"]["path"]["description"] = json!(
+                "Primary-relative search root or absolute directory within an active workspace root; defaults to the primary root"
+            );
+            schema
+        } else {
+            schema
+        };
         ToolSpec {
             name: glob_files_name(),
             description: GLOB_FILES_DESCRIPTION.to_owned(),
-            input_schema: glob_files_input_schema(),
+            input_schema: schema,
         }
     }
 
@@ -251,13 +279,31 @@ impl Tool for GlobFilesTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(contexts) = &self.workspace_contexts {
+                return workspace::execute(contexts, &context, arguments, &cancellation);
+            }
+            let _ = context;
             let arguments = decode_execution_arguments(arguments)?;
             let pattern = normalize_pattern(&arguments.pattern)?;
             let path = normalize_relative_path(&arguments.path)?;
@@ -278,6 +324,10 @@ impl Tool for GlobFilesTool {
         })
     }
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "glob_files_workspace.rs"]
+mod workspace;
 
 fn glob_files_input_schema() -> Value {
     json!({
@@ -733,25 +783,20 @@ fn join_relative(parent: &str, name: &str) -> String {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn join_workspace_path(search_path: &str, relative_path: &str) -> Result<String, ToolError> {
-    let path = if search_path == "." {
-        relative_path.to_owned()
-    } else {
-        let Some(capacity) = search_path
-            .len()
-            .checked_add(1)
-            .and_then(|length| length.checked_add(relative_path.len()))
-        else {
-            return Err(scan_limit());
-        };
-        let mut path = String::with_capacity(capacity);
-        path.push_str(search_path);
+    let prefix = if search_path == "." { "" } else { search_path };
+    let separator = usize::from(!prefix.is_empty() && !prefix.ends_with('/'));
+    let capacity = prefix
+        .len()
+        .checked_add(separator)
+        .and_then(|length| length.checked_add(relative_path.len()))
+        .filter(|length| *length <= MAX_GLOB_FILES_RESULT_PATH_BYTES)
+        .ok_or_else(scan_limit)?;
+    let mut path = String::with_capacity(capacity);
+    path.push_str(prefix);
+    if separator != 0 {
         path.push('/');
-        path.push_str(relative_path);
-        path
-    };
-    if path.len() > MAX_GLOB_FILES_RESULT_PATH_BYTES {
-        return Err(scan_limit());
     }
+    path.push_str(relative_path);
     Ok(path)
 }
 
