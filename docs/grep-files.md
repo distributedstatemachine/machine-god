@@ -2,9 +2,49 @@
 
 `grep_files` is a Linux/macOS library capability in `machine-god-native`. It
 searches bounded eligible UTF-8 regular-file content beneath one retained
-workspace identity. The current CLI does not construct an engine, register or
-invoke this tool, prompt for its permission, or change any accepted invocation
-or output byte.
+workspace identity. Standalone construction retains one explicit root; a native
+host can opt into exact-turn workspace routing with `with_workspace_contexts`.
+
+## Exact-turn workspace routing
+
+On Linux/macOS, `with_workspace_contexts(Arc<NativeWorkspaceContexts>)` is an
+inert opt-in builder. Contextual preflight accepts the same eight fields below.
+There is no `files` input: `path` selects one directory or one regular file;
+`files_with_matches` is an output mode. An omitted or relative path remains
+primary-root-relative. An absolute path selects a captured active workspace
+root, including an additional root, and is normalized to its qualified logical
+identity. Paths outside that captured scope, parent traversal and forbidden
+characters are rejected. Raw and qualified paths retain the 4,096-byte bound.
+
+Preparation performs only bounded lexical routing and exact live-context lookup;
+it duplicates no descriptor and does not inspect the selected object. The
+canonical eight-field execution envelope, including explicit `include: null`,
+is unchanged. Permission preparation validates this envelope against the exact
+live request session, incarnation and turn, and requires `SearchContent` at the
+same logical path. It does not reinterpret prepared input as provider input.
+
+Execution captures the exact turn scope when its future is created, without
+filesystem effects. On polling it validates that captured scope and canonical
+arguments before retaining the selected root descriptor. Missing, foreign,
+expired or cancelled contexts never fall back to the standalone root or acquire
+a later registration. The private relative path is used only for confined
+descriptor access. Output paths and echoed arguments use the logical identity;
+there is no shared alias map or post-scan path rewriting. A renamed root remains
+the captured descriptor identity, not the replacement at its former pathname.
+
+The same single scan owns all original traversal, content, matcher, path,
+pagination and serialization budgets. Qualified prefixes are charged before
+descendant construction and result retention. Include matching remains relative
+to the selected search root, including the existing single-file basename rule;
+counts, order, excerpts and pagination are otherwise unchanged. Every existing
+native, matcher and rendering cancellation checkpoint also validates scope
+liveness, including the final return check. Revocation fails the complete scan
+without a partial result. The fixed additional context error is
+`PermissionDenied` / `workspace_context_unavailable`, message
+`workspace context is unavailable`, non-retryable. No detached worker is added.
+
+The remaining sections describe the standalone grammar and shared scan contract;
+the scoped opt-in changes only the path authority and logical labels above.
 
 ## Workspace authority and permission semantics
 

@@ -144,11 +144,25 @@ impl Error for GrepFilesToolOpenError {}
 pub struct GrepFilesTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
 
 impl GrepFilesTool {
+    /// Routes searches through the exact live turn's captured workspace roots.
+    /// Construction is inert; a missing or expired scope never falls back.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
+    }
+
     /// Checks prepared execution input, including the explicit null include
     /// filter. This does not apply the distinct incoming argument grammar twice.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -159,6 +173,9 @@ impl GrepFilesTool {
     ) -> Result<(), ToolError> {
         if invocation.tool_name != &self.spec().name {
             return Err(invalid_arguments());
+        }
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::validate_permission(contexts, request, invocation);
         }
         let arguments = decode_execution_arguments(invocation.arguments.clone())?;
         validate_canonical_arguments(&arguments)?;
@@ -176,7 +193,10 @@ impl GrepFilesTool {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self {
+            root,
+            workspace_contexts: None,
+        }
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -292,10 +312,21 @@ impl ExecutionArguments {
 
 impl Tool for GrepFilesTool {
     fn spec(&self) -> ToolSpec {
+        let schema = grep_files_input_schema();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let schema = if self.workspace_contexts.is_some() {
+            let mut schema = schema;
+            schema["properties"]["path"]["description"] = json!(
+                "Primary-relative file or directory, or absolute path within an active workspace root; defaults to the primary root"
+            );
+            schema
+        } else {
+            schema
+        };
         ToolSpec {
             name: grep_files_name(),
             description: GREP_FILES_DESCRIPTION.to_owned(),
-            input_schema: grep_files_input_schema(),
+            input_schema: schema,
         }
     }
 
@@ -328,13 +359,36 @@ impl Tool for GrepFilesTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let scope = self
+            .workspace_contexts
+            .as_ref()
+            .map(|contexts| contexts.snapshot_for_tool(&context));
+        let _ = context;
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(scope) = scope {
+                return workspace::execute(scope, arguments, &cancellation);
+            }
             let arguments = decode_execution_arguments(arguments)?;
             validate_canonical_arguments(&arguments)?;
 
@@ -351,6 +405,9 @@ impl Tool for GrepFilesTool {
         })
     }
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace;
 
 fn grep_files_input_schema() -> Value {
     json!({
@@ -800,7 +857,7 @@ impl<'a> IncludeMatcher<'a> {
     fn compile(
         include: Option<&'a str>,
         budget: &mut ScanBudget,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<Self, ToolError> {
         let Some(pattern) = include else {
             return Ok(Self::All);
@@ -853,7 +910,7 @@ impl<'a> IncludeMatcher<'a> {
         relative_path: &str,
         basename: &str,
         budget: &mut ScanBudget,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<bool, ToolError> {
         match self {
             Self::All => Ok(true),
@@ -877,7 +934,7 @@ impl<'a> IncludeMatcher<'a> {
         &self,
         basename: &str,
         budget: &mut ScanBudget,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<bool, ToolError> {
         match self {
             Self::All => Ok(true),
@@ -930,7 +987,7 @@ impl LiteralMatcher {
         &self,
         haystack: &[u8],
         budget: &mut ScanBudget,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<Option<usize>, ToolError> {
         let mut matched = 0_usize;
         for (index, byte) in haystack.iter().copied().enumerate() {
@@ -969,7 +1026,16 @@ impl GrepFilesTool {
     fn execute_unix(
         &self,
         arguments: &ExecutionArguments,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
+    ) -> Result<ToolOutput, ToolError> {
+        self.execute_unix_at(arguments, &arguments.path, cancellation)
+    }
+
+    fn execute_unix_at(
+        &self,
+        arguments: &ExecutionArguments,
+        private_path: &str,
+        cancellation: &impl ScanCheck,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(cancellation)?;
         let mut outcome = ScanOutcome {
@@ -989,7 +1055,7 @@ impl GrepFilesTool {
             cancellation,
         )?;
         let root = self.open_search_root(
-            &arguments.path,
+            private_path,
             &include_matcher,
             &mut outcome.budget,
             cancellation,
@@ -1011,7 +1077,7 @@ impl GrepFilesTool {
         search_path: &str,
         include_matcher: &IncludeMatcher<'_>,
         budget: &mut ScanBudget,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<SearchRoot, ToolError> {
         check_cancellation(cancellation)?;
         let mut current = rustix::fs::openat(
@@ -1087,7 +1153,7 @@ fn scan_root(
     include_matcher: &IncludeMatcher<'_>,
     outcome: &mut ScanOutcome,
     content_buffer: &mut ContentBuffer,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     match root {
         SearchRoot::File(file) => {
@@ -1126,7 +1192,7 @@ fn scan_directory_tree(
     include_matcher: &IncludeMatcher<'_>,
     outcome: &mut ScanOutcome,
     content_buffer: &mut ContentBuffer,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     let mut stack = vec![make_directory_frame(
         directory,
@@ -1228,7 +1294,7 @@ fn make_directory_frame(
     relative_path: String,
     depth: usize,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<DirectoryFrame, ToolError> {
     let entries = read_directory_entries(directory.as_fd(), budget, cancellation)?;
     Ok(DirectoryFrame {
@@ -1243,7 +1309,7 @@ fn make_directory_frame(
 fn read_directory_entries(
     directory: rustix::fd::BorrowedFd<'_>,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<Vec<DirectoryEntry>, ToolError> {
     check_cancellation(cancellation)?;
     let mut stream = Dir::read_from(directory).map_err(map_directory_stream_error)?;
@@ -1300,7 +1366,7 @@ fn scan_open_file(
     matcher: &LiteralMatcher,
     outcome: &mut ScanOutcome,
     content_buffer: &mut ContentBuffer,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     check_cancellation(cancellation)?;
     let metadata = rustix::fs::fstat(file).map_err(|_| read_failed())?;
@@ -1376,7 +1442,7 @@ fn read_bounded_content<'a>(
     file: &OwnedFd,
     content_buffer: &'a mut ContentBuffer,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<&'a [u8], ToolError> {
     read_bounded_content_with(
         content_buffer,
@@ -1435,7 +1501,7 @@ fn search_content(
     budget: &mut ScanBudget,
     stats: &mut ScanStats,
     retained: &mut RetainedResults,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     let lines = line_ranges(content, cancellation)?;
     let mut file_matched = false;
@@ -1470,10 +1536,7 @@ fn search_content(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn line_ranges(
-    content: &str,
-    cancellation: &CancellationToken,
-) -> Result<Vec<LineRange>, ToolError> {
+fn line_ranges(content: &str, cancellation: &impl ScanCheck) -> Result<Vec<LineRange>, ToolError> {
     line_ranges_with_check(content, || check_cancellation(cancellation))
 }
 
@@ -1710,7 +1773,7 @@ fn utf8_prefix(text: &str, maximum_bytes: usize) -> &str {
 fn render_output(
     arguments: &ExecutionArguments,
     outcome: ScanOutcome,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<ToolOutput, ToolError> {
     render_output_with_check(arguments, outcome, || check_cancellation(cancellation))
 }
@@ -1976,7 +2039,7 @@ fn segment_matches(
     pattern: &[u8],
     candidate: &[u8],
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<bool, ToolError> {
     let mut pattern_index = 0_usize;
     let mut candidate_index = 0_usize;
@@ -2018,7 +2081,7 @@ fn path_matches(
     non_recursive_pattern_segments: usize,
     candidate: &str,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<bool, ToolError> {
     path_matches_with_check(
         pattern_segments,
@@ -2036,7 +2099,7 @@ fn path_matches_with_check(
     non_recursive_pattern_segments: usize,
     candidate: &str,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
     check: &mut impl FnMut() -> Result<(), ToolError>,
 ) -> Result<bool, ToolError> {
     budget.observe_include_steps(candidate.len())?;
@@ -2158,7 +2221,7 @@ fn checked_workspace_path_length(
     } else {
         search_path
             .len()
-            .checked_add(1)
+            .checked_add(usize::from(search_path != "/"))
             .and_then(|length| length.checked_add(relative_length))
             .ok_or_else(scan_limit)
     }
@@ -2175,7 +2238,9 @@ fn join_workspace_path(search_path: &str, relative_path: &str) -> Result<String,
     } else {
         let mut path = String::with_capacity(capacity);
         path.push_str(search_path);
-        path.push('/');
+        if search_path != "/" {
+            path.push('/');
+        }
         path.push_str(relative_path);
         path
     };
@@ -2206,7 +2271,7 @@ const fn content_open_flags() -> OFlags {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn ensure_root_is_linked(
     root: rustix::fd::BorrowedFd<'_>,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     #[cfg(target_os = "linux")]
     {
@@ -2225,7 +2290,7 @@ fn ensure_root_is_linked(
 #[cfg(target_os = "macos")]
 fn ensure_macos_root_is_linked(
     root: rustix::fd::BorrowedFd<'_>,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     check_cancellation(cancellation)?;
     let root_metadata = rustix::fs::fstat(root).map_err(|_| unavailable())?;
@@ -2322,16 +2387,28 @@ fn map_content_open_error(error: rustix::io::Errno) -> ToolError {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
-    if cancellation.is_cancelled() {
-        Err(ToolError::new(
-            ToolErrorKind::Cancelled,
-            "grep_files_cancelled",
-            "grep_files execution was cancelled",
-            false,
-        ))
-    } else {
-        Ok(())
+fn check_cancellation(cancellation: &impl ScanCheck) -> Result<(), ToolError> {
+    cancellation.check()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+trait ScanCheck {
+    fn check(&self) -> Result<(), ToolError>;
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ScanCheck for CancellationToken {
+    fn check(&self) -> Result<(), ToolError> {
+        if self.is_cancelled() {
+            Err(ToolError::new(
+                ToolErrorKind::Cancelled,
+                "grep_files_cancelled",
+                "grep_files execution was cancelled",
+                false,
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 
