@@ -1188,6 +1188,172 @@ fn workspace_json(output: &Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn workspace_without_settings(primary: &Path, state: &Path) -> Command {
+    let mut command = machine_god();
+    command
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("XDG_STATE_HOME", state)
+        .current_dir(primary);
+    command
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn workspace_settings_free_list_aliases_preserve_receipts_and_filesystem() {
+    for state_exists in [false, true] {
+        let temporary = TestDirectory::new("workspace-settings-free-list");
+        let primary = temporary.path().join("primary-café");
+        let state = temporary.path().join("state");
+        fs::create_dir(&primary).unwrap();
+        if state_exists {
+            fs::create_dir_all(state.join("machine-god")).unwrap();
+        }
+        let canonical = fs::canonicalize(&primary).unwrap();
+        let primary_text = canonical.to_str().unwrap();
+        for args in [
+            &["workspace"][..],
+            &["workspace", "list"][..],
+            &["workspace", "--json"][..],
+            &["workspace", "list", "--json"][..],
+            &["workspace", "--json", "list"][..],
+        ] {
+            let output = workspace_without_settings(&primary, &state)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{args:?}: {output:?}");
+            assert!(output.stderr.is_empty());
+            assert!(output.stdout.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
+            if args.contains(&"--json") {
+                let value = workspace_json(&output);
+                assert_eq!(value["kind"], "workspace");
+                assert_eq!(value["action"], "list");
+                assert_eq!(
+                    value["primary_directory"],
+                    serde_json::json!({"text": primary_text, "bytes_hex": null})
+                );
+                assert!(value["generation"].as_u64().is_some());
+                assert_eq!(value["saved_suppressed"], false);
+                assert_eq!(value["additional_directories"], serde_json::json!([]));
+                assert_eq!(value["saved_changed"], false);
+                assert_eq!(value["runtime_changed"], false);
+                assert_eq!(value["reconciliation"], "refreshed");
+                assert!(value["reconciliation_error"].is_null());
+                assert_eq!(value["launch_flag_can_restore"], false);
+            } else {
+                let stdout = std::str::from_utf8(&output.stdout).unwrap();
+                assert!(stdout.starts_with(&format!(
+                    "[workspace] action=list primary={primary_text:?} generation="
+                )));
+                assert!(stdout.ends_with(concat!(
+                    " saved_suppressed=false\n",
+                    "[workspace] additional_directories=0\n",
+                    "[workspace] saved_changed=false runtime_changed=false ",
+                    "reconciliation=refreshed launch_flag_can_restore=false\n",
+                )));
+            }
+            assert_eq!(fs::read_dir(&primary).unwrap().count(), 0);
+            assert_eq!(state.exists(), state_exists);
+            if state_exists {
+                assert_eq!(fs::read_dir(&state).unwrap().count(), 1);
+                assert_eq!(fs::read_dir(state.join("machine-god")).unwrap().count(), 0);
+            }
+            assert_eq!(
+                fs::read_dir(temporary.path()).unwrap().count(),
+                if state_exists { 2 } else { 1 }
+            );
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn workspace_settings_free_mutations_remain_unavailable_without_effects() {
+    let temporary = TestDirectory::new("workspace-settings-free-mutations");
+    let primary = temporary.path().join("primary");
+    let extra = temporary.path().join("extra");
+    let state = temporary.path().join("missing-state");
+    fs::create_dir(&primary).unwrap();
+    fs::create_dir(&extra).unwrap();
+    for action in ["add", "remove", "clear"] {
+        for json in [false, true] {
+            let mut command = workspace_without_settings(&primary, &state);
+            command.args(["workspace", action]);
+            if action != "clear" {
+                command.arg(&extra);
+            }
+            if json {
+                command.arg("--json");
+            }
+            let output = command.output().unwrap();
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            if json {
+                assert!(output.stderr.is_empty());
+                let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "kind": "workspace", "action": action,
+                        "error": "workspace operation failed", "code": "Unavailable"
+                    })
+                );
+            } else {
+                assert!(output.stdout.is_empty());
+                assert_eq!(
+                    output.stderr,
+                    b"machine-god workspace: operation failed: Unavailable\n"
+                );
+            }
+            assert!(!state.exists());
+            assert_eq!(fs::read_dir(&primary).unwrap().count(), 0);
+            assert_eq!(fs::read_dir(&extra).unwrap().count(), 0);
+            assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 2);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn workspace_list_selected_invalid_settings_environment_is_not_ignored() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let temporary = TestDirectory::new("workspace-invalid-settings-environment");
+    let primary = temporary.path().join("primary");
+    let state = temporary.path().join("missing-state");
+    fs::create_dir(&primary).unwrap();
+    for config in [
+        OsString::from("relative-WORKSPACE_CONFIG_SECRET"),
+        OsString::from_vec(b"/WORKSPACE_CONFIG_SECRET-\xff".to_vec()),
+    ] {
+        for args in [&["workspace"][..], &["workspace", "list", "--json"][..]] {
+            let output = workspace_without_settings(&primary, &state)
+                .env("XDG_CONFIG_HOME", &config)
+                .args(args)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            if args.contains(&"--json") {
+                assert!(output.stderr.is_empty());
+                let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(value["action"], "list");
+                assert_eq!(value["code"], "Unavailable");
+            } else {
+                assert!(output.stdout.is_empty());
+                assert_eq!(
+                    output.stderr,
+                    b"machine-god workspace: operation failed: Unavailable\n"
+                );
+            }
+            assert_output_omits(&output, &["WORKSPACE_CONFIG_SECRET"]);
+            assert!(!state.exists());
+            assert_eq!(fs::read_dir(&primary).unwrap().count(), 0);
+            assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 1);
+        }
+    }
+}
+
 #[test]
 fn workspace_list_aliases_do_not_create_config_or_state() {
     let temporary = TestDirectory::new("workspace-read-only");
@@ -1307,31 +1473,48 @@ fn workspace_malformed_configuration_fails_redacted_and_unchanged() {
     let temporary = TestDirectory::new("workspace-malformed");
     let config = temporary.path().join("config");
     let state = temporary.path().join("missing-state");
-    let bytes = b"WORKSPACE_MALFORMED_SECRET:not-json";
-    let path = write_config(&config, bytes);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    for args in [
-        &["workspace", "--json"][..],
-        &["workspace", "clear", "--json"][..],
+    for bytes in [
+        &b"WORKSPACE_MALFORMED_SECRET:not-json"[..],
+        &br#"{"schema_version":8,"future":"WORKSPACE_MALFORMED_SECRET"}"#[..],
     ] {
-        let output = workspace_command(temporary.path(), &config, &state)
-            .args(args)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(1));
-        assert!(output.stderr.is_empty());
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["code"], "InvalidConfiguration");
-        assert_eq!(fs::read(&path).unwrap(), bytes);
-        assert!(!state.exists());
-        assert_output_omits(
-            &output,
-            &["WORKSPACE_MALFORMED_SECRET", "WORKSPACE_CREDENTIAL_SECRET"],
-        );
+        let path = write_config(&config, bytes);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        for args in [
+            &["workspace"][..],
+            &["workspace", "list"][..],
+            &["workspace", "clear"][..],
+            &["workspace", "--json"][..],
+            &["workspace", "list", "--json"][..],
+            &["workspace", "clear", "--json"][..],
+        ] {
+            let output = workspace_command(temporary.path(), &config, &state)
+                .args(args)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            if args.contains(&"--json") {
+                assert!(output.stderr.is_empty());
+                let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(value["code"], "InvalidConfiguration");
+            } else {
+                assert!(output.stdout.is_empty());
+                assert_eq!(
+                    output.stderr,
+                    b"machine-god workspace: operation failed: InvalidConfiguration\n"
+                );
+            }
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert!(!state.exists());
+            assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+            assert_output_omits(
+                &output,
+                &["WORKSPACE_MALFORMED_SECRET", "WORKSPACE_CREDENTIAL_SECRET"],
+            );
+        }
     }
 }
 

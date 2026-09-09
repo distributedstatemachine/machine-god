@@ -74,6 +74,12 @@ native owned configuration publication. Duplicate additions and no-op clears do
 not rewrite settings. Top-level commands have no launch-only roots or saved
 suppression. Missing configuration and session-state directories are not created
 by startup or listing; mutations may create their configuration directory.
+When process selection provides no settings authority, top-level listing uses
+the native settings-free startup and service: it reports the validated primary
+root with no saved additional roots and creates no directories. Add, remove,
+and clear remain unavailable without persistence authority. This does not ignore
+invalid environment selections or malformed, unreadable, or unsafe selected
+configuration; those still fail rather than becoming settings-free requests.
 
 The current-thread runtime drives the actual owned native worker scope. That
 scope is closed and its full worker/collector completion is joined before

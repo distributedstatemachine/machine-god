@@ -3,10 +3,11 @@ use super::{
     WorkspaceAction, WorkspaceCommandHost, WorkspaceOperationalFailure, WorkspaceSnapshot,
 };
 use machine_god_native::{
-    NativeEnvironment, NativeOwnedWorkerScope, NativeRootSelection, NativeUserConfigError,
-    NativeUserConfigStore, NativeWorkspaceAction, NativeWorkspaceAuthorityError,
-    NativeWorkspaceReceipt, NativeWorkspaceReconciliation, NativeWorkspaceService,
-    NativeWorkspaceServiceError, inspect_native_status, prepare_native_workspace,
+    ConfigFileState, NativeEnvironment, NativeOwnedWorkerScope, NativeRootSelection,
+    NativeUserConfigError, NativeUserConfigStore, NativeWorkspaceAction,
+    NativeWorkspaceAuthorityError, NativeWorkspaceReceipt, NativeWorkspaceReconciliation,
+    NativeWorkspaceService, NativeWorkspaceServiceError, inspect_native_status,
+    prepare_native_workspace, prepare_native_workspace_without_settings,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -17,14 +18,17 @@ impl WorkspaceCommandHost for ProductionWorkspaceCommandHost {
         action: &WorkspaceAction,
     ) -> Result<WorkspaceSnapshot, WorkspaceOperationalFailure> {
         let environment = NativeEnvironment::from_process();
-        let directory = inspect_native_status(&environment)
-            .config_file_path()
-            .and_then(Path::parent)
-            .ok_or(WorkspaceOperationalFailure::Unavailable)?
-            .to_owned();
+        let status = inspect_native_status(&environment);
+        let store = match status.config_file_path().and_then(Path::parent) {
+            Some(directory) => Some(Arc::new(NativeUserConfigStore::new(directory.to_owned()))),
+            None if status.config_file_state() == ConfigFileState::Unavailable => None,
+            None => return Err(WorkspaceOperationalFailure::Unavailable),
+        };
+        if store.is_none() && !matches!(action, WorkspaceAction::List) {
+            return Err(WorkspaceOperationalFailure::Unavailable);
+        }
         let selection = NativeRootSelection::from_current_process(&environment)
             .map_err(|_| WorkspaceOperationalFailure::Unavailable)?;
-        let store = Arc::new(NativeUserConfigStore::new(directory));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -32,19 +36,26 @@ impl WorkspaceCommandHost for ProductionWorkspaceCommandHost {
         let workers = NativeOwnedWorkerScope::new();
         let completion = workers.completion();
         let result = runtime.block_on(async {
-            let authority = prepare_native_workspace(
-                selection,
-                store.clone(),
-                Vec::new(),
-                false,
-                workers.clone(),
-            )
-            .await?;
-            let service = Arc::new(NativeWorkspaceService::new(
-                authority,
-                store,
-                workers.clone(),
-            ));
+            let preparation = match store.as_ref() {
+                Some(store) => prepare_native_workspace(
+                    selection,
+                    store.clone(),
+                    Vec::new(),
+                    false,
+                    workers.clone(),
+                ),
+                None => prepare_native_workspace_without_settings(
+                    selection,
+                    Vec::new(),
+                    false,
+                    workers.clone(),
+                ),
+            };
+            let authority = preparation.await?;
+            let service = Arc::new(match store {
+                Some(store) => NativeWorkspaceService::new(authority, store, workers.clone()),
+                None => NativeWorkspaceService::without_settings(authority, workers.clone()),
+            });
             service
                 .execute(match action {
                     WorkspaceAction::List => NativeWorkspaceAction::List,

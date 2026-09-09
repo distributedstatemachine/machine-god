@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI paired background-signal tests integrated; replacement verification`
-- Next gate: `parallel preparation, full platform runtime checks, three fresh reviews and exact remote gates`
+- Active phase: `combined CLI settings-free workspace listing integrated; replacement verification`
+- Next gate: `focused and full checks, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -240,9 +240,15 @@ Linux run then rejected one native same-owner background-signal assertion with
 `Unavailable`; an unchanged isolated pass does not establish its cause. Controlled
 diagnosis proved that an admitted child reaped before enumeration rejects an
 incomplete traversal with budget remaining. Paired tests now retain that failure
-and use an acknowledged stable shell for owner routing. Their focused Linux
-checks pass; complete replacement verification remains pending. Native behavior,
-deadlines, cleanup requirements and Linux concurrency are unchanged.
+and use an acknowledged stable shell for owner routing. The replacement passed
+the full Linux and macOS local gates, but fresh correctness review found that
+top-level workspace listing unnecessarily requires settings authority. The
+integrated correction restores settings-free listing through the existing native
+service; persistence mutations still require settings. Its new public regression
+rejects the unchanged release, with selected-invalid and mutation contrasts passing.
+The lifecycle/platform and resource reviews found no actionable issues. The
+corrected candidate requires fresh full verification and all three reviews.
+Native signal behavior, deadlines, cleanup and Linux concurrency are unchanged.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

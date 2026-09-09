@@ -1014,3 +1014,39 @@ release and both exact changed cases passed, along with 151 background-process
 tests (three existing helper ignores) and all fifty supervisor tests at default
 Linux concurrency. The production release hash was unchanged; complete
 replacement acceptance remains open.
+
+## Combined-candidate review: `9b46059b`
+
+The exact candidate passed pinned formatting, full warnings-denied Clippy,
+fresh locked releases, and full workspace runs on both platforms. Linux passed
+4,545 tests with seventeen existing helper ignores; macOS passed 4,540 with
+eighteen existing helper ignores. Explicit doctests passed all three cases on
+each platform. Both changed native tests passed on Linux, and the owner-routing
+case passed on macOS before its full run. Python passed 255 tests with fourteen
+existing platform skips, including its genuine fresh optimized cleanup probe.
+Documentation/drift, dependency policy/audit, FreeBSD/WASI, both Apple binding
+and ABI checks, and standalone support checks passed. Released verification
+worktrees and the idle Linux container were removed; logs and caches remain.
+
+Three fresh independent local review agents inspected the complete combined
+feature against `4659f001`. These were local reviews, not Bugbot service results.
+Lifecycle/platform and performance/resources established zero actionable
+findings. Correctness/API established one P2: `workspace/native.rs` requires a
+configuration directory before even listing. The verified release binary exits
+with `Unavailable` when only PATH and valid XDG_STATE_HOME are supplied; adding
+XDG_CONFIG_HOME pointing to an absent directory makes listing succeed without
+creating files. The prior command supported missing settings authority, and the
+native settings-free startup/service already preserves descriptor-backed list
+behavior while rejecting persistence mutations. This rejects the candidate;
+there was no push or main advancement. Review worktrees were cleaned up.
+
+Source component `bdb1315f` uses the existing settings-free native preparation
+and service only for genuinely unavailable settings authority; invalid selected
+environment remains an error and mutations still reject missing persistence
+authority. Test component `d7db7d3a` covers default/list human and JSON aliases,
+absent/existing state, receipt facts and no filesystem effects. Against the
+unchanged exact release, the new listing regression failed as expected and four
+contrasting tests passed: configured listing, invalid selected environment,
+malformed/future settings, and settings-free mutation rejection. Pinned harness
+compilation and formatting passed. Positive replacement and full-feature gates
+remain pending; the unchanged release's negative result is not acceptance.
