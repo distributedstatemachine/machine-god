@@ -43,7 +43,7 @@ pub(crate) fn parse(
             (Scope::Local, first, rest)
         };
     let (mutation, tool) = if action.eq_ignore_ascii_case("reset") {
-        let reset = match trim(rest).to_ascii_lowercase().as_str() {
+        let category = match trim(rest).to_ascii_lowercase().as_str() {
             "all" => Reset::All,
             "command" | "commands" => Reset::Commands,
             "tool" | "tools" => Reset::Tools,
@@ -51,7 +51,7 @@ pub(crate) fn parse(
             "web-fetch-domain" | "web-fetch-domains" => Reset::WebFetchDomains,
             _ => return Err(Error::Invalid),
         };
-        (Mutation::Reset(reset), None)
+        (Mutation::Reset(category), None)
     } else {
         let add = action.eq_ignore_ascii_case("add");
         if !add && !action.eq_ignore_ascii_case("remove") {

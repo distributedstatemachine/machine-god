@@ -88,7 +88,7 @@ pub(crate) fn execute_inner(
                                 *reload = Err(ReloadError::Unavailable);
                             }
                             Receipt::Mutation { reload, .. } => {
-                                *reload = Some(Err(ReloadError::Unavailable))
+                                *reload = Some(Err(ReloadError::Unavailable));
                             }
                         }
                         Ok(receipt)

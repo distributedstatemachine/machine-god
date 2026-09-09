@@ -30,6 +30,10 @@ async fn apply(
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "One ordered source-shadowing scenario retains a single actual host/runtime."
+)]
 fn allowlist_real_store_sources_normalization_views_and_noop_remove_match_runtime() {
     executor().block_on(async {
         let fixture = Fixture::new();
@@ -180,6 +184,10 @@ fn allowlist_real_store_sources_normalization_views_and_noop_remove_match_runtim
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "The post-commit race and failure share explicit real-store setup and ownership."
+)]
 fn allowlist_post_commit_reload_is_fresh_and_failure_preserves_durable_receipt() {
     executor().block_on(async {
         let fixture = Fixture::new();
@@ -295,6 +303,10 @@ fn allowlist_post_commit_reload_is_fresh_and_failure_preserves_durable_receipt()
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "The single drop/permit/TLS scenario keeps every synchronization endpoint visible."
+)]
 fn allowlist_dropped_response_keeps_effect_permit_and_actual_host_thread_join() {
     struct ThreadCleanup {
         entered: std::sync::mpsc::Sender<()>,

@@ -110,7 +110,7 @@ impl NativeAllowlistSources {
         };
         rules
             .into_iter()
-            .flat_map(|rules| rules.rules())
+            .flat_map(NativeConfiguredPermissionRules::rules)
             .filter(|rule| {
                 rule.decision() == crate::NativeConfiguredPermissionDecision::Allow
                     && (rule.permission() != "web_fetch"
