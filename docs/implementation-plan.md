@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-agent-readiness`
-- Active phase: `verifying all twelve integrated whole-codebase agent-readiness and Rust-structure fixes on a stacked maintenance branch`
+- Active phase: `fixing Linux CI prerequisites and a Linux-only fixture lint after whole-codebase maintenance review`
 - Next gate: `fresh exact-release full local gate, three fresh independent reviews, then exact feature-branch CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
@@ -127,6 +127,12 @@ receipt and transition assertions preserved. No production behavior was changed
 for that fixture correction. The complete run also exposed two stale credential
 configuration assertions; current/default and future-version fixtures now match
 the existing schema-v7 contract, while legacy schema-v3 coverage is preserved.
+
+The first reviewed remote candidate (`53378c8c`) passed its local gate and all
+three independent review tracks, but remote Linux checks exposed a fixture lint
+and missing release-helper provisioning. Correct these without changing test
+selection, Linux concurrency, or product behavior; the replacement requires a
+fresh local gate, three fresh reviews and exact remote evidence.
 
 Freeze a single candidate after the complete local gate, run three fresh independent review
 tracks, fix until all are green, and require exact feature-branch CI and
@@ -380,9 +386,9 @@ cargo +1.94.1 build --release --locked -p machine-god-cli --bin machine-god --ta
 MACHINE_GOD_CLI_TEST_BINARY="$(pwd -P)/target/release/machine-god"
 export MACHINE_GOD_CLI_TEST_BINARY
 test -x "$MACHINE_GOD_CLI_TEST_BINARY"
+MACHINE_GOD_TERMINAL_RELEASE_BINARY="$MACHINE_GOD_CLI_TEST_BINARY"
+export MACHINE_GOD_TERMINAL_RELEASE_BINARY
 if [ "$(uname -s)" = Darwin ]; then
-  MACHINE_GOD_TERMINAL_RELEASE_BINARY="$MACHINE_GOD_CLI_TEST_BINARY"
-  export MACHINE_GOD_TERMINAL_RELEASE_BINARY
   cargo +1.94.1 test --workspace -- --test-threads=1
 else
   cargo +1.94.1 test --workspace
@@ -397,8 +403,9 @@ relevant FreeBSD/WASI compilation or active
 unsupported behavior, documentation policy, no-unsafe conformance checks, and a
 fresh locked release-binary smoke of user-visible behavior. Evidence is a
 regression/delivery claim unless a milestone explicitly promotes it.
-The Apple branch matches the native matrix's serial process-table scheduling
-and explicit production-helper selection. Linux retains default test concurrency.
+Both platforms select the explicit production helper. The Apple branch matches
+the native matrix's serial process-table scheduling; Linux retains default test
+concurrency.
 Keep explicitly constructed protocol and failure fixtures; do not relax
 deadlines or skip tests. A changed source tree requires a fresh release helper.
 The CLI integration harness accepts `MACHINE_GOD_CLI_TEST_BINARY` as an explicit

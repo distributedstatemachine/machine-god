@@ -1343,6 +1343,7 @@ fn workspace_no_op_clear_and_unknown_remove_do_not_create_configuration() {
 #[cfg(target_os = "linux")]
 #[test]
 fn workspace_non_unicode_add_list_and_remove_preserve_bytes() {
+    use std::fmt::Write as _;
     use std::os::unix::ffi::OsStringExt;
     let temporary = TestDirectory::new("workspace-raw-path");
     let primary = temporary.path().join("primary");
@@ -1360,12 +1361,10 @@ fn workspace_non_unicode_add_list_and_remove_preserve_bytes() {
     let value = workspace_json(&output);
     let path = &value["additional_directories"][0]["source"];
     assert!(path["text"].is_null());
-    let expected = extra
-        .as_os_str()
-        .as_encoded_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let mut expected = String::new();
+    for byte in extra.as_os_str().as_encoded_bytes() {
+        write!(expected, "{byte:02x}").unwrap();
+    }
     assert_eq!(path["bytes_hex"], expected);
     let listed = workspace_json(
         &workspace_command(&primary, &config, &state)
