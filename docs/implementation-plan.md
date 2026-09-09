@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI verification; rerunning full gate after platform regression fix`
-- Next gate: `replacement full local gate, three fresh reviews and exact feature CI/Benchmark evidence`
+- Active phase: `combined CLI verification; correcting resume documentation after full review`
+- Next gate: `replacement candidate checks and fresh reviews, then exact feature CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -226,7 +226,13 @@ The full macOS run passed CLI/core/native unit checks, then exposed a stale
 composed-host test that still expected macOS semantic search to be unsupported.
 Both supported platforms now exercise retained-root success and a real empty
 match result through the composed host; both focused macOS scenarios pass.
-The replacement full gate remains open.
+The replacement full local gate passed on Linux and macOS, with repository
+policy, dependency, documentation and unsupported-target checks green. Three
+independent reviews found no actionable runtime defects and one resume-contract
+documentation mismatch: interactive recording was incorrectly described as
+unsupported. The correction scopes the one-prompt restrictions and documents
+the accepted trailing interactive modifier. Replacement candidate verification
+and the exact remote feature gates remain open.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

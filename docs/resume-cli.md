@@ -1,4 +1,8 @@
-# Explicit-session `resume` command
+# Session `resume` command
+
+Interactive resume selects an existing session for the
+[interactive host](cli.md#interactive-ownership). The grammar below also retains
+a separate prompt-bearing, noninteractive extension.
 
 Prompt-bearing `machine-god resume` continues one existing durable session with one bounded,
 noninteractive prompt. It exposes native conversation resume and runtime
@@ -35,6 +39,13 @@ Aliases accept no additional operands beyond those shown. In particular,
 The legacy `session resume --resume --last` spelling also selects latest.
 `session <id> [--json]` retains its separate inspection grammar.
 
+Interactive forms may append one trailing `--record`, for example
+`machine-god resume saved --record`, `machine-god resume --record`, or
+`machine-god session resume saved --record`. Duplicate or misplaced recording
+modifiers are rejected; the modifier does not enable recording for the
+prompt-bearing extension. Recording follows the interactive host's owned
+startup, output and finalization contract.
+
 The existing noninteractive extension is:
 
 ```text
@@ -63,8 +74,12 @@ state-root, credential, runtime, session-store, or network effects. Standard
 input is never read by this prompt-bearing form. Only `resume <id>` supports
 the prompt-bearing extension; aliases, `session resume` and explicit `--id`
 remain interactive-only. Interactive forms use the
-[interactive host](cli.md#interactive-ownership). Unsupported options, including
-`--record` and `--json`, are rejected rather than silently ignored.
+[interactive host](cli.md#interactive-ownership). The prompt-bearing extension
+rejects `--record` and `--json` rather than silently ignoring them.
+
+The native composition, streaming, durability, exit and resource descriptions
+in the next three sections apply to that prompt-bearing extension; interactive
+resume follows the linked interactive-host contract.
 
 ## Native composition and authority
 
@@ -187,9 +202,10 @@ ceiling for advisory-lock acquisition, filesystem latency, or retries after
 `EINTR`.
 
 The pinned upstream fx surface accepts implicit-last selection, aliases,
-recording, and interactive continuation forms. Machine-god intentionally
-implements only the explicit-ID, one-prompt scenario above. Matching the
-observable ability to continue a selected session is scenario compatibility;
+recording, and interactive continuation forms. Machine-god implements the
+interactive forms above, including optional trailing recording, alongside its
+explicit-ID, one-prompt extension. Matching the observable ability to continue
+a selected session is scenario compatibility;
 it is not grammar, option, presentation, persistence-format, concurrency, or
 performance equivalence.
 

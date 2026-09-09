@@ -665,3 +665,28 @@ scenario into a cross-platform exact empty-match success scenario. Catalog,
 permission, completion and durable-result assertions remain; successful scanning
 is checked through exact counters rather than an unsupported stub. No production
 behavior, deadlines or test-runner policy changed.
+
+## Combined-candidate review: `adee6877`
+
+The replacement candidate passed the complete Rust 1.94.1 local gate. macOS
+used serial runtime scheduling and the fresh release helper; Linux used its
+default concurrency and a separately built release helper. Both workspace and
+explicit doc tests passed. Repository Python checks passed 255 tests with 14
+existing platform skips; dependency policy, vulnerability audit, pinned drift,
+bounded documentation and FreeBSD/WASI compilation checks passed.
+
+Three fresh independent read-only agents reviewed the complete delta against
+merge-base `4659f0011e5add304bd24bd5cfd43e244edceac7`:
+
+- `cli_full_review_api_01`: one P3 documentation finding. `docs/resume-cli.md`
+  incorrectly rejected interactive `--record` and claimed only explicit-ID,
+  one-prompt resume existed. No additional runtime/API defect was established.
+- `cli_full_review_lifecycle_01`: zero actionable findings across workspace,
+  permission, persistence, resume, input, recording and cleanup ownership.
+- `cli_full_review_resources_01`: zero actionable findings across JSON bounds,
+  scanning, undo, queues, catalogs, recording, CI and test topology.
+
+These were local source/caller/test reviews, not independent runtime reruns or
+remote acceptance. The documentation correction states the existing accepted
+interactive recording grammar and explicitly scopes one-prompt behavior; it
+changes no product code or tests. The candidate was not pushed or delivered.
