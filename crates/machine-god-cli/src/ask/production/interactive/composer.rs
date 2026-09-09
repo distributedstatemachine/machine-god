@@ -14,12 +14,14 @@ use std::fmt;
 
 pub(super) const MAX_COMPOSER_BYTES: usize = 256 * 1024;
 pub(super) const MAX_COMPOSER_STEP_BYTES: usize = 4096;
+pub(super) const MAX_PICKER_QUERY_BYTES: usize = 256;
 const MAX_ESCAPE_BYTES: usize = 32;
 const PASTE_END: &[u8] = b"\x1b[201~";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct ComposerContext {
     pub active_response: bool,
+    pub session_picker: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +47,11 @@ pub(super) enum ComposerEvent {
     Submit(String),
     CancelRequested,
     ExitRequested,
+    SessionPickerRequested,
+    PickerPrevious,
+    PickerNext,
+    PickerToggleScope,
+    EscapeRequested,
     Changed,
     InputError(ComposerInputError),
 }
@@ -54,6 +61,11 @@ impl fmt::Debug for ComposerEvent {
             Self::Submit(_) => f.write_str("Submit(..)"),
             Self::CancelRequested => f.write_str("CancelRequested"),
             Self::ExitRequested => f.write_str("ExitRequested"),
+            Self::SessionPickerRequested => f.write_str("SessionPickerRequested"),
+            Self::PickerPrevious => f.write_str("PickerPrevious"),
+            Self::PickerNext => f.write_str("PickerNext"),
+            Self::PickerToggleScope => f.write_str("PickerToggleScope"),
+            Self::EscapeRequested => f.write_str("EscapeRequested"),
             Self::Changed => f.write_str("Changed"),
             Self::InputError(error) => f.debug_tuple("InputError").field(error).finish(),
         }
@@ -134,6 +146,21 @@ impl Composer {
     pub fn reset(&mut self) {
         *self = Self::default();
     }
+    pub fn has_pending_input(&self) -> bool {
+        !matches!(self.decoder, Decoder::Ready)
+    }
+    pub fn waiting_for_escape(&self) -> bool {
+        matches!(self.decoder, Decoder::Escape { len: 1, .. })
+    }
+    /// The input owner supplies the bounded ESC ambiguity timer; no clock is
+    /// read here and an unfinished CSI or paste is never treated as plain ESC.
+    pub fn expire_escape(&mut self) -> Option<ComposerEvent> {
+        if !self.waiting_for_escape() {
+            return None;
+        }
+        self.decoder = Decoder::Ready;
+        Some(ComposerEvent::EscapeRequested)
+    }
 
     /// Consumes at most 4,096 bytes and emits at most one event. Empty input is
     /// inert. A returned prefix must be removed before feeding the remainder.
@@ -158,11 +185,11 @@ impl Composer {
                         continue;
                     }
                 }
-                if printable(bytes[consumed]) {
+                if printable(bytes[consumed], context) {
                     let available = &bytes[consumed..];
                     let end = available
                         .iter()
-                        .position(|byte| !printable(*byte))
+                        .position(|byte| !printable(*byte, context))
                         .unwrap_or(available.len());
                     let candidate = &available[..end];
                     let valid = match std::str::from_utf8(candidate) {
@@ -172,7 +199,7 @@ impl Composer {
                     if valid > 0 {
                         let text =
                             std::str::from_utf8(&candidate[..valid]).expect("validated prefix");
-                        let event = self.insert(text);
+                        let event = self.insert(text, context);
                         consumed += valid;
                         if matches!(event, ComposerEvent::InputError(_)) {
                             self.decoder = Decoder::RejectLine;
@@ -189,7 +216,7 @@ impl Composer {
                 Decoder::Ready => self.key(byte, context),
                 Decoder::Utf8(mut utf8) => match utf8.push(byte) {
                     Ok(Some(text)) => {
-                        let event = self.insert(text);
+                        let event = self.insert(text, context);
                         if matches!(event, ComposerEvent::InputError(_)) {
                             self.decoder = Decoder::RejectLine;
                         }
@@ -206,7 +233,7 @@ impl Composer {
                         Some(ComposerEvent::InputError(error))
                     }
                 },
-                Decoder::Escape { bytes, len } => self.escape(byte, bytes, len),
+                Decoder::Escape { bytes, len } => self.escape(byte, bytes, len, context),
                 Decoder::Osc { escape } => {
                     if matches!(byte, b'\r' | b'\n') {
                         self.skip_lf = byte == b'\r';
@@ -218,7 +245,7 @@ impl Composer {
                         None
                     }
                 }
-                Decoder::Paste(paste) => self.paste_byte(paste, byte),
+                Decoder::Paste(paste) => self.paste_byte(paste, byte, context),
                 Decoder::RejectLine => match byte {
                     b'\r' | b'\n' => {
                         self.skip_lf = byte == b'\r';
@@ -238,8 +265,8 @@ impl Composer {
         (consumed, None)
     }
 
-    fn insert(&mut self, text: &str) -> ComposerEvent {
-        if text.len() > MAX_COMPOSER_BYTES - self.text.len() {
+    fn insert(&mut self, text: &str, context: ComposerContext) -> ComposerEvent {
+        if text.len() > byte_limit(context).saturating_sub(self.text.len()) {
             return ComposerEvent::InputError(ComposerInputError::TooLong);
         }
         self.text.insert_str(self.cursor, text);
@@ -249,6 +276,18 @@ impl Composer {
 
     fn key(&mut self, byte: u8, context: ComposerContext) -> Option<ComposerEvent> {
         match byte {
+            9 if context.session_picker => Some(ComposerEvent::PickerToggleScope),
+            10 if context.session_picker => Some(ComposerEvent::PickerNext),
+            11 if context.session_picker => Some(ComposerEvent::PickerPrevious),
+            b'\r' if context.session_picker => {
+                self.skip_lf = true;
+                // Selection may fail or be stale. Keep the bounded query and
+                // cursor editable until the owner explicitly closes the picker.
+                if self.text.len() > MAX_PICKER_QUERY_BYTES {
+                    return Some(ComposerEvent::InputError(ComposerInputError::TooLong));
+                }
+                Some(ComposerEvent::Submit(self.text.clone()))
+            }
             b'\r' | b'\n' => {
                 self.cursor = 0;
                 self.skip_lf = byte == b'\r';
@@ -321,6 +360,7 @@ impl Composer {
         byte: u8,
         mut bytes: [u8; MAX_ESCAPE_BYTES],
         len: usize,
+        context: ComposerContext,
     ) -> Option<ComposerEvent> {
         if len == MAX_ESCAPE_BYTES || matches!(byte, b'\r' | b'\n' | 0) {
             self.reject_at(byte);
@@ -338,7 +378,7 @@ impl Composer {
                     self.decoder = Decoder::Osc { escape: false };
                     return Some(ComposerEvent::InputError(ComposerInputError::InvalidEscape));
                 }
-                27 => return self.key(27, ComposerContext::default()),
+                27 => return self.key(27, context),
                 _ => return Some(ComposerEvent::InputError(ComposerInputError::InvalidEscape)),
             }
         }
@@ -346,12 +386,21 @@ impl Composer {
             self.decoder = Decoder::Escape { bytes, len };
             return None;
         }
-        match &bytes[..len] {
+        let sequence = &bytes[..len];
+        if let Some(event) = picker_escape(sequence, context) {
+            return match event {
+                EscapeKey::Event(event) => Some(event),
+                EscapeKey::Consumed => None,
+            };
+        }
+        match sequence {
             b"\x1b[D" | b"\x1bOD" => self.move_to(previous_start(&self.text, self.cursor)),
             b"\x1b[C" | b"\x1bOC" => self.move_to(next_end(&self.text, self.cursor)),
             b"\x1b[H" | b"\x1bOH" | b"\x1b[1~" | b"\x1b[7~" => self.move_to(0),
             b"\x1b[F" | b"\x1bOF" | b"\x1b[4~" | b"\x1b[8~" => self.move_to(self.text.len()),
             b"\x1b[3~" => self.delete_forward(),
+            b"\x1bOA" if context.session_picker => Some(ComposerEvent::PickerPrevious),
+            b"\x1bOB" if context.session_picker => Some(ComposerEvent::PickerNext),
             b"\x1b[200~" => {
                 self.decoder = Decoder::Paste(Paste::default());
                 None
@@ -360,7 +409,12 @@ impl Composer {
         }
     }
 
-    fn paste_byte(&mut self, mut paste: Paste, byte: u8) -> Option<ComposerEvent> {
+    fn paste_byte(
+        &mut self,
+        mut paste: Paste,
+        byte: u8,
+        context: ComposerContext,
+    ) -> Option<ComposerEvent> {
         if byte == PASTE_END[paste.marker] {
             paste.marker += 1;
             if paste.marker == PASTE_END.len() {
@@ -370,14 +424,16 @@ impl Composer {
                 if paste.utf8.len != 0 {
                     return Some(ComposerEvent::InputError(ComposerInputError::InvalidUtf8));
                 }
-                return Some(self.insert(&paste.text));
+                return Some(self.insert(&paste.text, context));
             }
             self.decoder = Decoder::Paste(paste);
             return None;
         }
         let mut error = None;
         for &pending in &PASTE_END[..paste.marker] {
-            if let Err(failure) = paste.push(pending, MAX_COMPOSER_BYTES - self.text.len()) {
+            if let Err(failure) =
+                paste.push(pending, byte_limit(context).saturating_sub(self.text.len()))
+            {
                 error = Some(failure);
                 break;
             }
@@ -385,7 +441,9 @@ impl Composer {
         paste.marker = 0;
         if byte == PASTE_END[0] {
             paste.marker = 1;
-        } else if let Err(failure) = paste.push(byte, MAX_COMPOSER_BYTES - self.text.len()) {
+        } else if let Err(failure) =
+            paste.push(byte, byte_limit(context).saturating_sub(self.text.len()))
+        {
             error = Some(failure);
         }
         self.decoder = Decoder::Paste(paste);
@@ -423,7 +481,7 @@ impl Paste {
             byte
         };
         if let Some(text) = self.utf8.push(byte)? {
-            if text.len() > limit - self.text.len() {
+            if text.len() > limit.saturating_sub(self.text.len()) {
                 return Err(ComposerInputError::TooLong);
             }
             self.text.push_str(text);
@@ -433,8 +491,72 @@ impl Paste {
     }
 }
 
-fn printable(byte: u8) -> bool {
-    byte == b'\t' || byte >= 32 && byte != 127
+fn byte_limit(context: ComposerContext) -> usize {
+    if context.session_picker {
+        MAX_PICKER_QUERY_BYTES
+    } else {
+        MAX_COMPOSER_BYTES
+    }
+}
+
+enum EscapeKey {
+    Event(ComposerEvent),
+    Consumed,
+}
+
+fn picker_escape(bytes: &[u8], context: ComposerContext) -> Option<EscapeKey> {
+    let body = bytes.strip_prefix(b"\x1b[")?;
+    if let Some(parameters) = body.strip_suffix(b"u") {
+        let text = std::str::from_utf8(parameters).ok()?;
+        let mut fields = text.split(';');
+        let code = fields.next()?.split(':').next()?.parse::<u32>().ok()?;
+        let mut modifiers = fields.next().unwrap_or("1").split(':');
+        let modifiers_value = modifiers.next()?.parse::<u32>().ok()?.checked_sub(1)?;
+        let event = modifiers.next().unwrap_or("1").parse::<u32>().ok()?;
+        if modifiers.next().is_some() || fields.next().is_some() || !(1..=3).contains(&event) {
+            return None;
+        }
+        if matches!(code, 82 | 114) && modifiers_value & 8 != 0 {
+            return Some(if event == 3 {
+                EscapeKey::Consumed
+            } else {
+                EscapeKey::Event(ComposerEvent::SessionPickerRequested)
+            });
+        }
+        if context.session_picker && code == 13 && modifiers_value & 1 != 0 {
+            return Some(EscapeKey::Consumed);
+        }
+    }
+    if !context.session_picker {
+        return None;
+    }
+    if body == b"Z" {
+        return Some(EscapeKey::Event(ComposerEvent::PickerToggleScope));
+    }
+    if body == b"27;2;13~" {
+        return Some(EscapeKey::Consumed);
+    }
+    let (key, parameters) = body.split_last()?;
+    if matches!(key, b'A' | b'B') {
+        let modified = parameters.strip_prefix(b"1;").is_some_and(|value| {
+            std::str::from_utf8(value)
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                .is_some_and(|value| value > 0)
+        });
+        if parameters.is_empty() || modified {
+            return Some(EscapeKey::Event(if *key == b'A' {
+                ComposerEvent::PickerPrevious
+            } else {
+                ComposerEvent::PickerNext
+            }));
+        }
+    }
+    None
+}
+
+fn printable(byte: u8, context: ComposerContext) -> bool {
+    byte == b'\t' && !context.session_picker || byte >= 32 && byte != 127
 }
 
 fn next_end(text: &str, start: usize) -> usize {

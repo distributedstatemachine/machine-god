@@ -7,6 +7,7 @@ fn feed(editor: &mut Composer, mut bytes: &[u8], active: bool) -> Vec<ComposerEv
             bytes,
             ComposerContext {
                 active_response: active,
+                session_picker: false,
             },
         );
         assert!(consumed > 0 && consumed <= MAX_COMPOSER_STEP_BYTES && consumed <= bytes.len());
@@ -22,6 +23,127 @@ fn error(events: &[ComposerEvent], expected: ComposerInputError) -> bool {
     events
         .iter()
         .any(|event| matches!(event, ComposerEvent::InputError(actual) if *actual == expected))
+}
+
+fn picker_feed(editor: &mut Composer, mut bytes: &[u8]) -> Vec<ComposerEvent> {
+    let mut events = Vec::new();
+    while !bytes.is_empty() {
+        let (consumed, event) = editor.feed(
+            bytes,
+            ComposerContext {
+                session_picker: true,
+                ..ComposerContext::default()
+            },
+        );
+        assert!(consumed > 0 && consumed <= MAX_COMPOSER_STEP_BYTES);
+        bytes = &bytes[consumed..];
+        events.extend(event);
+    }
+    events
+}
+
+#[test]
+fn picker_keys_and_super_r_are_decoded_at_every_chunk_split() {
+    for (bytes, expected) in [
+        (b"\x1b[114;9u".as_slice(), "SessionPickerRequested"),
+        (b"\x1b[82;10u", "SessionPickerRequested"),
+        (b"\x1b[114;9:2u", "SessionPickerRequested"),
+        (b"\x1b[A", "PickerPrevious"),
+        (b"\x1bOA", "PickerPrevious"),
+        (b"\x1b[1;5A", "PickerPrevious"),
+        (b"\x0b", "PickerPrevious"),
+        (b"\x1b[B", "PickerNext"),
+        (b"\x1bOB", "PickerNext"),
+        (b"\x1b[1;2B", "PickerNext"),
+        (b"\x0a", "PickerNext"),
+        (b"\t", "PickerToggleScope"),
+        (b"\x1b[Z", "PickerToggleScope"),
+    ] {
+        for split in 0..=bytes.len() {
+            let mut editor = Composer::default();
+            let mut events = picker_feed(&mut editor, &bytes[..split]);
+            events.extend(picker_feed(&mut editor, &bytes[split..]));
+            assert_eq!(events.len(), 1, "{bytes:?} at {split}");
+            assert_eq!(format!("{:?}", events[0]), expected);
+            assert!(editor.is_empty());
+        }
+    }
+    let mut editor = Composer::default();
+    assert!(matches!(
+        feed(&mut editor, b"\x1b[114;9u", false).as_slice(),
+        [ComposerEvent::SessionPickerRequested]
+    ));
+    for bytes in [b"\x12".as_slice(), b"\x1b[114;5u", b"\x1b[114;9:3u"] {
+        assert!(
+            !feed(&mut editor, bytes, false)
+                .iter()
+                .any(|event| matches!(event, ComposerEvent::SessionPickerRequested))
+        );
+    }
+}
+
+#[test]
+fn picker_shift_enter_is_consumed_and_plain_enter_submits_query() {
+    let mut editor = Composer::default();
+    picker_feed(&mut editor, b"query");
+    for bytes in [b"\x1b[13;2u".as_slice(), b"\x1b[27;2;13~"] {
+        assert!(picker_feed(&mut editor, bytes).is_empty());
+        assert_eq!(editor.text(), "query");
+    }
+    assert_eq!(submitted(&picker_feed(&mut editor, b"\r")), ["query"]);
+    assert_eq!(editor.text(), "query");
+    assert_eq!(editor.cursor(), 5);
+    picker_feed(&mut editor, b"!");
+    assert_eq!(submitted(&picker_feed(&mut editor, b"\r")), ["query!"]);
+}
+
+#[test]
+fn picker_query_limit_and_atomic_paste_do_not_submit_a_truncated_prefix() {
+    let mut editor = Composer::default();
+    picker_feed(&mut editor, &vec![b'x'; MAX_PICKER_QUERY_BYTES]);
+    let events = picker_feed(&mut editor, b"more\r");
+    assert!(error(&events, ComposerInputError::TooLong));
+    assert!(submitted(&events).is_empty());
+    assert_eq!(editor.text().len(), MAX_PICKER_QUERY_BYTES);
+    editor.reset();
+    picker_feed(&mut editor, b"keep\x1b[200~");
+    assert!(error(
+        &picker_feed(&mut editor, &vec![b'x'; MAX_PICKER_QUERY_BYTES]),
+        ComposerInputError::TooLong
+    ));
+    assert_eq!(editor.text(), "keep");
+    assert!(submitted(&picker_feed(&mut editor, b"\r\x1b[201~")).is_empty());
+    assert_eq!(editor.text(), "keep");
+    editor.reset();
+    let paste = b"\x1b[200~a\t\n\x0b\x1b[114;9u\x1b[201~";
+    for byte in paste {
+        assert!(
+            picker_feed(&mut editor, &[*byte])
+                .iter()
+                .all(|event| matches!(event, ComposerEvent::Changed))
+        );
+    }
+    assert_eq!(editor.text(), "a\t\n\x0b\x1b[114;9u");
+}
+
+#[test]
+fn pure_escape_expiration_only_consumes_a_standalone_prefix() {
+    let mut editor = Composer::default();
+    assert!(editor.expire_escape().is_none());
+    picker_feed(&mut editor, b"\x1b");
+    assert!(editor.waiting_for_escape());
+    assert!(matches!(
+        editor.expire_escape(),
+        Some(ComposerEvent::EscapeRequested)
+    ));
+    assert!(editor.expire_escape().is_none());
+    for prefix in [b"\x1b[".as_slice(), b"\x1b[200~"] {
+        editor.reset();
+        picker_feed(&mut editor, prefix);
+        assert!(editor.has_pending_input());
+        assert!(!editor.waiting_for_escape());
+        assert!(editor.expire_escape().is_none());
+    }
 }
 fn submitted(events: &[ComposerEvent]) -> Vec<&str> {
     events

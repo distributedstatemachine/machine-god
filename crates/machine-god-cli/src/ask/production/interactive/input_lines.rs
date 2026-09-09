@@ -4,12 +4,24 @@ use machine_god_native::{
     NativeInteractiveInput, NativeInteractiveInputChunk, NativeInteractiveInputError,
     NativeInteractivePromptToken,
 };
-use std::task::{Context, Poll};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
+use tokio::time::Sleep;
+
+const ESCAPE_TIMEOUT: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) enum InputBinding {
     Command,
     AwaitingPrompt,
+    Picker {
+        generation: u64,
+        revision: u64,
+    },
     Prompt {
         token: NativeInteractivePromptToken,
         question: usize,
@@ -34,6 +46,7 @@ pub(super) struct InputLines {
     line_binding: Option<InputBinding>,
     ended: bool,
     cancel_disarm: bool,
+    escape_timer: Option<Pin<Box<Sleep>>>,
 }
 
 impl InputLines {
@@ -48,6 +61,7 @@ impl InputLines {
             line_binding: None,
             ended: false,
             cancel_disarm: false,
+            escape_timer: None,
         }
     }
 
@@ -79,6 +93,7 @@ impl InputLines {
         if let Some(composer) = &mut self.composer {
             composer.reset();
             self.line_binding = None;
+            self.escape_timer = None;
         }
     }
 
@@ -139,7 +154,9 @@ impl InputLines {
     }
 
     /// At most one bounded received chunk and one composer event per poll.
-    /// Changed/error/paste/partial UTF-8 do not start a new presentation epoch.
+    /// Picker events start a new epoch for newly received chunks, but partial
+    /// UTF-8/paste and already received chunk remainders keep their first epoch.
+    /// Ordinary command/prompt drafts retain their original modal identity.
     /// Physical EOF never submits the retained draft, unlike canonical finish.
     pub fn poll_event(
         &mut self,
@@ -154,6 +171,29 @@ impl InputLines {
         }
         if self.ended {
             return Poll::Ready(None);
+        }
+        if self
+            .escape_timer
+            .as_mut()
+            .is_some_and(|timer| timer.as_mut().poll(cx).is_ready())
+        {
+            self.escape_timer = None;
+            if let Some(event) = self
+                .composer
+                .as_mut()
+                .expect("raw mode checked")
+                .expire_escape()
+            {
+                let binding = self
+                    .line_binding
+                    .as_ref()
+                    .expect("escape has an input binding")
+                    .clone();
+                if matches!(binding, InputBinding::Picker { .. }) {
+                    self.line_binding = None;
+                }
+                return Poll::Ready(Some(Ok((event, binding))));
+            }
         }
         if self.chunk.is_none() {
             match self.input.poll_chunk(cx) {
@@ -177,7 +217,18 @@ impl InputLines {
             .get_or_insert_with(|| self.chunk_binding.clone());
         let chunk = self.chunk.as_ref().expect("a received chunk");
         let composer = self.composer.as_mut().expect("raw mode checked");
-        let (consumed, event) = composer.feed(&chunk.as_bytes()[self.offset..], context);
+        let effective_context = ComposerContext {
+            session_picker: matches!(self.line_binding, Some(InputBinding::Picker { .. })),
+            ..context
+        };
+        let (consumed, event) = composer.feed(&chunk.as_bytes()[self.offset..], effective_context);
+        if composer.waiting_for_escape() {
+            if self.escape_timer.is_none() {
+                self.escape_timer = Some(Box::pin(tokio::time::sleep(ESCAPE_TIMEOUT)));
+            }
+        } else {
+            self.escape_timer = None;
+        }
         self.cancel_disarm |= chunk.as_bytes()[self.offset..self.offset + consumed]
             .iter()
             .any(|byte| !matches!(byte, 3 | 27));
@@ -201,6 +252,9 @@ impl InputLines {
             event,
             ComposerEvent::Submit(_) | ComposerEvent::ExitRequested
         ) || matches!(event, ComposerEvent::CancelRequested) && !context.active_response
+            || matches!(binding, InputBinding::Picker { .. }) && !composer.has_pending_input()
+            || matches!(event, ComposerEvent::SessionPickerRequested)
+                && matches!(binding, InputBinding::Command)
         {
             self.line_binding = None;
         }
@@ -312,6 +366,129 @@ mod tests {
         finish(input);
     }
 
+    fn picker(revision: u64) -> InputBinding {
+        InputBinding::Picker {
+            generation: 7,
+            revision,
+        }
+    }
+
+    #[test]
+    fn picker_events_refresh_new_chunks_but_never_relabel_received_remainders() {
+        let (mut input, mut write) = raw_source();
+        runtime().block_on(async {
+            write.write_all(b"\x1b[B\r").unwrap();
+            let navigation = event(&mut input, picker(1), false).await;
+            assert!(matches!(navigation.0, ComposerEvent::PickerNext));
+            assert!(navigation.1 == picker(1));
+            let stale_submit = event(&mut input, picker(2), false).await;
+            assert!(matches!(stale_submit.0, ComposerEvent::Submit(_)));
+            assert!(stale_submit.1 == picker(1));
+            write.write_all(b"query").unwrap();
+            let changed = event(&mut input, picker(2), false).await;
+            assert!(matches!(changed.0, ComposerEvent::Changed));
+            assert!(changed.1 == picker(2));
+            write.write_all(b"\r").unwrap();
+            let submit = event(&mut input, picker(3), false).await;
+            assert!(matches!(submit.0, ComposerEvent::Submit(text) if text == "query"));
+            assert!(submit.1 == picker(3));
+        });
+        finish(input);
+    }
+
+    #[test]
+    fn command_chunk_cannot_become_picker_selection_after_shortcut() {
+        let (mut input, mut write) = raw_source();
+        runtime().block_on(async {
+            write.write_all(b"\x1b[114;9u\r").unwrap();
+            assert!(matches!(
+                event(&mut input, InputBinding::Command, false).await,
+                (ComposerEvent::SessionPickerRequested, InputBinding::Command)
+            ));
+            input.reset_raw_draft();
+            assert!(matches!(
+                event(&mut input, picker(1), false).await,
+                (ComposerEvent::Submit(_), InputBinding::Command)
+            ));
+            write.write_all(b"\r").unwrap();
+            let fresh = event(&mut input, picker(1), false).await;
+            assert!(matches!(fresh.0, ComposerEvent::Submit(_)));
+            assert!(fresh.1 == picker(1));
+        });
+        finish(input);
+    }
+
+    #[test]
+    fn picker_split_sequences_and_paste_keep_first_received_view() {
+        for (first, second, expected) in [
+            (b"\x1b[".as_slice(), b"1;5A".as_slice(), "PickerPrevious"),
+            (b"\xf0\x9f", b"\xa6\x80", "Changed"),
+            (b"\x1b[200~query", b"\x1b[201~", "Changed"),
+        ] {
+            let (mut input, mut write) = raw_source();
+            runtime().block_on(async {
+                write.write_all(first).unwrap();
+                partial(&mut input, picker(1)).await;
+                write.write_all(second).unwrap();
+                let result = event(&mut input, picker(2), false).await;
+                assert_eq!(format!("{:?}", result.0), expected);
+                assert!(result.1 == picker(1));
+                write.write_all(b"\t").unwrap();
+                let fresh = event(&mut input, picker(2), false).await;
+                assert!(matches!(fresh.0, ComposerEvent::PickerToggleScope));
+                assert!(fresh.1 == picker(2));
+            });
+            finish(input);
+        }
+    }
+
+    #[test]
+    fn standalone_escape_waits_for_timer_and_keeps_its_original_picker_view() {
+        let (mut input, mut write) = raw_source();
+        runtime().block_on(async {
+            write.write_all(b"\x1b").unwrap();
+            partial(&mut input, picker(1)).await;
+            assert!(input.escape_timer.is_some());
+            let escape = event(&mut input, picker(2), false).await;
+            assert!(matches!(escape.0, ComposerEvent::EscapeRequested));
+            assert!(escape.1 == picker(1));
+            assert!(input.escape_timer.is_none());
+            assert!(input.line_binding.is_none());
+            write.write_all(b"\x1b").unwrap();
+            partial(&mut input, picker(2)).await;
+            write.write_all(b"[A").unwrap();
+            let arrow = event(&mut input, picker(3), false).await;
+            assert!(matches!(arrow.0, ComposerEvent::PickerPrevious));
+            assert!(arrow.1 == picker(2));
+            assert!(input.escape_timer.is_none());
+        });
+        finish(input);
+    }
+
+    #[test]
+    fn ignored_picker_shortcut_and_escape_do_not_retarget_a_modal_draft() {
+        let (mut input, mut write) = raw_source();
+        let original = prompt_binding();
+        let replacement = prompt_binding();
+        runtime().block_on(async {
+            write.write_all(b"draft").unwrap();
+            let _ = event(&mut input, original.clone(), false).await;
+            write.write_all(b"\x1b[114;9u").unwrap();
+            let shortcut = event(&mut input, replacement.clone(), false).await;
+            assert!(matches!(shortcut.0, ComposerEvent::SessionPickerRequested));
+            assert!(shortcut.1 == original);
+            write.write_all(b"\x1b").unwrap();
+            let escape = event(&mut input, replacement.clone(), false).await;
+            assert!(matches!(escape.0, ComposerEvent::EscapeRequested));
+            assert!(escape.1 == original);
+            write.write_all(b"\r").unwrap();
+            let submitted = event(&mut input, replacement, false).await;
+            assert!(matches!(submitted.0, ComposerEvent::Submit(text) if text == "draft"));
+            assert!(submitted.1 == original);
+        });
+        finish(input);
+    }
+
     async fn event(
         input: &mut InputLines,
         binding: InputBinding,
@@ -325,6 +502,7 @@ mod tests {
                     binding.clone(),
                     ComposerContext {
                         active_response: active,
+                        session_picker: matches!(binding, InputBinding::Picker { .. }),
                     },
                 )
             }),
@@ -453,6 +631,7 @@ mod tests {
                                 InputBinding::Command,
                                 ComposerContext {
                                     active_response: true,
+                                    session_picker: false,
                                 }
                             )
                             .is_pending()
@@ -510,7 +689,8 @@ mod tests {
                                 cx,
                                 InputBinding::AwaitingPrompt,
                                 ComposerContext {
-                                    active_response: true
+                                    active_response: true,
+                                    session_picker: false,
                                 }
                             )
                             .is_pending()
