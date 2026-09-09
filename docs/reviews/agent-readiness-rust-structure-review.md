@@ -19,12 +19,55 @@ were checked against source by the coordinator. Inspection was weighted toward
 high-churn code and important composition boundaries, not every source line.
 Unintegrated implementation worktrees were excluded and preserved.
 
+The initial eight findings were disproportionately concentrated on CLI and
+workflow concerns. The expanded pass below assesses every workspace crate,
+native subsystem groups, the excluded test-support crate, and repository
+tooling. Additional findings retain separate IDs so that broadening this review
+does not silently change the implementation scope already selected from the
+initial findings. Both passes use the same reviewed source revision.
+
 The review did not rerun full workspace tests, remote CI, dependency audits,
 benchmarks, or a comprehensive platform/security audit. It does not establish a
 performance improvement or release readiness. Source paths and line numbers
 below refer to the reviewed revision.
 
-## Prioritized findings
+## Codebase coverage
+
+“Implementation-focused” means selected implementations and their consumers
+were traced, not that every line in that area was audited. “Boundary-focused”
+means contracts, dependencies, composition, or selected tests were inspected;
+it is not a correctness endorsement of every implementation behind them.
+
+| Area | Inspection and assessment | Depth / findings |
+| --- | --- | --- |
+| `machine-god-core` | Engine dependency injection, cancellation, validated identifiers, model and permission contracts, tool preparation/execution, session storage/orchestration, and subagent JSON-bound consumers. Provider-neutral contracts and explicit authority are strengths; generic JSON machinery is misplaced inside session orchestration. | Implementation-focused on these seams; findings 6 and 9. Not an exhaustive session state-machine review. |
+| `machine-god-native` | Filesystem tools, retained-root checks, history/approval composition, persistence/configuration, runtime composition, network adapters, and extensibility boundaries. Effects remain in the appropriate crate; shared low-level mechanisms and the root configuration façade need better cohesion. | Mixed depth, detailed below; findings 6, 7, 10, and 12. |
+| `machine-god-cli` | Command dispatch/injection, bounded rendering, extracted command modules, signal/helper fixtures, and platform test prerequisites. The host boundary is generally sound; local rendering and command wiring repeat mechanisms. | Implementation-focused on reviewed command seams; findings 1, 4, and 8. Not a fresh end-to-end acceptance run. |
+| `machine-god-testkit` | Exports and scripted provider, tool, permission, event sink, session-store, and subagent fixtures. Bounded recording and strict scripts are useful agent-facing test seams; contextual preparation cannot be recorded by the shared prepared-tool double. | Implementation-focused on preparation and selected script/storage paths; boundary-focused elsewhere. Finding 11. |
+| `machine-god-terminal-sys` | Manifest/lints, public wrapper surface, process identity bindings, bounded process-inventory decoding, and C ABI assertions. Narrow unsafe exceptions are documented rather than spread through product crates. | Selected binding/decoder implementation and ABI-test inspection; no additional finding established. No independent Darwin ABI or kernel-behavior verification. |
+| `test-support/reentrant-waker` | The excluded test-only crate and its `RawWaker`/`Arc` ownership implementation were read in the context of ADR 0002. Keeping this fixture outside product unsafe exceptions is intentional. | Implementation-focused static read; no additional finding established. No Miri run. |
+| Build, CI, and test layout | Workspace manifests, pinned toolchain/lints, change classification, workflow prerequisites, source-including integration harnesses, and formatter discovery. The platform/package selection contract is useful; its prerequisite and test-topology gaps are actionable. | Implementation-focused on the reported selection/layout issues; findings 1, 2, 5, and 7. |
+| Compatibility and benchmarks | Compatibility test inventory, benchmark provenance/shape validation, and selected fixture tests. These are evidence tooling, not substitutes for product acceptance or a measured Rust-versus-upstream performance result. | Boundary-focused, with selected validator code read; no additional finding established. Generators and all benchmark paths were not exhaustively audited or executed. |
+| Agent instructions and documentation | Root instructions, README entry points, the live ledger, review navigation, architecture decisions, and the bounded documentation checker. The principal problem is duplicated/stale operational guidance, not a need for more dashboards or parser features. | Implementation-focused on navigation and gate recipes; findings 2 and 3. |
+
+### Native subsystem coverage
+
+The native crate is too broad for a single undifferentiated “reviewed” label.
+
+| Subsystem | What was inspected | Assessment / remaining depth limit |
+| --- | --- | --- |
+| Filesystem and workspace | Read/search/mutation root-identity paths, workspace authority composition, file-history wrapping, and approval binding. | Findings 6 and 10. Caller-specific cancellation and commit-phase checks are meaningful differences, not duplication to erase indiscriminately. Every filesystem race/interleaving was not replayed. |
+| Persistence and configuration | Session-store publication/revision handling, user-config store structure, bounded memory contracts, and root environment/status implementation. | Finding 12 concerns module ownership. Native ownership of persistence is appropriate; no new storage-correctness failure was established. Crash/durability behavior was not tested. |
+| Provider and network adapters | Shared HTTP credential/header machinery, adapter interfaces, cached model-loading ownership, and feature composition. | A shared HTTP primitive is a positive DRY example. Boundary-focused coverage does not establish full codec, streaming, retry, or web-tool protocol correctness. |
+| Conversation and process runtime | Conversation limits/lifecycle contracts, owned-worker observation, reference-host composition, terminal/background test graphs, and helper entry points. | Findings 6 and 7 affect these seams. No comprehensive scheduler, cancellation-race, or process-lifetime acceptance run was performed by this audit. |
+| MCP, skills, and other extensibility | MCP selection/features contracts and authority injection, memory bounds, and skill-install staging/checkpoint structure. | Boundary-focused; no additional confirmed finding. Full MCP transport and skill-install rollback behavior remain outside the deep inspection performed here. |
+
+No additional finding means none was established by this inspection. It does
+not mean that an area is proven bug-free. Dependency freshness/advisories,
+cross-platform execution, measured performance, and exhaustive concurrency
+verification remain explicitly outside this advisory review.
+
+## Initial prioritized findings
 
 Order reflects expected benefit relative to effort, confidence, and change risk.
 Effort includes tests: S means hours, M roughly a day, L multiple days. Risk is
@@ -206,6 +249,132 @@ module pattern for models, doctor, and session inspection. Replace positional
 host tuples with named dependencies. Preserve parsing-before-effects behavior,
 signal/output lifetimes, diagnostics, and test injection seams.
 
+## Additional whole-codebase findings
+
+These extend the original review beyond its CLI-heavy emphasis. They are
+structural or testability findings, not newly reproduced runtime failures.
+Their implementation must be selected and recorded in the single live plan;
+this section is not a second implementation checklist.
+
+| ID | Finding | Effort | Fix risk | Confidence |
+| --- | --- | --- | --- | --- |
+| 9 | Generic core JSON machinery is coupled to session orchestration | M | Medium | High, dependency/call-site evidence |
+| 10 | Native retained-root identity observation is repeated across seven consumers | M | Medium | High, implementation comparison |
+| 11 | Testkit cannot record contextual tool preparation | M | Low–Medium | High, contract and fixture comparison |
+| 12 | Native root façade also owns environment/status implementation | M | Medium | High, module-responsibility evidence |
+
+### 9. Separate core JSON mechanics from session orchestration
+
+Evidence:
+
+- [core/session.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-core/src/session.rs),
+  lines 2520–2820, defines JSON byte counting, validation budgets, root
+  validation, iterative value destruction, and bounded serialized sizing.
+  The same module owns session-store contracts, session state, and turn
+  orchestration, including `run_turn_inner` at line 1686.
+- [core/tool.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-core/src/tool.rs),
+  lines 198–212 and 370–372, calls `crate::session::drop_json_value_iterative`.
+- [core/engine.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-core/src/engine.rs),
+  lines 118, 205–254, and 405, also uses session-owned JSON helpers;
+  [core/subagent.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-core/src/subagent.rs),
+  lines 3–6, imports the generic helpers and limit type from `session`.
+
+Impact: changing shared JSON bounds or cleanup requires navigating and owning
+the session orchestration module. Tool values, engine construction, and
+subagents depend on an unrelated high-level module for a lower-level
+mechanism, complicating independent agent assignments. This is a cohesion
+finding, not evidence that current limits or destruction are incorrect.
+
+Recommendation: move these helpers and focused tests into a private core
+JSON/bounds module. Preserve depth, node and byte limits, iterative destruction,
+and exact error mapping. Avoid a new crate, public API, ambient effects, or a
+generic validation framework. Validate existing deeply nested/oversized values
+and destruction behavior through all four consumers before and after the move.
+
+### 10. Share the narrow retained-root identity observation primitive
+
+Evidence: materially repeated macOS `fstat` / retained-path / parent-open /
+non-following `statat` / device-and-inode comparison sequences occur in:
+
+- [grep_files.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/grep_files.rs),
+  lines 2291–2324, and
+  [glob_files.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/glob_files.rs),
+  lines 998–1031.
+- [write_file.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/write_file.rs),
+  lines 1265–1287;
+  [edit_file.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/edit_file.rs),
+  lines 926–948; and
+  [copy_file.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/copy_file.rs),
+  lines 1015–1049.
+- [file_info.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/file_info.rs),
+  lines 406–435, and
+  [session_store.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/session_store.rs),
+  lines 853–882.
+
+Impact: a correction to the same identity-observation mechanism needs several
+coordinated edits across independently owned tools and storage. This raises
+maintenance drift risk; the audit did not establish an existing confinement
+failure from that duplication.
+
+Recommendation: characterize replaced, renamed, unlinked, and filesystem-root
+cases, then extract only the shared identity observation. Preserve caller-owned
+cancellation/checkpoint placement, error types, retryability, and precommit or
+walk-phase semantics. Grep's scan checks, glob's cancellation checks, copy's
+precommit wrappers, and edit's phase mapping are deliberately different. A
+shared primitive must retain those distinctions, not merge whole traversal
+implementations or reduce validation around syscalls.
+
+### 11. Let shared test doubles observe contextual preparation
+
+Evidence:
+
+- [core/tool.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-core/src/tool.rs),
+  lines 496–515, defines `prepare_for_turn` with a `ToolContext`; the default
+  delegates to `prepare`, while wrappers are required to forward the context.
+- [testkit/tool.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-testkit/src/tool.rs),
+  lines 44–48, records only `ToolCall` in `RecordedToolPreparation`. Its
+  `ScriptedPreparedTool` implementation at lines 313–363 overrides `prepare`
+  but not `prepare_for_turn`, so contextual preparation falls through without
+  recording that context.
+- [native/file_history_tool.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/file_history_tool.rs),
+  lines 360–366, instead implements a custom fixture hook that embeds context
+  into prepared arguments to exercise forwarding.
+
+Impact: agents cannot use the shared prepared-tool fixture to assert exact
+session-incarnation, turn, and call context forwarding. Tests of this core
+contract need custom doubles, increasing fixture duplication and making a
+missing forwarding override easier to overlook. Execution-context recording
+already exists; this finding concerns preparation specifically.
+
+Recommendation: add bounded contextual-preparation recording and a
+`prepare_for_turn` override while preserving strict script consumption and
+existing `prepare` behavior. Account for callers constructing the public record
+type before adding a required field; an additive recording accessor or separate
+record type can preserve that source compatibility. Test exact context
+forwarding, direct non-contextual preparation, exhaustion, and recorder limits.
+Do not change invocation-construction timing as an incidental fixture cleanup.
+
+### 12. Separate native environment/status implementation from the façade
+
+Evidence: [native/lib.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/lib.rs)
+combines module declarations and extensive feature/platform-gated re-exports
+with `PermissionMode` at line 973, `NativeSandboxMode` at line 997,
+`NativeEnvironment` and process capture from line 1022, `NativeStatus` at line
+1131, status inspection from line 1189, path/root/configuration helpers from
+line 1231, and their tests.
+
+Impact: wiring an unrelated native module and changing configuration/status
+behavior both require ownership of the crate root. The concern is mixed
+responsibilities and a shared edit surface, not the number of exports or file
+length by itself. Keeping these effects in native is correct.
+
+Recommendation: move environment/status implementation and its focused tests
+into a cohesive private module, retaining compatible root re-exports. Preserve
+all feature/platform conditions, process-environment snapshot behavior, path
+validation, and diagnostics. Check default/all-feature configurations and
+supported platform compilation; do not widen this into a mass namespace or
+crate split.
+
 ## Architecture assessment and intentional choices
 
 Dependency inversion and explicit ownership are strengths: core remains
@@ -218,6 +387,20 @@ futures, explicit capability checks, and platform-specific implementations were
 not treated as defects merely because they add code. File length alone was
 also rejected as sufficient evidence of poor architecture.
 
+Core's validated identifier types, explicit injected dependencies, structured
+errors, and cancellation ownership are idiomatic Rust strengths. Native
+effects, CLI hosting, and deterministic testkit fixtures have sensible crate
+boundaries. The additional recommendations strengthen cohesion inside those
+boundaries instead of replacing them with a generic framework.
+
+The terminal binding and test-only waker exceptions are deliberate decisions
+in [ADR 0002](../decisions/0002-reentrant-raw-waker-test-fixture.md),
+[ADR 0003](../decisions/0003-macos-terminal-foreground-signal.md), and
+[ADR 0004](../decisions/0004-macos-process-inventory-helper.md), not reasons to
+introduce unsafe code elsewhere. Likewise, upstream Zig build inputs belong
+to compatibility/evidence work; they do not make the Rust product a Zig
+implementation or warrant removal in this maintainability review.
+
 Keep the concise root AGENTS instructions and the single live ledger. More
 agent-specific dashboards or a larger documentation parser would not address
 the identified problems.
@@ -229,6 +412,12 @@ wrapper-chain characterization before changing lifecycle abstractions. Findings
 4 and 5 are bounded maintenance opportunities; undertake test-graph and command
 module refactors separately after preserving their existing coverage.
 
-These are recommendations, not newly authorized implementation tasks. Any
-accepted work should be tracked in the existing implementation plan rather than
-turning this historical review into another mutable status document.
+For the additional findings, the contextual-preparation fixture (11) provides a
+bounded testing improvement. Keep the core helper extraction (9), native
+configuration extraction (12), and retained-root primitive (10) as independent
+slices; establish platform/caller characterization before the last of these.
+
+The original eight findings formed the initial selected maintenance scope.
+Findings 9–12 broaden the advisory review and are not silently added to that
+implementation batch. Accepted work and its delivery status belong in the
+existing implementation plan, not this historical document.

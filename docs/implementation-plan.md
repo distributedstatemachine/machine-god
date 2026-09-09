@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-agent-readiness`
-- Active phase: `implementing all eight agent-readiness and Rust-structure findings on a stacked maintenance branch`
+- Active phase: `implementing all twelve whole-codebase agent-readiness and Rust-structure findings on a stacked maintenance branch`
 - Next gate: `integrate the maintenance worktrees, pass the complete local gate, three fresh reviews and exact feature-branch CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
@@ -78,7 +78,7 @@ ACP, teams and extension slash commands retain their later milestone ownership.
 ### Active maintenance work
 
 The active branch is stacked on `agent/m60-cli-shell` at `3a0df99` to implement
-all eight findings from the [agent-readiness review](reviews/agent-readiness-rust-structure-review.md).
+all twelve findings from the [agent-readiness review](reviews/agent-readiness-rust-structure-review.md).
 This bounded maintenance task does not deliver the unfinished combined CLI
 feature, increment the delivered count, or authorize promoting its parent to
 `main`. Existing unintegrated product worktrees remain preserved.
@@ -88,6 +88,11 @@ history/approval binding, and native test topology/formatting. The coordinator
 owns CI prerequisites, the canonical check recipe, ledger compaction and
 integration. All workers use separate worktrees; shared contracts and ownership
 changes must be agreed before editing overlapping files.
+
+The expanded scope adds independent core JSON-helper, contextual testkit, and
+native retained-root observation worktrees. Native environment/status extraction
+follows integration of the test-topology changes to avoid concurrent crate-root
+ownership. The coordinator retains the single live ledger and integration.
 
 The maintenance acceptance boundary is:
 
@@ -105,6 +110,14 @@ The maintenance acceptance boundary is:
   tests, fault injection or required helper-process entrypoints.
 - Separate models, doctor and session inspection from the CLI entry point and
   replace positional host tuples with named dependencies.
+- Move generic JSON bounds and iterative cleanup into a private core module,
+  preserving limits, error mapping, and cleanup behavior across consumers.
+- Share the narrow macOS retained-root identity observation across seven native
+  consumers without changing caller checkpoints, phase errors, or retryability.
+- Add source-compatible contextual preparation recording to the shared testkit
+  double, preserving bounded recording, strict scripts and invocation timing.
+- Extract native environment/status implementation behind compatible root
+  exports with unchanged feature/platform behavior.
 
 Implementation and integrated verification are in progress. Freeze a single
 candidate after the complete local gate, run three fresh independent review
