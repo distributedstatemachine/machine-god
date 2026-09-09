@@ -15,6 +15,9 @@ use crate::config::{
 };
 use crate::{LoadedNativeConfig, NativeConfigError, NativeModelPreferences};
 
+mod workspaces;
+pub use workspaces::{NativeUserWorkspaceCommit, NativeWorkspaceCommitDurability};
+
 const DATA: &str = "config.json";
 const LOCK: &str = ".config.lock";
 const TEMP: &str = ".config.tmp";
@@ -648,7 +651,7 @@ mod tests {
             NativeUserConfigError::CommitAmbiguous
         );
         let current = store.load().unwrap();
-        assert_eq!(current.loaded().config().schema_version(), 6);
+        assert_eq!(current.loaded().config().schema_version(), 7);
         assert_eq!(
             current
                 .loaded()

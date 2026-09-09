@@ -13,14 +13,14 @@ once after complete argument validation. It validates the closed provider,
 transport, and credential-source selections before native credential or
 network access, never reloads configuration for public fallback, never changes
 the configured generation model, and never writes or migrates the file. That
-catalog path accepts the built-in or missing-file safe schema-v6 defaults and
-strict v1/v2/v3/v4/v5/v6 files, but rejects any config-load failure before credential
+catalog path accepts the built-in or missing-file safe schema-v7 defaults and
+strict v1/v2/v3/v4/v5/v6/v7 files, but rejects any config-load failure before credential
 discovery. It does not add an endpoint, team, token, cache, or catalog field to
 the configuration schema.
 
 The configuration contract advances the built-in and current file
-schema to v6 while retaining strict read compatibility for the exact legacy v1,
-v2, v3, v4 and v5 objects. Loading is still read-only; explicit user-default publication
+schema to v7 while retaining strict read compatibility for the exact legacy v1,
+v2, v3, v4, v5 and v6 objects. Loading is still read-only; explicit user-default publication
 is a separately granted native effect described below.
 
 ## Location and defaults
@@ -45,11 +45,11 @@ whether it is valid, relative, or non-Unicode, so that path neither reads nor
 falls back to `HOME`.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
-the explicit built-in schema-v6 configuration. A resolved file that is missing
+the explicit built-in schema-v7 configuration. A resolved file that is missing
 also produces this configuration:
 
 ```json
-{"schema_version":6,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"workspace_permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
+{"schema_version":7,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"workspace_permission_rules":[],"workspace_directories":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
 ```
 
 Invalid selected environment input is not treated as absence and fails closed.
@@ -119,13 +119,13 @@ projection. Their observable `schema_version()` values remain `1` and `2`
 respectively; neither is relabelled as v3. Loading never rewrites, expands, or
 migrates either file.
 
-Every integer schema version other than `1`, `2`, `3`, `4`, `5`, or `6` is unsupported. A
+Every integer schema version other than `1`, `2`, `3`, `4`, `5`, `6`, or `7` is unsupported. A
 missing, duplicate, non-integer, or otherwise malformed schema-version field is
 invalid format. Full-buffer UTF-8 validation still precedes schema dispatch.
 
 ## Public data boundary
 
-`CONFIG_SCHEMA_VERSION` is `6`. `AI_GATEWAY_DEFAULT_MODEL` is
+`CONFIG_SCHEMA_VERSION` is `7`. `AI_GATEWAY_DEFAULT_MODEL` is
 `"zai/glm-5.2"`, and `AI_GATEWAY_MAX_MODEL_BYTES` aliases core's
 `MAX_MODEL_ID_BYTES` (`1024`). The shared `validate_model_id` contract matches
 the pinned settings and durable-session model validators.
@@ -165,7 +165,7 @@ owns its non-cloneable secret snapshot and does not put secret values into
 
 The raw file limit remains 64 KiB (65,536 bytes). A file of exactly that length
 can be considered for parsing; any additional byte makes it oversized. Bytes
-must be valid UTF-8 and then valid strict v1, v2, v3, v4, v5, or v6 JSON. The loader retains
+must be valid UTF-8 and then valid strict v1, v2, v3, v4, v5, v6, or v7 JSON. The loader retains
 at most 64 KiB plus one byte while deciding whether input fits, so neither a
 stale size observation nor concurrent file growth turns loading into an
 unbounded retained buffer. The read loop retries the first 15 cumulative
@@ -320,9 +320,10 @@ concurrent spawn or descriptor duplicate retains its open-file description.
 Genuine contention still returns `Busy`; locks are not externally reset or unlinked.
 
 Only the requested model/effort/fast fields change. Existing validated provider,
-transport, permission mode, sandbox preference, global and workspace permission rules and
+transport, permission mode, sandbox preference, saved workspace directories,
+global and workspace permission rules and
 credential-source selections are retained, and the
-explicit publication upgrades supported legacy formats to schema v6 in the
+explicit publication upgrades supported legacy formats to schema v7 in the
 same `config.json`. Malformed or future configurations are never overwritten.
 Publication exclusively creates `.config.tmp` with mode 0600, writes and fsyncs
 it, rechecks entry identities and current bytes, renames it atomically, and
@@ -358,7 +359,7 @@ The entire configuration, including every workspace, rule and JSON overhead,
 shares the existing 64 KiB bound. Limits are not multiplied per workspace.
 Legacy v1–v5 files have no local entries in memory and retain their original
 schema labels. Their new-field rejection remains strict. A successful explicit
-write upgrades to v6; reads and unchanged permission edits never upgrade bytes.
+write upgrades to the current schema; reads and unchanged permission edits never upgrade bytes.
 
 `NativeConfig::permission_sources(workspace)` takes an already-normalized host
 workspace label and returns borrowed `user`, optional `local`, and `effective`
@@ -396,7 +397,7 @@ candidate is validated and serialized before directory, lock or temp creation.
 Changed edits reuse the model-default store's exact-byte CAS, nonblocking lock,
 private temp, rename and directory durability checks, preserving other
 workspaces and unrelated model/policy fields. Model-default edits likewise
-preserve all local permission entries. Unchanged edits validate observed
+preserve all local permission entries and saved workspace directories. Unchanged edits validate observed
 store/root/bytes without creating a lock or writing anything; this is an
 observation, not a reservation against future concurrent changes.
 
@@ -408,3 +409,70 @@ leave original bytes authoritative; failures after rename remain
 `CommitAmbiguous` and require fresh observation rather than automatic retry.
 Callers must preserve the durable result independently from reload/application
 failures. Receipt and source Debug output do not expose workspace or rule text.
+
+## Schema v7 saved workspace directories
+
+Schema v7 retains all v6 fields and requires `workspace_directories`, an array
+of objects with exactly `workspace_hex` and `additional_directories`. The latter
+is an ordered array of records with exactly `source_hex`, `identity_hex` and
+boolean `identity_canonical`. All three path fields use canonical lowercase
+hexadecimal encoding of raw Unix bytes, including non-UTF-8 bytes. Each decoded
+path is absolute, at most 4,096 bytes, and contains no NUL, empty components,
+`.` or `..`; only `/` itself may end in a separator. Duplicate primary keys,
+duplicate sources or identities within a primary, and a source or identity
+equal to its primary are rejected. Unknown, missing, duplicate and wrong-type
+fields remain errors. At most 16 saved identities belong to one primary; the
+entire configuration still shares the 64 KiB encoded bound.
+
+`NativeSavedWorkspaceDirectory::new(source, identity, identity_canonical)`
+validates and copies bounded raw byte slices. Read-only `source_bytes`,
+`identity_bytes` and `identity_canonical` getters preserve the record exactly.
+`NativeConfig::saved_workspace_directories(primary)` accepts a raw-byte primary
+and returns its borrowed saved slice, or an empty slice for an absent entry.
+Parsing never probes, canonicalizes or opens these paths. Unavailable saved
+sources remain roundtrippable; an identity-canonical flag is a retained host
+observation, not a filesystem availability check or execution grant. Legacy
+v1–v6 files project no saved directory entries and preserve their source schema.
+
+## Latest-state workspace-directory publication
+
+On Linux and macOS, `apply_workspace_directory_mutation(primary, mutation, launch_identities)`
+accepts `Add(NativeSavedWorkspaceDirectory)`, `Remove(identity_bytes)` or
+`Clear`. Unlike the model/permission APIs, it takes no snapshot token: a changed
+operation rereads and merges the latest validated configuration under the same
+nonblocking cooperative writer lock. Unrelated fields, other primaries and
+concurrent same-list additions are preserved. Add appends a new identity;
+an already-present identity is unchanged and retains its original source.
+A reused source with a different identity is rejected, not silently retargeted.
+Remove selects exact retained identity, never its current filesystem target;
+an unknown identity is unchanged. Clear affects only the selected primary.
+Removing the last record removes that primary's directory entry.
+
+The caller supplies the staged surviving launch identities as bounded raw-byte
+paths (empty for standalone administration and Clear). These must be normalized,
+unique, nonprimary paths, with at most 16 entries. Their union with the candidate's
+saved identities must fit the same 16-identity cap. The store checks this both
+before acquiring publication authority and again against the latest state under
+the lock, preventing concurrent saved additions from bypassing effective capacity.
+
+The future is inert before polling and creates no detached worker. Request
+validation precedes filesystem effects. An initial observational no-op creates
+no directory, lock or temp and preserves bytes and schema. It is not a
+reservation against later changes. If a genuinely changed preflight becomes
+unchanged after lock acquisition, the lock may have been created, but no temp,
+config rewrite or schema upgrade occurs. Changed publication retains the
+existing descriptor, private-entry, bounded-write, exact-byte recheck, rename
+and directory-sync checks. Existing foreign temp files are not removed.
+The model and configured-permission APIs retain their separate exact-snapshot
+CAS contracts unchanged, and their writes preserve saved directory records.
+
+`NativeUserWorkspaceCommit` carries `before` and `after` selected saved sets,
+`changed`, `loaded`, and `NativeWorkspaceCommitDurability::{Confirmed, Ambiguous}`.
+The `loaded` value is the intended merged candidate, not a fresh post-commit
+observation. An ambiguous receipt means replacement occurred but durability or
+the final root link could not be confirmed; its retained previous/intended sets
+let the owner perform a fresh reload and reconciliation rather than retrying
+automatically. Errors before replacement are fixed and redacted. Receipt Debug
+does not expose directory bytes. Storage does not install runtime roots, resolve
+launch paths or grant tools authority; those remain explicit native host
+responsibilities.

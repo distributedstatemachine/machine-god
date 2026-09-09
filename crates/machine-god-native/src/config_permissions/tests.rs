@@ -107,6 +107,10 @@ fn strict_v6_rejects_bad_paths_duplicates_unknowns_and_missing_fields() {
         .remove("workspace_permission_rules");
     assert!(parse_config_bytes(&serde_json::to_vec(&value).unwrap()).is_err());
     value["schema_version"] = json!(5);
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("workspace_directories");
     assert_eq!(parsed(&value).schema_version(), 5);
     value["workspace_permission_rules"] = json!([]);
     assert!(parse_config_bytes(&serde_json::to_vec(&value).unwrap()).is_err());

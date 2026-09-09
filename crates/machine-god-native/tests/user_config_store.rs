@@ -59,6 +59,44 @@ fn add_rule(pattern: &str) -> Mutation {
 }
 
 #[test]
+fn public_workspace_transaction_roundtrips_raw_source_identity_and_receipts() {
+    use machine_god_native::{
+        NativeSavedWorkspaceDirectory, NativeWorkspaceCommitDurability,
+        NativeWorkspaceDirectoryMutation,
+    };
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let record =
+        NativeSavedWorkspaceDirectory::new(b"/source-\xff", b"/identity-\xfe", false).unwrap();
+    let mutation = NativeWorkspaceDirectoryMutation::Add(record.clone());
+    let receipt =
+        block_on(store.apply_workspace_directory_mutation(b"/primary-\x80", &mutation, &[]))
+            .unwrap();
+    assert!(receipt.changed);
+    assert_eq!(
+        receipt.durability,
+        NativeWorkspaceCommitDurability::Confirmed
+    );
+    assert!(receipt.before.is_empty());
+    assert_eq!(receipt.after, vec![record.clone()]);
+    let observed = store.load().unwrap();
+    assert_eq!(observed.loaded(), &receipt.loaded);
+    assert_eq!(
+        observed
+            .loaded()
+            .config()
+            .saved_workspace_directories(b"/primary-\x80")
+            .unwrap(),
+        &[record]
+    );
+    let unchanged =
+        block_on(store.apply_workspace_directory_mutation(b"/primary-\x80", &mutation, &[]))
+            .unwrap();
+    assert!(!unchanged.changed);
+    assert_eq!(unchanged.before, unchanged.after);
+}
+
+#[test]
 fn permission_edits_are_inert_and_missing_noops_create_nothing() {
     let fixture = Fixture::new();
     let store = fixture.store();
@@ -86,7 +124,7 @@ fn permission_edits_are_inert_and_missing_noops_create_nothing() {
         receipt.outcome,
         MutationOutcome::Changed { removed_rules: 0 }
     );
-    assert_eq!(receipt.loaded.config().schema_version(), 6);
+    assert_eq!(receipt.loaded.config().schema_version(), 7);
     let sources = receipt
         .loaded
         .config()
@@ -343,7 +381,7 @@ fn missing_load_and_unpolled_write_are_inert_then_publish_current_defaults() {
     drop(store.set_model_preferences(&snapshot, &prefs));
     assert!(!fixture.root().exists());
     let saved = block_on(store.set_model_preferences(&snapshot, &prefs)).unwrap();
-    assert_eq!(saved.config().schema_version(), 6);
+    assert_eq!(saved.config().schema_version(), 7);
     assert_eq!(
         saved.config().sandbox_mode(),
         machine_god_native::NativeSandboxMode::None
@@ -394,7 +432,7 @@ fn legacy_versions_are_not_migrated_until_explicit_write_and_keep_other_fields()
             serde_json::from_slice(&fs::read(fixture.root().join("config.json")).unwrap()).unwrap();
         assert_eq!(written["sandbox_mode"], expected_sandbox);
         assert_eq!(saved.config().permission_rules(), before.permission_rules());
-        assert_eq!(saved.config().schema_version(), 6);
+        assert_eq!(saved.config().schema_version(), 7);
         assert_eq!(saved.config().provider(), before.provider());
         assert_eq!(saved.config().transport(), before.transport());
         assert_eq!(
@@ -408,7 +446,7 @@ fn legacy_versions_are_not_migrated_until_explicit_write_and_keep_other_fields()
 
 #[test]
 fn whole_config_write_bound_preserves_policy_and_original_bytes() {
-    for version in [5, 6] {
+    for version in [5, 6, 7] {
         let fixture = Fixture::new();
         let mut value = serde_json::json!({
             "schema_version":5, "permission_mode":"auto", "sandbox_mode":"none",
@@ -417,8 +455,11 @@ fn whole_config_write_bound_preserves_policy_and_original_bytes() {
             "credential_source":"environment", "effort":"future-tier", "fast_mode":true,
         });
         value["schema_version"] = version.into();
-        if version == 6 {
+        if version >= 6 {
             value["workspace_permission_rules"] = serde_json::json!([]);
+        }
+        if version == 7 {
+            value["workspace_directories"] = serde_json::json!([]);
         }
         let base = serde_json::to_vec(&value).unwrap().len();
         value["permission_rules"][0]["pattern"] = "x"
@@ -442,8 +483,8 @@ fn whole_config_write_bound_preserves_policy_and_original_bytes() {
             assert_eq!(fs::read(fixture.root().join("config.json")).unwrap(), bytes);
             assert!(!fixture.root().join(".config.tmp").exists());
         }
-        if version == 5 {
-            // Even an equal-size model cannot hide the required v6 envelope overhead.
+        if version < 7 {
+            // Even an equal-size model cannot hide the required v7 envelope overhead.
             assert!(
                 matches!(block_on(store.set_model_preferences(&snapshot, &preferences("y"))),
             Err(NativeUserConfigError::InvalidConfig(error)) if error.kind() == machine_god_native::NativeConfigErrorKind::TooLarge)

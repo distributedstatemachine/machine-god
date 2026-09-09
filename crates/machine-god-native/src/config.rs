@@ -19,6 +19,12 @@ pub use permissions::{
     NativeConfiguredPermissionSources,
 };
 
+#[path = "config_workspaces.rs"]
+mod workspaces;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use workspaces::validate_launch as validate_workspace_directory_launch;
+pub use workspaces::{NativeSavedWorkspaceDirectory, NativeWorkspaceDirectoryMutation};
+
 use super::ai_gateway::{AI_GATEWAY_DEFAULT_MODEL, valid_model};
 use super::{
     NativeConfiguredPermissionDecision, NativeConfiguredPermissionRule,
@@ -28,7 +34,7 @@ use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file
 use super::{NativeModelPreferences, NativeReasoningEffort};
 
 /// Current configuration schema version used by this native host.
-pub const CONFIG_SCHEMA_VERSION: u32 = 6;
+pub const CONFIG_SCHEMA_VERSION: u32 = 7;
 
 /// Maximum number of bytes retained while loading a native configuration.
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -94,6 +100,7 @@ pub struct NativeConfig {
     sandbox_mode: NativeSandboxMode,
     permission_rules: NativeConfiguredPermissionRules,
     workspace_permission_rules: Vec<permissions::WorkspaceRules>,
+    workspace_directories: Vec<workspaces::WorkspaceDirectories>,
     provider: NativeProviderKind,
     transport: NativeTransportKind,
     model: String,
@@ -144,6 +151,7 @@ impl NativeConfig {
             sandbox_mode: &'a str,
             permission_rules: &'a NativeConfiguredPermissionRules,
             workspace_permission_rules: &'a [permissions::WorkspaceRules],
+            workspace_directories: &'a [workspaces::WorkspaceDirectories],
             provider: &'a str,
             transport: &'a str,
             model: &'a str,
@@ -173,6 +181,7 @@ impl NativeConfig {
                 sandbox_mode: self.sandbox_mode.as_str(),
                 permission_rules: &self.permission_rules,
                 workspace_permission_rules: &self.workspace_permission_rules,
+                workspace_directories: &self.workspace_directories,
                 provider: self.provider.as_str(),
                 transport: self.transport.as_str(),
                 model: &self.model,
@@ -241,6 +250,7 @@ impl Default for NativeConfig {
             sandbox_mode: NativeSandboxMode::None,
             permission_rules: NativeConfiguredPermissionRules::default(),
             workspace_permission_rules: Vec::new(),
+            workspace_directories: Vec::new(),
             provider: NativeProviderKind::VercelAiGateway,
             transport: NativeTransportKind::AiGatewayHttp,
             model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
@@ -260,6 +270,7 @@ impl fmt::Debug for NativeConfig {
             .field("sandbox_mode", &self.sandbox_mode)
             .field("permission_rules", &"<redacted>")
             .field("workspace_permission_rules", &"<redacted>")
+            .field("workspace_directories", &"<redacted>")
             .field("provider", &self.provider)
             .field("transport", &self.transport)
             .field("model", &"<redacted>")
@@ -473,6 +484,7 @@ pub(crate) fn parse_config_bytes(bytes: &[u8]) -> Result<NativeConfig, NativeCon
         4 => parse_v4_config(bytes)?,
         5 => parse_v5_config(bytes)?,
         6 => parse_v6_config(bytes)?,
+        7 => parse_v7_config(bytes)?,
         _ => unreachable!("validated schema version is supported"),
     };
     Ok(config)
@@ -491,6 +503,7 @@ fn validate_schema_version(bytes: &[u8]) -> Result<u32, NativeConfigError> {
                 4 => return Ok(4),
                 5 => return Ok(5),
                 6 => return Ok(6),
+                7 => return Ok(7),
                 _ => {}
             }
         }
@@ -514,6 +527,7 @@ fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         workspace_permission_rules: Vec::new(),
+        workspace_directories: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
@@ -540,6 +554,7 @@ fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         workspace_permission_rules: Vec::new(),
+        workspace_directories: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
@@ -567,6 +582,7 @@ fn parse_v3_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         workspace_permission_rules: Vec::new(),
+        workspace_directories: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
@@ -596,6 +612,7 @@ fn parse_v4_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         workspace_permission_rules: Vec::new(),
+        workspace_directories: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         credential_source: NativeCredentialSourceKind::Environment,
@@ -630,6 +647,27 @@ fn parse_v6_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     Ok(config)
 }
 
+fn parse_v7_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    let wire: WireNativeConfigV7 = serde_json::from_slice(bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    let mut config = config_from_v5(WireNativeConfigV5 {
+        schema_version: wire.schema_version,
+        permission_mode: wire.permission_mode,
+        sandbox_mode: wire.sandbox_mode,
+        permission_rules: wire.permission_rules,
+        provider: wire.provider,
+        transport: wire.transport,
+        model: wire.model,
+        credential_source: wire.credential_source,
+        effort: wire.effort,
+        fast_mode: wire.fast_mode,
+    })?;
+    config.workspace_permission_rules =
+        permissions::decode_workspaces(wire.workspace_permission_rules)?;
+    config.workspace_directories = workspaces::decode_workspaces(wire.workspace_directories)?;
+    Ok(config)
+}
+
 fn config_from_v5(wire: WireNativeConfigV5) -> Result<NativeConfig, NativeConfigError> {
     let invalid = || NativeConfigError::new(NativeConfigErrorKind::InvalidFormat);
     let permission_mode = match wire.permission_mode.as_str() {
@@ -658,6 +696,7 @@ fn config_from_v5(wire: WireNativeConfigV5) -> Result<NativeConfig, NativeConfig
         sandbox_mode,
         permission_rules,
         workspace_permission_rules: Vec::new(),
+        workspace_directories: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
@@ -806,6 +845,23 @@ struct WireNativeConfigV6 {
     sandbox_mode: String,
     permission_rules: Vec<WirePermissionRule>,
     workspace_permission_rules: Vec<permissions::WireWorkspaceRules>,
+    provider: String,
+    transport: String,
+    model: String,
+    credential_source: String,
+    effort: String,
+    fast_mode: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireNativeConfigV7 {
+    schema_version: u32,
+    permission_mode: String,
+    sandbox_mode: String,
+    permission_rules: Vec<WirePermissionRule>,
+    workspace_permission_rules: Vec<permissions::WireWorkspaceRules>,
+    workspace_directories: Vec<workspaces::WireWorkspaceDirectories>,
     provider: String,
     transport: String,
     model: String,
@@ -1418,7 +1474,7 @@ mod tests {
         );
 
         let loaded = load_native_config(&temporary.environment()).unwrap();
-        assert_eq!(CONFIG_SCHEMA_VERSION, 6);
+        assert_eq!(CONFIG_SCHEMA_VERSION, 7);
         assert_eq!(loaded.origin(), ConfigOrigin::File);
         assert_config(loaded.config(), 3, "custom/model");
     }
@@ -1505,7 +1561,7 @@ mod tests {
     #[test]
     fn unsupported_schema_version_has_its_own_kind() {
         let temporary = TestDirectory::new("unsupported-version");
-        temporary.write_config(br#"{"schema_version":7,"permission_mode":"ask"}"#);
+        temporary.write_config(br#"{"schema_version":8,"permission_mode":"ask"}"#);
 
         let error = load_native_config(&temporary.environment()).unwrap_err();
         assert_eq!(
@@ -1517,7 +1573,7 @@ mod tests {
     #[test]
     fn future_and_arbitrary_size_integer_versions_are_classified_before_v1_fields() {
         for (index, document) in [
-            br#"{"schema_version":7,"permission_mode":"future","new_field":true}"#.as_slice(),
+            br#"{"schema_version":8,"permission_mode":"future","new_field":true}"#.as_slice(),
             br#"{"schema_version":18446744073709551616}"#.as_slice(),
             br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
         ]
