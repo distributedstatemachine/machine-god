@@ -262,7 +262,9 @@ existing incomplete-tail rule handles a partially written final frame.
 
 `finish` acknowledges actual flush/sync attempts and file close. Its status is
 complete only when explicitly finalized without an earlier failure; abandonment
-remains incomplete even if cleanup succeeds. Observation-only completion handles
+remains incomplete even if cleanup succeeds. The final receipt remains awaitable
+after a failure disconnects admission or a prior finish future is dropped; no
+new worker is required to finish an already closing host. Observation-only completion handles
 survive recorder drop without keeping admission alive. A file-close receipt is
 not a thread-join receipt: the host closes its worker scope and observes its
 existing collector-completion fence before declaring shutdown complete. This

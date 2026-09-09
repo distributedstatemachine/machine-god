@@ -724,3 +724,30 @@ fn reply_publisher_survives_panicking_waker_and_abandoned_receipt() {
     drop(receiver);
     sender.send(Ok(9));
 }
+
+#[test]
+fn finish_uses_final_receipt_when_writer_disconnects_after_status_observation() {
+    let scope = NativeOwnedWorkerScope::new();
+    let (sender, receiver) = mpsc::sync_channel(1);
+    drop(receiver);
+    let final_status = TerminalTapeRecordingStatus {
+        closed: true,
+        failure: Some(TerminalTapeRecordingError::WriteFailed),
+        ..TerminalTapeRecordingStatus::pending()
+    };
+    let (final_reply, final_receipt) = reply::channel();
+    final_reply.send(Ok(final_status));
+    // Force the stale observation that can precede concurrent worker close.
+    let mut recorder = TerminalTapeRecorder {
+        sender: Some(sender),
+        path: PathBuf::new(),
+        record_stdin: false,
+        completion: TerminalTapeRecordingCompletion {
+            status: Arc::new(Mutex::new(TerminalTapeRecordingStatus::pending())),
+            workers: scope.completion(),
+        },
+        final_receipt,
+    };
+    assert_eq!(block_on(recorder.finish()).unwrap(), final_status);
+    settle(&scope);
+}

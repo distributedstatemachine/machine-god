@@ -364,7 +364,12 @@ impl TerminalTapeRecorder {
                 return Ok(current);
             }
             if let Some(sender) = &self.sender {
-                sender.try_send(Command::Finish).map_err(map_send_error)?;
+                match sender.try_send(Command::Finish) {
+                    Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
+                    Err(mpsc::TrySendError::Full(_)) => {
+                        return Err(TerminalTapeRecordingError::Busy);
+                    }
+                }
                 self.sender.take();
             }
             // Failure can already have disconnected admission while file
