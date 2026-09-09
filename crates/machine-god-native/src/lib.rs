@@ -322,10 +322,7 @@ mod terminal_captured_exec;
 ))]
 #[cfg_attr(
     test,
-    allow(
-        dead_code,
-        reason = "shared private tests also run in the component harness"
-    )
+    allow(dead_code, reason = "unit tests exercise private component seams")
 )]
 mod terminal_monitor;
 #[cfg(all(
@@ -334,55 +331,253 @@ mod terminal_monitor;
 ))]
 #[cfg_attr(
     test,
-    allow(
-        dead_code,
-        reason = "shared private tests also run in the component harness"
-    )
+    allow(dead_code, reason = "unit tests exercise private component seams")
 )]
 mod terminal_probe_effects;
+// Explicit module declarations keep the native component graph visible to rustfmt.
 #[cfg(all(
     any(test, feature = "ai-gateway-http"),
     any(target_os = "linux", target_os = "macos")
 ))]
-macro_rules! terminal_host_components {
-    ($($module:ident),+ $(,)?) => {$(
-        #[cfg_attr(test, allow(dead_code, reason = "shared private tests also run in the component harness"))]
-        mod $module;
-    )+};
-}
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_catalog;
 #[cfg(all(
     any(test, feature = "ai-gateway-http"),
     any(target_os = "linux", target_os = "macos")
 ))]
-terminal_host_components!(
-    terminal_host,
-    terminal_catalog,
-    terminal_catalog_view,
-    terminal_history,
-    terminal_host_catalog,
-    terminal_host_dispatch,
-    terminal_host_authority,
-    terminal_host_probes,
-    terminal_input,
-    terminal_journal,
-    terminal_native_backend,
-    terminal_native_launch,
-    terminal_owner,
-    terminal_profile,
-    terminal_profile_store,
-    terminal_pty,
-    terminal_registry,
-    terminal_resident_dispatch,
-    terminal_runtime,
-    terminal_session,
-    terminal_session_record,
-    terminal_staged_start,
-    terminal_startup,
-    terminal_tmux,
-    terminal_tmux_startup,
-    terminal_wait,
-    terminal_write_completion,
-);
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_catalog_view;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_history;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_host;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_host_authority;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_host_catalog;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_host_dispatch;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_host_probes;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_input;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_journal;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_native_backend;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_native_launch;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_owner;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_profile;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_profile_store;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_pty;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_registry;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_resident_dispatch;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_runtime;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_session;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_session_record;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_staged_start;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_startup;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_tmux;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_tmux_startup;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_wait;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "unit tests exercise private component seams")
+)]
+mod terminal_write_completion;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use terminal_captured_exec::{
     TERMINAL_CAPTURED_HELPER_ARGUMENT, TerminalCapturedExec, TerminalCapturedExecError,

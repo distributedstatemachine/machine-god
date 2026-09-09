@@ -1,15 +1,14 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-#[path = "../src/permission_preparer/identity.rs"]
-mod identities;
-#[path = "permission_preparer/terminal_identity.rs"]
-mod terminal_identity;
+#[path = "support/permission_preparer_fixture.rs"]
+mod fixture;
+use fixture::{Directory, call};
 
 use futures_executor::block_on;
 use futures_util::StreamExt;
 use machine_god_core::{
     BoxFuture, CancellationToken, Engine, EngineLimits, ModelEvent, PermissionRequest, SessionId,
-    SessionIncarnationId, StopReason, Tool, ToolCall, ToolCallId, ToolName,
+    SessionIncarnationId, StopReason, Tool, ToolCall,
 };
 use machine_god_native::*;
 use machine_god_testkit::{InMemorySessionStore, ModelProviderStep, ScriptedModelProvider};
@@ -17,7 +16,6 @@ use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     fs::{self, File},
-    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -25,24 +23,6 @@ use std::{
     time::Instant,
 };
 
-struct Directory(PathBuf);
-impl Directory {
-    fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "machine-god-preparer-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed),
-        ));
-        fs::create_dir(&path).unwrap();
-        Self(fs::canonicalize(path).unwrap())
-    }
-}
-impl Drop for Directory {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
-    }
-}
 struct Clock(Instant);
 impl NativePermissionReviewClock for Clock {
     fn now(&self) -> Instant {
@@ -112,13 +92,6 @@ impl PermissionPrompter for Prompt {
                 .pop_front()
                 .unwrap_or(PermissionPromptDecision::Deny))
         })
-    }
-}
-fn call(name: &str, arguments: Value) -> ToolCall {
-    ToolCall {
-        name: ToolName::new(name).unwrap(),
-        id: ToolCallId::new("call").unwrap(),
-        arguments,
     }
 }
 fn round(call: ToolCall) -> ModelProviderStep {
