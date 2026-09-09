@@ -21,6 +21,8 @@ mod picker_startup;
 mod presentation;
 #[cfg(test)]
 mod recording_lifetime_tests;
+#[cfg(test)]
+mod recording_process_tests;
 mod resize;
 #[cfg(test)]
 mod terminal_lifetime_tests;

@@ -60,7 +60,8 @@ fn sessions(fixture: &Fixture) -> Vec<std::path::PathBuf> {
             path.file_name()
                 .unwrap()
                 .to_str()
-                .is_some_and(|name| name.starts_with("session-") && name.ends_with(".json"))
+                .is_some_and(|name| name.starts_with("session-"))
+                && path.extension() == Some(std::ffi::OsStr::new("json"))
         })
         .collect()
 }

@@ -41,7 +41,7 @@ impl Gateway {
                         serve(&mut connection, &requests)?;
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(2))
+                        std::thread::sleep(Duration::from_millis(2));
                     }
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                     Err(error) => return Err(error),
