@@ -333,7 +333,9 @@ pub(crate) fn run_interactive(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod production {
     mod interactive;
+    mod output;
     mod piped_prompt;
+    use output::{OutputAcknowledgement, OutputBridge, OutputWork, serve_output};
     use std::future::{Future, poll_fn};
     use std::pin::Pin;
     use std::sync::{Arc, mpsc};
@@ -802,23 +804,7 @@ mod production {
         }
     }
 
-    enum OutputWork {
-        Write(Vec<u8>),
-        Flush,
-    }
-
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum OutputAcknowledgement {
-        Succeeded,
-        Failed,
-    }
-
     const SIGNAL_OUTPUT_GRACE: Duration = Duration::from_millis(100);
-
-    struct OutputBridge {
-        work: tokio::sync::mpsc::Sender<OutputWork>,
-        acknowledgements: tokio::sync::mpsc::Receiver<OutputAcknowledgement>,
-    }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct TurnDriveResult {
@@ -869,28 +855,6 @@ mod production {
             Pin::new(&mut *self.turn)
                 .poll_next(context)
                 .map(|event| event.map(|event| event.map(|event| event.payload).map_err(|_| ())))
-        }
-    }
-
-    fn serve_output(
-        mut work: tokio::sync::mpsc::Receiver<OutputWork>,
-        acknowledgements: &tokio::sync::mpsc::Sender<OutputAcknowledgement>,
-        output: &mut dyn std::io::Write,
-    ) {
-        while let Some(work) = work.blocking_recv() {
-            let succeeded = match work {
-                OutputWork::Write(bytes) => output.write_all(&bytes),
-                OutputWork::Flush => output.flush(),
-            }
-            .is_ok();
-            let acknowledgement = if succeeded {
-                OutputAcknowledgement::Succeeded
-            } else {
-                OutputAcknowledgement::Failed
-            };
-            if acknowledgements.blocking_send(acknowledgement).is_err() {
-                break;
-            }
         }
     }
 
