@@ -138,6 +138,17 @@ exits `1` with a fixed diagnostic before configuration, credentials or sessions
 are acquired. The explicitly supplied native pipe adapter is not permission to
 treat piped bare input as an upstream-compatible interactive prompt.
 
+A singleton final `--record` requests an FXTP tape for fresh or resumed
+interactive startup, including picker/latest/exact aliases; one-shot prompts
+and administrative commands reject it. `FX_RECORD` can instead select an
+explicit tape path, and `FX_RECORD_INPUT` explicitly opts into captured stdin.
+Required recording setup succeeds before session admission or fails startup;
+optional environment-only failure is fully joined and visibly reported before
+continuing without a tape. Recording uses a separate native worker scope,
+preserves accepted output through final presentation, and joins before process
+exit without holding up native conversation/input cleanup. See
+[recording startup and privacy](replay-cli.md#interactive-recording-startup).
+
 The raw UTF-8 composer described above serves both prompts and commands through
 one input reader. Permission choices distinguish once, turn,
 session and deny; session permission is not saved-rule confirmation. Ordinary
