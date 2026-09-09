@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `resumed combined CLI implementation after accepted readiness maintenance`
-- Next gate: `complete remaining CLI boundaries, then full local gate, three fresh reviews and exact feature CI/Benchmark evidence`
+- Active phase: `combined CLI integrated; full-feature verification pending`
+- Next gate: `full exact local gate, three fresh reviews and exact feature CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -171,10 +171,10 @@ compilation. These component checks are not full-feature acceptance.
 Terminal routing is integrated and its clean released worktree removed after
 focused composition, permission, PTY/tmux and monitor checks. CLI launch/slash
 workspace selection and the native FXTP recording backend are also integrated.
-Native session maintenance and recording lifecycle/scenarios are integrated;
-their released clean worktrees are removed. Separate workers finish configured
-permission reporting, saved-rule interaction and startup-resume scenarios in
-isolated worktrees. The coordinator owns integration, historical cards, the live plan,
+Native session maintenance, recording lifecycle/scenarios, configured permission
+reporting, saved-rule interaction and startup-resume scenarios are integrated;
+all released clean implementation worktrees are removed. The coordinator owns
+integration, historical cards, the live plan,
 shared-contract integration, cross-platform prerequisites and final gates.
 Preserve uncommitted paused work before updating a worker's base. Remove worker
 trees only after their changes are committed, integrated and released.
@@ -214,9 +214,14 @@ receipts and six public subprocess tests. The integrated CLI package passes
 tests, ten replay tests and warnings-denied Clippy. These are component checks,
 not a fresh-release or complete-feature gate. A positive acknowledged startup
 picker test restores the selected identity, preferences and history without new
-sessions, provider requests or repeated file effects. Remaining work is configured
-rule discovery, saved exact-rule confirmation/revocation and composed policy-effect
-and latest/exact startup-resume scenarios, then the complete gates.
+sessions, provider requests or repeated file effects. Configured rule discovery
+now uses native scope selection and explicit unavailable runtime-state reporting.
+Saved exact-rule confirmation/revocation and composed policy-effect scenarios
+exercise actual file effects, reset, stale answers and captured-versus-queued
+policy. Latest/exact startup-resume scenarios pass under PTY. Native Linux also
+passes configured permission discovery from an actual non-Unicode working path.
+These integrated component checks leave the complete feature gates pending;
+they do not constitute a delivery or fresh-release acceptance.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
