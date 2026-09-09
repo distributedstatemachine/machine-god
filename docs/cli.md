@@ -252,7 +252,12 @@ Only an exact acknowledged picker frame can select a row. Input already
 received keeps its original chunk identity across opening, query changes,
 scope changes and startup handoff. Selection carries the observed session ID,
 incarnation and revision; it cannot silently retarget a replaced or revised
-record. Missing/stale/open failures keep the picker available for retry. Successful
+record. Missing/stale/open failures keep the picker available for retry. A typed
+busy, changed or missing selection rejection alone does not make an otherwise
+successful interactive session exit as failed. Its receipt remains visible through
+blocked output and shutdown; unrelated failures and uncertain outcomes still fail.
+This does not promise rollback of an association already published during preparation.
+Successful
 selection uses the normal native resume transition and canonical history replay,
 not a provider prompt or repeated tool effects. Terminal-safe width/byte-bounded
 labels and owned output acknowledgements also apply to picker presentation.

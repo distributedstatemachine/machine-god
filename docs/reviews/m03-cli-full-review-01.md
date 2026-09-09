@@ -263,3 +263,23 @@ observed preparation/adoption and candidate preference publication. The native
 owned same-store-access integration addresses that complete path before picker
 acceptance; initial preflight alone is insufficient. These component records
 are not final full-feature review or remote gates.
+
+Owned same-store preparation/adoption and preference publication are integrated
+at `99544ee`. Workspace warnings-denied Clippy and a fresh locked release build
+pass; that binary passes all 96 command tests. The combined CLI runtime check
+rejects this checkpoint: four tests encounter fresh-startup `Resume(Busy)` under
+default concurrency, and one picker fixture accepts the loading frame before
+catalog rows arrive. Waiting for a nonzero acknowledged view revision corrects
+the fixture, whose exact focused test then passes. Native scoped lock release
+is repaired separately; the release checks do not override these failures.
+
+The CLI retry correction retains the exact request identity for busy, changed
+or missing picker rejection receipts until acknowledgement or native-free final
+presentation. It does not suppress unrelated failures, failed settled turns or
+indeterminate outcomes. A composed native-store regression changes a displayed
+row's revision and verifies unchanged current identity, no provider calls,
+retained rejection under blocked output, acknowledged receipt retirement, normal
+successful shutdown, and explicit successful selection after a fresh display.
+Its focused test passes all three receipt/retry scenarios; CLI all-target and
+all-feature warnings-denied Clippy passes. Combined replacement checks remain
+separate from this focused evidence.

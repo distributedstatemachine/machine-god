@@ -93,7 +93,10 @@ impl Driver {
         copies.extend(self.copy_outcome.take());
         copies.extend(self.owner.take_copy_outcome());
         let native_failed = self.native_failed
-            || outcomes.iter().any(outcome_failed)
+            || outcomes.iter().any(|outcome| {
+                outcome_failed_for_picker(outcome, self.picker_rejection)
+                    && outcome_failed_for_picker(outcome, self.picker_request)
+            })
             || controls.iter().any(control_failed);
         FinalPresentation {
             output: self.output,
@@ -144,8 +147,15 @@ impl Driver {
         if self.outcome.is_none()
             && let Some(outcome) = self.owner.take_outcome()
         {
+            let picker_request = self.picker_request;
             self.picker_outcome(&outcome);
-            self.native_failed |= outcome_failed(&outcome);
+            self.native_failed |= outcome_failed_for_picker(&outcome, picker_request);
+            if matches!(&outcome, NativeInteractiveOutcome::Rejected { request, .. } if Some(*request) == picker_request)
+            {
+                // Keep the request identity until the typed receipt is flushed,
+                // including transfer into the native-free shutdown tail.
+                self.picker_rejection = picker_request;
+            }
             if matches!(&outcome, NativeInteractiveOutcome::Transition(receipt) if !receipt.unchanged)
                 && !self.shutting_down
             {
@@ -439,6 +449,7 @@ impl Driver {
             match receipt {
                 Some(ReceiptKind::Outcome) => {
                     self.outcome.take();
+                    self.picker_rejection.take();
                 }
                 Some(ReceiptKind::Control) => {
                     self.control_outcome.take();
@@ -859,6 +870,30 @@ pub(super) fn next_render_work(
 
 fn terminal_failed(event: &EngineEvent) -> bool {
     !matches!(event.payload, TurnEvent::Completed { .. })
+}
+
+fn outcome_failed_for_picker(
+    outcome: &NativeInteractiveOutcome,
+    picker_request: Option<machine_god_native::NativeInteractiveRequestId>,
+) -> bool {
+    use machine_god_native::{NativeInteractiveError, NativeSessionResumeErrorKind};
+    if let NativeInteractiveOutcome::Rejected {
+        request,
+        error: NativeInteractiveError::Resume(error),
+        settled_turn,
+        ..
+    } = outcome
+        && Some(*request) == picker_request
+        && matches!(
+            error.kind(),
+            NativeSessionResumeErrorKind::Busy
+                | NativeSessionResumeErrorKind::Conflict
+                | NativeSessionResumeErrorKind::NotFound
+        )
+    {
+        return settled_turn.as_ref().is_some_and(terminal_failed);
+    }
+    outcome_failed(outcome)
 }
 
 fn outcome_failed(outcome: &NativeInteractiveOutcome) -> bool {

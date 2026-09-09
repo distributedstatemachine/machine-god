@@ -1049,7 +1049,7 @@ fn picker_enter_received_before_flush_cannot_select_after_acknowledgement() {
         let old = harness.driver.picker_binding().unwrap();
         assert!(matches!(old, InputBinding::AwaitingPicker { .. }));
         let _ = pump_until(&mut harness, |driver| {
-            matches!(driver.picker_binding(), Some(InputBinding::Picker { .. }))
+            matches!(driver.picker_binding(), Some(InputBinding::Picker { revision, .. }) if revision > 0)
         })
         .await;
         assert!(harness.driver.picker_event(
@@ -1073,6 +1073,141 @@ fn picker_enter_received_before_flush_cannot_select_after_acknowledgement() {
     });
     let mut tail = dispose(harness, fixture, result);
     let _ = runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+async fn stale_picker_selection(fixture: &support::Fixture, harness: &mut Harness) {
+    use machine_god_core::{
+        Message, Role, SessionId, SessionIncarnationId, SessionRecord, SessionStore,
+    };
+    let id = SessionId::new("stale-selection").unwrap();
+    let mut record = SessionRecord::empty(
+        id.clone(),
+        SessionIncarnationId::new("stale-selection-life").unwrap(),
+    );
+    record
+        .messages
+        .push(Message::text(Role::User, "saved request"));
+    record.metadata.insert(
+        native::NATIVE_SESSION_METADATA_KEY.into(),
+        native::NativeSessionMetadata::new(
+            &fixture.workspace,
+            10,
+            native::NativeSessionOrigin::Cli,
+        )
+        .unwrap()
+        .to_value(),
+    );
+    fixture
+        .host
+        .session_lifecycle()
+        .session_store()
+        .save(record, None)
+        .await
+        .unwrap();
+    let original = harness.driver.owner.runtime().id();
+    harness.driver.picker = Some(picker::Picker::new(
+        fixture.host.session_catalog_reader().unwrap(),
+        Some(original),
+        24,
+    ));
+    harness.driver.command("/resume", 100);
+    pump_until(harness, |driver| {
+        matches!(driver.picker_binding(), Some(InputBinding::Picker { revision, .. }) if revision > 0)
+    }).await;
+    let session = fixture.host.session_lifecycle().resume(id).await.unwrap();
+    native::rename_native_session(&session, "changed since display", 101)
+        .await
+        .unwrap();
+    let binding = harness.driver.picker_binding().unwrap();
+    assert!(harness.driver.picker_event(
+        &composer::ComposerEvent::Submit(String::new()),
+        &binding,
+        102,
+    ));
+    assert!(harness.driver.picker_request.is_some());
+}
+
+#[test]
+fn stale_picker_rejection_is_retryable_and_survives_output_and_shutdown() {
+    for (acknowledge_receipt, retry) in [(false, false), (true, false), (true, true)] {
+        let runtime = executor();
+        let fixture = support::Fixture::new();
+        let mut harness = runtime.block_on(harness(&fixture));
+        harness.driver = harness.driver.with_raw_input(80, None);
+        let original = harness.driver.owner.runtime().id();
+        let result = runtime.block_on(async {
+            stale_picker_selection(&fixture, &mut harness).await;
+            until(&mut harness, |driver| {
+                matches!(
+                    driver.outcome,
+                    Some(NativeInteractiveOutcome::Rejected { .. })
+                )
+            })
+            .await;
+            let outcome = harness.driver.outcome.as_ref().unwrap();
+            assert!(matches!(outcome, NativeInteractiveOutcome::Rejected {
+                error: native::NativeInteractiveError::Resume(error), ..
+            } if error.kind() == native::NativeSessionResumeErrorKind::Conflict));
+            assert!(
+                super::outcome_failed(outcome),
+                "non-picker rejections remain failures"
+            );
+            assert!(!harness.driver.native_failed);
+            assert!(harness.driver.picker_open());
+            assert!(harness.driver.scope_active);
+            assert_eq!(harness.driver.owner.runtime().id(), original);
+            assert!(fixture.transport.requests().is_empty());
+            if acknowledge_receipt {
+                let output = pump_until(&mut harness, |driver| driver.outcome.is_none()).await;
+                assert!(String::from_utf8_lossy(&output).contains("rejected"));
+                assert!(harness.driver.picker_rejection.is_none());
+            }
+            if retry {
+                // Reopen to get a new observed tuple, then explicitly select it.
+                // No failed attempt may silently follow a changed revision.
+                harness.driver.close_picker();
+                harness.driver.command("/resume", 103);
+                pump_until(&mut harness, |driver| {
+                    matches!(driver.picker_binding(), Some(InputBinding::Picker { revision, .. }) if revision > 0)
+                }).await;
+                let binding = harness.driver.picker_binding().unwrap();
+                assert!(harness.driver.picker_event(
+                    &composer::ComposerEvent::Submit(String::new()), &binding, 104,
+                ));
+                pump_until(&mut harness, |driver| {
+                    driver.owner.runtime().id() != original && driver.picker_request.is_none()
+                }).await;
+                assert_eq!(harness.driver.owner.runtime().id().as_str(), "stale-selection");
+                assert!(!harness.driver.picker_open());
+                assert!(!harness.driver.native_failed);
+                assert!(fixture.transport.requests().is_empty());
+            }
+            harness.driver.shutdown();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                poll_fn(|cx| harness.driver.poll(cx, &mut harness.signals)),
+            )
+            .await
+            .unwrap()
+        });
+        assert_eq!(result.outcome, AskCommandOutcome::Completed);
+        let mut tail = dispose(harness, fixture, result);
+        assert!(!tail.presentation.native_failed);
+        if !acknowledge_receipt {
+            assert!(
+                tail.presentation
+                    .outcomes
+                    .iter()
+                    .any(|outcome| matches!(outcome, NativeInteractiveOutcome::Rejected { .. }))
+            );
+        }
+        let (result, output) = runtime.block_on(finish_raw_tail(&mut tail));
+        assert_eq!(result.outcome, AskCommandOutcome::Completed);
+        if !acknowledge_receipt {
+            assert!(String::from_utf8_lossy(&output).contains("rejected"));
+        }
+        assert!(tail.presentation.outcomes.is_empty());
+    }
 }
 
 async fn pump_until(harness: &mut Harness, condition: impl Fn(&Driver) -> bool) -> Vec<u8> {

@@ -383,6 +383,7 @@ struct Driver {
     history: Option<history_view::HistoryView>,
     picker: Option<picker::Picker>,
     picker_request: Option<machine_god_native::NativeInteractiveRequestId>,
+    picker_rejection: Option<machine_god_native::NativeInteractiveRequestId>,
 }
 
 struct Frontend {
@@ -443,6 +444,7 @@ impl Driver {
             history: None,
             picker: None,
             picker_request: None,
+            picker_rejection: None,
         })
     }
     fn with_resources(

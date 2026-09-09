@@ -214,9 +214,17 @@ Picker composition now includes startup without a provisional writer, pinned
 resume aliases and raw keys, cached/paged loaded-summary search, exact observed
 selection and output-acknowledged input identities. Combined CLI checks pass
 284 unit tests with five private-helper ignores, all 96 command tests, scoped
-warnings-denied Clippy, formatting and bounded documentation checks. The remaining
-picker prerequisite is owned nonblocking preparation/adoption and candidate
-preference publication under lock contention, followed by integration checks.
+warnings-denied Clippy, formatting and bounded documentation checks. Owned
+nonblocking preparation/adoption and candidate preference publication are
+integrated at `99544ee`; workspace Clippy and its fresh release build pass.
+The combined runtime run rejects that candidate on concurrent fresh-startup
+lock contention. Fix scoped lock release and rerun replacement integration checks;
+the separate loading-frame test has been corrected and passes its focused check.
+Picker busy/changed/missing rejection receipts now retain retry semantics through
+output acknowledgement and native-free shutdown. A composed stale-row test passes
+blocked and acknowledged receipt paths plus explicit refreshed-selection success;
+scoped all-target/all-feature CLI Clippy passes. Combined replacement checks await
+the native lock-fix integration, so this is not feature acceptance.
 Typed historical cards and the remaining command/session scenarios still need
 implementation; complete local, review and exact remote feature gates stay open.
 
