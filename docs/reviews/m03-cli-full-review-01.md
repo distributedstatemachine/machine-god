@@ -756,3 +756,14 @@ That scenario checks a live child and group before timeout, their absence at
 publication, and bounded activity-slot release. It uses the existing owned
 future for cleanup on assertion failure; no production hooks or deadline
 changes are introduced. The component commit is not full-feature acceptance.
+
+The correction passed pinned formatting, workspace all-target/all-feature
+Clippy, a fresh release build, both focused scenarios, all fifty terminal unit
+tests and all 98 terminal integration tests on Linux. No child processes
+remained in the initialized container. The clean integrated component worktree
+was removed. The unchanged `6f6e6660` macOS native executable subsequently
+passed 2,163 tests with twelve existing helper ignores in 462.22 seconds, using
+serial scheduling and the original release helper. Quiet diagnostic output
+retained the complete result. This does not recover the missing earlier
+failure details or establish their cause, and does not replace an exact
+full-candidate gate.
