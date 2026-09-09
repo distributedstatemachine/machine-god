@@ -2,6 +2,8 @@
 use super::check_cancelled;
 use super::{TerminalTapeRecordingDestination, TerminalTapeRecordingError};
 use machine_god_core::CancellationToken;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::fmt::Write;
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -52,7 +54,6 @@ pub(super) fn open(
                     let mut random = [0; 12];
                     getrandom::fill(&mut random)
                         .map_err(|_| TerminalTapeRecordingError::OpenFailed)?;
-                    use std::fmt::Write;
                     let mut name = format!("machine-god-record-{epoch_ms}-");
                     for byte in random {
                         write!(name, "{byte:02x}").expect("string formatting");

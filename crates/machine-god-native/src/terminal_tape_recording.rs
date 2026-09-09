@@ -228,6 +228,7 @@ pub struct TerminalTapeRecorder {
     path: PathBuf,
     record_stdin: bool,
     completion: TerminalTapeRecordingCompletion,
+    final_receipt: reply::Receiver<TerminalTapeRecordingStatus>,
 }
 
 impl fmt::Debug for TerminalTapeRecorder {
@@ -242,6 +243,7 @@ impl TerminalTapeRecorder {
     /// Opens the tape and writes its complete header before returning success.
     /// The future is inert before poll. A dropped start disconnects admission;
     /// any already started file work still closes on the enrolled worker.
+    #[must_use]
     pub fn start(
         request: TerminalTapeRecordingRequest,
         scope: NativeOwnedWorkerScope,
@@ -250,6 +252,9 @@ impl TerminalTapeRecorder {
         Box::pin(async move {
             request.options.validate()?;
             check_cancelled(&cancellation)?;
+            if !cfg!(any(target_os = "linux", target_os = "macos")) {
+                return Err(TerminalTapeRecordingError::UnsupportedPlatform);
+            }
             let status = Arc::new(Mutex::new(TerminalTapeRecordingStatus::pending()));
             let completion = TerminalTapeRecordingCompletion {
                 status: Arc::clone(&status),
@@ -257,10 +262,18 @@ impl TerminalTapeRecorder {
             };
             let (sender, receiver) = mpsc::sync_channel(1);
             let (startup, response) = reply::channel();
+            let (final_reply, final_receipt) = reply::channel();
             let record_stdin = request.options.record_stdin;
             scope
                 .spawn(move || {
-                    run_recording(request, receiver, startup, status, &cancellation);
+                    run_recording(
+                        request,
+                        receiver,
+                        startup,
+                        final_reply,
+                        status,
+                        &cancellation,
+                    );
                 })
                 .map_err(|_| TerminalTapeRecordingError::WorkerUnavailable)?;
             // Sender remains owned by this future while setup is pending.
@@ -271,6 +284,7 @@ impl TerminalTapeRecorder {
                 path,
                 record_stdin,
                 completion,
+                final_receipt,
             })
         })
     }
@@ -337,8 +351,8 @@ impl TerminalTapeRecorder {
         })
     }
 
-    /// Requests flush/sync/close after admitted frames. Call before closing the
-    /// host scope, then use its completion fence to prove actual thread join.
+    /// Requests flush/sync/close after admitted frames without admitting a new
+    /// worker. Use the host scope's completion fence to prove actual thread join.
     /// Dropping this future or the recorder cannot detach finalization.
     pub fn finish(
         &mut self,
@@ -349,22 +363,27 @@ impl TerminalTapeRecorder {
                 self.sender.take();
                 return Ok(current);
             }
-            let (reply, receipt) = reply::channel();
-            self.sender
-                .as_ref()
-                .ok_or(TerminalTapeRecordingError::Closed)?
-                .try_send(Command::Finish(reply))
-                .map_err(map_send_error)?;
-            self.sender.take();
-            receipt.await
+            if let Some(sender) = &self.sender {
+                sender.try_send(Command::Finish).map_err(map_send_error)?;
+                self.sender.take();
+            }
+            // Failure can already have disconnected admission while file
+            // cleanup is still in flight. Its final receipt remains awaitable.
+            (&mut self.final_receipt).await
         })
     }
 }
 
 fn map_send_error<T>(error: mpsc::TrySendError<T>) -> TerminalTapeRecordingError {
     match error {
-        mpsc::TrySendError::Full(_) => TerminalTapeRecordingError::Busy,
-        mpsc::TrySendError::Disconnected(_) => TerminalTapeRecordingError::Closed,
+        mpsc::TrySendError::Full(command) => {
+            drop(command);
+            TerminalTapeRecordingError::Busy
+        }
+        mpsc::TrySendError::Disconnected(command) => {
+            drop(command);
+            TerminalTapeRecordingError::Closed
+        }
     }
 }
 
@@ -410,7 +429,7 @@ enum Command {
         cancellation: CancellationToken,
         reply: reply::Sender<TerminalTapeRecordingStatus>,
     },
-    Finish(reply::Sender<TerminalTapeRecordingStatus>),
+    Finish,
 }
 
 trait TapeSink: Write + Send {
@@ -428,6 +447,7 @@ struct TapeWriter {
     status: Arc<Mutex<TerminalTapeRecordingStatus>>,
     options: TerminalTapeRecordingOptions,
     last_ms: i64,
+    final_reply: Option<reply::Sender<TerminalTapeRecordingStatus>>,
 }
 
 impl TapeWriter {
@@ -530,7 +550,9 @@ impl TapeWriter {
             status.failure = status.failure.or(failure);
         });
         if let Some(mut sink) = self.sink.take() {
-            if sink.flush().and_then(|()| sink.sync()).is_err() {
+            let flush_failed = sink.flush().is_err();
+            let sync_failed = sink.sync().is_err();
+            if flush_failed || sync_failed {
                 self.update(|status| {
                     status
                         .failure
@@ -543,7 +565,11 @@ impl TapeWriter {
             status.closed = true;
             status.complete = status.failure.is_none();
         });
-        self.snapshot()
+        let status = self.snapshot();
+        if let Some(reply) = self.final_reply.take() {
+            reply.send(Ok(status));
+        }
+        status
     }
 }
 
@@ -559,6 +585,7 @@ fn run_recording(
     request: TerminalTapeRecordingRequest,
     receiver: mpsc::Receiver<Command>,
     startup: reply::Sender<PathBuf>,
+    final_reply: reply::Sender<TerminalTapeRecordingStatus>,
     status: Arc<Mutex<TerminalTapeRecordingStatus>>,
     cancellation: &CancellationToken,
 ) {
@@ -581,6 +608,7 @@ fn run_recording(
         last_ms: request.options.epoch_ms,
         options: request.options,
         status,
+        final_reply: Some(final_reply),
     };
     let mut header = Vec::with_capacity(18 + writer.options.version.len());
     header.extend_from_slice(b"FXTP\x01");
@@ -596,10 +624,11 @@ fn run_recording(
     }
     writer.update(|status| status.active = true);
     startup.send(Ok(path));
-    serve(writer, receiver);
+    serve(writer, &receiver);
+    drop(receiver);
 }
 
-fn serve(mut writer: TapeWriter, receiver: mpsc::Receiver<Command>) {
+fn serve(mut writer: TapeWriter, receiver: &mpsc::Receiver<Command>) {
     while let Ok(command) = receiver.recv() {
         match command {
             Command::Frame {
@@ -610,22 +639,22 @@ fn serve(mut writer: TapeWriter, receiver: mpsc::Receiver<Command>) {
             } => {
                 let result = writer.frame(&payload, timestamp_ms, &cancellation);
                 if let Err(error) = result {
-                    let status = writer.close(Some(error));
+                    writer.close(Some(error));
                     reply.send(Err(error));
                     // Preserve the initiating failure for an already queued
                     // command, rather than relabeling it as a lost worker.
                     for pending in receiver.try_iter() {
                         match pending {
                             Command::Frame { reply, .. } => reply.send(Err(error)),
-                            Command::Finish(reply) => reply.send(Ok(status)),
+                            Command::Finish => {}
                         }
                     }
                     return;
                 }
                 reply.send(result);
             }
-            Command::Finish(reply) => {
-                reply.send(Ok(writer.close(None)));
+            Command::Finish => {
+                writer.close(None);
                 return;
             }
         }

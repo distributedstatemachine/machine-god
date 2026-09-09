@@ -134,6 +134,89 @@ fn input_requires_opt_in_and_empty_output_does_not_create_frames() {
 }
 
 #[test]
+fn existing_recording_finishes_after_scope_closure_but_new_start_has_no_effects() {
+    let fixture = Fixture::new();
+    let scope = NativeOwnedWorkerScope::new();
+    let mut recorder = block_on(TerminalTapeRecorder::start(
+        fixture.request(),
+        scope.clone(),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    scope.close();
+    assert!(block_on(recorder.finish()).unwrap().complete);
+    scope.completion().wait_on_worker().unwrap();
+    let mut request = fixture.request();
+    request.destination = TerminalTapeRecordingDestination::Explicit(fixture.0.join("not-created"));
+    assert_eq!(
+        block_on(TerminalTapeRecorder::start(
+            request,
+            scope,
+            CancellationToken::new()
+        ))
+        .unwrap_err(),
+        TerminalTapeRecordingError::WorkerUnavailable,
+    );
+    assert!(!fixture.0.join("not-created").exists());
+}
+
+#[test]
+fn exact_maximum_header_version_emits_only_its_declared_bytes() {
+    let fixture = Fixture::new();
+    let scope = NativeOwnedWorkerScope::new();
+    let mut request = fixture.request();
+    request.options.version = vec![0xff; 255];
+    let mut recorder = block_on(TerminalTapeRecorder::start(
+        request,
+        scope.clone(),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert!(block_on(recorder.finish()).unwrap().complete);
+    settle(&scope);
+    let bytes = fs::read(recorder.path()).unwrap();
+    assert_eq!(bytes.len(), 18 + 255);
+    assert_eq!(bytes[17], 255);
+    assert_eq!(&bytes[18..], &[0xff; 255]);
+    assert!(frames(&bytes).is_empty());
+}
+
+#[test]
+fn automatic_destination_rejects_nonprivate_and_symlink_recording_directories() {
+    for symlink_directory in [false, true] {
+        let fixture = Fixture::new();
+        let state = fixture.0.join("state");
+        fs::create_dir(&state).unwrap();
+        let outside = fixture.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        if symlink_directory {
+            symlink(&outside, state.join("recordings")).unwrap();
+        } else {
+            fs::create_dir(state.join("recordings")).unwrap();
+            fs::set_permissions(state.join("recordings"), fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        let mut request = fixture.request();
+        request.destination = TerminalTapeRecordingDestination::Automatic {
+            store: Arc::new(FileSessionStore::open(&state).unwrap()),
+            state_path: state,
+        };
+        let scope = NativeOwnedWorkerScope::new();
+        assert_eq!(
+            block_on(TerminalTapeRecorder::start(
+                request,
+                scope.clone(),
+                CancellationToken::new()
+            ))
+            .unwrap_err(),
+            TerminalTapeRecordingError::OpenFailed
+        );
+        settle(&scope);
+        assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+    }
+}
+
+#[test]
 fn unpolled_invalid_and_precancelled_start_have_no_destination_effects() {
     let fixture = Fixture::new();
     let scope = NativeOwnedWorkerScope::new();
@@ -322,14 +405,21 @@ fn oversized_frame_is_not_allocated_or_admitted_and_final_status_stays_failed() 
 }
 
 #[derive(Default)]
+enum Fault {
+    #[default]
+    None,
+    Interrupted,
+    Flush,
+    Sync,
+}
+
+#[derive(Default)]
 struct Probe {
     bytes: Vec<u8>,
     calls: usize,
     max_chunk: usize,
     fail_at: Option<usize>,
-    interrupted: bool,
-    flush_error: bool,
-    sync_error: bool,
+    fault: Fault,
     flushes: usize,
     syncs: usize,
     dropped: bool,
@@ -340,7 +430,7 @@ impl Write for Sink {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let mut probe = self.0.lock().unwrap();
         probe.calls += 1;
-        if probe.interrupted {
+        if matches!(probe.fault, Fault::Interrupted) {
             return Err(io::Error::from(io::ErrorKind::Interrupted));
         }
         if probe.fail_at == Some(probe.calls) {
@@ -356,7 +446,7 @@ impl Write for Sink {
     fn flush(&mut self) -> io::Result<()> {
         let mut probe = self.0.lock().unwrap();
         probe.flushes += 1;
-        if probe.flush_error {
+        if matches!(probe.fault, Fault::Flush) {
             Err(io::Error::other("flush"))
         } else {
             Ok(())
@@ -367,7 +457,7 @@ impl TapeSink for Sink {
     fn sync(&mut self) -> io::Result<()> {
         let mut probe = self.0.lock().unwrap();
         probe.syncs += 1;
-        if probe.sync_error {
+        if matches!(probe.fault, Fault::Sync) {
             Err(io::Error::other("sync"))
         } else {
             Ok(())
@@ -388,6 +478,7 @@ fn writer(probe: Arc<Mutex<Probe>>) -> TapeWriter {
         })),
         options: TerminalTapeRecordingOptions::new(20, 3, 100, vec![]),
         last_ms: 100,
+        final_reply: None,
     }
 }
 
@@ -407,7 +498,11 @@ fn partial_write_zero_progress_interrupted_exhaustion_and_flush_failures_are_typ
         let probe = Arc::new(Mutex::new(Probe {
             max_chunk,
             fail_at,
-            interrupted,
+            fault: if interrupted {
+                Fault::Interrupted
+            } else {
+                Fault::None
+            },
             ..Probe::default()
         }));
         let mut writer = writer(probe.clone());
@@ -434,8 +529,11 @@ fn partial_write_zero_progress_interrupted_exhaustion_and_flush_failures_are_typ
     for flush_error in [true, false] {
         let probe = Arc::new(Mutex::new(Probe {
             max_chunk: 64,
-            flush_error,
-            sync_error: !flush_error,
+            fault: if flush_error {
+                Fault::Flush
+            } else {
+                Fault::Sync
+            },
             ..Probe::default()
         }));
         let mut writer = writer(probe.clone());
@@ -445,6 +543,8 @@ fn partial_write_zero_progress_interrupted_exhaustion_and_flush_failures_are_typ
             Some(TerminalTapeRecordingError::FlushFailed)
         );
         assert!(status.closed && !status.complete && probe.lock().unwrap().dropped);
+        assert_eq!(probe.lock().unwrap().flushes, 1);
+        assert_eq!(probe.lock().unwrap().syncs, 1);
     }
 }
 
@@ -478,6 +578,26 @@ fn fully_written_zero_payload_frame_keeps_its_receipt_after_post_write_cancellat
 struct Noop;
 impl Wake for Noop {
     fn wake(self: Arc<Self>) {}
+}
+
+#[test]
+fn dropped_polled_start_never_leaves_a_recording_worker_detached() {
+    let fixture = Fixture::new();
+    let scope = NativeOwnedWorkerScope::new();
+    let mut start =
+        TerminalTapeRecorder::start(fixture.request(), scope.clone(), CancellationToken::new());
+    let waker = Waker::from(Arc::new(Noop));
+    // Either result is legitimate: when startup wins this race, dropping its
+    // ready value must disconnect admission just like dropping the future.
+    drop(start.as_mut().poll(&mut Context::from_waker(&waker)));
+    drop(start);
+    settle(&scope);
+    let path = fixture.0.join("tape.fxtape");
+    if path.exists() {
+        let bytes = fs::read(path).unwrap();
+        assert_eq!(bytes.len(), 30);
+        assert!(frames(&bytes).is_empty());
+    }
 }
 
 #[test]
@@ -523,12 +643,15 @@ fn dropped_receipt_and_recorder_keep_started_writes_scoped_until_file_close() {
         workers: scope.completion(),
     };
     let (sender, receiver) = mpsc::sync_channel(1);
-    scope.spawn(move || serve(writer, receiver)).unwrap();
+    let (final_reply, final_receipt) = reply::channel();
+    writer.final_reply = Some(final_reply);
+    scope.spawn(move || serve(writer, &receiver)).unwrap();
     let mut recorder = TerminalTapeRecorder {
         sender: Some(sender),
         path: PathBuf::new(),
         record_stdin: false,
         completion: completion.clone(),
+        final_receipt,
     };
     let mut future = recorder.record(
         TerminalTapeRecordingFrame::StdoutWritten(b"kept"),
