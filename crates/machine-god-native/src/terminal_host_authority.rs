@@ -239,9 +239,20 @@ impl CapturedTerminalHostAuthority {
         self.environment.entries().to_vec()
     }
 
+    #[cfg(test)]
     pub(crate) fn resolve_on_worker(
         &self,
         invocation: TerminalActionInvocation,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<ResolvedTerminalHostInvocation, ToolError> {
+        self.resolve_on_worker_with_scope(invocation, None, deadline, cancellation)
+    }
+
+    pub(crate) fn resolve_on_worker_with_scope(
+        &self,
+        invocation: TerminalActionInvocation,
+        scope: Option<&crate::NativeWorkspaceTurnScope>,
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<ResolvedTerminalHostInvocation, ToolError> {
@@ -251,7 +262,8 @@ impl CapturedTerminalHostAuthority {
         })?;
         let mut cwd = None;
         let request = invocation.resolve_cwd(|raw| {
-            let (canonical, descriptor) = self.resolve_directory(raw, deadline, cancellation)?;
+            let (canonical, descriptor) =
+                self.resolve_directory_with_scope(raw, scope, deadline, cancellation)?;
             cwd = Some(descriptor);
             Ok(canonical)
         })?;
@@ -345,25 +357,59 @@ impl CapturedTerminalHostAuthority {
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<(String, OwnedFd), ToolError> {
+        self.resolve_directory_with_scope(raw, None, deadline, cancellation)
+    }
+
+    pub(crate) fn resolve_directory_with_scope(
+        &self,
+        raw: &str,
+        scope: Option<&crate::NativeWorkspaceTurnScope>,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<(String, OwnedFd), ToolError> {
         check(deadline, cancellation)?;
+        let snapshot = scope
+            .map(crate::NativeWorkspaceTurnScope::snapshot)
+            .transpose()
+            .map_err(|_| unavailable())?;
+        if let Some(snapshot) = &snapshot {
+            if snapshot.primary_identity() != self.workspace_path {
+                return Err(invalid());
+            }
+            let primary = snapshot.route(Path::new(".")).map_err(|_| unavailable())?;
+            same_directory(&self.workspace, primary.root_descriptor())?;
+        }
         if raw.is_empty() || raw.len() > MAX_PATH_BYTES || raw.contains('\0') {
             return Err(invalid());
         }
-        exact_directory(&self.workspace, &self.workspace_path)?;
+        if snapshot.is_none() {
+            exact_directory(&self.workspace, &self.workspace_path)?;
+        }
         check(deadline, cancellation)?;
         // join preserves symlink/.. order. Never collect lexical components first.
         let original = self.default_cwd.join(raw);
         let canonical = std::fs::canonicalize(&original).map_err(|_| unavailable())?;
         check(deadline, cancellation)?;
+        let route = snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.route(&canonical))
+            .transpose()
+            .map_err(|_| invalid())?;
+        let (workspace, workspace_path) = route
+            .as_ref()
+            .map_or((&self.workspace, self.workspace_path.as_path()), |route| {
+                (route.root_descriptor(), route.root_identity())
+            });
+        exact_directory(workspace, workspace_path)?;
         let relative = canonical
-            .strip_prefix(&self.workspace_path)
+            .strip_prefix(workspace_path)
             .map_err(|_| invalid())?;
         let canonical_text = path_text(&canonical)?.to_owned();
         let original_fd = rustix::fs::open(&original, directory_flags(), Mode::empty())
             .map_err(|_| unavailable())?;
         check(deadline, cancellation)?;
         let mut retained =
-            rustix::io::fcntl_dupfd_cloexec(&self.workspace, 3).map_err(|_| unavailable())?;
+            rustix::io::fcntl_dupfd_cloexec(workspace, 3).map_err(|_| unavailable())?;
         for component in relative.components() {
             check(deadline, cancellation)?;
             let Component::Normal(component) = component else {
@@ -379,7 +425,18 @@ impl CapturedTerminalHostAuthority {
         }
         check(deadline, cancellation)?;
         same_directory(&original_fd, &retained)?;
-        exact_directory(&self.workspace, &self.workspace_path)?;
+        exact_directory(workspace, workspace_path)?;
+        if let Some(snapshot) = snapshot {
+            snapshot
+                .validate_directory_outside_state(&retained, || {
+                    check(deadline, cancellation)
+                        .map_err(|_| crate::NativeWorkspaceAuthorityError::Unavailable)
+                })
+                .map_err(|_| invalid())?;
+        }
+        if scope.is_some_and(|scope| !scope.is_live()) {
+            return Err(unavailable());
+        }
         check(deadline, cancellation)?;
         Ok((canonical_text, retained))
     }

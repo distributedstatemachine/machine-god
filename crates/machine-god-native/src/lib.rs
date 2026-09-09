@@ -209,6 +209,8 @@ mod glob_files;
 mod grep_files;
 mod install_skill;
 mod list_files;
+#[cfg(target_os = "macos")]
+mod macos_directory;
 mod mcp_features;
 mod mcp_search_tools;
 mod mcp_select_tool;

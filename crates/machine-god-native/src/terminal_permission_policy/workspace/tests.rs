@@ -344,7 +344,6 @@ fn pty_helper() -> crate::terminal_pty::TerminalPtyHelper {
                 vec![
                     "--exact".into(),
                     "terminal_pty::tests::helper_entry".into(),
-                    "--ignored".into(),
                     "--nocapture".into(),
                     "--quiet".into(),
                 ],

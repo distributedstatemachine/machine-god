@@ -162,12 +162,27 @@ and arguments. `SHELL` never chooses the executable.
 Exec/start cwd resolution consumes `TerminalActionInvocation::resolve_cwd`'s
 original requested spelling on the owned worker. Native canonicalization runs
 before any lexical simplification, preserving symlink/parent semantics. The
-canonical result must remain inside the retained workspace. An original-path
-descriptor must match a no-follow descriptor-relative walk from that workspace
-by device/inode, and the workspace descriptor must still match its captured
-canonical spelling. The resulting exact cwd descriptor stays on the owned
+canonical result must remain inside the selected retained workspace root. With
+workspace contexts attached, the outer tool/executor future captures the exact
+live session-incarnation/turn registration before first poll. Both ordinary and
+turn execution, including the governed wrapper, retain that acceptance stamp;
+late registration, reused IDs or a different bound call context cannot repair
+an unavailable or retired scope. This pure capture performs no filesystem work.
+The worker routes the native canonical result through that captured snapshot's
+primary and active additional roots, excluding state and without consulting the
+current manager or falling back to primary. Relative paths retain the captured
+default-cwd base; native symlink/parent ordering is not lexically rewritten.
+The worker also compares resolved-directory ancestry against the retained state
+object, so moving state under an allowed root does not authorize it as a cwd.
+An original-path descriptor must match a no-follow descriptor-relative walk from
+the selected root by device/inode, and that root descriptor must still match its
+captured canonical spelling. The resulting exact cwd descriptor stays on the owned
 effect worker through launch; it is never reopened or returned to an async
 polling thread as path-based authority. Non-command actions acquire no cwd.
+Permission preparation captures the same acceptance-time scope and passes it to
+the actual host resolver, preserving canonical capability and shell identity
+checks without a second registration lookup. Legacy explicit host constructors
+without workspace contexts retain their primary-only behavior.
 A supplied `list.workspace_root` uses the separate effect-free
 `TerminalActionInvocation::resolve_workspace_filter` callback, invoked on the
 bounded, scoped effect worker against the captured default cwd, preserving native
@@ -182,6 +197,16 @@ its own final descriptor/path checks and rejects replacement rather than
 silently rebinding authority. One supplied deadline and cancellation token are
 checked between synchronous boundaries; an individual filesystem or account
 lookup syscall is not preempted by those checks.
+
+Workspace selection is independent of permission options. When no permission
+policy is attached, scoped exec/start still carry a `none` launch snapshot with
+the exact live workspace proof through final native release. A committed process
+is not revoked when its originating turn finishes. Custom-probe cwd and path
+monitor parent resolution use the same selected scope; successful monitor-grant
+installation checks the live registration and transfers retained immutable
+directory authority to the monitor's independent owner/generation lifetime.
+Stale preparations cannot install a new grant. Existing grants retain their
+ordinary deadlines and revocation without requiring the source turn to stay open.
 
 ### Captured foreground execution
 

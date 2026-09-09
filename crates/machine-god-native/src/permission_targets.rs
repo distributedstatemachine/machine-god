@@ -115,7 +115,7 @@ impl NativePermissionTargetAuthority {
             arguments_json: bounded_arguments(invocation.arguments, false, cancellation)?,
             targets: Vec::new(),
             observations: Vec::new(),
-            workspace_scope,
+            workspace_scope: workspace_scope.map(Arc::new),
             bypass: Bypass::Never,
             terminal: None,
         };
@@ -183,8 +183,27 @@ impl NativePermissionTargetAuthority {
         invocation: PermissionInvocation<'a>,
         cancellation: CancellationToken,
     ) -> BoxFuture<'a, Result<NativePreparedPermissionTargets, PermissionError>> {
+        // Capture the exact registration before returning the inert future;
+        // a later registration with reused IDs cannot repair failed acceptance.
+        let workspace_scope = self
+            .workspace_contexts
+            .as_ref()
+            .map(|contexts| {
+                contexts
+                    .snapshot_for_permission(request)
+                    .map(Arc::new)
+                    .map_err(|_| invalid())
+            })
+            .transpose();
         Box::pin(async move {
             check_cancel(&cancellation)?;
+            let workspace_scope = workspace_scope?;
+            if workspace_scope
+                .as_ref()
+                .is_some_and(|scope| !scope.is_live())
+            {
+                return Err(invalid());
+            }
             let name = invocation.tool_name.as_str();
             if !known_builtin(name) {
                 return Err(invalid());
@@ -219,16 +238,7 @@ impl NativePermissionTargetAuthority {
                 }
             };
             check_cancel(&cancellation)?;
-            let workspace_scope = self
-                .workspace_contexts
-                .as_ref()
-                .map(|contexts| {
-                    contexts
-                        .snapshot_for_permission(request)
-                        .map_err(|_| invalid())
-                })
-                .transpose()?;
-            validate_workspace_binding(&self.root, &self.workspace, workspace_scope.as_ref())?;
+            validate_workspace_binding(&self.root, &self.workspace, workspace_scope.as_deref())?;
             let mut prepared = NativePreparedPermissionTargets {
                 root: Arc::clone(&self.root),
                 workspace: self.workspace.clone(),
@@ -241,46 +251,25 @@ impl NativePermissionTargetAuthority {
                 terminal: None,
             };
             if let Some(terminal) = terminal {
-                let resolution = match entry {
-                    NativePermissionTargetTool::TerminalWithResolver { resolver, .. } => {
-                        resolver.resolve(terminal, cancellation.clone()).await?
-                    }
-                    NativePermissionTargetTool::Terminal(tool) => {
-                        if let Some(resolver) = tool.permission_resolver() {
-                            resolver.resolve(terminal, cancellation.clone()).await?
-                        } else {
-                            if terminal.has_workspace_filter() {
-                                return Err(invalid());
-                            }
-                            let action = terminal
-                                .resolve_cwd(|_| {
-                                    Err(machine_god_core::ToolError::new(
-                                        machine_god_core::ToolErrorKind::InvalidInput,
-                                        "permission_target_invalid",
-                                        "permission target preparation failed",
-                                        false,
-                                    ))
-                                })
-                                .map_err(|_| invalid())?;
-                            let identity = tool.permission_host_identity();
-                            NativePermissionTerminalResolution::new(
-                                action,
-                                None,
-                                None,
-                                identity.environment_sha256.clone(),
-                                identity.shell_selection_sha256.clone(),
-                            )?
-                        }
-                    }
-                    NativePermissionTargetTool::Ordinary(_)
-                    | NativePermissionTargetTool::Question(_)
-                    | NativePermissionTargetTool::Grep(_) => return Err(invalid()),
-                };
+                let resolution = terminal::resolve(
+                    entry,
+                    terminal,
+                    prepared.workspace_scope.clone(),
+                    cancellation.clone(),
+                )
+                .await?;
                 prepared.prepare_terminal(resolution);
             } else {
                 prepared.prepare_ordinary(request, invocation.arguments)?;
             }
             check_cancel(&cancellation)?;
+            if prepared
+                .workspace_scope
+                .as_ref()
+                .is_some_and(|scope| !scope.is_live())
+            {
+                return Err(invalid());
+            }
             Ok(prepared)
         })
     }
@@ -343,7 +332,7 @@ pub struct NativePreparedPermissionTargets {
     arguments_json: String,
     targets: Vec<NativePermissionOwnedTarget>,
     observations: Vec<(Arc<File>, paths::Observation)>,
-    workspace_scope: Option<crate::NativeWorkspaceTurnScope>,
+    workspace_scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
     bypass: Bypass,
     terminal: Option<NativePermissionTerminalResolution>,
 }
@@ -437,7 +426,7 @@ impl NativePreparedPermissionTargets {
     /// # Errors
     /// Rejects root, parent, selected-entry replacement, or missing-entry changes.
     pub fn revalidate(&self) -> Result<(), PermissionError> {
-        validate_workspace_binding(&self.root, &self.workspace, self.workspace_scope.as_ref())?;
+        validate_workspace_binding(&self.root, &self.workspace, self.workspace_scope.as_deref())?;
         for (root, observed) in &self.observations {
             observed.revalidate(root)?;
         }

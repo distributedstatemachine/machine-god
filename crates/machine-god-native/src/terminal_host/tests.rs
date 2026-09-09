@@ -11,11 +11,13 @@ use std::path::{Path, PathBuf};
 mod lifecycle;
 #[path = "../terminal_permission_policy/host_tests.rs"]
 mod permission_policy;
+#[path = "../terminal_host_authority/workspace_tests.rs"]
+mod workspace;
 
 struct Fixture {
     context: ToolContext,
     root: PathBuf,
-    tool: TerminalActionTool,
+    tool: Arc<TerminalActionTool>,
     resource: Option<NativeTerminalHostResource>,
     completion: NativeOwnedWorkerCompletion,
 }
@@ -40,10 +42,16 @@ fn write_cli_fixture_helper(root: &Path) -> PathBuf {
     );
     #[cfg(not(target_os = "macos"))]
     let inventory = "";
+    // Tmux's exact four-argument helper protocol uses the existing raw helper
+    // entrypoint; ordinary host helpers still require their sole private flag.
+    let tmux = format!(
+        "if [ \"$1\" = '{}' ]; then\n[ \"$#\" -eq 5 ] || exit 125\nexport MG_TMUX_KIND=\"$2\" MG_TMUX_SOCKET=\"$3\" MG_TMUX_NONCE=\"$4\" MG_TMUX_CWD=\"$5\"\nif [ \"$2\" = exec ]; then exec 2>&1; exec 1>/dev/null; fi\nexec '{quoted}' --exact terminal_tmux_startup::tests::helper_entry --nocapture\nfi\n",
+        crate::TERMINAL_TMUX_HELPER_ARGUMENT,
+    );
     // Inventory is a raw pipe protocol: only the registered entrypoint's
     // stderr reaches the collector, never libtest's stdout framing. Exec
     // preserves direct-child ownership and the inherited original deadline.
-    std::fs::write(&script, format!("#!/bin/sh\n[ \"$#\" -eq 1 ] || exit 125\n{inventory}export MACHINE_GOD_TEST_HOST_HELPER=\"$1\"\nexec '{quoted}' --exact terminal_host::tests::helper_child --ignored --nocapture --quiet\n")).unwrap();
+    std::fs::write(&script, format!("#!/bin/sh\n{tmux}[ \"$#\" -eq 1 ] || exit 125\n{inventory}export MACHINE_GOD_TEST_HOST_HELPER=\"$1\"\nexec '{quoted}' --exact terminal_host::tests::helper_child --ignored --nocapture --quiet\n")).unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     script
 }
@@ -53,6 +61,13 @@ impl Fixture {
         Self::with_permission(|_| None)
     }
     fn with_permission(
+        permission: impl FnOnce(&Path) -> Option<Arc<NativeTerminalPermissionPolicy>>,
+    ) -> Self {
+        Self::with_workspace(None, None, permission)
+    }
+    fn with_workspace(
+        contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
+        tmux: Option<PathBuf>,
         permission: impl FnOnce(&Path) -> Option<Arc<NativeTerminalPermissionPolicy>>,
     ) -> Self {
         let mut nonce = [0_u8; 8];
@@ -87,23 +102,29 @@ impl Fixture {
             ],
             account_shell: TerminalHostAccountShell::Explicit(Some("/bin/bash".into())),
             cli_executable: cli,
-            tmux_executable: None,
+            tmux_executable: tmux,
             artifacts: open(&artifacts),
             artifact_path: artifacts,
         };
         let state = open(&root.join("state"));
         let identity = SessionIncarnationId::new("host-test").unwrap();
-        let (tool, resource) = match permission {
-            Some(permission) => NativeTerminalHost::compose_with_permission_on_worker(
-                inputs, state, identity, permission,
-            ),
-            None => NativeTerminalHost::compose_on_worker(inputs, state, identity),
+        let (tool, resource) = if let Some(contexts) = contexts {
+            NativeTerminalHost::compose_with_workspace_on_worker(
+                inputs, state, identity, contexts, permission,
+            )
+        } else {
+            match permission {
+                Some(permission) => NativeTerminalHost::compose_with_permission_on_worker(
+                    inputs, state, identity, permission,
+                ),
+                None => NativeTerminalHost::compose_on_worker(inputs, state, identity),
+            }
         }
         .unwrap();
         Self {
             context: Self::context(),
             root,
-            tool,
+            tool: Arc::new(tool),
             completion: resource.completion(),
             resource: Some(resource),
         }

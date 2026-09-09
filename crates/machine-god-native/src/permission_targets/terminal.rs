@@ -1,10 +1,64 @@
 use super::invalid;
 use crate::{TerminalActionInvocation, TerminalShell};
 use machine_god_core::{BoxFuture, CancellationToken, PermissionError, TerminalActionRequest};
-use std::{fmt, fs::File};
+use std::{fmt, fs::File, sync::Arc};
+
+pub(super) async fn resolve(
+    entry: &super::NativePermissionTargetTool,
+    invocation: TerminalActionInvocation,
+    scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
+    cancellation: CancellationToken,
+) -> Result<NativePermissionTerminalResolution, PermissionError> {
+    use super::NativePermissionTargetTool;
+    let (tool, resolver) = match entry {
+        NativePermissionTargetTool::TerminalWithResolver { tool, resolver } => {
+            (tool, Some(Arc::clone(resolver)))
+        }
+        NativePermissionTargetTool::Terminal(tool) => (tool, tool.permission_resolver()),
+        _ => return Err(invalid()),
+    };
+    if let Some(resolver) = resolver {
+        return resolver
+            .resolve_with_workspace_scope(invocation, scope, cancellation)
+            .await;
+    }
+    if invocation.has_workspace_filter() {
+        return Err(invalid());
+    }
+    let action = invocation
+        .resolve_cwd(|_| {
+            Err(machine_god_core::ToolError::new(
+                machine_god_core::ToolErrorKind::InvalidInput,
+                "permission_target_invalid",
+                "permission target preparation failed",
+                false,
+            ))
+        })
+        .map_err(|_| invalid())?;
+    let identity = tool.permission_host_identity();
+    NativePermissionTerminalResolution::new(
+        action,
+        None,
+        None,
+        identity.environment_sha256.clone(),
+        identity.shell_selection_sha256.clone(),
+    )
+}
 
 /// Explicit actual-host resolution authority, never a model-selected cwd resolver.
 pub trait NativePermissionTerminalResolver: Send + Sync + 'static {
+    /// Resolves using the caller's acceptance-time workspace scope, without
+    /// rediscovering a registration by IDs. Legacy explicit resolvers retain
+    /// their original behavior unless they opt into contextual authority.
+    fn resolve_with_workspace_scope(
+        &self,
+        invocation: TerminalActionInvocation,
+        _scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<NativePermissionTerminalResolution, PermissionError>> {
+        self.resolve(invocation, cancellation)
+    }
+
     fn resolve(
         &self,
         invocation: TerminalActionInvocation,

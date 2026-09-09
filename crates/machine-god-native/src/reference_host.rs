@@ -1359,9 +1359,7 @@ impl NativeReferenceHost {
             &session_store,
             terminal_wait_delay,
             terminal_selection,
-            permission_setup
-                .as_ref()
-                .map(|setup| Arc::clone(&setup.sandbox)),
+            TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
@@ -1564,6 +1562,23 @@ struct SelectedTerminalComposition {
     archive: Option<Arc<NativeToolResultArchiveAdapter>>,
 }
 
+struct TerminalScopeSelection {
+    permission: Option<Arc<crate::NativeTerminalPermissionPolicy>>,
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
+}
+
+impl TerminalScopeSelection {
+    fn new(
+        permission: Option<&PermissionComposition>,
+        workspace: Option<&WorkspaceBinding>,
+    ) -> Self {
+        Self {
+            permission: permission.map(|setup| Arc::clone(&setup.sandbox)),
+            workspace_contexts: workspace.map(|binding| Arc::clone(&binding.contexts)),
+        }
+    }
+}
+
 fn compose_selected_terminal(
     workspace: OwnedFd,
     workspace_path: PathBuf,
@@ -1571,16 +1586,11 @@ fn compose_selected_terminal(
     session_store: &FileSessionStore,
     wait_delay: Arc<dyn TerminalBackgroundWaitDelay>,
     selection: Option<TerminalCompositionSelection>,
-    permission: Option<Arc<crate::NativeTerminalPermissionPolicy>>,
+    scope: TerminalScopeSelection,
 ) -> Result<SelectedTerminalComposition, NativeReferenceHostBuildError> {
     if let Some(selection) = selection {
-        let full = compose_full_terminal(
-            workspace,
-            workspace_path,
-            session_store,
-            selection,
-            permission,
-        )?;
+        let full =
+            compose_full_terminal(workspace, workspace_path, session_store, selection, scope)?;
         let tool = Arc::new(full.tool);
         Ok(SelectedTerminalComposition {
             tool: tool.clone(),
@@ -1610,7 +1620,7 @@ fn compose_full_terminal(
     workspace_path: PathBuf,
     session_store: &FileSessionStore,
     selection: TerminalCompositionSelection,
-    permission: Option<Arc<crate::NativeTerminalPermissionPolicy>>,
+    scope: TerminalScopeSelection,
 ) -> Result<FullTerminalComposition, NativeReferenceHostBuildError> {
     use std::fmt::Write as _;
     let state_root = session_store
@@ -1649,14 +1659,21 @@ fn compose_full_terminal(
         artifacts,
         artifact_path: state_path.join("terminal-startup"),
     };
-    let (tool, resource) = match permission {
-        Some(permission) => NativeTerminalHost::compose_with_permission_on_worker(
+    let (tool, resource) = match (scope.workspace_contexts, scope.permission) {
+        (Some(contexts), permission) => NativeTerminalHost::compose_with_workspace_on_worker(
+            inputs,
+            state_root,
+            host_identity,
+            contexts,
+            permission,
+        ),
+        (None, Some(permission)) => NativeTerminalHost::compose_with_permission_on_worker(
             inputs,
             state_root,
             host_identity,
             permission,
         ),
-        None => NativeTerminalHost::compose_on_worker(inputs, state_root, host_identity),
+        (None, None) => NativeTerminalHost::compose_on_worker(inputs, state_root, host_identity),
     }
     .map_err(|_| terminal_options_error())?;
     let archive = Arc::new(

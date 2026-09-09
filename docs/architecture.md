@@ -21,7 +21,11 @@ product crates, with one isolated macOS OS-binding exception in
 `machine-god-terminal-sys` described by
 [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md) and the fixed
 read-only helper query in
-[ADR 0004](decisions/0004-macos-process-inventory-helper.md).
+[ADR 0004](decisions/0004-macos-process-inventory-helper.md), plus the fixed
+single-refill directory binding in
+[ADR 0005](decisions/0005-macos-directory-reader.md). The safe native scanner
+owns parsing, traversal and refill accounting; the binding receives only an
+already-borrowed descriptor and fixed initialized storage.
 
 ## Core composition
 

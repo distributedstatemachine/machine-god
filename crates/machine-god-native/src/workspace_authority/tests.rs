@@ -433,6 +433,46 @@ fn descriptor_ancestor_detects_real_nested_directories() {
     assert!(!descriptor_ancestor(&open(&fixture.state), &open(&nested)).unwrap());
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn terminal_directory_exclusion_tracks_moved_state_and_checks_each_ancestry_step() {
+    let fixture = Fixture::new();
+    let authority = fixture.authority(vec![], false).unwrap();
+    let snapshot = authority.snapshot().unwrap();
+    let nested = fixture.directory("state/nested");
+    let retained = open(&nested);
+    let moved = fixture.primary.join("moved-state");
+    std::fs::rename(&fixture.state, &moved).unwrap();
+    std::fs::create_dir(&fixture.state).unwrap();
+    assert!(
+        snapshot.route(&moved.join("nested")).is_ok(),
+        "lexical routing alone does not exclude the retained state object"
+    );
+    assert_eq!(
+        snapshot.validate_directory_outside_state(&retained, || Ok(())),
+        Err(NativeWorkspaceAuthorityError::OverlappingState)
+    );
+    snapshot
+        .validate_directory_outside_state(&open(&fixture.primary), || Ok(()))
+        .unwrap();
+    let mut checks = 0;
+    assert_eq!(
+        snapshot.validate_directory_outside_state(&open(&fixture.primary), || {
+            checks += 1;
+            if checks == 4 {
+                Err(NativeWorkspaceAuthorityError::Unavailable)
+            } else {
+                Ok(())
+            }
+        }),
+        Err(NativeWorkspaceAuthorityError::Unavailable)
+    );
+    assert_eq!(
+        checks, 4,
+        "a cancelled/deadline check stops the native walk"
+    );
+}
+
 #[test]
 fn missing_provisional_leaf_cannot_hide_state_overlap_behind_ancestor_alias() {
     let fixture = Fixture::new();

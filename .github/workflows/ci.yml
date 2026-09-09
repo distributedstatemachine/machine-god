@@ -1431,6 +1431,13 @@ jobs:
           set -euo pipefail
           xcrun clang -arch arm64 -fsyntax-only -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/process_inventory_abi.c
           xcrun clang -arch x86_64 -fsyntax-only -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/process_inventory_abi.c
+          xcrun clang -arch arm64 -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/macos_directory_abi.c -o "${RUNNER_TEMP}/machine-god-directory-abi-arm64"
+          xcrun clang -arch x86_64 -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/macos_directory_abi.c -o "${RUNNER_TEMP}/machine-god-directory-abi-x86_64"
+          case "${RUNNER_ARCH}" in
+            ARM64) "${RUNNER_TEMP}/machine-god-directory-abi-arm64" ;;
+            X64) "${RUNNER_TEMP}/machine-god-directory-abi-x86_64" ;;
+            *) echo "unsupported Apple runner architecture" >&2; exit 1 ;;
+          esac
           cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-terminal-sys --all-targets --all-features --target "${{ matrix.target }}" -- -D warnings
       - name: Build production terminal helper for selected runtime tests
         if: ${{ needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' || needs.change-classification.outputs.full_workspace == 'true' }}

@@ -158,8 +158,7 @@ fn pure_scope_uses_the_taken_root_set_not_a_later_install() {
     );
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+mod native {
     use super::super::super::{
         ScanCheck, SemanticSearchTool, checked_workspace_path_length, join_workspace_path,
     };

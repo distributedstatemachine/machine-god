@@ -342,6 +342,91 @@ fn workspace_host_routes_metadata_enumeration_and_grep_with_policy_and_history()
 }
 
 #[test]
+fn workspace_host_terminal_cwd_uses_bound_roots_with_and_without_native_policy() {
+    let helper = PathBuf::from(
+        std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY")
+            .expect("select the production release helper before terminal integration tests"),
+    );
+    assert!(helper.is_absolute() && helper.is_file());
+    for governed in [false, true] {
+        for bind in [false, true] {
+            for selected in ["additional", "state", "outside"] {
+                let temporary = TemporaryDirectory::new("workspace-terminal-cwd");
+                let (prepared, state) = complete_terminal_roots(temporary.path());
+                let primary = prepared.workspace_root().to_owned();
+                let additional = temporary.path().join("additional");
+                let outside = temporary.path().join("outside");
+                fs::create_dir(&additional).unwrap();
+                fs::create_dir(&outside).unwrap();
+                let cwd = match selected {
+                    "additional" => additional.canonicalize().unwrap(),
+                    "state" => state.clone(),
+                    _ => outside.canonicalize().unwrap(),
+                };
+                let mut options =
+                    NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+                        .with_terminal(
+                            NativeReferenceHostTerminalOptions::new(
+                                helper.clone(),
+                                Some("/bin/bash".into()),
+                                vec![("PATH".into(), "/usr/bin:/bin".into())],
+                            )
+                            .unwrap(),
+                        )
+                        .with_workspace(
+                            authority(&primary, &state, &additional),
+                            Arc::new(NativeWorkspaceContexts::new()),
+                        );
+                let config = if governed {
+                    options = options.with_permissions(NativeReferenceHostPermissionOptions::new(
+                        Arc::new(NativePermissionContexts::new()),
+                        Arc::new(TokioPermissionReviewClock),
+                    ));
+                    configured(temporary.path(), "yolo", &json!([]))
+                } else {
+                    built_in_config()
+                };
+                let host = compose(
+                    prepared,
+                    config,
+                    options,
+                    vec![
+                        call(
+                            "terminal",
+                            &json!({
+                                "action":"exec", "profile":"clean", "cwd":cwd,
+                                "command":"printf bound > workspace-cwd-marker"
+                            }),
+                        ),
+                        answer(),
+                    ],
+                );
+                let completion = host.terminal_shutdown_completion().unwrap();
+                let events = collect(&host, bind);
+                let allowed = bind && selected == "additional";
+                assert_eq!(
+                    events.iter().any(|event| matches!(event,
+                        TurnEvent::ToolFinished { output, .. } if !output.is_error
+                    )),
+                    allowed,
+                    "governed={governed}, bound={bind}, cwd={selected}: {events:?}"
+                );
+                assert_eq!(cwd.join("workspace-cwd-marker").exists(), allowed);
+                assert!(!primary.join("workspace-cwd-marker").exists());
+                if allowed {
+                    assert_eq!(
+                        fs::read(cwd.join("workspace-cwd-marker")).unwrap(),
+                        b"bound"
+                    );
+                }
+                drop(host);
+                completion.wait_on_worker().unwrap();
+            }
+        }
+    }
+}
+
+#[test]
 fn workspace_host_vision_reads_additional_root_through_actual_permission_and_transport() {
     let temporary = TemporaryDirectory::new("workspace-vision-host");
     let (prepared, state) = complete_terminal_roots(temporary.path());
