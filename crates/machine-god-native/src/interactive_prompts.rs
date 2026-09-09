@@ -126,7 +126,7 @@ impl NativeInteractivePromptView {
     #[must_use]
     pub fn permission(&self) -> Option<&PermissionRequest> {
         match self.payload.as_ref() {
-            Payload::Permission(value) => Some(value),
+            Payload::Permission { request, .. } => Some(request),
             Payload::Question { .. } => None,
         }
     }
@@ -134,8 +134,17 @@ impl NativeInteractivePromptView {
     pub fn question(&self) -> Option<(&ToolContext, &QuestionPromptRequest)> {
         match self.payload.as_ref() {
             Payload::Question { context, request } => Some((context, request)),
-            Payload::Permission(_) => None,
+            Payload::Permission { .. } => None,
         }
+    }
+    /// Whether native preparation supplied an exact-action proposal source.
+    /// This observation neither validates a stale view nor creates authority.
+    #[must_use]
+    pub fn can_save_rule(&self) -> bool {
+        matches!(
+            self.payload.as_ref(),
+            Payload::Permission { rule: Some(_), .. }
+        )
     }
 }
 impl fmt::Debug for NativeInteractivePromptView {
@@ -194,9 +203,20 @@ impl PermissionPrompter for NativeInteractivePromptBridge {
         &self,
         request: PermissionRequest,
     ) -> BoxFuture<'_, Result<PermissionPromptDecision, PermissionPromptError>> {
+        self.prompt_with_rule(request, None)
+    }
+
+    fn prompt_with_rule(
+        &self,
+        request: PermissionRequest,
+        rule: Option<crate::NativePermissionRulePrompt>,
+    ) -> BoxFuture<'_, Result<PermissionPromptDecision, PermissionPromptError>> {
         let scope = self.shared.scope();
         let shared = Arc::clone(&self.shared);
-        let payload = Arc::new(Payload::Permission(request));
+        let payload = Arc::new(Payload::Permission {
+            request,
+            rule: rule.map(Box::new),
+        });
         Box::pin(async move {
             match shared.request(scope, payload).await {
                 Ok(NativeInteractivePromptResponse::Permission(decision)) => Ok(decision),
@@ -246,6 +266,17 @@ impl fmt::Debug for NativeInteractivePromptInbox {
     }
 }
 impl NativeInteractivePromptInbox {
+    /// Proposes an exact saved change from the current unanswered native prompt.
+    /// The returned token still requires a separate human confirmation.
+    /// # Errors
+    /// Rejects stale, unprepared, cancelled or reset prompt authority.
+    pub fn propose_rule_change(
+        &self,
+        token: &NativeInteractivePromptToken,
+        decision: crate::NativePermissionRuleDecision,
+    ) -> Result<crate::NativePermissionRuleProposal, NativeInteractivePromptError> {
+        self.shared.propose_rule_change(token, decision)
+    }
     /// Replaces the exact UI principal and invalidates every prior response,
     /// including a response accepted but not yet consumed by its future.
     /// # Errors

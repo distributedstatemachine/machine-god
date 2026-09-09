@@ -362,7 +362,10 @@ fn typed_answer_bounds_reject_without_consuming_displayed_request() {
 
 #[test]
 fn exact_payload_byte_limit_aggregate_limit_and_invalid_limits_are_enforced() {
-    let payload = Payload::Permission(request("bound"));
+    let payload = Payload::Permission {
+        request: request("bound"),
+        rule: None,
+    };
     let bytes = payload.bytes(usize::MAX).unwrap();
     for (limit, accepted) in [(bytes - 1, false), (bytes, true)] {
         let (bridge, mut inbox) = NativeInteractivePromptBridge::new(
@@ -429,7 +432,12 @@ fn permission_json_depth_and_node_bounds_are_inclusive() {
             details: value,
         };
         assert_eq!(
-            Payload::Permission(request).bytes(8 * 1024 * 1024).is_ok(),
+            Payload::Permission {
+                request,
+                rule: None
+            }
+            .bytes(8 * 1024 * 1024)
+            .is_ok(),
             accepted
         );
     }
@@ -440,7 +448,12 @@ fn permission_json_depth_and_node_bounds_are_inclusive() {
             details: Value::Array(vec![Value::Null; children]),
         };
         assert_eq!(
-            Payload::Permission(request).bytes(8 * 1024 * 1024).is_ok(),
+            Payload::Permission {
+                request,
+                rule: None
+            }
+            .bytes(8 * 1024 * 1024)
+            .is_ok(),
             accepted
         );
     }

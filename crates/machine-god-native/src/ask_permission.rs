@@ -63,6 +63,16 @@ pub trait PermissionPrompter: Send + Sync + 'static {
         &self,
         request: PermissionRequest,
     ) -> BoxFuture<'_, Result<PermissionPromptDecision, PermissionPromptError>>;
+
+    /// Optional native-prepared rule proposal source; the default preserves the
+    /// ordinary prompt and never creates a persistent rule.
+    fn prompt_with_rule(
+        &self,
+        request: PermissionRequest,
+        _rule: Option<crate::NativePermissionRulePrompt>,
+    ) -> BoxFuture<'_, Result<PermissionPromptDecision, PermissionPromptError>> {
+        self.prompt(request)
+    }
 }
 
 /// Fail-closed [`PermissionHandler`] backed by an explicitly injected prompt.

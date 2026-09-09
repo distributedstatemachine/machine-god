@@ -82,6 +82,15 @@ the terminal. Termios restoration and native joins do not depend on that tail.
 
 ## Commands
 
+Interactive saved exact permission rules use a second human confirmation:
+`a`/`d` in a native-prepared permission prompt proposes saved allow/deny, then
+`yes` confirms the separately displayed page. A saved rule applies only to a
+freshly prepared action; the pending action is not executed or retried.
+`/permissions rules [offset]` lists the session's exact rules and
+`/permissions revoke <id>` proposes confirmed revocation. These are separate
+from `/allowlist` configured patterns and `s` volatile session grants; see the
+[saved-rule interaction contract](ask-permission.md#interactive-saved-exact-rules).
+
 | Command | Purpose | Contract |
 | --- | --- | --- |
 | `help` | Show command help | This page |

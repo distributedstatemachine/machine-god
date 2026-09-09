@@ -781,8 +781,9 @@ pub use model_selection::{
 pub use permission_controller::{
     NativePermissionActionPreparer, NativePermissionAutomaticOutcome,
     NativePermissionConfiguredOutcome, NativePermissionController, NativePermissionExecutionProof,
-    NativePermissionPolicySnapshot, NativePermissionRuleChange, NativePermissionRuleProposal,
-    NativePermissionSession, NativePermissionTurn, NativePreparedPermissionAction,
+    NativePermissionPolicySnapshot, NativePermissionRuleChange, NativePermissionRulePrompt,
+    NativePermissionRuleProposal, NativePermissionSession, NativePermissionTurn,
+    NativePreparedPermissionAction,
 };
 pub use permission_patterns::{
     MAX_CONFIGURED_PERMISSION_MATCH_STEPS, MAX_CONFIGURED_PERMISSION_TARGET_BYTES,

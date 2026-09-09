@@ -11,6 +11,109 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
 struct NoEffects;
+
+#[test]
+fn saved_prompt_proposals_retire_with_reset_cancel_drop_and_inbox_scope() {
+    for retirement in 0..4 {
+        let f = Fixture::new();
+        let turn = block_on(f.owner.session.prompt("proposal source")).unwrap();
+        let registration = f
+            .owner
+            .begin_turn(&turn, f.owner.snapshot().unwrap())
+            .unwrap();
+        let (attempt, epoch, rules_epoch) = f.owner.attempt(turn.id()).unwrap();
+        let source = NativePermissionRulePrompt::new(
+            &f.owner,
+            &attempt,
+            epoch,
+            rules_epoch,
+            NativePermissionRuleKey::new(
+                crate::NativePermissionRuleKind::StructuredTool,
+                "native exact identity",
+            )
+            .unwrap(),
+        );
+        let saves_before_proposal = f.store.saves.load(Ordering::SeqCst);
+        let (bridge, mut inbox) = crate::NativeInteractivePromptBridge::new(
+            crate::NativeInteractivePromptLimits::default(),
+        )
+        .unwrap();
+        inbox
+            .activate(machine_god_core::BackgroundOutputOwner::new(
+                f.owner.session.id(),
+                f.owner.session.incarnation_id(),
+            ))
+            .unwrap();
+        let request = PermissionRequest {
+            id: machine_god_core::PermissionRequestId::new("source").unwrap(),
+            session_id: f.owner.session.id(),
+            session_incarnation_id: f.owner.session.incarnation_id(),
+            turn_id: turn.id().clone(),
+            capability: machine_god_core::Capability::Custom {
+                name: "not the canonical identity".into(),
+                details: serde_json::Value::Null,
+            },
+            risk: machine_god_core::PermissionRisk::Low,
+            reason: "display only".into(),
+        };
+        let mut future = bridge.prompt_with_rule(request, Some(source));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(future.as_mut().poll(&mut cx).is_pending());
+        let Poll::Ready(Some(view)) = inbox.poll_prompt(&mut cx) else {
+            panic!("displayed native prompt");
+        };
+        let proposal = inbox
+            .propose_rule_change(view.token(), NativePermissionRuleDecision::Allow)
+            .unwrap();
+        match retirement {
+            0 => {
+                f.owner.reset().unwrap();
+            }
+            1 => {
+                inbox.cancel(view.token()).unwrap();
+            }
+            2 => {
+                inbox.deactivate();
+            }
+            _ => {
+                drop(future);
+                assert!(block_on(f.owner.confirm_rule_change(proposal)).is_err());
+                drop(registration);
+                continue;
+            }
+        }
+        assert!(block_on(f.owner.confirm_rule_change(proposal)).is_err());
+        assert_eq!(f.store.saves.load(Ordering::SeqCst), saves_before_proposal);
+        drop(future);
+        drop(registration);
+    }
+}
+
+#[test]
+fn reset_rejects_idle_proposal_but_does_not_claim_rollback_after_publication_started() {
+    let f = Fixture::new();
+    let old = f.proposal();
+    f.owner.reset().unwrap();
+    assert!(block_on(f.owner.confirm_rule_change(old)).is_err());
+    assert_eq!(f.store.saves.load(Ordering::SeqCst), 0);
+    let proposal = f.proposal();
+    f.store.pending.store(true, Ordering::SeqCst);
+    let mut save = f.owner.confirm_rule_change(proposal);
+    assert!(
+        save.as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+    );
+    assert_eq!(f.store.saves.load(Ordering::SeqCst), 1);
+    f.owner.reset().unwrap();
+    drop(save);
+    assert!(lock(&f.owner.state).uncertain_rules);
+    assert!(
+        f.owner
+            .propose_rule_change(NativePermissionRuleChange::Revoke { id: 1 })
+            .is_err()
+    );
+}
 impl NativePermissionActionPreparer for NoEffects {
     fn prepare<'a>(
         &'a self,

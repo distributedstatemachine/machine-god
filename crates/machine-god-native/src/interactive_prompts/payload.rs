@@ -8,7 +8,10 @@ use serde_json::Value;
 use std::io::{self, Write};
 
 pub(super) enum Payload {
-    Permission(PermissionRequest),
+    Permission {
+        request: PermissionRequest,
+        rule: Option<Box<crate::NativePermissionRulePrompt>>,
+    },
     Question {
         context: ToolContext,
         request: QuestionPromptRequest,
@@ -18,7 +21,9 @@ pub(super) enum Payload {
 impl Payload {
     pub fn belongs_to(&self, owner: &BackgroundOutputOwner) -> bool {
         let (session, incarnation) = match self {
-            Self::Permission(request) => (&request.session_id, &request.session_incarnation_id),
+            Self::Permission { request, .. } => {
+                (&request.session_id, &request.session_incarnation_id)
+            }
             Self::Question { context, .. } => {
                 (&context.session_id, &context.session_incarnation_id)
             }
@@ -29,7 +34,11 @@ impl Payload {
     pub fn bytes(&self, limit: usize) -> Result<usize, Error> {
         let mut budget = Budget { bytes: 0, limit };
         match self {
-            Self::Permission(request) => {
+            Self::Permission { request, rule } => {
+                // Canonical identity plus fixed digest/weak-owner bookkeeping.
+                if rule.is_some() {
+                    budget.add(crate::MAX_NATIVE_PERMISSION_IDENTITY_BYTES + 256)?;
+                }
                 if let Some(value) = capability_value(&request.capability) {
                     check_json(value)?;
                 }
@@ -82,7 +91,7 @@ impl Payload {
                 }
                 Ok(())
             }
-            (Self::Permission(_), Response::Permission(_))
+            (Self::Permission { .. }, Response::Permission(_))
             | (
                 Self::Question { .. },
                 Response::Question(
@@ -162,7 +171,7 @@ fn check_json(root: &Value) -> Result<(), Error> {
 
 impl Drop for Payload {
     fn drop(&mut self) {
-        let Self::Permission(request) = self else {
+        let Self::Permission { request, .. } = self else {
             return;
         };
         let value = match &mut request.capability {

@@ -18,6 +18,7 @@ const ESCAPE_TIMEOUT: Duration = Duration::from_millis(50);
 pub(super) enum InputBinding {
     Command,
     AwaitingPrompt,
+    SavedRule(u64),
     AwaitingPicker {
         generation: u64,
     },

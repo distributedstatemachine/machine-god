@@ -503,7 +503,7 @@ not core, owns reuse. Closing/cancelling the actual core turn invalidates proofs
 even if its native registration has not yet been dropped.
 
 Saved-rule edits have an opaque owner-bound, single-use proposal and an expected
-per-rule generation. Hosts must obtain explicit human confirmation separately
+per-rule generation plus the owner's reset epoch. Hosts must obtain explicit human confirmation separately
 before consuming a proposal. Active-turn writes use the turn-owned metadata
 editor; idle writes use ordinary core metadata CAS. Neither writes directly to
 the session store. Rule publication invalidates old proofs before awaiting the
@@ -565,6 +565,58 @@ Ready responses are checked again after cleanup callbacks. Waker clone, wake,
 drop, and payload cleanup run outside state locks. Hosts must pin input framing
 to the displayed token and discard obsolete fragments instead of applying them
 to a replacement prompt after a transition.
+
+### Interactive saved exact rules
+
+The interactive CLI adds `a` (propose saved allow) and `d` (propose saved deny)
+only when the native preparer supplied an exact saved-rule identity. Existing
+`y`/`yes`, `t`, `s`, and `n`/`no` choices retain once, turn, session, and deny
+semantics. Selecting `a` or `d` does not grant, deny, or save anything by itself.
+A second, separately flushed confirmation displays the pending request again
+and requires `yes`; `no`, `n`, or `/cancel` dismisses the proposal and denies
+the pending request. Buffered input from the earlier prompt cannot confirm
+the newly displayed page. EOF, quit, signal, and session retirement invalidate
+unconfirmed prompt authority.
+
+`PermissionPrompter::prompt_with_rule` is a source-compatible contextual method;
+its default calls the ordinary prompt without saving. The opaque
+`NativePermissionRulePrompt` originates only from the prepared native action.
+The inbox proposes against its current displayed, unanswered token; the CLI
+never builds canonical keys from display strings, capability JSON, or model
+prose. The proposal retains weak exact session/turn ownership, reset and rule
+epochs, and prompt lifetime. Reply, cancellation, future drop, or inbox retirement
+invalidates it. Publication rechecks these guards immediately before arming
+the existing metadata CAS. One extra canonical identity is covered by a bounded
+4,352-byte prompt accounting allowance. Native debug output omits its content.
+
+Confirmation submits the existing native control operation, which progresses
+while the original prompt remains pending. A success receipt means the saved
+rule was published; it does not renew the original execution proof. The CLI
+denies that pending request after the save receipt. A later explicit request
+must undergo fresh native preparation before the saved allow/deny can apply;
+no automatic retry is introduced. Failed or interrupted publication keeps the
+existing native uncertainty semantics, not an assumed rollback or success.
+Already accepted saves remain native-owned through cancellation and shutdown.
+
+`/permissions rules [offset]` lists the active session's saved exact rules with
+stable IDs, decision, kind, and escaped display identity. Output is bounded;
+an omission row supplies the next zero-based offset. `/permissions revoke <id>`
+proposes revoking that exact canonical ID and also requires a separately flushed
+`yes` confirmation. Missing IDs, malformed rules, changed generations, and reset
+epochs fail closed. Display identities are never lookup keys. The active session
+metadata is the source; this command does not edit user/workspace configuration.
+These machine-god command forms are intentionally distinct from configured
+`/allowlist` patterns and volatile session grants. `/permissions reset` retains
+saved rules, but invalidates proposals opened before that reset.
+
+During an acknowledged permission/question prompt or saved-rule confirmation,
+the exact `/permissions ask`, `/permissions auto`, `/permissions yolo`, and
+`/permissions reset` forms remain available. They require input bound to that
+currently displayed epoch: pre-display input, stale buffered lines, and extra
+arguments cannot acquire policy-command authority. Mode changes affect future
+taken jobs, not the active job's captured policy. Reset also retires old inbox
+tokens and unconfirmed proposal pages; a later old answer cannot recreate a
+grant or save. It does not claim rollback of an already admitted publication.
 
 ## Saved exact-action rule values
 
