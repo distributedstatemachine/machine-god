@@ -225,9 +225,10 @@ logical path is reporting metadata, not authority to reopen a renamed root.
 An explicit absolute destination similarly uses exclusive private creation;
 it never truncates an existing tape. Explicit-path parent directories must
 already exist and are walked descriptor-relatively without following symlinks.
-Neither mode follows a final symlink. These stricter no-overwrite and explicit
-failure rules intentionally differ from pinned fx's explicit-path truncation
-and optional environment-request failure suppression. Confined recording is
+Neither mode follows a final symlink. This no-overwrite rule intentionally
+differs from pinned fx's explicit-path truncation. The interactive host
+distinguishes required flag startup from optional environment-only startup as
+described below. Confined recording is
 implemented on Linux and macOS, alongside the native worker-scope runtime.
 The request's effect-free `validate` method remains available on other platforms
 and returns the explicit `UnsupportedPlatform` error before native admission.
@@ -271,3 +272,65 @@ survive recorder drop without keeping admission alive. A file-close receipt is
 not a thread-join receipt: the host closes its worker scope and observes its
 existing collector-completion fence before declaring shutdown complete. This
 also covers dropped startup/operation responses and thread-local cleanup.
+
+## Interactive recording startup
+
+One terminal `--record` modifier requests recording for interactive startup or
+an interactive resume, including the picker and latest/exact aliases. Leading
+workspace modifiers remain before the command; `--record` remains the final
+token. It is rejected for administrative commands, `ask`, and a resume carrying
+a one-shot prompt, before host effects. For example:
+
+```text
+machine-god --record
+machine-god --add-dir ../shared --record
+machine-god -r --record
+machine-god --continue --record
+machine-god resume --id <session-id> --record
+```
+
+Validated interactive startup captures the compatibility variables `FX_RECORD`
+and `FX_RECORD_INPUT` once. No recording variables are read by noninteractive
+commands or by the native recorder. A nonblank `FX_RECORD` selects an explicit
+destination, including when no flag is present; otherwise `--record` selects the
+automatic retained-store destination. Paths are trimmed only of ASCII space,
+tab, CR and LF, retain non-UTF-8 bytes, and resolve relative to the captured
+working directory without shell expansion. The resolved absolute path is
+bounded to 4,096 bytes and remains subject to native no-symlink/no-overwrite
+validation. Automatic recording uses the selected native state authority, not
+an independently discovered home or temporary-directory fallback.
+
+Stdin recording is off by default. `FX_RECORD_INPUT`, after the same trimming,
+enables it only for case-insensitive `1`, `true` or `on`. This is an explicit
+privacy choice: accepted input can include prompts and approval answers, while
+recorded stdout can include sensitive conversation content. The initial notice
+shows the escaped tape path and whether stdin is included; it reports active
+capture, not successful finalization.
+
+Initial terminal dimensions, epoch milliseconds and the binary version are
+injected into the native request. Tape startup succeeds before a conversation
+is created, resumed or admitted through the picker. A failed `--record` startup
+is fatal. A failed environment-only startup closes and joins its attempted
+recording scope before continuing with the fixed `recording unavailable`
+notice; it never claims active recording. A signal observed during recording
+startup cancels and joins that setup and prevents conversation admission,
+including for an optional environment-only request.
+
+The output bridge retains each actual accepted stdout prefix until its tape
+receipt succeeds or reports an explicit failure, splitting payloads at the
+native 64 KiB frame bound. The presentation lane holds at most eight queued
+events; opted-in stdin is copied once at native chunk receipt. Resize, SIGINT
+and the explicit `machine-god:interactive` startup marker use their respective
+FXTP frame kinds. Saturation, clock failure and native write failure make a
+tape incomplete rather than silently dropping captured events.
+
+Input and native conversation/terminal cleanup progress independently of tape
+acknowledgements and blocked stdout. Final presentation still records accepted
+output, then requests tape flush/sync/close. The outer CLI worker closes and
+joins the separate recording worker scope after all presentation owners drop.
+Signals remain latched until this actual join; neither a final tape receipt nor
+an output acknowledgement authorizes early process exit. Abandonment is never
+reported as a complete tape. These CLI rules retain the pinned environment
+selection and stdin opt-in semantics from
+[`record_tape.zig`](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/workspace/record_tape.zig),
+with the explicit native authority and no-overwrite differences above.

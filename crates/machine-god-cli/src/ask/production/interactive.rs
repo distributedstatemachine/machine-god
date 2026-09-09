@@ -57,6 +57,7 @@ use std::{
 
 pub(super) fn execute(
     launch: &crate::workspace::launch::LaunchWorkspaceOptions,
+    record_requested: bool,
     selection: InteractiveSessionSelection,
     output: &mut dyn std::io::Write,
     mut controller: AskSignalController,
@@ -72,80 +73,17 @@ pub(super) fn execute(
             std::thread::Builder::new()
                 .name("machine-god-interactive".into())
                 .spawn_scoped(scope, move || {
-                    let (bridge, inbox) = NativeInteractivePromptBridge::new(
-                        NativeInteractivePromptLimits::default(),
-                    )
-                    .map_err(|_| ())?;
-                    let (source, terminal) = capture_input()?;
-                    let size_reader = capture_output_size()?;
-                    let input = NativeInteractiveInput::new(
-                        source,
-                        machine_god_core::CancellationToken::new(),
-                    );
-                    let input_completion = input.completion();
-                    let Ok(PreparedConversationHost {
-                        host,
-                        runtime,
-                        workspace,
-                        catalog,
-                        model_routes: _model_routes,
-                        observations: _observations,
-                        catalog_cache: _catalog_cache,
-                        user_config,
-                    }) = prepare_conversation_host_with_activation(
+                    run_interactive(
                         launch,
-                        bridge.clone(),
-                        bridge,
-                        || control.activate_turn(),
-                    )
-                    else {
-                        return super::finish_setup_failure(signals, &control);
-                    };
-                    let clipboard = clipboard::capture(&workspace);
-                    settle(
-                        host,
-                        InputSettlement {
-                            input_completion,
-                            terminal,
-                            runtime: &runtime,
-                            size_completion: Some(size_reader.completion()),
+                        record_requested,
+                        selection,
+                        OutputBridge {
+                            work,
+                            acknowledgements,
+                            tape: None,
                         },
                         signals,
                         &control,
-                        |host, signals, terminal| {
-                            runtime.block_on(async {
-                                let mut options = NativeInteractiveSessionOptions::new(
-                                    workspace,
-                                    host.loaded_config().config().model_preferences(),
-                                )
-                                .map_err(|_| ())?;
-                                if let Some(catalog) = &catalog {
-                                    options = options.with_catalog(catalog.clone());
-                                }
-                                let options = clipboard::configure(options, clipboard);
-                                let opening = InitialPresentation {
-                                    selection,
-                                    input,
-                                    inbox,
-                                    output: OutputBridge {
-                                        work,
-                                        acknowledgements,
-                                        tape: None,
-                                    },
-                                    size_reader,
-                                };
-                                let mut driver =
-                                    match opening.open(host, options, terminal, signals).await? {
-                                        Ok(driver) => driver.with_resources(catalog, user_config),
-                                        Err(presentation) => return Ok(presentation),
-                                    };
-                                let result = poll_fn(|cx| driver.poll(cx, signals)).await;
-                                Ok(driver.into_presentation(result))
-                            })
-                        },
-                        |mut presentation, signals| {
-                            Ok(runtime.block_on(poll_fn(|cx| presentation.poll(cx, signals))))
-                        },
                     )
                 }),
         )?;
@@ -159,12 +97,161 @@ pub(super) fn execute(
     (outcome, controller)
 }
 
+fn run_interactive(
+    launch: &crate::workspace::launch::LaunchWorkspaceOptions,
+    record_requested: bool,
+    selection: InteractiveSessionSelection,
+    mut output: OutputBridge,
+    signals: AskSignals,
+    control: &AskSignalControlSender,
+) -> Result<AskCommandOutcome, ()> {
+    let (bridge, inbox) =
+        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default())
+            .map_err(|_| ())?;
+    let (source, terminal) = capture_input()?;
+    let size_reader = capture_output_size()?;
+    let input = NativeInteractiveInput::new(source, machine_god_core::CancellationToken::new());
+    let input_completion = input.completion();
+    let Ok(PreparedConversationHost {
+        host,
+        runtime,
+        workspace,
+        state_path,
+        catalog,
+        model_routes: _model_routes,
+        observations: _observations,
+        catalog_cache: _catalog_cache,
+        user_config,
+    }) = prepare_conversation_host_with_activation(launch, bridge.clone(), bridge, || {
+        control.activate_turn()
+    })
+    else {
+        return super::finish_setup_failure(signals, control);
+    };
+    let clipboard = clipboard::capture(&workspace);
+    let recording_selection =
+        super::recording_startup::Selection::capture(record_requested, &workspace);
+    let recording = super::recording_startup::Settlement::default();
+    settle_with_recording(
+        host,
+        InputSettlement {
+            input_completion,
+            terminal,
+            runtime: &runtime,
+            size_completion: Some(size_reader.completion()),
+        },
+        signals,
+        control,
+        |host, signals, terminal| {
+            let prepared = prepare_terminal_presentation(
+                &runtime,
+                terminal,
+                size_reader,
+                &host,
+                RecordingSetup {
+                    selection: recording_selection,
+                    state_path,
+                    owner: &recording,
+                },
+                signals,
+            )?;
+            output.tape = prepared.tape;
+            runtime.block_on(async {
+                let mut options = NativeInteractiveSessionOptions::new(
+                    workspace,
+                    host.loaded_config().config().model_preferences(),
+                )
+                .map_err(|_| ())?;
+                if let Some(catalog) = &catalog {
+                    options = options.with_catalog(catalog.clone());
+                }
+                let options = clipboard::configure(options, clipboard);
+                let opening = InitialPresentation {
+                    selection,
+                    input,
+                    inbox,
+                    output,
+                    resize: prepared.resize,
+                    dimensions: prepared.dimensions,
+                    startup_notice: prepared.notice,
+                };
+                let mut driver = match opening.open(host, options, signals).await? {
+                    Ok(driver) => driver.with_resources(catalog, user_config),
+                    Err(presentation) => return Ok(presentation),
+                };
+                let result = poll_fn(|cx| driver.poll(cx, signals)).await;
+                Ok(driver.into_presentation(result))
+            })
+        },
+        |mut presentation, signals| {
+            Ok(runtime.block_on(poll_fn(|cx| presentation.poll(cx, signals))))
+        },
+        Some(&recording),
+    )
+}
+
+struct RecordingSetup<'a> {
+    selection: Option<super::recording_startup::Selection>,
+    state_path: std::path::PathBuf,
+    owner: &'a super::recording_startup::Settlement,
+}
+
+struct PreparedTerminalPresentation {
+    resize: resize::Resize,
+    dimensions: machine_god_native::NativeInteractiveTerminalDimensions,
+    tape: Option<super::output::tape::TapeLane>,
+    notice: Option<Vec<u8>>,
+}
+
+/// Native terminal/header preparation completes before any session admission.
+fn prepare_terminal_presentation(
+    runtime: &machine_god_native::TokioWebSearchRuntime,
+    terminal: &mut NativeInteractiveTerminal,
+    size_reader: machine_god_native::NativeInteractiveTerminalSizeReader,
+    host: &machine_god_native::NativeReferenceHost,
+    recording: RecordingSetup<'_>,
+    signals: &mut AskSignals,
+) -> Result<PreparedTerminalPresentation, ()> {
+    let (resize, dimensions) = runtime.block_on(async {
+        terminal.activate().await.map_err(|_| ())?;
+        let mut resize = resize::Resize::new(size_reader)?;
+        let dimensions = resize.initial_dimensions().await?;
+        Ok::<_, ()>((resize, dimensions))
+    })?;
+    let started = recording.owner.start(
+        runtime,
+        recording.selection,
+        host.session_store().clone(),
+        recording.state_path,
+        machine_god_native::TerminalTapeRecordingOptions::new(
+            dimensions.columns().get(),
+            dimensions.rows().get(),
+            wall_clock_ms()?,
+            env!("CARGO_PKG_VERSION").as_bytes().to_vec(),
+        ),
+        signals,
+    )?;
+    let tape = started.recorder.map(|recorder| {
+        let mut tape = super::output::tape::TapeLane::new(recorder, started.record_stdin);
+        tape.marker(b"machine-god:interactive");
+        tape
+    });
+    Ok(PreparedTerminalPresentation {
+        resize,
+        dimensions,
+        tape,
+        notice: started.notice,
+    })
+}
+
 struct InitialPresentation {
     selection: InteractiveSessionSelection,
     input: NativeInteractiveInput,
     inbox: NativeInteractivePromptInbox,
     output: OutputBridge,
-    size_reader: machine_god_native::NativeInteractiveTerminalSizeReader,
+    resize: resize::Resize,
+    dimensions: machine_god_native::NativeInteractiveTerminalDimensions,
+    startup_notice: Option<Vec<u8>>,
 }
 
 impl InitialPresentation {
@@ -172,21 +259,19 @@ impl InitialPresentation {
         self,
         host: Arc<machine_god_native::NativeReferenceHost>,
         options: NativeInteractiveSessionOptions,
-        terminal: &mut NativeInteractiveTerminal,
         signals: &mut AskSignals,
     ) -> Result<Result<Driver, FinalPresentation>, ()> {
         let picker_reader = host.session_catalog_reader().map_err(|_| ())?;
         let replay_history = !matches!(self.selection, InteractiveSessionSelection::Fresh);
-        terminal.activate().await.map_err(|_| ())?;
-        let mut resize = resize::Resize::new(self.size_reader)?;
-        let dimensions = resize.initial_dimensions().await?;
+        let dimensions = self.dimensions;
         if let Some(initial) = initial_selection(self.selection) {
             let owner = NativeInteractiveSession::open(host, options, initial, wall_clock_ms()?)
                 .await
                 .map_err(|_| ())?;
             let mut driver = Driver::new(owner, self.input, self.inbox, self.output)?
                 .with_history(replay_history)
-                .with_raw_input(dimensions.columns().get(), Some(resize));
+                .with_raw_input(dimensions.columns().get(), Some(self.resize))
+                .with_startup_notice(self.startup_notice);
             driver.frontend.as_mut().expect("raw frontend").rows = dimensions.rows().get();
             driver.picker = Some(picker::Picker::new(
                 picker_reader,
@@ -201,9 +286,10 @@ impl InitialPresentation {
                 self.input,
                 self.output,
                 picker_reader,
-                resize,
+                self.resize,
                 dimensions,
-            );
+            )
+            .with_startup_notice(self.startup_notice);
             poll_fn(|cx| startup.poll(cx, signals)).await;
             startup.into_result(self.inbox)
         }
@@ -284,7 +370,7 @@ impl InputSettlement<'_> {
 
 /// Retain signal observation outside the unwind boundary and settle the exact
 /// full host once, after all interactive owners have been dropped.
-fn settle(
+fn settle_with_recording(
     host: machine_god_native::NativeReferenceHost,
     mut input: InputSettlement<'_>,
     mut signals: AskSignals,
@@ -295,6 +381,7 @@ fn settle(
         &mut NativeInteractiveTerminal,
     ) -> Result<FinalPresentation, ()>,
     render: impl FnOnce(FinalPresentation, &mut AskSignals) -> Result<TurnDriveResult, ()>,
+    recording: Option<&super::recording_startup::Settlement>,
 ) -> Result<AskCommandOutcome, ()> {
     let completion = host.terminal_shutdown_completion().ok_or(())?;
     let host = Arc::new(host);
@@ -306,7 +393,14 @@ fn settle(
     // Attempt both even when one reports a failure.
     let input_result = input.finish();
     let host_result = completion.wait_on_worker();
-    control.enter_final()?;
+    // A first signal in Final may immediately exit. Keep latching while any
+    // recording worker remains owned, including throughout final output.
+    let recording_live = recording.is_some_and(super::recording_startup::Settlement::is_live);
+    let early_final = if recording_live {
+        Ok(())
+    } else {
+        control.enter_final()
+    };
     let result = result
         .map_err(|payload| {
             std::mem::forget(payload);
@@ -322,6 +416,17 @@ fn settle(
                 std::mem::forget(payload);
             })?
         });
+    let recording_result = recording
+        .map(super::recording_startup::Settlement::finish)
+        .transpose();
+    if recording_live {
+        control.enter_final()?;
+    }
+    let result = result.and_then(|value| {
+        early_final?;
+        recording_result?;
+        Ok(value)
+    });
     let operation_failed = result.is_err();
     let mut result = result.unwrap_or(TurnDriveResult {
         outcome: AskCommandOutcome::OperationalFailure,
@@ -469,6 +574,15 @@ impl Driver {
     ) -> Self {
         self.catalog = catalog;
         self.user_config = user_config;
+        self
+    }
+    fn with_startup_notice(mut self, notice: Option<Vec<u8>>) -> Self {
+        if let Some(mut notice) = notice {
+            if let Some(existing) = self.notice.take() {
+                notice.extend(existing);
+            }
+            self.notice = Some(notice);
+        }
         self
     }
     fn with_raw_input(mut self, columns: u16, resize: Option<resize::Resize>) -> Self {

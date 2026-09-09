@@ -162,10 +162,12 @@ impl AskCommandExecution {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ProductionAskCommandHost {
     workspace: crate::workspace::launch::LaunchWorkspaceOptions,
+    record_requested: bool,
 }
 
 pub(crate) static PRODUCTION_ASK_HOST: ProductionAskCommandHost = ProductionAskCommandHost {
     workspace: crate::workspace::launch::LaunchWorkspaceOptions::EMPTY,
+    record_requested: false,
 };
 
 pub(crate) fn parse_prompt_arguments(
@@ -343,6 +345,7 @@ mod production {
     mod interactive;
     mod output;
     mod piped_prompt;
+    mod recording_startup;
     use output::{OutputAcknowledgement, OutputBridge, OutputWork, serve_output};
     use std::future::{Future, poll_fn};
     use std::pin::Pin;
@@ -991,13 +994,18 @@ mod production {
             workspace: crate::workspace::launch::LaunchWorkspaceOptions,
             record_requested: bool,
         ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
-            if record_requested {
-                return Err(());
-            }
-            Ok(Box::new(Self { workspace }))
+            Ok(Box::new(Self {
+                workspace,
+                record_requested,
+            }))
         }
 
         fn execute_stdin(&self, output: &mut dyn std::io::Write) -> AskCommandExecution {
+            if self.record_requested {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            }
             let Ok(mut controller) = AskSignalController::spawn() else {
                 return AskCommandExecution::without_finalizer(
                     AskCommandOutcome::OperationalFailure,
@@ -1046,8 +1054,13 @@ mod production {
                     controller,
                 );
             }
-            let (outcome, controller) =
-                interactive::execute(&self.workspace, selection, output, controller);
+            let (outcome, controller) = interactive::execute(
+                &self.workspace,
+                self.record_requested,
+                selection,
+                output,
+                controller,
+            );
             AskCommandExecution::with_finalizer(outcome, controller)
         }
         fn execute(
@@ -1056,6 +1069,11 @@ mod production {
             prompt: String,
             output: &mut dyn std::io::Write,
         ) -> AskCommandExecution {
+            if self.record_requested {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            }
             let Ok(controller) = AskSignalController::spawn() else {
                 return AskCommandExecution::without_finalizer(
                     AskCommandOutcome::OperationalFailure,
@@ -1096,6 +1114,7 @@ mod production {
                             host,
                             runtime,
                             workspace,
+                            state_path: _state_path,
                             model_routes,
                             observations,
                             catalog,
@@ -1149,6 +1168,7 @@ mod production {
         host: NativeReferenceHost,
         runtime: machine_god_native::TokioWebSearchRuntime,
         workspace: std::path::PathBuf,
+        state_path: std::path::PathBuf,
         model_routes: Arc<NativeConversationModelRoutes>,
         observations: Arc<NativeConversationObservations>,
         catalog: Option<Arc<NativeModelCatalog>>,
@@ -1194,6 +1214,7 @@ mod production {
             PreparedNativeRoots::prepare(root_selection.clone()).map_err(|_| ())?;
         let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
         let workspace = prepared_roots.workspace_root().to_owned();
+        let state_path = prepared_roots.state_root().to_owned();
         let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
         // Validate inference access before any catalog request.
         // Catalog loading precedes terminal-host acquisition:
@@ -1242,6 +1263,7 @@ mod production {
             host,
             runtime,
             workspace,
+            state_path,
             model_routes,
             observations,
             catalog,
@@ -4204,10 +4226,10 @@ impl AskCommandHost for ProductionAskCommandHost {
         workspace: crate::workspace::launch::LaunchWorkspaceOptions,
         record_requested: bool,
     ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
-        if record_requested {
-            return Err(());
-        }
-        Ok(Box::new(Self { workspace }))
+        Ok(Box::new(Self {
+            workspace,
+            record_requested,
+        }))
     }
 
     fn execute(
@@ -4216,7 +4238,7 @@ impl AskCommandHost for ProductionAskCommandHost {
         _prompt: String,
         _output: &mut dyn io::Write,
     ) -> AskCommandExecution {
-        let _ = &self.workspace;
+        let _ = (&self.workspace, self.record_requested);
         AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
     }
 }
