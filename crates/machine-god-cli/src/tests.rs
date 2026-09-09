@@ -56,6 +56,7 @@ impl BackgroundCommandHost for FakeBackgroundHost {
 #[derive(Debug)]
 struct FakeAskHost {
     launches: RefCell<Vec<crate::workspace::launch::LaunchWorkspaceOptions>>,
+    recordings: RefCell<Vec<bool>>,
     outcome: AskCommandOutcome,
     calls: Cell<usize>,
     selections: RefCell<Vec<Option<String>>>,
@@ -67,6 +68,7 @@ impl FakeAskHost {
     fn new(outcome: AskCommandOutcome, output: &'static [u8]) -> Self {
         Self {
             launches: RefCell::new(Vec::new()),
+            recordings: RefCell::new(Vec::new()),
             outcome,
             calls: Cell::new(0),
             selections: RefCell::new(Vec::new()),
@@ -77,11 +79,13 @@ impl FakeAskHost {
 }
 
 impl AskCommandHost for FakeAskHost {
-    fn with_workspace(
+    fn with_launch(
         &self,
         options: crate::workspace::launch::LaunchWorkspaceOptions,
+        record_requested: bool,
     ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
         self.launches.borrow_mut().push(options);
+        self.recordings.borrow_mut().push(record_requested);
         Ok(Box::new(self))
     }
     fn execute_stdin(&self, _output: &mut dyn io::Write) -> AskCommandExecution {
@@ -216,6 +220,69 @@ fn launch_workspace_modifiers_reach_only_validated_conversation_hosts() {
             2
         );
         assert_eq!(host.calls.get(), 0);
+        assert!(host.launches.borrow().is_empty());
+        assert!(stdout.is_empty());
+    }
+}
+
+#[test]
+fn recording_modifier_reaches_only_validated_interactive_hosts() {
+    for args in [
+        vec!["--record"],
+        vec!["--resume", "--record"],
+        vec!["session", "resume", "--record"],
+        vec!["resume", "saved", "--record"],
+        vec![
+            "--add-dir",
+            "shared",
+            "--no-additional-dirs",
+            "-r",
+            "--record",
+        ],
+    ] {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, b"interactive\n");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_hosts(
+                args.into_iter().map(OsString::from),
+                &mut stdout,
+                &mut stderr,
+                CommandHosts {
+                    ask: &host,
+                    ..Default::default()
+                }
+            ),
+            0
+        );
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(*host.recordings.borrow(), vec![true]);
+        assert_eq!(stdout, b"interactive\n");
+        assert!(stderr.is_empty());
+    }
+    for args in [
+        vec!["ask", "prompt", "--record"],
+        vec!["resume", "saved", "prompt", "--record"],
+        vec!["--add-dir=shared", "--record", "resume"],
+        vec!["--record", "--record"],
+    ] {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, b"not reached");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_hosts(
+                args.into_iter().map(OsString::from),
+                &mut stdout,
+                &mut stderr,
+                CommandHosts {
+                    ask: &host,
+                    ..Default::default()
+                }
+            ),
+            2
+        );
+        assert_eq!(host.calls.get(), 0);
+        assert!(host.recordings.borrow().is_empty());
         assert!(host.launches.borrow().is_empty());
         assert!(stdout.is_empty());
     }
@@ -770,7 +837,6 @@ fn resume_aliases_reject_malformed_targets_and_tails_before_host_effects() {
         vec!["--resume", " \t\r\n"],
         vec!["--resume", "\u{a0}alpha\u{a0}"],
         vec!["--resume", "bad/session"],
-        vec!["--resume", "--record"],
         vec!["resume", "--id"],
         vec!["resume", "--id", ""],
         vec!["resume", "--id", "--record"],
@@ -780,7 +846,6 @@ fn resume_aliases_reject_malformed_targets_and_tails_before_host_effects() {
         vec!["resume", "--resume", "--last", "extra"],
         vec!["session", "resume", "alpha", "prompt"],
         vec!["session", "resume", "--id", "last", "prompt"],
-        vec!["session", "resume", "--record"],
         vec!["session", "resume", "last", "--json"],
     ] {
         let host = FakeAskHost::new(AskCommandOutcome::Completed, b"must not run");

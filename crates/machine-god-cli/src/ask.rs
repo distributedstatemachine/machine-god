@@ -83,13 +83,6 @@ impl AskCommandOutcome {
 pub(crate) trait AskCommandHost {
     /// Retains validated launch inputs only; alternate hosts must explicitly
     /// support them instead of silently dropping requested authority selection.
-    fn with_workspace(
-        &self,
-        options: crate::workspace::launch::LaunchWorkspaceOptions,
-    ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
-        self.with_launch(options, false)
-    }
-
     fn with_launch(
         &self,
         _options: crate::workspace::launch::LaunchWorkspaceOptions,

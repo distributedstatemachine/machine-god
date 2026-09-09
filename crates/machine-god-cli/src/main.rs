@@ -7,6 +7,7 @@ mod background;
 mod bounded_output;
 mod doctor;
 mod models;
+mod recording_launch;
 mod replay;
 mod session;
 mod sessions;
@@ -306,13 +307,15 @@ fn run_with_hosts(
             OUTPUT_FAILURE,
         );
     }
-    let Ok(command) = parse_arguments(first.into_iter().chain(arguments)) else {
+    let Ok((command, record_requested)) =
+        recording_launch::parse(first.into_iter().chain(arguments))
+    else {
         let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
         return 2;
     };
 
     let configured_ask;
-    let ask_host = if launch.selected() {
+    let ask_host = if launch.selected() || record_requested {
         if !matches!(
             command,
             Command::Interactive { .. }
@@ -323,7 +326,7 @@ fn run_with_hosts(
             let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
             return 2;
         }
-        let Ok(host) = hosts.ask.with_workspace(launch) else {
+        let Ok(host) = hosts.ask.with_launch(launch, record_requested) else {
             let _ = stderr.write_all(CONFIGURATION_FAILURE.as_bytes());
             return 1;
         };
@@ -607,6 +610,7 @@ fn help() -> String {
             "\n",
             "Usage:\n",
             "  machine-god\n",
+            "  machine-god [<interactive-resume-options>] --record\n",
             "  machine-god [--add-dir PATH | --add-dir=PATH]... [--no-additional-dirs] [ask ... | resume ... | <interactive-resume-options>]\n",
             "  machine-god help\n",
             "  machine-god ask [--] [<prompt...>]\n",
