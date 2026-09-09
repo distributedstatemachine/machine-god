@@ -124,6 +124,7 @@ impl InputLines {
         }
     }
 
+    #[cfg(test)]
     pub fn poll_line(
         &mut self,
         cx: &mut Context<'_>,
@@ -197,6 +198,7 @@ impl InputLines {
     /// UTF-8/paste and already received chunk remainders keep their first epoch.
     /// Ordinary command/prompt drafts retain their original modal identity.
     /// Physical EOF never submits the retained draft, unlike canonical finish.
+    #[cfg(test)]
     pub fn poll_event(
         &mut self,
         cx: &mut Context<'_>,
@@ -352,6 +354,62 @@ mod tests {
     fn raw_source() -> (InputLines, std::io::PipeWriter) {
         let (canonical, write) = source();
         (InputLines::new_raw(canonical.input), write)
+    }
+
+    #[test]
+    fn recording_observes_received_bytes_once_across_chunk_remainders_and_invalid_input() {
+        let (mut input, mut write) = source();
+        let bytes = b"first\nsecond\n\xff\n";
+        let mut observed = Vec::new();
+        runtime().block_on(async {
+            write.write_all(bytes).unwrap();
+            for index in 0..3 {
+                let line = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    poll_fn(|cx| {
+                        input.poll_line_recorded(cx, InputBinding::Command, |bytes| {
+                            observed.extend_from_slice(bytes);
+                        })
+                    }),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                assert_eq!(line.is_err(), index == 2);
+            }
+        });
+        assert_eq!(observed, bytes);
+        finish(input);
+    }
+
+    #[test]
+    fn raw_recording_observes_unmodified_escape_and_control_bytes_once() {
+        let (mut input, mut write) = raw_source();
+        let bytes = b"a\x1b[D\x03\r";
+        let mut observed = Vec::new();
+        runtime().block_on(async {
+            write.write_all(bytes).unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                poll_fn(|cx| {
+                    let _ = input.poll_event_recorded(
+                        cx,
+                        InputBinding::Command,
+                        ComposerContext::default(),
+                        |bytes| observed.extend_from_slice(bytes),
+                    );
+                    if input.chunk.is_none() && observed.len() == bytes.len() {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+        });
+        assert_eq!(observed, bytes);
+        finish(input);
     }
 
     #[test]

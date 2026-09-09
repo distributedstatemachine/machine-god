@@ -56,6 +56,13 @@ struct Recorded {
     finish: bool,
 }
 
+#[derive(PartialEq, Eq)]
+enum Finalization {
+    Open,
+    Closing,
+    Closed,
+}
+
 pub(crate) struct TapeLane {
     recorder: Option<TerminalTapeRecorder>,
     pending: Option<BoxFuture<'static, Recorded>>,
@@ -63,7 +70,7 @@ pub(crate) struct TapeLane {
     stdout: Option<StdoutReceipt>,
     record_stdin: bool,
     failed: bool,
-    finished: bool,
+    finalization: Finalization,
     clock: fn() -> Result<i64, ()>,
 }
 
@@ -76,7 +83,7 @@ impl TapeLane {
             stdout: None,
             record_stdin,
             failed: false,
-            finished: false,
+            finalization: Finalization::Open,
             clock: super::super::wall_clock_ms,
         }
     }
@@ -108,7 +115,7 @@ impl TapeLane {
     }
 
     fn enqueue(&mut self, event: Event) {
-        if self.failed || self.finished {
+        if self.failed || self.finalization != Finalization::Open {
             return;
         }
         let Ok(timestamp_ms) = (self.clock)() else {
@@ -127,8 +134,7 @@ impl TapeLane {
         }
     }
 
-    pub(super) fn stdout(&mut self, bytes: Vec<u8>, failed: bool) {
-        let timestamp_ms = (self.clock)();
+    pub(super) fn stdout(&mut self, bytes: Vec<u8>, failed: bool, timestamp_ms: Result<i64, ()>) {
         if self.stdout.is_some() {
             self.abort();
             return;
@@ -207,7 +213,9 @@ impl TapeLane {
                     .expect("admitted stdout receipt")
                     .waiting = false;
             }
-            self.finished |= recorded.finish;
+            if recorded.finish {
+                self.finalization = Finalization::Closed;
+            }
         }
         if let Some(queued) = self.queue.pop_front() {
             let Some(mut recorder) = self.recorder.take() else {
@@ -241,13 +249,16 @@ impl TapeLane {
             Ok(false) => return Poll::Pending,
             Ok(true) => {}
         }
-        if self.finished {
+        if self.finalization == Finalization::Closed {
             return Poll::Ready(Ok(()));
         }
         let Some(mut recorder) = self.recorder.take() else {
             self.abort();
             return Poll::Ready(Err(()));
         };
+        // Later signals still affect the process outcome, but cannot enqueue
+        // frames behind an already requested final close.
+        self.finalization = Finalization::Closing;
         self.pending = Some(Box::pin(async move {
             let result = recorder.finish().await;
             Recorded {
@@ -269,4 +280,22 @@ impl TapeLane {
         self.recorder.take();
         self.queue.clear();
     }
+
+    #[cfg(test)]
+    pub(crate) fn hold_for_test(&mut self, until: tokio::sync::oneshot::Receiver<()>) {
+        let recorder = self.recorder.take().expect("idle test recorder");
+        self.pending = Some(Box::pin(async move {
+            let _ = until.await;
+            let result = Ok(recorder.completion().status());
+            Recorded {
+                recorder,
+                result,
+                stdout: false,
+                finish: false,
+            }
+        }));
+    }
 }
+
+#[cfg(test)]
+mod tests;
