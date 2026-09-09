@@ -1,113 +1,94 @@
 # Top-level workspace command
 
-The bounded `workspace` command reports the process's primary workspace as a
-read-only lexical snapshot. It does not manage additional directories or
-construct the native reference host. Current delivery state and gate evidence
-remain only in the
-[implementation plan](implementation-plan.md#current-delivery-state); this page
-defines durable behavior.
+The bounded `workspace` command lists and manages native saved additional
+directories. Configuration, descriptor authority, publication, and reconciliation
+belong to the native service; the CLI only parses and presents its receipts.
+Current delivery state remains in the [implementation plan](implementation-plan.md#current-delivery-state).
 
 ## Grammar and exits
 
-The only accepted invocations are:
-
 ```text
-machine-god workspace
-machine-god workspace --json
-machine-god workspace list
-machine-god workspace list --json
+machine-god workspace [list | add PATH | remove PATH | clear] [--json]
 ```
 
-`list` is the default action. The singleton `--json` flag must be final.
-`--json list`, repeated flags, `--json=true`, `add`, `remove`, `clear`, path
-operands, extra arguments, and non-Unicode arguments are invalid. The complete
-grammar is validated before current-directory or any other native authority is
-acquired.
+`list` is the default. A singleton `--json` may appear anywhere after
+`workspace`, including between the verb and path. Missing or extra operands,
+repeated flags, unknown flags, and `--json=true` are invalid. A path beginning
+with a hyphen must be spelled with an explicit relative prefix such as
+`./-name`; there is no `--` separator. Path operands preserve operating-system
+bytes, including non-Unicode paths where supported, with a 4,096-byte limit and
+no NUL. The complete grammar is validated before acquiring native authority.
 
-Invalid syntax writes the one global usage diagnostic to standard error,
-writes no standard output, and exits `2`. Success writes only standard output
-and exits `0`. An operational or rendering failure exits `1`. Human mode writes
-its fixed diagnostic to standard error with empty standard output. JSON mode
-writes one compact error object to standard output with empty standard error.
-A stdout failure uses the existing exact
-`machine-god: failed to write output\n` standard-error diagnostic and exits
-`1`.
+Invalid syntax emits global usage on stderr and exits `2`. Confirmed or
+refreshed receipts exit `0`. Ambiguous, indeterminate, or reload-failed receipts
+retain their independent facts but exit `1`; they are not blindly retried.
+Operational and rendering failures also exit `1`. Human failures use stderr;
+JSON failures use stdout. Output failures use
+`machine-god: failed to write output\n` on stderr.
 
-The closed, redacted presentation categories are:
+## Output and receipts
 
-| Category | Meaning |
-| --- | --- |
-| `Unavailable` | Current-directory capture failed, or the captured path is non-Unicode, relative, or contains a lexical parent component. |
-| `ResourceLimit` | The path, returned snapshot invariant, or complete serialized output exceeds its bound. |
+Each result identifies the canonical primary directory and generation, saved
+suppression, and up to 16 additional directories. Every entry preserves source
+spelling, identity, canonical-identity status, independent saved and launch
+provenance, availability, and activation. Unavailable entries remain visible.
 
-The human failure is exactly
-`machine-god workspace: could not inspect workspace: <Category>\n`. JSON
-failure fixes key order `kind,error,code` and is exactly
-`{"kind":"workspace","error":"could not inspect workspace: <Category>","code":"<Category>"}\n`.
-Neither mode reflects a path, environment value, operating-system diagnostic,
-raw error number, or underlying error text.
+JSON paths are lossless objects: `{"text":"/path","bytes_hex":null}` for valid
+Unicode, or `{"text":null,"bytes_hex":"<lowercase raw-byte hex>"}` otherwise.
+Human paths use escaped quoted strings or an explicit `bytes_hex` representation.
+Quotes, backslashes, terminal controls, Unicode line separators and bidirectional
+formatting controls are escaped in either presentation.
 
-## Successful output
+Compact JSON uses keys `kind,action,primary_directory,generation,saved_suppressed,
+additional_directories,saved_changed,runtime_changed,reconciliation,
+reconciliation_error,launch_flag_can_restore`. Entry keys are
+`source,identity,identity_canonical,saved,launch,available,active`.
+The human rendering presents the same fields as labeled lines.
 
-The result has one primary directory. It is the accepted lexical path returned
-by the single process current-directory capture, not a canonical path, retained
-descriptor, filesystem identity, or promise that the directory still exists.
-The UTF-8 path is at most 4,096 bytes.
+`saved_changed` and `runtime_changed` are independent optional booleans;
+`null` means unknown, not false. Reconciliation is `cached_busy`, `refreshed`,
+`confirmed`, `ambiguous_intended`, `ambiguous_before`, `indeterminate`, or
+`reload_failed`. Observing intended or prior configuration after an ambiguous
+publication does not confirm durability. `reconciliation_error` is null except
+for a fixed redacted reload error. `launch_flag_can_restore` preserves the
+native service's distinction between saved configuration and launch authority.
 
-Human success is exactly these two LF-terminated lines:
+Both presentations are fully assembled before writing and capped at 1 MiB,
+including one final LF. Entry cardinality and path bounds are checked first.
+An invalid result or oversized rendering fails atomically as `ResourceLimit`.
 
-```text
-[workspace] primary="<absolute-path>"
-[workspace] additional_directories=unsupported
-```
-
-`<absolute-path>` is a JSON string, including its quotes. Quotes, backslashes,
-C0/C1 controls and DEL, Unicode line and paragraph separators, and Unicode
-bidirectional-formatting controls are escaped. The path is intentional public
-output in both modes.
-
-Compact JSON fixes key order
-`kind,action,primary_directory,additional_directories_supported,additional_directories`:
-
-```json
-{"kind":"workspace","action":"list","primary_directory":"<absolute-path>","additional_directories_supported":false,"additional_directories":[]}
-```
-
-`action` is always `list`. The `false` value and empty array describe the
-currently supported command surface; they do not claim that an upstream or
-foreign saved-directory configuration was inspected. Both representations are
-assembled completely before their first byte is written, end with exactly one
-LF, and are capped at 32,768 bytes including that LF. A violated result
-invariant or output cap fails atomically as `ResourceLimit`; partial success
-output is never intentionally emitted.
+Operational errors never reflect raw underlying messages, credentials, or paths.
+Human errors are `machine-god workspace: operation failed: <Code>\n`.
+JSON errors contain `kind,action,error,code`, with fixed
+`"error":"workspace operation failed"`. Codes distinguish `Busy`,
+`InvalidPath`, `UnknownDirectory`, `ResourceLimit`, `DuplicateRoot`,
+`OverlappingState`, `Conflict`, `InvalidConfiguration`, `UnsafePath`,
+`Persistence`, `Ambiguous`, `Unavailable`, and `Unsupported`.
 
 ## Native authority and effects
 
-After parsing, the native workspace inspection boundary synchronously calls
-`std::env::current_dir()` exactly once. The returned path must be nonempty,
-Unicode, absolute, contain no lexical `ParentDir` component, and satisfy the
-4,096-byte UTF-8 limit. Inspection performs lexical validation only.
+After parsing, explicit process root/config selection supplies the native
+startup factory and workspace service. List reads actual saved configuration;
+malformed settings fail rather than being ignored. Add, remove, and clear use
+native owned configuration publication. Duplicate additions and no-op clears do
+not rewrite settings. Top-level commands have no launch-only roots or saved
+suppression. Missing configuration and session-state directories are not created
+by startup or listing; mutations may create their configuration directory.
 
-The command does not read process environment variables, configuration, state,
-credentials, session records, or directory metadata. It does not inspect,
-canonicalize, open, create, remove, rename, or write a filesystem object; load
-or prepare native roots; construct an engine, provider, transport, runtime, or
-reference host; prompt; or use the network. In particular, missing, empty,
-relative, non-Unicode, or otherwise invalid `HOME`, `XDG_CONFIG_HOME`, and
-`XDG_STATE_HOME` values cannot affect this command and no configuration or state
-path is created.
+The current-thread runtime drives the actual owned native worker scope. That
+scope is closed and its full worker/collector completion is joined before
+rendering either a receipt or an error. No engine, provider, reference host,
+credential acquisition, network request, or detached Tokio helper is involved.
 
-This boundary is separate from `NativeRootSelection::from_current_process`.
-Root selection also selects a state root and therefore has authority and
-failure modes that a primary-workspace observation does not need. The workspace
-snapshot grants no filesystem or tool authority to later operations.
+The older `NativeWorkspaceInspection` library remains a separate compatible
+lexical observation API. These commands instead use descriptor-backed authority.
 
-## Deferred surface
+## Authority and remaining integration
 
 ### Descriptor authority contract
 
-The native workspace authority primitive is separate from the lexical command
-above. Its caller supplies an already-owned primary descriptor, an explicit
+The native workspace authority primitive receives explicit root authority.
+Its caller supplies an already-owned primary descriptor, an explicit
 state identity, and an owned state descriptor when that directory exists.
 An absent state directory instead retains a validated nearest-existing-prefix
 descriptor and canonical projected exclusion path; it creates nothing and does
@@ -156,18 +137,10 @@ grammar or extend any tool's authority.
 
 ### Remaining command surface
 
-The following pinned-upstream behavior remains intentionally unsupported:
-
-- `workspace add PATH`, `workspace remove PATH`, `workspace clear`, durable
-  additional-directory configuration, reconciliation, saved suppression, and
-  the upstream additional-directory limit;
-- global `--add-dir` and `--no-additional-dirs` options;
-- availability, activation, and source flags for additional directories;
-- interactive `/workspace` behavior and its slash-command category;
-- extending tool authority, indexing, search, or completion across additional
-  roots; and
-- canonical filesystem identity, descriptor retention, or a compatibility-
-  equivalence claim for the broader upstream workspace manager.
+Global `--add-dir` / `--no-additional-dirs`, interactive `/workspace`, and
+actual additional-root tool/search/completion integration remain separate
+composition work. Top-level management alone does not extend a running
+conversation's tool authority or establish complete upstream equivalence.
 
 ## Native workspace operation ownership
 

@@ -4,7 +4,6 @@ use std::fmt::Write as _;
 #[cfg(not(target_family = "wasm"))]
 use std::future::poll_fn;
 use std::io;
-use std::path::Path;
 use std::process::ExitCode;
 #[cfg(not(target_family = "wasm"))]
 use std::sync::mpsc;
@@ -17,6 +16,10 @@ mod background;
 mod replay;
 mod sessions;
 mod status;
+mod workspace;
+use workspace::{
+    ProductionWorkspaceCommandHost, WorkspaceCommandHost, WorkspaceOptions, run_workspace,
+};
 
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
@@ -39,11 +42,9 @@ use machine_god_native::{
     DiscoveredAiGatewayCatalogCredential, discover_process_ai_gateway_catalog_credential,
 };
 use machine_god_native::{
-    MAX_WORKSPACE_PATH_BYTES, NativeCredentialSourceKind, NativeDoctorCheckStatus,
-    NativeDoctorReport, NativeProviderKind, NativeSessionInspection, NativeSessionInspectionError,
-    NativeSessionInspectionErrorKind, NativeTransportKind, NativeWorkspaceInspection,
-    NativeWorkspaceInspectionError, NativeWorkspaceInspectionErrorKind, PermissionMode,
-    inspect_process_doctor, inspect_process_session, inspect_process_workspace,
+    NativeCredentialSourceKind, NativeDoctorCheckStatus, NativeDoctorReport, NativeProviderKind,
+    NativeSessionInspection, NativeSessionInspectionError, NativeSessionInspectionErrorKind,
+    NativeTransportKind, PermissionMode, inspect_process_doctor, inspect_process_session,
     load_process_config,
 };
 use replay::{ProductionReplayCommandHost, ReplayCommandHost, is_replay_command, run_replay};
@@ -52,7 +53,7 @@ use status::{ProductionStatusCommandHost, StatusCommandHost, is_status_command, 
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -61,7 +62,6 @@ const DOCTOR_CHECK_COUNT: usize = 4;
 const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
 const MAX_MODELS_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_SESSION_OUTPUT_BYTES: usize = 4096;
-const MAX_WORKSPACE_OUTPUT_BYTES: usize = 32 * 1024;
 
 #[derive(Debug)]
 struct BoundedDoctorOutput {
@@ -153,36 +153,6 @@ impl std::fmt::Write for BoundedSessionOutput {
     }
 }
 
-#[derive(Debug)]
-struct BoundedWorkspaceOutput {
-    value: String,
-}
-
-impl BoundedWorkspaceOutput {
-    fn new() -> Self {
-        Self {
-            value: String::with_capacity(8192),
-        }
-    }
-
-    fn finish(self) -> String {
-        self.value
-    }
-}
-
-impl std::fmt::Write for BoundedWorkspaceOutput {
-    fn write_str(&mut self, value: &str) -> std::fmt::Result {
-        let Some(new_len) = self.value.len().checked_add(value.len()) else {
-            return Err(std::fmt::Error);
-        };
-        if new_len > MAX_WORKSPACE_OUTPUT_BYTES {
-            return Err(std::fmt::Error);
-        }
-        self.value.push_str(value);
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Command {
     Identity,
@@ -215,7 +185,7 @@ enum Command {
         options: SessionsOptions,
     },
     Workspace {
-        json: bool,
+        options: WorkspaceOptions,
     },
 }
 
@@ -399,73 +369,6 @@ fn classify_session_inspection_error_kind(
         NativeSessionInspectionErrorKind::NotFound => SessionOperationalFailure::NotFound,
         NativeSessionInspectionErrorKind::Corrupt => SessionOperationalFailure::Corrupt,
         _ => SessionOperationalFailure::Unavailable,
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct WorkspaceSnapshot {
-    primary_directory: String,
-}
-
-impl WorkspaceSnapshot {
-    fn from_native(
-        inspection: &NativeWorkspaceInspection,
-    ) -> Result<Self, WorkspaceOperationalFailure> {
-        let primary_directory = inspection
-            .primary_workspace()
-            .to_str()
-            .ok_or(WorkspaceOperationalFailure::Unavailable)?
-            .to_owned();
-        let snapshot = Self { primary_directory };
-        validate_workspace_snapshot(&snapshot)?;
-        Ok(snapshot)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WorkspaceOperationalFailure {
-    ResourceLimit,
-    Unavailable,
-}
-
-impl WorkspaceOperationalFailure {
-    const fn category(self) -> &'static str {
-        match self {
-            Self::ResourceLimit => "ResourceLimit",
-            Self::Unavailable => "Unavailable",
-        }
-    }
-}
-
-trait WorkspaceCommandHost {
-    fn inspect_workspace(&self) -> Result<WorkspaceSnapshot, WorkspaceOperationalFailure>;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct ProductionWorkspaceCommandHost;
-
-impl WorkspaceCommandHost for ProductionWorkspaceCommandHost {
-    fn inspect_workspace(&self) -> Result<WorkspaceSnapshot, WorkspaceOperationalFailure> {
-        let inspection =
-            inspect_process_workspace().map_err(classify_workspace_inspection_error)?;
-        WorkspaceSnapshot::from_native(&inspection)
-    }
-}
-
-fn classify_workspace_inspection_error(
-    error: NativeWorkspaceInspectionError,
-) -> WorkspaceOperationalFailure {
-    classify_workspace_inspection_error_kind(error.kind())
-}
-
-fn classify_workspace_inspection_error_kind(
-    kind: NativeWorkspaceInspectionErrorKind,
-) -> WorkspaceOperationalFailure {
-    match kind {
-        NativeWorkspaceInspectionErrorKind::ResourceLimit => {
-            WorkspaceOperationalFailure::ResourceLimit
-        }
-        NativeWorkspaceInspectionErrorKind::Unavailable => WorkspaceOperationalFailure::Unavailable,
     }
 }
 
@@ -1544,8 +1447,8 @@ fn run_with_hosts_and_status(
         Command::Sessions { options } => {
             return run_sessions(listing_host, &options, stdout, stderr);
         }
-        Command::Workspace { json } => {
-            return run_workspace(workspace_host, json, stdout, stderr);
+        Command::Workspace { options } => {
+            return run_workspace(workspace_host, &options, stdout, stderr);
         }
     };
 
@@ -1635,19 +1538,9 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
         "sessions" => Command::Sessions {
             options: sessions::parse_options(arguments.by_ref())?,
         },
-        "workspace" => {
-            let json = match arguments.next() {
-                None => false,
-                Some(argument) if argument == "--json" => true,
-                Some(argument) if argument == "list" => match arguments.next() {
-                    None => false,
-                    Some(argument) if argument == "--json" => true,
-                    Some(_) => return Err(()),
-                },
-                Some(_) => return Err(()),
-            };
-            Command::Workspace { json }
-        }
+        "workspace" => Command::Workspace {
+            options: workspace::parse_options(arguments.by_ref())?,
+        },
         alias if alias.starts_with("--resume-") => Command::Interactive {
             selection: InteractiveSessionSelection::Exact(parse_explicit_session_id(
                 OsString::from(&alias["--resume-".len()..]),
@@ -1783,7 +1676,7 @@ fn help() -> String {
             "  machine-god session <id> [--json]\n",
             "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
             "  machine-god status [--json]\n",
-            "  machine-god workspace [list] [--json]\n",
+            "  machine-god workspace [list | add <path> | remove <path> | clear] [--json]\n",
             "\n",
             "Commands:\n",
             "  help         Show this help\n",
@@ -1797,7 +1690,7 @@ fn help() -> String {
             "  session      Inspect a saved session\n",
             "  sessions     List saved sessions\n",
             "  status       Show configuration and runtime information\n",
-            "  workspace    Show the current workspace\n",
+            "  workspace    Manage additional workspace directories\n",
             "\n",
             "Options:\n",
             "  -h, --help       Show this help\n",
@@ -2161,118 +2054,6 @@ fn write_json_session(
     output.write_str("}\n")
 }
 
-fn run_workspace(
-    host: &impl WorkspaceCommandHost,
-    json: bool,
-    stdout: &mut impl io::Write,
-    stderr: &mut impl io::Write,
-) -> u8 {
-    let snapshot = match host.inspect_workspace() {
-        Ok(snapshot) => snapshot,
-        Err(failure) => return write_workspace_failure(failure, json, stdout, stderr),
-    };
-    let output = match render_workspace(&snapshot, json) {
-        Ok(output) => output,
-        Err(failure) => return write_workspace_failure(failure, json, stdout, stderr),
-    };
-    if stdout.write_all(output.as_bytes()).is_err() {
-        let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
-        return 1;
-    }
-    0
-}
-
-fn write_workspace_failure(
-    failure: WorkspaceOperationalFailure,
-    json: bool,
-    stdout: &mut impl io::Write,
-    stderr: &mut impl io::Write,
-) -> u8 {
-    let category = failure.category();
-    if json {
-        let mut output = BoundedWorkspaceOutput::new();
-        let rendered = (|| {
-            output.write_str("{\"kind\":\"workspace\",\"error\":")?;
-            write_json_string(
-                &mut output,
-                &format!("could not inspect workspace: {category}"),
-            )?;
-            output.write_str(",\"code\":")?;
-            write_json_string(&mut output, category)?;
-            output.write_str("}\n")
-        })();
-        let output = if rendered.is_ok() {
-            output.finish()
-        } else {
-            concat!(
-                "{\"kind\":\"workspace\",\"error\":",
-                "\"could not inspect workspace: ResourceLimit\",",
-                "\"code\":\"ResourceLimit\"}\n",
-            )
-            .to_owned()
-        };
-        if stdout.write_all(output.as_bytes()).is_err() {
-            let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
-        }
-    } else {
-        let mut output = String::from("machine-god workspace: could not inspect workspace: ");
-        output.push_str(category);
-        output.push('\n');
-        if stderr.write_all(output.as_bytes()).is_err() {
-            let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
-        }
-    }
-    1
-}
-
-fn render_workspace(
-    snapshot: &WorkspaceSnapshot,
-    json: bool,
-) -> Result<String, WorkspaceOperationalFailure> {
-    validate_workspace_snapshot(snapshot)?;
-    let mut output = BoundedWorkspaceOutput::new();
-    let rendered = if json {
-        write_json_workspace(&mut output, snapshot)
-    } else {
-        write_human_workspace(&mut output, snapshot)
-    };
-    rendered.map_err(|_| WorkspaceOperationalFailure::ResourceLimit)?;
-    Ok(output.finish())
-}
-
-fn validate_workspace_snapshot(
-    snapshot: &WorkspaceSnapshot,
-) -> Result<(), WorkspaceOperationalFailure> {
-    let path = Path::new(&snapshot.primary_directory);
-    if snapshot.primary_directory.len() > MAX_WORKSPACE_PATH_BYTES
-        || !path.is_absolute()
-        || path
-            .components()
-            .any(|component| component == std::path::Component::ParentDir)
-    {
-        return Err(WorkspaceOperationalFailure::ResourceLimit);
-    }
-    Ok(())
-}
-
-fn write_human_workspace(
-    output: &mut BoundedWorkspaceOutput,
-    snapshot: &WorkspaceSnapshot,
-) -> std::fmt::Result {
-    output.write_str("[workspace] primary=")?;
-    write_json_string(output, &snapshot.primary_directory)?;
-    output.write_str("\n[workspace] additional_directories=unsupported\n")
-}
-
-fn write_json_workspace(
-    output: &mut BoundedWorkspaceOutput,
-    snapshot: &WorkspaceSnapshot,
-) -> std::fmt::Result {
-    output.write_str("{\"kind\":\"workspace\",\"action\":\"list\",\"primary_directory\":")?;
-    write_json_string(output, &snapshot.primary_directory)?;
-    output.write_str(",\"additional_directories_supported\":false,\"additional_directories\":[]}\n")
-}
-
 fn permissions(permission_mode: PermissionMode, json: bool) -> String {
     if json {
         json_permissions(permission_mode)
@@ -2341,17 +2122,15 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::is_background_process_helper_arguments;
     use super::{
-        BoundedSessionOutput, BoundedWorkspaceOutput, Command, DOCTOR_RENDER_FAILURE,
-        DoctorCheckSnapshot, DoctorCheckStatus, DoctorCommandHost, DoctorReportSnapshot,
-        INVALID_ARGUMENTS, MAX_DOCTOR_OUTPUT_BYTES, MAX_SESSION_OUTPUT_BYTES,
-        MAX_WORKSPACE_OUTPUT_BYTES, ModelsCommandExecution, ModelsCommandHost,
-        ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode, SessionCommandHost,
-        SessionOperationalFailure, SessionSnapshot, SessionsOptions, WorkspaceCommandHost,
-        WorkspaceOperationalFailure, WorkspaceSnapshot, classify_session_inspection_error_kind,
-        classify_workspace_inspection_error_kind, help, json_permissions, parse_arguments,
-        permissions, push_json_string, render_doctor, render_session, render_workspace, run,
-        run_with_ask_host, run_with_background_host, run_with_doctor_host, run_with_models_host,
-        run_with_session_host, run_with_status_host, run_with_workspace_host,
+        BoundedSessionOutput, Command, DOCTOR_RENDER_FAILURE, DoctorCheckSnapshot,
+        DoctorCheckStatus, DoctorCommandHost, DoctorReportSnapshot, INVALID_ARGUMENTS,
+        MAX_DOCTOR_OUTPUT_BYTES, MAX_SESSION_OUTPUT_BYTES, ModelsCommandExecution,
+        ModelsCommandHost, ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode,
+        SessionCommandHost, SessionOperationalFailure, SessionSnapshot, SessionsOptions,
+        classify_session_inspection_error_kind, help, json_permissions, parse_arguments,
+        permissions, push_json_string, render_doctor, render_session, run, run_with_ask_host,
+        run_with_background_host, run_with_doctor_host, run_with_models_host,
+        run_with_session_host, run_with_status_host,
     };
     #[cfg(not(target_family = "wasm"))]
     use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
@@ -2377,10 +2156,9 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     use machine_god_core::{ProviderError, ProviderErrorKind};
     use machine_god_native::{
-        AI_GATEWAY_DEFAULT_MODEL, MAX_WORKSPACE_PATH_BYTES, NativeBackgroundQuery,
-        NativeRuntimeCredentialEnvironment, NativeRuntimeStatus, NativeRuntimeStatusError,
-        NativeRuntimeStatusInput, NativeSessionInspectionErrorKind,
-        NativeWorkspaceInspectionErrorKind, inspect_native_runtime_status,
+        AI_GATEWAY_DEFAULT_MODEL, NativeBackgroundQuery, NativeRuntimeCredentialEnvironment,
+        NativeRuntimeStatus, NativeRuntimeStatusError, NativeRuntimeStatusInput,
+        NativeSessionInspectionErrorKind, inspect_native_runtime_status,
     };
     use std::cell::{Cell, RefCell};
     use std::ffi::OsString;
@@ -2596,28 +2374,6 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Debug)]
-    struct FakeWorkspaceHost {
-        result: Result<WorkspaceSnapshot, WorkspaceOperationalFailure>,
-        calls: Cell<usize>,
-    }
-
-    impl FakeWorkspaceHost {
-        fn new(result: Result<WorkspaceSnapshot, WorkspaceOperationalFailure>) -> Self {
-            Self {
-                result,
-                calls: Cell::new(0),
-            }
-        }
-    }
-
-    impl WorkspaceCommandHost for FakeWorkspaceHost {
-        fn inspect_workspace(&self) -> Result<WorkspaceSnapshot, WorkspaceOperationalFailure> {
-            self.calls.set(self.calls.get() + 1);
-            self.result.clone()
-        }
-    }
-
     fn session_snapshot(id: &str) -> SessionSnapshot {
         SessionSnapshot {
             id: id.to_owned(),
@@ -2626,12 +2382,6 @@ mod tests {
             next_turn_sequence: 4,
             message_count: 3,
             metadata_entry_count: 2,
-        }
-    }
-
-    fn workspace_snapshot(primary_directory: &str) -> WorkspaceSnapshot {
-        WorkspaceSnapshot {
-            primary_directory: primary_directory.to_owned(),
         }
     }
 
@@ -3837,60 +3587,6 @@ mod tests {
         );
         assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
         assert_eq!(host.calls.get(), 0);
-    }
-
-    #[test]
-    fn workspace_parser_accepts_only_list_with_an_optional_final_json_flag() {
-        for arguments in [
-            vec![OsString::from("workspace")],
-            vec![OsString::from("workspace"), OsString::from("list")],
-        ] {
-            assert_eq!(
-                parse_arguments(arguments),
-                Ok(Command::Workspace { json: false })
-            );
-        }
-        for arguments in [
-            vec![OsString::from("workspace"), OsString::from("--json")],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("list"),
-                OsString::from("--json"),
-            ],
-        ] {
-            assert_eq!(
-                parse_arguments(arguments),
-                Ok(Command::Workspace { json: true })
-            );
-        }
-        for arguments in [
-            vec![OsString::from("workspace"), OsString::from("add")],
-            vec![OsString::from("workspace"), OsString::from("remove")],
-            vec![OsString::from("workspace"), OsString::from("clear")],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("--json"),
-                OsString::from("list"),
-            ],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("--json"),
-                OsString::from("--json"),
-            ],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("list"),
-                OsString::from("list"),
-            ],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("list"),
-                OsString::from("--json"),
-                OsString::from("extra"),
-            ],
-        ] {
-            assert_eq!(parse_arguments(arguments), Err(()));
-        }
     }
 
     #[test]
@@ -5420,265 +5116,6 @@ mod tests {
         assert!(stdout.is_empty());
         assert_eq!(stderr.captured, OUTPUT_FAILURE.as_bytes());
         assert_eq!(host.calls.get(), 1);
-    }
-
-    #[test]
-    fn workspace_aliases_have_exact_human_and_json_output_and_one_observation() {
-        let cases = [
-            (
-                vec![OsString::from("workspace")],
-                concat!(
-                    "[workspace] primary=\"/work/café\"\n",
-                    "[workspace] additional_directories=unsupported\n",
-                ),
-            ),
-            (
-                vec![OsString::from("workspace"), OsString::from("list")],
-                concat!(
-                    "[workspace] primary=\"/work/café\"\n",
-                    "[workspace] additional_directories=unsupported\n",
-                ),
-            ),
-            (
-                vec![OsString::from("workspace"), OsString::from("--json")],
-                concat!(
-                    "{\"kind\":\"workspace\",\"action\":\"list\",",
-                    "\"primary_directory\":\"/work/café\",",
-                    "\"additional_directories_supported\":false,",
-                    "\"additional_directories\":[]}\n",
-                ),
-            ),
-            (
-                vec![
-                    OsString::from("workspace"),
-                    OsString::from("list"),
-                    OsString::from("--json"),
-                ],
-                concat!(
-                    "{\"kind\":\"workspace\",\"action\":\"list\",",
-                    "\"primary_directory\":\"/work/café\",",
-                    "\"additional_directories_supported\":false,",
-                    "\"additional_directories\":[]}\n",
-                ),
-            ),
-        ];
-        for (arguments, expected) in cases {
-            let host = FakeWorkspaceHost::new(Ok(workspace_snapshot("/work/café")));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_workspace_host(arguments, &mut stdout, &mut stderr, &host);
-
-            assert_eq!(exit, 0);
-            assert_eq!(stdout, expected.as_bytes());
-            assert!(stderr.is_empty());
-            assert_eq!(host.calls.get(), 1);
-        }
-    }
-
-    #[test]
-    fn workspace_output_escapes_terminal_controls_and_json_metacharacters() {
-        let snapshot = workspace_snapshot(
-            "/quote\"-slash\\-line\n-escape\u{1b}-del\u{7f}-c1\u{85}-bidi\u{202e}-separator\u{2028}",
-        );
-        for json in [false, true] {
-            let output = render_workspace(&snapshot, json).expect("valid path renders");
-            assert_eq!(output.matches('\n').count(), if json { 1 } else { 2 });
-            for raw_control in ['\u{1b}', '\u{7f}', '\u{85}', '\u{202e}', '\u{2028}'] {
-                assert!(!output.contains(raw_control));
-            }
-            assert!(output.contains(
-                "quote\\\"-slash\\\\-line\\n-escape\\u001b-del\\u007f-c1\\u0085-bidi\\u202e-separator\\u2028"
-            ));
-        }
-    }
-
-    #[test]
-    fn native_workspace_errors_collapse_to_the_frozen_cli_categories() {
-        assert_eq!(
-            classify_workspace_inspection_error_kind(
-                NativeWorkspaceInspectionErrorKind::ResourceLimit
-            ),
-            WorkspaceOperationalFailure::ResourceLimit
-        );
-        assert_eq!(
-            classify_workspace_inspection_error_kind(
-                NativeWorkspaceInspectionErrorKind::Unavailable
-            ),
-            WorkspaceOperationalFailure::Unavailable
-        );
-    }
-
-    #[test]
-    fn workspace_failures_use_exact_human_and_json_channels() {
-        for failure in [
-            WorkspaceOperationalFailure::ResourceLimit,
-            WorkspaceOperationalFailure::Unavailable,
-        ] {
-            let category = failure.category();
-            let host = FakeWorkspaceHost::new(Err(failure));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_workspace_host(
-                [OsString::from("workspace")],
-                &mut stdout,
-                &mut stderr,
-                &host,
-            );
-            assert_eq!(exit, 1);
-            assert!(stdout.is_empty());
-            assert_eq!(
-                stderr,
-                format!("machine-god workspace: could not inspect workspace: {category}\n")
-                    .as_bytes()
-            );
-            assert_eq!(host.calls.get(), 1);
-
-            let host = FakeWorkspaceHost::new(Err(failure));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_workspace_host(
-                [OsString::from("workspace"), OsString::from("--json")],
-                &mut stdout,
-                &mut stderr,
-                &host,
-            );
-            assert_eq!(exit, 1);
-            assert_eq!(
-                stdout,
-                format!(
-                    "{{\"kind\":\"workspace\",\"error\":\"could not inspect workspace: {category}\",\"code\":\"{category}\"}}\n"
-                )
-                .as_bytes()
-            );
-            assert!(stderr.is_empty());
-            assert_eq!(host.calls.get(), 1);
-        }
-    }
-
-    #[test]
-    fn invalid_workspace_arguments_are_rejected_before_host_observation() {
-        for arguments in [
-            vec![OsString::from("workspace"), OsString::from("add")],
-            vec![OsString::from("workspace"), OsString::from("remove")],
-            vec![OsString::from("workspace"), OsString::from("clear")],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("--json"),
-                OsString::from("list"),
-            ],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("list"),
-                OsString::from("list"),
-            ],
-            vec![
-                OsString::from("workspace"),
-                OsString::from("list"),
-                OsString::from("--json"),
-                OsString::from("extra"),
-            ],
-        ] {
-            let host = FakeWorkspaceHost::new(Err(WorkspaceOperationalFailure::Unavailable));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_workspace_host(arguments, &mut stdout, &mut stderr, &host);
-
-            assert_eq!(exit, 2);
-            assert!(stdout.is_empty());
-            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
-            assert_eq!(host.calls.get(), 0);
-        }
-    }
-
-    #[test]
-    fn workspace_snapshot_and_output_bounds_are_exact_and_fail_closed() {
-        let maximum = format!("/{}", "x".repeat(MAX_WORKSPACE_PATH_BYTES - 1));
-        let snapshot = workspace_snapshot(&maximum);
-        for json in [false, true] {
-            let output = render_workspace(&snapshot, json).expect("inclusive path limit renders");
-            assert!(output.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
-            assert!(output.ends_with('\n'));
-        }
-
-        #[cfg(target_os = "windows")]
-        let absolute_prefix = "C:\\";
-        #[cfg(not(target_os = "windows"))]
-        let absolute_prefix = "/";
-        let maximum_escaped = format!(
-            "{absolute_prefix}{}",
-            "\u{7f}".repeat(MAX_WORKSPACE_PATH_BYTES - absolute_prefix.len())
-        );
-        assert_eq!(maximum_escaped.len(), MAX_WORKSPACE_PATH_BYTES);
-        let snapshot = workspace_snapshot(&maximum_escaped);
-        for json in [false, true] {
-            let output = render_workspace(&snapshot, json)
-                .expect("maximal escaping expansion remains within the output limit");
-            assert!(!output.contains('\u{7f}'));
-            assert!(output.contains("\\u007f"));
-            assert_eq!(output.matches('\n').count(), if json { 1 } else { 2 });
-            assert!(output.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
-            assert!(output.ends_with('\n'));
-        }
-
-        for invalid in [
-            format!("/{maximum}"),
-            "relative".to_owned(),
-            "/work/../outside".to_owned(),
-        ] {
-            assert_eq!(
-                render_workspace(&workspace_snapshot(&invalid), false),
-                Err(WorkspaceOperationalFailure::ResourceLimit)
-            );
-        }
-
-        let mut output = BoundedWorkspaceOutput::new();
-        output
-            .write_str(&"x".repeat(MAX_WORKSPACE_OUTPUT_BYTES))
-            .expect("inclusive output limit is accepted");
-        assert_eq!(output.value.len(), MAX_WORKSPACE_OUTPUT_BYTES);
-        assert!(output.write_char('x').is_err());
-    }
-
-    #[test]
-    fn workspace_broken_success_and_failure_outputs_use_global_diagnostic() {
-        for json in [false, true] {
-            let arguments = if json {
-                vec![OsString::from("workspace"), OsString::from("--json")]
-            } else {
-                vec![OsString::from("workspace")]
-            };
-            let host = FakeWorkspaceHost::new(Ok(workspace_snapshot("/work")));
-            let mut stdout = BrokenWriter;
-            let mut stderr = Vec::new();
-            let exit = run_with_workspace_host(arguments, &mut stdout, &mut stderr, &host);
-            assert_eq!(exit, 1);
-            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
-        }
-
-        let host = FakeWorkspaceHost::new(Err(WorkspaceOperationalFailure::Unavailable));
-        let mut stdout = BrokenWriter;
-        let mut stderr = Vec::new();
-        let exit = run_with_workspace_host(
-            [OsString::from("workspace"), OsString::from("--json")],
-            &mut stdout,
-            &mut stderr,
-            &host,
-        );
-        assert_eq!(exit, 1);
-        assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
-
-        let host = FakeWorkspaceHost::new(Err(WorkspaceOperationalFailure::Unavailable));
-        let mut stdout = Vec::new();
-        let mut stderr = FirstWriteFailsThenCaptures::default();
-        let exit = run_with_workspace_host(
-            [OsString::from("workspace")],
-            &mut stdout,
-            &mut stderr,
-            &host,
-        );
-        assert_eq!(exit, 1);
-        assert!(stdout.is_empty());
-        assert_eq!(stderr.captured, OUTPUT_FAILURE.as_bytes());
     }
 
     #[test]

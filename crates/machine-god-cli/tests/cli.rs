@@ -70,7 +70,7 @@ const HELP: &str = concat!(
     "  machine-god session <id> [--json]\n",
     "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
     "  machine-god status [--json]\n",
-    "  machine-god workspace [list] [--json]\n",
+    "  machine-god workspace [list | add <path> | remove <path> | clear] [--json]\n",
     "\n",
     "Commands:\n",
     "  help         Show this help\n",
@@ -84,7 +84,7 @@ const HELP: &str = concat!(
     "  session      Inspect a saved session\n",
     "  sessions     List saved sessions\n",
     "  status       Show configuration and runtime information\n",
-    "  workspace    Show the current workspace\n",
+    "  workspace    Manage additional workspace directories\n",
     "\n",
     "Options:\n",
     "  -h, --help       Show this help\n",
@@ -118,7 +118,7 @@ const STATUS_MISSING_AUTH_HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -129,7 +129,7 @@ const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
 const MAX_STATUS_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_SESSION_OUTPUT_BYTES: usize = 4096;
-const MAX_WORKSPACE_OUTPUT_BYTES: usize = 32 * 1024;
+const MAX_WORKSPACE_OUTPUT_BYTES: usize = 1024 * 1024;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -1148,73 +1148,241 @@ fn status_help_aliases_anywhere_preempt_parsing_and_process_effects() {
     }
 }
 
-#[test]
-fn workspace_aliases_are_exact_read_only_and_ignore_unrelated_process_inputs() {
-    let temporary = TestDirectory::new("workspace-read-only");
-    let workspace = temporary.path().join("workspace-café");
-    let config_root = temporary.path().join("config-CLI_WORKSPACE_CONFIG_SECRET");
-    let state_root = temporary
-        .path()
-        .join("missing-state-CLI_WORKSPACE_STATE_SECRET");
-    let home = temporary
-        .path()
-        .join("missing-home-CLI_WORKSPACE_HOME_SECRET");
-    fs::create_dir(&workspace).unwrap();
-    let config_contents = b"CLI_WORKSPACE_INVALID_CONFIG_SECRET:not-json";
-    let config_path = write_config(&config_root, config_contents);
-    let primary = fs::canonicalize(&workspace).unwrap();
-    let primary = primary.to_str().unwrap();
-    let expected_human = format!(
-        "[workspace] primary={primary:?}\n[workspace] additional_directories=unsupported\n"
-    );
-    let expected_json = format!(
-        concat!(
-            "{{\"kind\":\"workspace\",\"action\":\"list\",",
-            "\"primary_directory\":{primary:?},",
-            "\"additional_directories_supported\":false,",
-            "\"additional_directories\":[]}}\n",
-        ),
-        primary = primary,
-    );
+fn workspace_command(primary: &Path, config: &Path, state: &Path) -> Command {
+    let mut command = machine_god();
+    command
+        .current_dir(primary)
+        .env("XDG_CONFIG_HOME", config)
+        .env("XDG_STATE_HOME", state)
+        .env("VERCEL_OIDC_TOKEN", "WORKSPACE_CREDENTIAL_SECRET")
+        .env_remove("AI_GATEWAY_API_KEY");
+    command
+}
 
-    for (arguments, expected) in [
-        (&["workspace"][..], expected_human.as_str()),
-        (&["workspace", "list"][..], expected_human.as_str()),
-        (&["workspace", "--json"][..], expected_json.as_str()),
-        (&["workspace", "list", "--json"][..], expected_json.as_str()),
+fn workspace_json(output: &Output) -> serde_json::Value {
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn workspace_list_aliases_do_not_create_config_or_state() {
+    let temporary = TestDirectory::new("workspace-read-only");
+    let primary = temporary.path().join("primary-café");
+    let config = temporary.path().join("missing-config");
+    let state = temporary.path().join("missing-state");
+    fs::create_dir(&primary).unwrap();
+    for args in [
+        &["workspace", "--json"][..],
+        &["workspace", "list", "--json"][..],
+        &["workspace", "--json", "list"][..],
     ] {
-        let output = machine_god()
-            .args(arguments)
-            .current_dir(&workspace)
-            .env("HOME", &home)
-            .env("XDG_CONFIG_HOME", &config_root)
-            .env("XDG_STATE_HOME", &state_root)
-            .env("VERCEL_OIDC_TOKEN", "CLI_WORKSPACE_CREDENTIAL_SECRET")
-            .env(
-                "AI_GATEWAY_API_KEY",
-                "CLI_WORKSPACE_LOWER_CREDENTIAL_SECRET",
-            )
+        let output = workspace_command(&primary, &config, &state)
+            .args(args)
             .output()
             .unwrap();
+        let value = workspace_json(&output);
+        assert_eq!(value["action"], "list");
+        assert_eq!(
+            value["primary_directory"]["text"],
+            fs::canonicalize(&primary).unwrap().to_str().unwrap()
+        );
+        assert!(value["primary_directory"]["bytes_hex"].is_null());
+        assert_eq!(value["additional_directories"], serde_json::json!([]));
+        assert_eq!(value["saved_changed"], false);
+        assert_eq!(value["reconciliation"], "refreshed");
+        assert!(!config.exists());
+        assert!(!state.exists());
+        assert_output_omits(&output, &["WORKSPACE_CREDENTIAL_SECRET"]);
+    }
+    for args in [&["workspace"][..], &["workspace", "list"][..]] {
+        let output = workspace_command(&primary, &config, &state)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("[workspace] additional_directories=0\n")
+        );
+        assert!(output.stderr.is_empty());
+    }
+}
 
-        assert_success(&output, expected);
-        assert!(output.stdout.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
-        assert_eq!(fs::read(&config_path).unwrap(), config_contents);
-        assert!(!state_root.exists());
-        assert!(!home.exists());
-        assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
+#[test]
+fn workspace_add_duplicate_remove_and_clear_persist_native_configuration() {
+    let temporary = TestDirectory::new("workspace-mutations");
+    let primary = temporary.path().join("primary");
+    let extra = temporary.path().join("extra");
+    let config = temporary.path().join("config");
+    let state = temporary.path().join("missing-state");
+    fs::create_dir(&primary).unwrap();
+    fs::create_dir(&extra).unwrap();
+    let run = |args: &[&OsStr]| {
+        workspace_command(&primary, &config, &state)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let add = workspace_json(&run(&[
+        OsStr::new("workspace"),
+        OsStr::new("add"),
+        extra.as_os_str(),
+        OsStr::new("--json"),
+    ]));
+    assert_eq!(add["saved_changed"], true);
+    assert_eq!(add["reconciliation"], "confirmed");
+    assert_eq!(add["additional_directories"][0]["saved"], true);
+    assert_eq!(add["additional_directories"][0]["available"], true);
+    assert_eq!(add["additional_directories"][0]["active"], true);
+    let path = config.join("machine-god/config.json");
+    let saved = fs::read(&path).unwrap();
+    let duplicate = workspace_json(&run(&[
+        OsStr::new("workspace"),
+        OsStr::new("--json"),
+        OsStr::new("add"),
+        extra.as_os_str(),
+    ]));
+    assert_eq!(duplicate["saved_changed"], false);
+    assert_eq!(fs::read(&path).unwrap(), saved);
+    let list = workspace_json(&run(&[OsStr::new("workspace"), OsStr::new("--json")]));
+    assert_eq!(list["additional_directories"].as_array().unwrap().len(), 1);
+    let removed = workspace_json(&run(&[
+        OsStr::new("workspace"),
+        OsStr::new("remove"),
+        OsStr::new("--json"),
+        extra.as_os_str(),
+    ]));
+    assert_eq!(removed["saved_changed"], true);
+    assert_eq!(removed["additional_directories"], serde_json::json!([]));
+    workspace_json(&run(&[
+        OsStr::new("workspace"),
+        OsStr::new("add"),
+        extra.as_os_str(),
+        OsStr::new("--json"),
+    ]));
+    let clear = workspace_json(&run(&[
+        OsStr::new("workspace"),
+        OsStr::new("clear"),
+        OsStr::new("--json"),
+    ]));
+    assert_eq!(clear["saved_changed"], true);
+    let cleared_bytes = fs::read(&path).unwrap();
+    let no_op = workspace_json(&run(&[
+        OsStr::new("workspace"),
+        OsStr::new("--json"),
+        OsStr::new("clear"),
+    ]));
+    assert_eq!(no_op["saved_changed"], false);
+    assert_eq!(fs::read(&path).unwrap(), cleared_bytes);
+    assert!(!state.exists());
+}
+
+#[test]
+fn workspace_malformed_configuration_fails_redacted_and_unchanged() {
+    let temporary = TestDirectory::new("workspace-malformed");
+    let config = temporary.path().join("config");
+    let state = temporary.path().join("missing-state");
+    let bytes = b"WORKSPACE_MALFORMED_SECRET:not-json";
+    let path = write_config(&config, bytes);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    for args in [
+        &["workspace", "--json"][..],
+        &["workspace", "clear", "--json"][..],
+    ] {
+        let output = workspace_command(temporary.path(), &config, &state)
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["code"], "InvalidConfiguration");
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert!(!state.exists());
         assert_output_omits(
             &output,
-            &[
-                "CLI_WORKSPACE_CONFIG_SECRET",
-                "CLI_WORKSPACE_STATE_SECRET",
-                "CLI_WORKSPACE_HOME_SECRET",
-                "CLI_WORKSPACE_INVALID_CONFIG_SECRET",
-                "CLI_WORKSPACE_CREDENTIAL_SECRET",
-                "CLI_WORKSPACE_LOWER_CREDENTIAL_SECRET",
-            ],
+            &["WORKSPACE_MALFORMED_SECRET", "WORKSPACE_CREDENTIAL_SECRET"],
         );
     }
+}
+
+#[test]
+fn workspace_no_op_clear_and_unknown_remove_do_not_create_configuration() {
+    let temporary = TestDirectory::new("workspace-no-op");
+    let primary = temporary.path().join("primary");
+    let config = temporary.path().join("missing-config");
+    let state = temporary.path().join("missing-state");
+    fs::create_dir(&primary).unwrap();
+    let clear = workspace_json(
+        &workspace_command(&primary, &config, &state)
+            .args(["workspace", "clear", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(clear["saved_changed"], false);
+    assert!(!config.exists());
+    let missing = workspace_command(&primary, &config, &state)
+        .args(["workspace", "remove", "missing", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(missing.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(value["code"], "UnknownDirectory");
+    assert!(!config.exists());
+    assert!(!state.exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn workspace_non_unicode_add_list_and_remove_preserve_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+    let temporary = TestDirectory::new("workspace-raw-path");
+    let primary = temporary.path().join("primary");
+    let extra = temporary.path().join(OsString::from_vec(vec![b'e', 0xff]));
+    let config = temporary.path().join("config");
+    let state = temporary.path().join("missing-state");
+    fs::create_dir(&primary).unwrap();
+    fs::create_dir(&extra).unwrap();
+    let output = workspace_command(&primary, &config, &state)
+        .args(["workspace", "add"])
+        .arg(&extra)
+        .arg("--json")
+        .output()
+        .unwrap();
+    let value = workspace_json(&output);
+    let path = &value["additional_directories"][0]["source"];
+    assert!(path["text"].is_null());
+    let expected = extra
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(path["bytes_hex"], expected);
+    let listed = workspace_json(
+        &workspace_command(&primary, &config, &state)
+            .args(["workspace", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(listed["additional_directories"][0]["source"], *path);
+    let removed = workspace_json(
+        &workspace_command(&primary, &config, &state)
+            .args(["workspace", "remove"])
+            .arg(&extra)
+            .arg("--json")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(removed["additional_directories"], serde_json::json!([]));
 }
 
 #[cfg(unix)]
@@ -1227,11 +1395,14 @@ fn workspace_paths_escape_terminal_controls_in_human_and_json_output() {
     fs::create_dir(&workspace).unwrap();
 
     for arguments in [&["workspace"][..], &["workspace", "--json"][..]] {
-        let output = machine_god()
-            .args(arguments)
-            .current_dir(&workspace)
-            .output()
-            .unwrap();
+        let output = workspace_command(
+            &workspace,
+            &temporary.path().join("config"),
+            &temporary.path().join("state"),
+        )
+        .args(arguments)
+        .output()
+        .unwrap();
         let stdout = String::from_utf8(output.stdout.clone()).unwrap();
 
         assert!(output.status.success());
@@ -1251,7 +1422,7 @@ fn invalid_workspace_grammar_is_exact_and_does_not_create_roots() {
     let temporary = TestDirectory::new("workspace-invalid-no-effects");
     for arguments in [
         &["workspace", "add"][..],
-        &["workspace", "--json", "list"][..],
+        &["workspace", "clear", "extra"][..],
         &["workspace", "list", "--json", "extra"][..],
     ] {
         let config_root = temporary.path().join("missing-config");
@@ -1319,9 +1490,9 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["--json", "workspace"][..],
         &["workspace", "add"][..],
         &["workspace", "remove"][..],
-        &["workspace", "clear"][..],
+        &["workspace", "clear", "extra"][..],
         &["workspace", "--json=true"][..],
-        &["workspace", "--json", "list"][..],
+        &["workspace", "add", "--json"][..],
         &["workspace", "--json", "--json"][..],
         &["workspace", "list", "list"][..],
         &["workspace", "list", "--json=true"][..],
