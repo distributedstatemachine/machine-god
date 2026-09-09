@@ -104,6 +104,58 @@ snapshot grants no filesystem or tool authority to later operations.
 
 ## Deferred surface
 
+### Descriptor authority contract
+
+The native workspace authority primitive is separate from the lexical command
+above. Its caller supplies an already-owned primary descriptor, an explicit
+state identity, and an owned state descriptor when that directory exists.
+An absent state directory instead retains a validated nearest-existing-prefix
+descriptor and canonical projected exclusion path; it creates nothing and does
+not exclude unrelated siblings beneath that prefix. Omitting the descriptor for
+an existing target is rejected. Blocking preparation validates
+those identities and opens additional roots; it never discovers a current
+directory, expands a home directory, or creates directories. Hosts must execute
+preparation and refresh on their owned native worker scope.
+
+Immutable generation snapshots retain the actual descriptors. A replacement is
+bound to its originating manager and base generation; only the admitted native
+owner may publish it. Foreign and stale preparations fail without changing the
+current snapshot. Existing snapshots and resolved routes retain their old
+descriptors across publication, root renames, and manager destruction.
+New preparations revalidate the primary and exclusion descriptor identities;
+renaming or replacing the retained exclusion ancestor fails without rebinding.
+If an absent state target appears, preparation fails until the owner obtains
+explicit existing-state authority instead of silently switching the proof.
+
+At most 16 additional entries are retained, including unavailable and suppressed
+entries. Each retains its source spelling, absolute identity, canonical-identity
+flag, and independent saved/launch provenance. Availability is separate from
+activation: an available root is active when it is a launch source or is saved
+without saved suppression. A combined saved/launch entry remains active during
+saved suppression. Duplicate primary/additional identities and descriptor aliases
+are rejected; saved/launch merging occurs before authority preparation.
+
+Canonical identities refresh against the observed identity, not the original
+source spelling. A retargeted identity becomes unavailable, never authority for
+the new target. An unavailable provisional source may acquire its first canonical
+identity when it becomes available. The owner must carry the resulting snapshot's
+updated source records forward. Missing entries remain visible and can reactivate
+when their retained identity returns. Final root symlinks are not followed;
+ancestor resolution is checked against the opened directory's identity.
+
+Paths preserve non-Unicode bytes, have a 4,096-byte bound, and reject NUL and
+parent traversal. Pure route selection sends relative paths to the primary root;
+absolute paths select primary first, then the first matching active additional
+root in entry order, using component boundaries. State roots and their ancestors,
+descendants, and descriptor aliases cannot become workspace authority. A route
+retains its root descriptor, identity, generation, and normalized relative path.
+This is lexical routing, not descendant symlink validation: consuming tools and
+preparers must still walk descendants relative to that descriptor using their
+existing no-follow confinement checks. This primitive alone does not change CLI
+grammar or extend any tool's authority.
+
+### Remaining command surface
+
 The following pinned-upstream behavior remains intentionally unsupported:
 
 - `workspace add PATH`, `workspace remove PATH`, `workspace clear`, durable
