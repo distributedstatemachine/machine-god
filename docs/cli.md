@@ -151,7 +151,16 @@ context as a substitute for canonical history. Historical user/assistant text is
 escaped and streamed in bounded chunks; raw system instructions and tool-result
 details are not printed as ordinary transcript text. Tool call/result summaries
 describe recorded identities and outcomes, not fresh execution receipts.
-History traversal yields after bounded work. Native progress, modal answers and
+Native-decoded terminal exec/start requests additionally show their saved command
+and requested CWD; an omitted CWD remains unknown, not today's working directory.
+Snapshot construction validates the bounded reserved native observation ledger.
+After the transcript, typed cards show recorded file status, stale flags and
+destinations, plus saved background log paths/URLs with current liveness unknown.
+Exact source-bound edit calls show escaped requested old/new fragments, not a
+full-file diff or proof of a successful mutation. Invalid observation metadata is
+suppressed with a fixed notice; unknown tool payloads stay collapsed. No card
+opens files, retrieves archives, probes processes or supplies execution authority.
+History traversal and card output yield after bounded work. Native progress, modal answers and
 shutdown remain independent of history output acknowledgements. Unsent obsolete
 history is discarded on confirmed replacement or shutdown, while already-written
 bytes cannot be retracted. Typed current lifecycle/save receipts remain retained.

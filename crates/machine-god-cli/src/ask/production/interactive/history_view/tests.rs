@@ -5,6 +5,9 @@ use machine_god_core::{
 };
 use serde_json::json;
 
+#[path = "cards_tests.rs"]
+mod cards_tests;
+
 fn record(messages: Vec<Message>) -> SessionRecord {
     let mut record = SessionRecord::empty(
         SessionId::new("saved").unwrap(),

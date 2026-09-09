@@ -3,6 +3,9 @@
 use machine_god_core::{ContentBlock, Role, SessionRecord, ToolOutput};
 use std::fmt;
 
+mod cards;
+use cards::{CommandCard, Observations};
+
 const CHUNK_BYTES: usize = 4096;
 const SCAN_STEPS: usize = 256;
 
@@ -31,6 +34,8 @@ pub(super) struct HistoryView {
     part: u8,
     offset: usize,
     header: bool,
+    command: Option<CommandCard>,
+    observations: Observations,
 }
 
 impl fmt::Debug for HistoryView {
@@ -40,9 +45,10 @@ impl fmt::Debug for HistoryView {
 }
 
 impl HistoryView {
-    /// Takes the one already-captured presentation snapshot. Construction does
-    /// not scan or clone history, inspect metadata, or acquire any authority.
+    /// Takes the one already-captured presentation snapshot. Construction
+    /// validates the bounded native observation ledger and acquires no authority.
     pub(super) fn new(record: SessionRecord) -> Self {
+        let observations = Observations::new(&record);
         Self {
             record,
             message: 0,
@@ -50,23 +56,24 @@ impl HistoryView {
             part: 0,
             offset: 0,
             header: true,
+            command: None,
+            observations,
         }
     }
 
     /// Complete text is streamed with whole UTF-8 scalars and whole escapes.
-    /// Raw JSON, tool arguments/results and system instructions stay collapsed;
+    /// Raw JSON, unrecognized arguments/results and system instructions stay collapsed;
     /// status describes the saved record, not whether any effect happened.
-    /// Typed command/diff/background cards require their native presentation
-    /// adapters and are deliberately not inferred from arbitrary output JSON.
+    /// Recognized requests and validated native observations are descriptive only.
     pub(super) fn next_chunk(&mut self) -> HistoryViewStep {
         if self.message == self.record.messages.len() {
-            return HistoryViewStep::Done;
+            return self.observations.next_chunk(&self.record);
         }
         let mut output = Vec::with_capacity(CHUNK_BYTES);
         for _ in 0..SCAN_STEPS {
             let Some(message) = self.record.messages.get(self.message) else {
                 return if output.is_empty() {
-                    HistoryViewStep::Done
+                    HistoryViewStep::Progress
                 } else {
                     HistoryViewStep::Chunk(output)
                 };
@@ -83,7 +90,16 @@ impl HistoryView {
                     _ => "\n[unrecognized history role]\n",
                 }))
             } else if let Some(block) = message.content.get(self.block) {
-                block_piece(block, message.role, self.part)
+                if self.part == 0 && self.offset == 0 {
+                    self.command = CommandCard::from_block(block, message.role);
+                }
+                if self.part >= 5 {
+                    self.command
+                        .as_ref()
+                        .and_then(|card| card.piece(self.part - 5))
+                } else {
+                    block_piece(block, message.role, self.part)
+                }
             } else {
                 self.next_message();
                 continue;
@@ -92,6 +108,7 @@ impl HistoryView {
                 self.block += 1;
                 self.part = 0;
                 self.offset = 0;
+                self.command = None;
                 continue;
             };
             let consumed = append_piece(piece, self.offset, &mut output);
@@ -122,6 +139,7 @@ impl HistoryView {
         self.part = 0;
         self.offset = 0;
         self.header = true;
+        self.command = None;
     }
 }
 

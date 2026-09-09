@@ -168,8 +168,10 @@ prerequisite are integrated; both clean released worktrees have been removed.
 Their focused tests cover real macOS scanning, concurrent cursors, exact roots,
 both Apple ABI/link probes, Linux compilation and FreeBSD/WASI unsupported
 compilation. These component checks are not full-feature acceptance.
-Separate workers own terminal routing, CLI launch/slash workspace selection,
-and the native FXTP recording backend. The coordinator owns the live plan,
+Terminal routing is integrated and its clean released worktree removed after
+focused composition, permission, PTY/tmux and monitor checks. Separate workers
+own native session maintenance, CLI launch/slash workspace selection, and the
+native FXTP recording backend. The coordinator owns historical cards, the live plan,
 shared-contract integration, cross-platform prerequisites and final gates.
 Preserve uncommitted paused work before updating a worker's base. Remove worker
 trees only after their changes are committed, integrated and released.
@@ -187,10 +189,14 @@ shares those contexts with reads, metadata, folder creation, enumeration, grep,
 all five mutations, permissions, undo, history, vision and sandbox scopes.
 Linux and macOS semantic routing are integrated. State aliases compare retained object
 identities; native interactive transitions attach the selected workspace.
+Historical command/file/replacement/background cards now project native-validated
+saved evidence without execution, filesystem reads or invented current state.
+Focused history tests and the CLI unit suite, all-target Clippy, formatting and
+documentation checks pass; these are component checks, not release acceptance.
 
-The remaining product boundary is terminal cwd routing, actual launch/slash
-workspace selection, migration/recovery/doctor cleanup,
-recording, typed historical cards and remaining policy/session scenarios.
+The remaining product boundary is actual launch/slash
+workspace selection (including launches without a settings directory), migration/recovery/doctor cleanup,
+recording and remaining policy/session scenarios.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
