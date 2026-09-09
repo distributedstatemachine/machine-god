@@ -435,6 +435,15 @@ impl NativeConversation {
         preferences: NativeModelPreferences,
         now_ms: i64,
     ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationError>> {
+        self.set_model_preferences_with_access(preferences, now_ms, None)
+    }
+
+    pub(crate) fn set_model_preferences_with_access(
+        &self,
+        preferences: NativeModelPreferences,
+        now_ms: i64,
+        access: Option<Arc<dyn machine_god_core::SessionStoreAccess>>,
+    ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationError>> {
         Box::pin(async move {
             let _lease = self.acquire_admission()?;
             if self.session.has_active_turn() {
@@ -455,10 +464,18 @@ impl NativeConversation {
                 NATIVE_MODEL_PREFERENCES_KEY.to_owned(),
                 preferences.to_value(),
             );
-            self.session
-                .update_metadata(record.revision, record.metadata)
-                .await
-                .map_err(map_engine_error)
+            match access {
+                Some(access) => self.session.update_metadata_with_access(
+                    record.revision,
+                    record.metadata,
+                    access,
+                ),
+                None => self
+                    .session
+                    .update_metadata(record.revision, record.metadata),
+            }
+            .await
+            .map_err(map_engine_error)
         })
     }
 

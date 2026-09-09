@@ -1,5 +1,8 @@
 //! Explicit native resume selection and checked candidate adoption.
 
+#[cfg(any(feature = "ai-gateway-http", test))]
+pub(crate) mod owned;
+
 use crate::{
     FileSessionStore, NativeContextPreferences, NativeConversation, NativeConversationError,
     NativeModelPreferences, NativeSessionCatalog, NativeSessionCatalogEntry,
@@ -73,6 +76,7 @@ pub enum NativeSessionResumeErrorKind {
     SelectionIncomplete,
     Conflict,
     Busy,
+    Cancelled,
     Corrupt,
     Unavailable,
     HostClosed,
@@ -87,6 +91,7 @@ impl NativeSessionResumeErrorKind {
             Self::SelectionIncomplete => "selection_incomplete",
             Self::Conflict => "conflict",
             Self::Busy => "busy",
+            Self::Cancelled => "cancelled",
             Self::Corrupt => "corrupt",
             Self::Unavailable => "unavailable",
             Self::HostClosed => "host_closed",
@@ -117,6 +122,7 @@ impl fmt::Display for NativeSessionResumeError {
             }
             NativeSessionResumeErrorKind::Conflict => "native resume target changed",
             NativeSessionResumeErrorKind::Busy => "native resume target is busy",
+            NativeSessionResumeErrorKind::Cancelled => "native resume was cancelled",
             NativeSessionResumeErrorKind::Corrupt => "native resume target is corrupt",
             NativeSessionResumeErrorKind::Unavailable => "native resume persistence is unavailable",
             NativeSessionResumeErrorKind::HostClosed => "native resume host is closed",
@@ -161,10 +167,19 @@ impl NativePreparedResume {
     /// observation, not a cross-process lease or an automatic runtime switch.
     #[must_use]
     pub fn adopt(self) -> BoxFuture<'static, Result<NativeConversation, Error>> {
+        self.adopt_with_access(None)
+    }
+
+    fn adopt_with_access(
+        self,
+        access: Option<Arc<dyn machine_god_core::SessionStoreAccess>>,
+    ) -> BoxFuture<'static, Result<NativeConversation, Error>> {
         Box::pin(async move {
             self.check_live()?;
-            let record = self
-                .store
+            let store: &dyn SessionStore = access
+                .as_ref()
+                .map_or(self.store.as_ref(), |access| access.as_ref());
+            let record = store
                 .load(self.id.clone())
                 .await
                 .map_err(|error| {
@@ -184,10 +199,14 @@ impl NativePreparedResume {
             }
             validate_native_record(&record)?;
             drop(record);
-            self.session
-                .check_metadata_revision(self.revision)
-                .await
-                .map_err(map_engine)?;
+            match access {
+                Some(access) => self
+                    .session
+                    .check_metadata_revision_with_access(self.revision, access),
+                None => self.session.check_metadata_revision(self.revision),
+            }
+            .await
+            .map_err(map_engine)?;
             self.check_live()?;
             let conversation =
                 NativeConversation::from_session(self.session.clone()).map_err(map_conversation)?;

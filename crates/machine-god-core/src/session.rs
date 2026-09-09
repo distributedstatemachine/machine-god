@@ -115,6 +115,26 @@ pub trait SessionStore: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>>;
 }
 
+/// Explicit trusted per-operation I/O adapter for the same configured store.
+/// Implementations retain their own scheduling/cancellation contract; core does
+/// not infer capabilities or replace the engine's store. The identity accessor
+/// must be inert and return the exact allocation actually accessed.
+pub trait SessionStoreAccess: SessionStore {
+    fn underlying_store(&self) -> &Arc<dyn SessionStore>;
+}
+
+pub(crate) fn validate_store_access(
+    store: &Arc<dyn SessionStore>,
+    access: &dyn SessionStoreAccess,
+) -> Result<(), EngineError> {
+    if !Arc::ptr_eq(store, access.underlying_store()) {
+        return Err(EngineError::Protocol(
+            "session store access identity mismatch".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// User input and optional inference controls for one turn.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Prompt {
@@ -623,7 +643,36 @@ impl Session {
             host: HostLease::new(self.host_resource.as_ref()),
         };
         let metadata = JsonOwnerGuard::new(metadata);
-        Box::pin(async move { session.update_metadata(expected_revision, metadata).await })
+        Box::pin(async move {
+            session
+                .update_metadata(expected_revision, metadata, None)
+                .await
+        })
+    }
+
+    /// Uses an explicitly injected I/O adapter over this engine's exact store.
+    /// # Errors
+    /// Returns ordinary metadata errors or rejects a different store allocation
+    /// before invoking it. Uncertain reconciliation uses the same adapter.
+    #[must_use]
+    pub fn update_metadata_with_access(
+        &self,
+        expected_revision: SessionRevision,
+        metadata: BTreeMap<String, Value>,
+        access: Arc<dyn SessionStoreAccess>,
+    ) -> BoxFuture<'static, Result<SessionRevision, EngineError>> {
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
+        let metadata = JsonOwnerGuard::new(metadata);
+        Box::pin(async move {
+            validate_store_access(&session.engine.session_store, access.as_ref())?;
+            session
+                .update_metadata(expected_revision, metadata, Some(access.as_ref()))
+                .await
+        })
     }
 
     /// Checks a canonical revision without saving or reserving a turn.
@@ -648,7 +697,34 @@ impl Session {
             state: Arc::clone(&self.state),
             host: HostLease::new(self.host_resource.as_ref()),
         };
-        Box::pin(async move { session.check_metadata_revision(expected_revision).await })
+        Box::pin(async move {
+            session
+                .check_metadata_revision(expected_revision, None)
+                .await
+        })
+    }
+
+    /// Checks the canonical revision using the explicit same-store adapter for
+    /// any required uncertainty reconciliation. Construction is inert.
+    /// # Errors
+    /// Returns ordinary revision-check errors or an adapter identity mismatch.
+    #[must_use]
+    pub fn check_metadata_revision_with_access(
+        &self,
+        expected_revision: SessionRevision,
+        access: Arc<dyn SessionStoreAccess>,
+    ) -> BoxFuture<'static, Result<SessionRevision, EngineError>> {
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
+        Box::pin(async move {
+            validate_store_access(&session.engine.session_store, access.as_ref())?;
+            session
+                .check_metadata_revision(expected_revision, Some(access.as_ref()))
+                .await
+        })
     }
 
     /// Atomically reserves a durable turn ID and user message, then creates a
@@ -767,6 +843,7 @@ impl SessionOperation {
     async fn check_metadata_revision(
         &self,
         expected_revision: SessionRevision,
+        access: Option<&dyn SessionStore>,
     ) -> Result<SessionRevision, EngineError> {
         self.host.ensure_open()?;
         self.state
@@ -776,7 +853,10 @@ impl SessionOperation {
         let _lease = TurnLease {
             state: Arc::clone(&self.state),
         };
-        self.reconcile_uncertain_metadata().await?;
+        self.reconcile_uncertain_metadata_with_store(
+            access.unwrap_or(self.engine.session_store.as_ref()),
+        )
+        .await?;
         self.host.ensure_open()?;
         let (snapshot, persisted) = self.state.snapshot();
         if snapshot.revision != expected_revision {
@@ -793,6 +873,7 @@ impl SessionOperation {
         &self,
         expected_revision: SessionRevision,
         metadata: JsonOwnerGuard<BTreeMap<String, Value>>,
+        access: Option<&dyn SessionStore>,
     ) -> Result<SessionRevision, EngineError> {
         self.host.ensure_open()?;
         self.state
@@ -802,7 +883,8 @@ impl SessionOperation {
         let _lease = TurnLease {
             state: Arc::clone(&self.state),
         };
-        self.reconcile_uncertain_metadata().await?;
+        let store = access.unwrap_or(self.engine.session_store.as_ref());
+        self.reconcile_uncertain_metadata_with_store(store).await?;
 
         let (snapshot, persisted) = self.state.snapshot();
         if snapshot.revision != expected_revision {
@@ -823,9 +905,7 @@ impl SessionOperation {
         self.state
             .metadata_reconciliation_required
             .store(true, Ordering::Release);
-        let revision = self
-            .engine
-            .session_store
+        let revision = store
             .save(candidate.clone(), persisted.then_some(expected_revision))
             .await
             .map_err(redact_store_error)?;
@@ -847,6 +927,14 @@ impl SessionOperation {
     /// old in-memory metadata is authoritative. A missing persisted record is
     /// not permission to recreate it after an uncertain edit.
     async fn reconcile_uncertain_metadata(&self) -> Result<(), EngineError> {
+        self.reconcile_uncertain_metadata_with_store(self.engine.session_store.as_ref())
+            .await
+    }
+
+    async fn reconcile_uncertain_metadata_with_store(
+        &self,
+        store: &dyn SessionStore,
+    ) -> Result<(), EngineError> {
         if !self
             .state
             .metadata_reconciliation_required
@@ -855,9 +943,7 @@ impl SessionOperation {
             return Ok(());
         }
         let (snapshot, persisted) = self.state.snapshot();
-        let loaded = self
-            .engine
-            .session_store
+        let loaded = store
             .load(snapshot.id.clone())
             .await
             .map_err(redact_store_error)?;

@@ -763,10 +763,19 @@ impl NativeConversationRuntime {
         now_ms: i64,
     ) -> BoxFuture<'_, Result<NativeModelPreferencePersistence, NativeConversationRuntimeError>>
     {
+        self.flush_model_preferences_with_access(now_ms, None)
+    }
+
+    pub(crate) fn flush_model_preferences_with_access(
+        &self,
+        now_ms: i64,
+        access: Option<Arc<dyn machine_god_core::SessionStoreAccess>>,
+    ) -> BoxFuture<'_, Result<NativeModelPreferencePersistence, NativeConversationRuntimeError>>
+    {
         Box::pin(async move {
             let permit = self.lifecycle.acquire()?;
             let (preferences, generation, save) = self.prepare_preference_save(permit);
-            self.save_preferences(preferences, generation, save, now_ms)
+            self.save_preferences(preferences, generation, save, now_ms, access)
                 .await
         })
     }
@@ -799,7 +808,7 @@ impl NativeConversationRuntime {
             let (preferences, generation, save) = self.prepare_preference_save(permit);
             let user_snapshot = user_store.load();
             let session = self
-                .save_preferences(preferences.clone(), generation, save, now_ms)
+                .save_preferences(preferences.clone(), generation, save, now_ms, None)
                 .await;
             let user_defaults = match user_snapshot {
                 Ok(snapshot) => {
@@ -842,6 +851,7 @@ impl NativeConversationRuntime {
         generation: u64,
         save: PreferenceSave,
         now_ms: i64,
+        access: Option<Arc<dyn machine_god_core::SessionStoreAccess>>,
     ) -> Result<NativeModelPreferencePersistence, NativeConversationRuntimeError> {
         let lease = match save {
             PreferenceSave::Observed(outcome) => return Ok(outcome),
@@ -849,7 +859,7 @@ impl NativeConversationRuntime {
         };
         let revision = self
             .conversation
-            .set_model_preferences(preferences, now_ms)
+            .set_model_preferences_with_access(preferences, now_ms, access)
             .await?;
         self.state
             .lock()

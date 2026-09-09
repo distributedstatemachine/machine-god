@@ -742,12 +742,47 @@ impl EngineRequester {
         id: SessionId,
         expected: Option<(SessionIncarnationId, SessionRevision)>,
     ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
+        self.load_session_guarded_with_access(id, expected, None)
+    }
+
+    /// Checked adoption through an explicit adapter over the exact configured
+    /// store. No native scheduling or cancellation capability is inferred.
+    /// # Errors
+    /// Returns ordinary checked-load errors or an adapter identity mismatch
+    /// before I/O. Host liveness and record validation remain mandatory.
+    #[must_use]
+    pub fn load_session_at_revision_with_access(
+        &self,
+        id: SessionId,
+        expected_incarnation: SessionIncarnationId,
+        expected_revision: SessionRevision,
+        access: Arc<dyn crate::SessionStoreAccess>,
+    ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
+        self.load_session_guarded_with_access(
+            id,
+            Some((expected_incarnation, expected_revision)),
+            Some(access),
+        )
+    }
+
+    fn load_session_guarded_with_access(
+        &self,
+        id: SessionId,
+        expected: Option<(SessionIncarnationId, SessionRevision)>,
+        access: Option<Arc<dyn crate::SessionStoreAccess>>,
+    ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
         let inner = Arc::clone(&self.inner);
         let host = self.host.clone();
         Box::pin(async move {
             host.ensure_open()?;
-            let record = inner
-                .session_store
+            let store: &dyn crate::SessionStore = match &access {
+                Some(access) => {
+                    crate::session::validate_store_access(&inner.session_store, access.as_ref())?;
+                    access.as_ref()
+                }
+                None => inner.session_store.as_ref(),
+            };
+            let record = store
                 .load(id.clone())
                 .await
                 .map_err(crate::session::redact_store_error)?;

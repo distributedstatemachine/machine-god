@@ -61,7 +61,7 @@ pub(crate) struct FileSessionScanControl {
 }
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl FileSessionScanControl {
-    fn check(&self) -> Result<(), FileSessionScanError> {
+    pub(crate) fn check(&self) -> Result<(), FileSessionScanError> {
         if self.cancel.is_cancelled() || self.abandoned.is_cancelled() {
             Err(FileSessionScanError::Cancelled)
         } else {
@@ -707,6 +707,88 @@ impl FileSessionStore {
         Ok(record)
     }
 
+    pub(crate) fn load_controlled(
+        &self,
+        id: &SessionId,
+        control: &FileSessionScanControl,
+    ) -> Result<Option<SessionRecord>, FileSessionScanError> {
+        control.check()?;
+        let names = SessionNames::for_id(id);
+        if !probe_data(self.root.as_fd(), &names.data)? {
+            return Ok(None);
+        }
+        control.check()?;
+        let lock = open_lock(self.root.as_fd(), &names.lock)?;
+        control.lock(&lock)?;
+        self.read_controlled_locked(id, &names, control)
+    }
+
+    fn read_controlled_locked(
+        &self,
+        id: &SessionId,
+        names: &SessionNames,
+        control: &FileSessionScanControl,
+    ) -> Result<Option<SessionRecord>, FileSessionScanError> {
+        match read_stored_record_controlled(
+            self.root.as_fd(),
+            &names.data,
+            MAX_FILE_SESSION_BYTES,
+            &mut 0,
+            Some(control),
+        )? {
+            StoredRecordRead::Missing => Ok(None),
+            StoredRecordRead::ByteLimit => Err(corrupt().into()),
+            StoredRecordRead::Record { record } => {
+                if record.id != *id {
+                    return Err(corrupt().into());
+                }
+                Ok(Some(record))
+            }
+        }
+    }
+
+    pub(crate) fn save_controlled(
+        &self,
+        record: &mut SessionRecord,
+        expected_revision: Option<SessionRevision>,
+        control: &FileSessionScanControl,
+    ) -> Result<SessionRevision, FileSessionScanError> {
+        control.check()?;
+        if record.next_turn_sequence == 0 || validate_record_json(record).is_err() {
+            return Err(serialization_failed().into());
+        }
+        control.check()?;
+        let names = SessionNames::for_id(&record.id);
+        let lock = open_lock(self.root.as_fd(), &names.lock)?;
+        control.lock(&lock)?;
+        let current = self.read_controlled_locked(&record.id, &names, control)?;
+        match &current {
+            Some(stored) => {
+                if stored.incarnation_id != record.incarnation_id {
+                    return Err(incarnation_conflict().into());
+                }
+                if expected_revision != Some(stored.revision) {
+                    return Err(revision_conflict().into());
+                }
+            }
+            None if expected_revision.is_some() => return Err(revision_conflict().into()),
+            None => {}
+        }
+        let revision_base = current
+            .as_ref()
+            .map_or(SessionRevision(0), |stored| stored.revision)
+            .max(record.revision);
+        let revision = SessionRevision(
+            revision_base
+                .0
+                .checked_add(1)
+                .ok_or_else(revision_exhausted)?,
+        );
+        record.revision = revision;
+        publish_record_controlled(self.root.as_fd(), &names, record, control)?;
+        Ok(revision)
+    }
+
     fn save_unix(
         &self,
         record: &mut SessionRecord,
@@ -823,6 +905,50 @@ fn publish_record(
         return Err(save_ambiguous());
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn publish_record_controlled(
+    root: rustix::fd::BorrowedFd<'_>,
+    names: &SessionNames,
+    record: &SessionRecord,
+    control: &FileSessionScanControl,
+) -> Result<(), FileSessionScanError> {
+    control.check()?;
+    let bytes = serialize_record(record)?;
+    control.check()?;
+    let temp = create_temp(root, &names.temp)?;
+    let prepared = (|| {
+        let mut remaining = bytes.as_slice();
+        while !remaining.is_empty() {
+            control.check()?;
+            let chunk = &remaining[..remaining.len().min(8192)];
+            match rustix::io::write(&temp, chunk) {
+                Ok(0) => return Err(unavailable(true).into()),
+                Ok(written) => remaining = &remaining[written..],
+                Err(rustix::io::Errno::INTR) => {}
+                Err(error) => return Err(map_io_error(error).into()),
+            }
+        }
+        loop {
+            control.check()?;
+            match rustix::fs::fsync(&temp) {
+                Ok(()) => break,
+                Err(rustix::io::Errno::INTR) => {}
+                Err(error) => return Err(map_io_error(error).into()),
+            }
+        }
+        control.check()?;
+        rustix::fs::renameat(root, &names.temp, root, &names.data).map_err(map_io_error)?;
+        Ok(())
+    })();
+    if let Err(error) = prepared {
+        let _ = rustix::fs::unlinkat(root, &names.temp, AtFlags::empty());
+        return Err(error);
+    }
+    // Publication has crossed its effect boundary. Cancellation must not hide
+    // its receipt; observe directory durability once and preserve uncertainty.
+    rustix::fs::fsync(root).map_err(|_| FileSessionScanError::Store(save_ambiguous()))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

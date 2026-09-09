@@ -89,6 +89,19 @@ pub(super) async fn prepare(
     now_ms: i64,
 ) -> Result<NativeConversation, NativeInteractiveError> {
     match kind {
+        NativeInteractiveTransition::Resume(crate::NativeResumeTarget::Observed(observed)) => {
+            crate::session_resume::owned::resume(
+                host.session_lifecycle(),
+                observed,
+                &options.workspace,
+                now_ms,
+                host.control_workers()
+                    .ok_or(NativeInteractiveError::Configuration)?,
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(NativeInteractiveError::Resume)
+        }
         NativeInteractiveTransition::Resume(target) => prepare_native_session_resume(
             host.session_lifecycle(),
             target,
@@ -155,7 +168,7 @@ pub(super) async fn compose(
     }
     // Persist selected workspace defaults for a fresh candidate before any old
     // terminal effects. Resume's already saved selection remains a checked no-op.
-    runtime.flush_model_preferences(now_ms).await?;
+    crate::session_resume::owned::flush_candidate(host, &runtime, now_ms).await?;
     Ok(Arc::new(runtime))
 }
 

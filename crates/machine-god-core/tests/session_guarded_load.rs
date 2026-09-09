@@ -99,6 +99,80 @@ fn engine(store: &Arc<Store>) -> Engine {
         .unwrap()
 }
 
+struct Access {
+    underlying: Arc<dyn SessionStore>,
+    calls: AtomicUsize,
+}
+impl machine_god_core::SessionStoreAccess for Access {
+    fn underlying_store(&self) -> &Arc<dyn SessionStore> {
+        &self.underlying
+    }
+}
+impl SessionStore for Access {
+    fn load(&self, id: SessionId) -> BoxFuture<'_, LoadResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.underlying.load(id)
+    }
+    fn save(
+        &self,
+        record: SessionRecord,
+        revision: Option<SessionRevision>,
+    ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.underlying.save(record, revision)
+    }
+}
+
+#[test]
+fn explicit_store_access_is_inert_identity_checked_and_never_installed_as_default() {
+    let store = Arc::new(Store::default());
+    let engine = engine(&store);
+    let saved = record(1);
+    let access = Arc::new(Access {
+        underlying: store.clone(),
+        calls: AtomicUsize::new(0),
+    });
+    let wrong = Arc::new(Access {
+        underlying: Arc::new(Store::default()),
+        calls: AtomicUsize::new(0),
+    });
+    let load = |access: Arc<Access>| {
+        engine.requester().load_session_at_revision_with_access(
+            saved.id.clone(),
+            saved.incarnation_id.clone(),
+            saved.revision,
+            access,
+        )
+    };
+    drop(load(access.clone()));
+    assert_eq!(access.calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        block_on(load(wrong.clone())),
+        Err(EngineError::Protocol(_))
+    ));
+    assert_eq!(wrong.calls.load(Ordering::SeqCst), 0);
+    store.push(saved.clone());
+    let session = block_on(load(access.clone())).unwrap().unwrap();
+    assert_eq!(access.calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        block_on(session.update_metadata_with_access(
+            saved.revision,
+            std::collections::BTreeMap::default(),
+            wrong.clone()
+        )),
+        Err(EngineError::Protocol(_))
+    ));
+    assert!(matches!(
+        block_on(session.check_metadata_revision_with_access(saved.revision, wrong.clone())),
+        Err(EngineError::Protocol(_))
+    ));
+    assert_eq!(wrong.calls.load(Ordering::SeqCst), 0);
+    store.push(saved.clone());
+    let ordinary = block_on(engine.load_session(saved.id)).unwrap().unwrap();
+    assert_eq!(ordinary.record(), session.record());
+    assert_eq!(access.calls.load(Ordering::SeqCst), 1);
+}
+
 fn record(revision: u64) -> SessionRecord {
     let mut record = SessionRecord::empty(
         SessionId::new("guarded-session").unwrap(),

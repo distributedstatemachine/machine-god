@@ -274,3 +274,22 @@ and `:3093–3199`.
 Foreign import, native migration, recovery copies, interactive selection and
 their presentation remain separate requirements, not silent fallback paths in
 this primitive.
+
+## Owned observed-selection I/O
+
+Interactive selection of an observed catalog row routes every persistence stage
+through an explicit same-store adapter and the host's actual owned-worker scope.
+Initial reads, canonical checked loads, workspace-rebind CAS and uncertainty
+reconciliation, final adoption reads, and the candidate preference flush use
+nonblocking advisory locks and bounded cancellation checks. Contention returns
+`Busy`; cancellation or dropped
+selection stops subsequent stages without cancelling the caller's token.
+Actual worker cleanup remains covered by host completion after a response is
+abandoned. Cancellation before atomic publication removes only that operation's
+temporary artifact; after rename the operation preserves its success or
+durability-uncertain receipt rather than claiming rollback. A confirmed rebind
+can remain durable even if selection is later abandoned. Existing direct
+`Exact`/`Latest` library preparation keeps its ordinary synchronous-store
+contract. No filesystem or bounded decoding call has a hard wall-clock deadline.
+The single candidate preference flush uses owned access for all interactive
+startup/transition kinds; later ordinary runtime operations do not inherit it.

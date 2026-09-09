@@ -50,8 +50,8 @@ pub use permission::{
 };
 pub use session::PermissionInvocationSnapshot;
 pub use session::{
-    Prompt, Session, SessionRecord, SessionReservation, SessionRevision, SessionStore, Turn,
-    TurnHandle, TurnMetadataEditor, TurnMetadataSnapshot,
+    Prompt, Session, SessionRecord, SessionReservation, SessionRevision, SessionStore,
+    SessionStoreAccess, Turn, TurnHandle, TurnMetadataEditor, TurnMetadataSnapshot,
 };
 pub use session_context::{
     MAX_CONTEXT_SUMMARY_BYTES, SessionContextProjection, SessionTurnPreparation,

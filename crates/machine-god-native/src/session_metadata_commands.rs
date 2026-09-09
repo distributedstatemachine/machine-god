@@ -71,6 +71,16 @@ pub fn rebind_native_session_workspace<'a>(
     workspace: &'a Path,
     now_ms: i64,
 ) -> BoxFuture<'a, Result<SessionRevision, NativeSessionMetadataMutationError>> {
+    rebind_workspace_with_access(session, expected_revision, workspace, now_ms, None)
+}
+
+pub(crate) fn rebind_workspace_with_access<'a>(
+    session: &'a Session,
+    expected_revision: SessionRevision,
+    workspace: &'a Path,
+    now_ms: i64,
+    access: Option<std::sync::Arc<dyn machine_god_core::SessionStoreAccess>>,
+) -> BoxFuture<'a, Result<SessionRevision, NativeSessionMetadataMutationError>> {
     Box::pin(async move {
         let record = session.record_snapshot();
         if record.revision != expected_revision {
@@ -85,10 +95,14 @@ pub fn rebind_native_session_workspace<'a>(
             .rebind_workspace(workspace, now_ms)
             .map_err(NativeSessionMetadataMutationError::InvalidMetadata)?
         {
-            return session
-                .check_metadata_revision(expected_revision)
-                .await
-                .map_err(map_engine_error);
+            return match access {
+                Some(access) => {
+                    session.check_metadata_revision_with_access(expected_revision, access)
+                }
+                None => session.check_metadata_revision(expected_revision),
+            }
+            .await
+            .map_err(map_engine_error);
         }
         expected_revision
             .0
@@ -101,10 +115,12 @@ pub fn rebind_native_session_workspace<'a>(
             NATIVE_WORKSPACE_REBINDINGS_KEY.to_owned(),
             history.to_value(),
         );
-        session
-            .update_metadata(expected_revision, entries)
-            .await
-            .map_err(map_engine_error)
+        match access {
+            Some(access) => session.update_metadata_with_access(expected_revision, entries, access),
+            None => session.update_metadata(expected_revision, entries),
+        }
+        .await
+        .map_err(map_engine_error)
     })
 }
 

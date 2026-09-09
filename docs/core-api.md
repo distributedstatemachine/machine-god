@@ -714,6 +714,21 @@ primitives alone do not establish `/compact` or `/continue` product completion.
 
 ### Exclusive metadata editing
 
+`SessionStoreAccess: SessionStore` is an explicit trusted per-operation I/O
+adapter. Its inert `underlying_store()` accessor identifies the exact original
+`Arc<dyn SessionStore>` it accesses. Core's
+`EngineRequester::load_session_at_revision_with_access` and
+`Session::{update_metadata_with_access, check_metadata_revision_with_access}`
+reject a different allocation before adapter I/O, while preserving existing
+record validation, canonical admission, host leases and reconciliation rules.
+The adapter is used for the requested operation and every uncertainty reload
+within it; it never replaces the engine's configured store or becomes a
+conversation default. These are trusted extension ports, not authentication of
+arbitrary adapter implementations. Core receives no native types, ambient
+execution context, worker scope, or inferred cancellation capability. An adapter
+must explicitly implement its own I/O and lifetime contract; there is no default
+fallback claiming stronger cancellation or nonblocking behavior.
+
 `Session::check_metadata_revision(expected_revision)` provides an owned,
 inert-before-poll checked observation for host no-op operations. It acquires
 the same exclusive lease, reconciles uncertain publication, checks host
