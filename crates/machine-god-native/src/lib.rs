@@ -606,7 +606,16 @@ mod terminal_helper;
 mod terminal_screen;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_shell;
+mod terminal_tape_recording;
 mod terminal_tape_replay;
+pub use terminal_tape_recording::{
+    MAX_TERMINAL_TAPE_RECORDING_BYTES, MAX_TERMINAL_TAPE_RECORDING_FRAME_BYTES,
+    MAX_TERMINAL_TAPE_RECORDING_FRAMES, TerminalTapeRecordingDestination,
+    TerminalTapeRecordingError, TerminalTapeRecordingFrame, TerminalTapeRecordingOptions,
+    TerminalTapeRecordingRequest, TerminalTapeRecordingStatus,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use terminal_tape_recording::{TerminalTapeRecorder, TerminalTapeRecordingCompletion};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_tmux_helper;
 mod terminal_unicode_data;
