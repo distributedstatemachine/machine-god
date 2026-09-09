@@ -358,6 +358,57 @@ fn startup_picker_allocates_nothing_until_escape_then_creates_one_writer() {
 }
 
 #[test]
+fn startup_signal_keeps_output_grace_until_after_host_cleanup() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    runtime.block_on(async {
+        assert_eq!(count(&fixture).await, 0);
+        harness._signal.send(AskSignal::Interrupt).await.unwrap();
+        poll_fn(|cx| {
+            assert!(harness.startup.poll(cx, &mut harness.signals).is_ready());
+            Poll::Ready(())
+        })
+        .await;
+        assert_eq!(count(&fixture).await, 0);
+    });
+    let input_completion = harness.startup.input.input.completion();
+    let Err(mut final_output) = harness.startup.into_result(harness.inbox).unwrap() else {
+        panic!("signal must not create a driver")
+    };
+    input_completion.wait_on_worker().unwrap();
+    fixture.finish();
+    let mut accepted = Vec::new();
+    let result = runtime.block_on(async {
+        tokio::time::pause();
+        tokio::time::advance(super::super::SIGNAL_OUTPUT_GRACE * 2).await;
+        for _ in 0..64 {
+            let result =
+                poll_fn(|cx| Poll::Ready(final_output.poll(cx, &mut harness.signals))).await;
+            if let Ok(work) = harness.work.try_recv() {
+                if let super::super::super::OutputWork::Write(bytes) = work {
+                    accepted.extend(bytes);
+                }
+                harness
+                    .ack
+                    .try_send(OutputAcknowledgement::Succeeded)
+                    .unwrap();
+            }
+            if let Poll::Ready(result) = result {
+                return result;
+            }
+        }
+        panic!("responsive startup final presentation did not finish");
+    });
+    assert_eq!(result.outcome, AskCommandOutcome::Interrupted);
+    assert!(!result.stalled_output_after_signal);
+    assert!(accepted.windows(8).any(|bytes| bytes == b"\x1b[?2004l"));
+}
+
+#[test]
 fn startup_ctrl_d_exits_without_allocating_any_session() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

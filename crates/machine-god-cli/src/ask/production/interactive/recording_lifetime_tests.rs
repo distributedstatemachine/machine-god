@@ -72,7 +72,6 @@ fn recorded_settlement_defers_final_phase_until_native_and_tape_collectors_join(
                     AskCommandOutcome::Completed,
                     None,
                     None,
-                    None,
                 ))
             },
             |mut presentation, signals| {

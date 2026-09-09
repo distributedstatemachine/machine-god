@@ -63,7 +63,6 @@ impl Driver {
             self.poll_input(cx, now_ms);
         }
         self.poll_output(cx);
-        self.poll_output_grace(cx);
 
         let native_settled = self.owner.is_closed() || self.owner.shutdown_error().is_some();
         if self.shutting_down && native_settled && !self.owner.has_pending_copy() {
@@ -80,7 +79,7 @@ impl Driver {
                     },
                     super::AskSignal::outcome,
                 ),
-                stalled_output_after_signal: self.stalled_output,
+                stalled_output_after_signal: false,
             });
         }
         Poll::Pending
@@ -117,7 +116,7 @@ impl Driver {
             native_failed,
             output_failed: self.output_failed,
             signal: self.signal,
-            grace: self.grace,
+            grace: None,
             final_flush_sent: self.final_flush_sent && self.frontend.is_none(),
             terminal_cleanup: self.frontend.is_some().then(|| {
                 terminal_cleanup(
@@ -141,7 +140,6 @@ impl Driver {
             {
                 tape.sigint();
             }
-            self.grace = Some(Box::pin(tokio::time::sleep(SIGNAL_OUTPUT_GRACE)));
             self.shutdown();
         }
     }
@@ -418,7 +416,7 @@ impl Driver {
     }
 
     fn poll_output(&mut self, cx: &mut Context<'_>) {
-        if self.output_failed || self.stalled_output {
+        if self.output_failed {
             return;
         }
         if self.in_flight.is_some() {
@@ -690,19 +688,6 @@ impl Driver {
             }
         }
     }
-
-    fn poll_output_grace(&mut self, cx: &mut Context<'_>) {
-        let Some(grace) = &mut self.grace else {
-            return;
-        };
-        if grace.as_mut().poll(cx).is_ready() {
-            // Expiration never stops native cleanup. It only releases output
-            // presentation after the outer signal guardian can enforce exit.
-            if self.in_flight.is_some() || self.render.is_some() || !self.final_flush_sent {
-                self.stalled_output = true;
-            }
-        }
-    }
 }
 
 /// Conversation-free tail. The host joins input and its terminal workers before
@@ -732,7 +717,6 @@ impl FinalPresentation {
         in_flight: Option<InFlight>,
         outcome: AskCommandOutcome,
         signal: Option<super::AskSignal>,
-        grace: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
         menu_height: Option<u16>,
     ) -> Self {
         Self {
@@ -750,7 +734,7 @@ impl FinalPresentation {
             native_failed: outcome == AskCommandOutcome::OperationalFailure,
             output_failed: outcome == AskCommandOutcome::OutputFailure,
             signal,
-            grace,
+            grace: None,
             final_flush_sent: false,
             terminal_cleanup: Some(terminal_cleanup(menu_height)),
         }
@@ -769,6 +753,12 @@ impl FinalPresentation {
             {
                 tape.sigint();
             }
+        }
+        if self.signal.is_some() && self.grace.is_none() {
+            // This tail is first polled after actual input and native-worker
+            // joins. Cleanup time is not evidence of stalled presentation.
+            // One deadline covers every final write, flush and tape receipt;
+            // acknowledgement progress must never restart the grace period.
             self.grace = Some(Box::pin(tokio::time::sleep(SIGNAL_OUTPUT_GRACE)));
         }
         if !self.output_failed && !self.result.stalled_output_after_signal {

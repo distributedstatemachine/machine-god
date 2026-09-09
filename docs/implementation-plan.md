@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI paired ordering tests integrated; replacement full verification`
-- Next gate: `parallel build preparation, separate platform runtime gates, three fresh reviews and exact remote gates`
+- Active phase: `combined CLI post-cleanup signal budget integrated; replacement verification`
+- Next gate: `focused shutdown checks, full replacement local gate, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -228,10 +228,15 @@ Integrated corrections cover composed macOS semantic expectations, recording
 documentation, explicit lock release, admission-inclusive timeout evidence,
 subreaper-safe shell cleanup, bounded HTTP timeout fixtures and container account
 setup. Their exact accepted/rejected checks remain in the combined CLI history.
-The latest full Linux run rejected one terminal output-limit/deadline ordering
-assertion. Paired public-budget and mandatory real-overflow tests now pass their
-component checks; earlier successes do not accept the replacement candidate.
-Production deadlines, cleanup requirements and Linux concurrency are unchanged.
+Paired public-budget and mandatory real-overflow tests corrected a terminal
+ordering assertion. The replacement passed the full Linux run, but macOS
+rejected one CLI SIGINT recording assertion: the tape lacked final terminal-reset
+bytes. Controlled active-session and startup regressions established that the
+interactive signal timer could expire across native/input joins before final
+presentation. The integrated correction starts its unchanged, non-renewable
+100 ms budget in the post-cleanup tail. Focused and complete replacement checks
+remain pending; this mechanism does not prove the historical failure's exact
+cause. Native deadlines, cleanup requirements and Linux concurrency are unchanged.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

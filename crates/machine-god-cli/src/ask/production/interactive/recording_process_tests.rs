@@ -237,7 +237,11 @@ fn sigint_preserves_exit_status_records_signal_and_closes_tape_and_input_helpers
     terminal.wait_for(b"stdin excluded]");
     terminal.wait_for(b"> ");
     terminal.child.signal();
-    assert_eq!(terminal.finish().0.code(), Some(130));
+    let (status, physical_output) = terminal.finish();
+    // Keep the drained PTY evidence separate from recorded output: a missing
+    // physical cleanup and a lost accepted-output frame are different failures.
+    let physical_tail = &physical_output[physical_output.len().saturating_sub(512)..];
+    assert_eq!(status.code(), Some(130), "PTY tail: {physical_tail:?}");
     let tapes = tapes(&fixture);
     assert_eq!(tapes.len(), 1);
     let frames = frames(&tapes[0]);
@@ -246,10 +250,17 @@ fn sigint_preserves_exit_status_records_signal_and_closes_tape_and_input_helpers
             .iter()
             .any(|(kind, bytes)| *kind == 4 && bytes.is_empty())
     );
+    let recorded = recorded_output(&frames);
+    let recorded_tail = &recorded[recorded.len().saturating_sub(512)..];
     assert!(
-        recorded_output(&frames)
+        physical_output
             .windows(8)
-            .any(|bytes| bytes == b"\x1b[?2004l")
+            .any(|bytes| bytes == b"\x1b[?2004l"),
+        "missing physical terminal cleanup; PTY tail: {physical_tail:?}; tape tail: {recorded_tail:?}"
+    );
+    assert!(
+        recorded.windows(8).any(|bytes| bytes == b"\x1b[?2004l"),
+        "missing recorded terminal cleanup; PTY tail: {physical_tail:?}; tape tail: {recorded_tail:?}"
     );
     gateway.finish();
 }

@@ -5,7 +5,7 @@ use super::{
     AskCommandOutcome, AskSignal, AskSignals, Driver, Frontend, InFlight, InputBinding, InputLines,
     NativeInteractiveInitialSession, NativeInteractiveInput, NativeInteractivePromptInbox,
     NativeInteractiveSession, NativeInteractiveSessionOptions, OutputAcknowledgement, OutputBridge,
-    Render, SIGNAL_OUTPUT_GRACE,
+    Render,
     composer::{ComposerContext, ComposerEvent},
     driver::{FinalPresentation, next_render_work},
     picker::{Picker, Selection},
@@ -18,7 +18,6 @@ use machine_god_native::{
     NativeResumeTarget, NativeSessionCatalogReader, NativeSessionCatalogScope,
 };
 use std::{
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -44,7 +43,6 @@ pub(super) struct Startup {
     cancel_armed: Option<Instant>,
     stopped: Option<AskCommandOutcome>,
     signal: Option<AskSignal>,
-    grace: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl Startup {
@@ -93,7 +91,6 @@ impl Startup {
             cancel_armed: None,
             stopped: None,
             signal: None,
-            grace: None,
         }
     }
 
@@ -107,7 +104,6 @@ impl Startup {
             {
                 tape.sigint();
             }
-            self.grace = Some(Box::pin(tokio::time::sleep(SIGNAL_OUTPUT_GRACE)));
             self.stop(signal.outcome());
         }
         if self.stopped.is_some() {
@@ -364,7 +360,6 @@ impl Startup {
                 self.in_flight,
                 outcome,
                 self.signal,
-                self.grace,
                 self.menu_height,
             )));
         }

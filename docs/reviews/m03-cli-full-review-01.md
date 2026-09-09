@@ -922,3 +922,40 @@ subreaper, all 51 selected terminal unit tests and all 98 terminal integration
 tests, at default Linux concurrency. Exact formatting, full warnings-denied
 Clippy and a fresh locked release build passed. Production code and binary
 SHA-256 were unchanged. Complete replacement acceptance remains pending.
+
+## Replacement macOS recording failure: `1b804b0b`
+
+The exact candidate passed pinned formatting, full warnings-denied Clippy,
+fresh locked release builds, policy/Python checks and FreeBSD/WASI/Apple ABI
+checks. The full Linux workspace passed 4,540 tests with seventeen existing
+helper ignores; explicit doctests passed all three cases. The macOS full
+workspace passed 4,535 tests and failed one, with eighteen existing helper
+ignores; its explicit doctests also passed all three cases. Nested helper
+summaries are excluded from these counts. Both runtime runs completed without
+fail-fast, on separate host runtime lanes.
+
+The sole macOS failure was
+`sigint_preserves_exit_status_records_signal_and_closes_tape_and_input_helpers`
+in the CLI recording scenarios. Exit 130, exact termios restoration, PTY helper
+closure, tape parsing and the recorded SIGINT assertion passed; the tape lacked
+the asserted bracketed-paste disable bytes. All other CLI unit cases, 108 command
+subprocess tests, ten replay tests and 2,163 native unit cases passed. The
+fixture discarded physical PTY output and removed its tape, so the original
+failure does not distinguish absent terminal output from absent recording.
+
+Read-only inspection identified an eager interactive signal timer carried
+across native/input joins as a candidate cause, not a proven explanation of the
+original run. Controlled regression work follows without weakening the existing
+recording assertion. No replacement product reviews, push or main advancement
+followed this rejected candidate. The completed read-only diagnosis worktree
+was removed; active correction work remains isolated.
+
+Two controlled regressions then failed against unchanged production: active
+driver shutdown and actual startup-picker interruption each joined the real
+host/input owners, advanced virtual time by 200 ms before final presentation,
+and supplied responsive output acknowledgements. Both incorrectly reported
+stalled output. This establishes the carried-over timer defect, not the exact
+cause of the historical PTY failure. The correction moves ownership of the
+unchanged, non-renewable 100 ms presentation budget to the post-cleanup tail;
+the subprocess assertion retains mandatory terminal-reset recording and adds
+bounded physical-versus-recorded output diagnostics.

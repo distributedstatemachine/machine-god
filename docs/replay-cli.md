@@ -337,6 +337,9 @@ Input and native conversation/terminal cleanup progress independently of tape
 acknowledgements and blocked stdout. Final presentation still records accepted
 output, then requests tape flush/sync/close. The outer CLI worker closes and
 joins the separate recording worker scope after all presentation owners drop.
+On a latched signal, output and tape finalization share one 100 ms deadline
+starting when the post-cleanup presentation is first polled, not when the signal
+arrived. Neither output nor tape acknowledgements restart that deadline.
 Signals remain latched until this actual join; neither a final tape receipt nor
 an output acknowledgement authorizes early process exit. Abandonment is never
 reported as a complete tape. These CLI rules retain the pinned environment

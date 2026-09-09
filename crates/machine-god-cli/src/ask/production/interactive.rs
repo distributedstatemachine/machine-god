@@ -55,7 +55,6 @@ use machine_god_native::{
 use presentation::Modal;
 use std::{
     future::poll_fn,
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
@@ -534,8 +533,6 @@ struct Driver {
     native_failed: bool,
     output_failed: bool,
     signal: Option<AskSignal>,
-    grace: Option<Pin<Box<tokio::time::Sleep>>>,
-    stalled_output: bool,
     final_flush_sent: bool,
     catalog: Option<Arc<machine_god_native::NativeModelCatalog>>,
     user_config: Option<Arc<machine_god_native::NativeUserConfigStore>>,
@@ -597,8 +594,6 @@ impl Driver {
             native_failed: false,
             output_failed: false,
             signal: None,
-            grace: None,
-            stalled_output: false,
             final_flush_sent: false,
             catalog: None,
             user_config: None,

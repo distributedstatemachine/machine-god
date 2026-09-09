@@ -348,6 +348,175 @@ fn ordinary_quit_joins_host_then_finishes_all_output_without_a_signal() {
 }
 
 #[test]
+fn cleanup_before_final_presentation_does_not_spend_signal_output_grace() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver = harness.driver.with_raw_input(80, None);
+    let result = runtime.block_on(finish_signal(&mut harness));
+    let mut tail = dispose(harness, fixture, result);
+    let mut accepted = Vec::new();
+    let result = runtime.block_on(async {
+        tokio::time::pause();
+        // Model time consumed by joins between native retirement and the first
+        // presentation poll. Responsive output has not received a polling turn.
+        tokio::time::advance(SIGNAL_OUTPUT_GRACE * 2).await;
+        for _ in 0..64 {
+            let result =
+                poll_fn(|cx| Poll::Ready(tail.presentation.poll(cx, &mut tail.signals))).await;
+            if let Ok(work) = tail.work.try_recv() {
+                if let OutputWork::Write(bytes) = work {
+                    accepted.extend(bytes);
+                }
+                tail.ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
+            }
+            if let Poll::Ready(result) = result {
+                return result;
+            }
+        }
+        panic!("responsive bounded final presentation did not finish");
+    });
+    assert_eq!(result.outcome, AskCommandOutcome::Interrupted);
+    assert!(!result.stalled_output_after_signal);
+    assert!(accepted.windows(8).any(|bytes| bytes == b"\x1b[?2004l"));
+}
+
+#[test]
+fn final_write_and_flush_acknowledgements_share_one_signal_deadline() {
+    let runtime = executor();
+    runtime.block_on(async {
+        tokio::time::pause();
+        let (send, mut work) = tokio::sync::mpsc::channel(1);
+        let (ack, acknowledgements) = tokio::sync::mpsc::channel(1);
+        let (_signal, received) = tokio::sync::mpsc::channel(1);
+        let mut signals = AskSignals::new(received);
+        let mut tail = super::FinalPresentation::startup(
+            OutputBridge {
+                tape: None,
+                work: send,
+                acknowledgements,
+            },
+            None,
+            None,
+            AskCommandOutcome::Interrupted,
+            Some(AskSignal::Interrupt),
+            None,
+        );
+        let started = tokio::time::Instant::now();
+        assert!(
+            poll_fn(|cx| Poll::Ready(tail.poll(cx, &mut signals)))
+                .await
+                .is_pending()
+        );
+        assert!(matches!(work.try_recv(), Ok(OutputWork::Write(_))));
+        let deadline = tail.grace.as_ref().unwrap().deadline();
+        assert_eq!(deadline, started + SIGNAL_OUTPUT_GRACE);
+        tokio::time::advance(Duration::from_millis(90)).await;
+        ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
+        assert!(
+            poll_fn(|cx| Poll::Ready(tail.poll(cx, &mut signals)))
+                .await
+                .is_pending()
+        );
+        assert!(matches!(work.try_recv(), Ok(OutputWork::Flush)));
+        assert_eq!(tail.grace.as_ref().unwrap().deadline(), deadline);
+        tokio::time::advance(Duration::from_millis(9)).await;
+        ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
+        assert!(
+            poll_fn(|cx| Poll::Ready(tail.poll(cx, &mut signals)))
+                .await
+                .is_pending()
+        );
+        assert!(matches!(work.try_recv(), Ok(OutputWork::Flush)));
+        assert_eq!(tail.grace.as_ref().unwrap().deadline(), deadline);
+        tokio::time::advance(Duration::from_millis(2)).await;
+        let Poll::Ready(result) = poll_fn(|cx| Poll::Ready(tail.poll(cx, &mut signals))).await
+        else {
+            panic!("final flush received a replacement signal-output deadline")
+        };
+        assert_eq!(result.outcome, AskCommandOutcome::Interrupted);
+        assert!(result.stalled_output_after_signal);
+        assert_eq!(tail.grace.as_ref().unwrap().deadline(), deadline);
+    });
+}
+
+#[test]
+fn accepted_output_tape_backpressure_uses_the_remaining_signal_deadline() {
+    use super::super::super::output;
+    let runtime = executor();
+    let fixture = output::tests::Fixture::new();
+    let scope = native::NativeOwnedWorkerScope::new();
+    let recorder = runtime
+        .block_on(native::TerminalTapeRecorder::start(
+            fixture.request(false),
+            scope.clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+    let completion = recorder.completion();
+    let mut tape = output::tape::TapeLane::new(recorder, false);
+    let (_release, held) = tokio::sync::oneshot::channel();
+    tape.hold_for_test(held);
+    runtime.block_on(async {
+        tokio::time::pause();
+        let (send, mut work) = tokio::sync::mpsc::channel(1);
+        let (ack, acknowledgements) = tokio::sync::mpsc::channel(1);
+        let (_signal, received) = tokio::sync::mpsc::channel(1);
+        let mut signals = AskSignals::new(received);
+        let mut tail = super::FinalPresentation::startup(
+            OutputBridge {
+                tape: Some(tape),
+                work: send,
+                acknowledgements,
+            },
+            None,
+            None,
+            AskCommandOutcome::Interrupted,
+            Some(AskSignal::Interrupt),
+            None,
+        );
+        assert!(
+            poll_fn(|cx| Poll::Ready(tail.poll(cx, &mut signals)))
+                .await
+                .is_pending()
+        );
+        let OutputWork::Write(bytes) = work.try_recv().unwrap() else {
+            panic!("expected terminal cleanup write")
+        };
+        let deadline = tail.grace.as_ref().unwrap().deadline();
+        tokio::time::advance(Duration::from_millis(90)).await;
+        ack.try_send(OutputAcknowledgement::Written {
+            bytes,
+            timestamp_ms: Ok(101),
+            failed: false,
+        })
+        .unwrap();
+        assert!(
+            poll_fn(|cx| Poll::Ready(tail.poll(cx, &mut signals)))
+                .await
+                .is_pending()
+        );
+        assert!(tail.in_flight.is_some());
+        assert!(work.try_recv().is_err());
+        assert!(!completion.status().closed);
+        assert_eq!(tail.grace.as_ref().unwrap().deadline(), deadline);
+        tokio::time::advance(Duration::from_millis(11)).await;
+        let Poll::Ready(result) = poll_fn(|cx| Poll::Ready(tail.poll(cx, &mut signals))).await
+        else {
+            panic!("tape acknowledgement received a replacement signal-output deadline")
+        };
+        assert_eq!(result.outcome, AskCommandOutcome::Interrupted);
+        assert!(result.stalled_output_after_signal);
+        assert_eq!(tail.grace.as_ref().unwrap().deadline(), deadline);
+    });
+    scope.close();
+    scope.completion().wait_on_worker().unwrap();
+    assert!(completion.status().closed);
+    assert!(!completion.status().complete);
+    assert!(completion.workers().is_complete());
+}
+
+#[test]
 fn final_presentation_records_shutdown_output_after_native_host_has_joined() {
     use super::super::super::output;
     let runtime = executor();

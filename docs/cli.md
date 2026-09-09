@@ -79,6 +79,10 @@ controls in draft text are escaped. Bracketed-paste mode is enabled through the
 acknowledged output lane and disabled in its final tail; output failure or a
 signal-forced stalled-output exit cannot promise that display cleanup reached
 the terminal. Termios restoration and native joins do not depend on that tail.
+For a latched signal, one 100 ms output deadline starts on the first final-tail
+poll after those joins. Native cleanup does not consume that presentation budget.
+Writes, flushes and recording finalization share the same deadline; output
+acknowledgements cannot restart it.
 
 ## Commands
 
