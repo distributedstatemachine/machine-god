@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `229cf94a798fa561f3ff7401c07a549b79e50616`
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
-- Active branch: `agent/m60-agent-readiness`
-- Active phase: `whole-codebase maintenance accepted on stacked feature branch; documentation seal`
-- Next gate: `documentation-only lightweight aggregate gates, then resume the retained CLI/tools boundary; no main promotion`
+- Active branch: `agent/m60-cli-shell`
+- Active phase: `resumed CLI workspace integration after accepted readiness maintenance`
+- Next gate: `integrate macOS semantic scanning, terminal cwd routing and CLI workspace selection; focused checks then complete feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -81,7 +81,7 @@ Feature candidate: `0193fab9926cd0aa9b6e348fffabd11e8e3d4e46`.
 Feature CI: `34363000919` (`GREEN`).
 Feature Benchmark evidence: `34363001004` (`GREEN`).
 
-The active branch is stacked on `agent/m60-cli-shell` at `3a0df99` to implement
+The maintenance branch was stacked on `agent/m60-cli-shell` at `3a0df99` to implement
 all twelve findings from the [agent-readiness review](reviews/agent-readiness-rust-structure-review.md).
 This bounded maintenance task does not deliver the unfinished combined CLI
 feature, increment the delivered count, or authorize promoting its parent to
@@ -148,10 +148,12 @@ artifacts are retained and unexpired through 2026-12-08. No performance mileston
 claim follows from these gates.
 
 All integrated maintenance implementation and review worktrees are cleaned up;
-the three earlier unfinished product worktrees remain preserved. The remaining
-documentation-only seal requires its exact lightweight aggregate gates, without
-another product review or new benchmark artifacts. The unfinished parent feature
-remains outside this acceptance and must not be promoted to main.
+the three earlier unfinished product worktrees remain preserved. Documentation
+seal `e14cab5d` passed exact lightweight CI `34365966890` and Benchmark
+`34365966876`, with heavy jobs skipped and no new artifacts. The parent CLI
+branch was then fast-forwarded to that accepted descendant without conflicts.
+The unfinished combined feature remains outside the maintenance acceptance and
+must not be promoted to main before its complete product gates.
 
 The agent-readiness review also records a separately scoped test-speed follow-up:
 selective nextest concurrency, release-probe/build reuse, and overlapping frozen
@@ -159,6 +161,14 @@ candidate verification. This is advisory, not an unmeasured runner migration or
 an amendment to the existing gates. Keep it separate from product-tool work.
 
 ### Retained combined CLI boundary
+
+The resumed iteration owns workspace integration: finish the preserved macOS
+semantic-search and terminal-cwd work, and wire actual launch/slash workspace
+selection. Workers use isolated worktrees with separate semantic/native-reader,
+terminal-routing, and CLI-host ownership. The coordinator owns the live plan,
+shared-contract integration, cross-platform prerequisites and final gates.
+Preserve uncommitted paused work before updating a worker's base. Remove worker
+trees only after their changes are committed, integrated and released.
 
 The parent feature's completed components include native conversation and
 interactive ownership; bounded queues and model selection; persistent permission
