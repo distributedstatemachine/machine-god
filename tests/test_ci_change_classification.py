@@ -11,6 +11,17 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 BENCHMARK_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "bench.yml"
 PATHS_FILTER_PIN = "ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
+RUNTIME_PREREQUISITE_CONDITION = (
+    "needs.change-classification.outputs.native == 'true' || "
+    "needs.change-classification.outputs.cli == 'true' || "
+    "needs.change-classification.outputs.full_workspace == 'true'"
+)
+NATIVE_TARGETS = (
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+)
 FOCUSED_FILTERS = {
     "core_api_docs": "docs/core-api.md",
     "testkit_docs": "docs/testkit.md",
@@ -780,12 +791,13 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn(non_apple_condition, non_apple_step.group("body"))
         self.assertNotIn("--test-threads=1", non_apple_step.group("body"))
 
-    def test_real_tmux_is_required_only_in_selected_native_jobs(self) -> None:
+    def test_real_tmux_is_required_only_in_selected_runtime_jobs(self) -> None:
         matrix = job(self.ci, "native-target-tests")
-        name = "Install tmux for native terminal integration tests"
+        name = "Install shells and tmux for selected runtime tests"
         install = step_script(matrix, name)
         self.assertIn(
             "if: ${{ needs.change-classification.outputs.native == 'true' || "
+            "needs.change-classification.outputs.cli == 'true' || "
             "needs.change-classification.outputs.full_workspace == 'true' }}",
             matrix,
         )
@@ -802,9 +814,9 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertLess(matrix.index(name), matrix.index("Test target natively"))
         self.assertNotIn("tmux", job(self.ci, "documentation-policy"))
 
-    def test_production_helper_is_built_only_for_selected_apple_runtime_tests(self) -> None:
+    def test_production_helper_is_built_before_selected_runtime_tests(self) -> None:
         matrix = job(self.ci, "native-target-tests")
-        name = "Build production terminal helper for selected Apple runtime tests"
+        name = "Build production terminal helper for selected runtime tests"
         block = re.search(
             rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)"
             r"(?=^      - name:|\Z)",
@@ -812,12 +824,7 @@ class CiChangeClassificationTests(unittest.TestCase):
         )
         self.assertIsNotNone(block)
         assert block is not None
-        condition = (
-            "if: ${{ endsWith(matrix.target, '-apple-darwin') && "
-            "(needs.change-classification.outputs.native == 'true' || "
-            "needs.change-classification.outputs.cli == 'true' || "
-            "needs.change-classification.outputs.full_workspace == 'true') }}"
-        )
+        condition = "if: ${{ " + RUNTIME_PREREQUISITE_CONDITION + " }}"
         self.assertIn(condition, block.group("body"))
         build = step_script(matrix, name)
         command = (
@@ -842,9 +849,24 @@ class CiChangeClassificationTests(unittest.TestCase):
             matrix.index(name),
             matrix.index("Test Apple target natively without shared process-table contention"),
         )
-        self.assertEqual(self.ci.count("MACHINE_GOD_TERMINAL_RELEASE_BINARY="), 1)
-        for other_job in ("quality", "documentation-policy", "unsupported-native-tools"):
-            self.assertNotIn(name, job(self.ci, other_job))
+        self.assertLess(matrix.index(name), matrix.index("Test target natively"))
+        quality = job(self.ci, "quality")
+        quality_name = "Build production terminal helper for selected quality tests"
+        quality_build = step_script(quality, quality_name)
+        quality_command = command.replace('--target "${{ matrix.target }}" ', "")
+        self.assertIn("set -euo pipefail", quality_build)
+        self.assertIn(quality_command, quality_build)
+        self.assertNotIn("--target ", quality_build)
+        self.assertIn(
+            'terminal_helper="${GITHUB_WORKSPACE}/target/release/machine-god"',
+            quality_build,
+        )
+        self.assertLess(quality_build.index(quality_command), quality_build.index(executable))
+        self.assertLess(quality_build.index(executable), quality_build.index(export))
+        self.assertLess(quality.index(quality_name), quality.index("      - name: Tests"))
+        self.assertEqual(self.ci.count("MACHINE_GOD_TERMINAL_RELEASE_BINARY="), 2)
+        for other_job in ("documentation-policy", "unsupported-native-tools"):
+            self.assertNotIn("Build production terminal helper", job(self.ci, other_job))
         linux = step_script(matrix, "Test target natively")
         apple = step_script(
             matrix, "Test Apple target natively without shared process-table contention"
@@ -857,26 +879,7 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertNotIn("--skip", apple)
         self.assertNotIn("--ignored", apple)
 
-    def test_apple_helper_prerequisite_follows_its_test_consumers(self) -> None:
-        matrix = job(self.ci, "native-target-tests")
-        name = "Build production terminal helper for selected Apple runtime tests"
-        block = matrix.split(f"      - name: {name}\n", 1)[1].split(
-            "      - name:", 1
-        )[0]
-        condition = re.search(r"(?m)^        if: \$\{\{ (.*) \}\}$", block)
-        self.assertIsNotNone(condition)
-        assert condition is not None
-        # Execute this one fixed prerequisite expression, not a general Actions
-        # interpreter. The separate shape test pins every supported operand.
-        shell_condition = condition.group(1).replace(
-            "endsWith(matrix.target, '-apple-darwin')",
-            '[[ "${TARGET}" == *-apple-darwin ]]',
-        )
-        for package in ("native", "cli", "full_workspace"):
-            shell_condition = shell_condition.replace(
-                f"needs.change-classification.outputs.{package} == 'true'",
-                f'[[ "${{{package.upper()}}}" == true ]]',
-            )
+    def test_runtime_prerequisites_follow_their_test_consumers(self) -> None:
         cases = (
             ("cli-source", {"CLI_ANY": "true", "CLI_SOURCE": "true"}, True),
             ("cli-test", {"CLI_ANY": "true"}, True),
@@ -888,18 +891,39 @@ class CiChangeClassificationTests(unittest.TestCase):
             ("format", {"RUST_FORMAT": "true"}, False),
             ("docs", {"DOCUMENTATION": "true"}, False),
         )
+        conditions = []
+        for job_name, suffix in (("quality", "quality"), ("native-target-tests", "runtime")):
+            selected_job = job(self.ci, job_name)
+            self.assertLess(
+                selected_job.index(f"Install shells and tmux for selected {suffix} tests"),
+                selected_job.index(f"Build production terminal helper for selected {suffix} tests"),
+            )
+            for prefix in ("Build production terminal helper", "Install shells and tmux"):
+                name = f"{prefix} for selected {suffix} tests"
+                block = selected_job.split(f"      - name: {name}\n", 1)[1].split(
+                    "      - name:", 1
+                )[0]
+                condition = re.search(r"(?m)^        if: \$\{\{ (.*) \}\}$", block)
+                self.assertIsNotNone(condition, name)
+                assert condition is not None
+                self.assertEqual(condition.group(1), RUNTIME_PREREQUISITE_CONDITION)
+                # Execute only this pinned expression, not a general Actions interpreter.
+                shell_condition = condition.group(1)
+                for package in ("native", "cli", "full_workspace"):
+                    shell_condition = shell_condition.replace(
+                        f"needs.change-classification.outputs.{package} == 'true'",
+                        f'[[ "${{{package.upper()}}}" == true ]]',
+                    )
+                targets = ("quality-host",) if job_name == "quality" else NATIVE_TARGETS
+                conditions.extend((name, target, shell_condition) for target in targets)
         for label, inputs, runtime_consumer in cases:
             route = run_route(self.ci, CI_ROUTE_INPUTS, inputs)
             if label.startswith("cli-"):
                 self.assertEqual(route["cli"], "true")
                 self.assertEqual(route["native"], "false")
                 self.assertEqual(route["native_matrix"], "true")
-            for target in (
-                "aarch64-apple-darwin",
-                "x86_64-apple-darwin",
-                "x86_64-unknown-linux-gnu",
-            ):
-                with self.subTest(case=label, target=target):
+            for name, target, shell_condition in conditions:
+                with self.subTest(case=label, step=name, target=target):
                     result = subprocess.run(
                         ["bash", "-c", f"if {shell_condition}; then echo true; else echo false; fi"],
                         env={
@@ -914,22 +938,23 @@ class CiChangeClassificationTests(unittest.TestCase):
                         check=False,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    expected = runtime_consumer and target.endswith("-apple-darwin")
-                    self.assertEqual(result.stdout.strip(), str(expected).lower())
+                    self.assertEqual(result.stdout.strip(), str(runtime_consumer).lower())
 
     def test_production_helper_export_requires_build_success_and_executable(self) -> None:
-        script = step_script(
-            self.ci, "Build production terminal helper for selected Apple runtime tests"
-        )
-        for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
-            for build_exit, executable in ((0, True), (1, True), (0, False)):
+        for target in ("", *NATIVE_TARGETS):
+            suffix = "runtime" if target else "quality"
+            script = step_script(
+                self.ci, f"Build production terminal helper for selected {suffix} tests"
+            )
+            for build_exit, executable in ((0, True), (1, True), (0, False), (0, None)):
                 with self.subTest(target=target, build_exit=build_exit, executable=executable):
                     with tempfile.TemporaryDirectory() as temporary:
                         root = Path(temporary)
                         helper = root / "target" / target / "release" / "machine-god"
                         helper.parent.mkdir(parents=True)
-                        helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-                        helper.chmod(0o700 if executable else 0o600)
+                        if executable is not None:
+                            helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                            helper.chmod(0o700 if executable else 0o600)
                         environment_file = root / "github-env"
                         environment_file.touch()
                         environment = {
@@ -948,22 +973,29 @@ class CiChangeClassificationTests(unittest.TestCase):
                             text=True,
                             check=False,
                         )
-                        succeeds = build_exit == 0 and executable
+                        succeeds = build_exit == 0 and executable is True
                         self.assertEqual(result.returncode == 0, succeeds, result.stderr)
                         self.assertEqual(
                             environment_file.read_text(encoding="utf-8"),
                             f"MACHINE_GOD_TERMINAL_RELEASE_BINARY={helper}\n" if succeeds else "",
                         )
 
-    def test_required_shells_are_provisioned_before_selected_native_quality_tests(self) -> None:
+    def test_required_shells_are_provisioned_before_selected_quality_tests(self) -> None:
         quality = job(self.ci, "quality")
-        name = "Install shells for selected native tests"
+        name = "Install shells and tmux for selected quality tests"
         install = step_script(quality, name)
-        self.assertIn("sudo apt-get install --yes bash zsh", install)
+        self.assertIn("sudo apt-get install --yes tmux bash zsh", install)
         self.assertIn("test -x /bin/bash", install)
         self.assertIn("test -x /bin/zsh", install)
+        self.assertIn('tmux_binary="$(command -v tmux)"', install)
+        self.assertIn('"${tmux_binary}" -V', install)
+        self.assertIn(
+            'echo "MACHINE_GOD_TERMINAL_TMUX_BINARY=${tmux_binary}" >> "${GITHUB_ENV}"',
+            install,
+        )
         self.assertIn(
             "if: ${{ needs.change-classification.outputs.native == 'true' || "
+            "needs.change-classification.outputs.cli == 'true' || "
             "needs.change-classification.outputs.full_workspace == 'true' }}",
             quality[quality.index(f"      - name: {name}"):quality.index("      - name: Tests")],
         )
@@ -972,8 +1004,8 @@ class CiChangeClassificationTests(unittest.TestCase):
 
     def test_linux_shell_setup_repairs_completion_permissions_without_skipping_profiles(self) -> None:
         for job_name, step_name in (
-            ("quality", "Install shells for selected native tests"),
-            ("native-target-tests", "Install tmux for native terminal integration tests"),
+            ("quality", "Install shells and tmux for selected quality tests"),
+            ("native-target-tests", "Install shells and tmux for selected runtime tests"),
         ):
             with self.subTest(job=job_name):
                 install = step_script(job(self.ci, job_name), step_name)
