@@ -229,11 +229,15 @@ fn locked_candidate_returns_busy_not_skipped_or_partial_and_unlock_restores_list
         .unwrap();
     let lock = fs::File::open(lock_path).unwrap();
     rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive).unwrap();
+    // Model a concurrent spawn retaining the same open file description.
+    // Closing only our original descriptor would leave its lock held.
+    let retained_lock = lock.try_clone().unwrap();
     let reader = fixture.reader();
     assert_eq!(
         list(&reader, NativeSessionCatalogScope::All, 10).unwrap_err(),
         NativeSessionCatalogReadError::Busy
     );
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::Unlock).unwrap();
     drop(lock);
     assert_eq!(
         list(&reader, NativeSessionCatalogScope::All, 10)
@@ -242,6 +246,7 @@ fn locked_candidate_returns_busy_not_skipped_or_partial_and_unlock_restores_list
             .len(),
         1
     );
+    drop(retained_lock);
 }
 
 #[test]

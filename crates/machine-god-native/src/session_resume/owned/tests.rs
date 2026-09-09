@@ -138,10 +138,14 @@ fn legacy_candidate_preference_flush_uses_owned_cas_under_late_lock_contention()
     .unwrap();
     assert!(runtime.status().model_preferences_pending);
     let lock = f.lock();
+    // Keep a shared open file description alive across the explicit unlock,
+    // as a concurrent spawn can do until it reaches exec.
+    let retained_lock = lock.try_clone().unwrap();
     assert!(
         block_on(runtime.flush_model_preferences_with_access(20, Some(f.access.clone()))).is_err()
     );
     assert!(runtime.status().model_preferences_pending);
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::Unlock).unwrap();
     drop(lock);
     assert!(
         block_on(runtime.flush_model_preferences_with_access(20, Some(f.access.clone()))).is_ok()
@@ -155,6 +159,7 @@ fn legacy_candidate_preference_flush_uses_owned_cas_under_late_lock_contention()
             .model(),
         "fixture/model"
     );
+    drop(retained_lock);
 }
 
 #[test]
@@ -165,6 +170,7 @@ fn advisory_lock_contention_rejects_load_and_cas_as_busy_without_mutation() {
         .unwrap()
         .unwrap();
     let lock = f.lock();
+    let retained_lock = lock.try_clone().unwrap();
     assert_eq!(
         f.resume(observed.clone(), CancellationToken::new())
             .unwrap_err()
@@ -178,11 +184,13 @@ fn advisory_lock_contention_rejects_load_and_cas_as_busy_without_mutation() {
             .kind(),
         Kind::Busy
     );
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::Unlock).unwrap();
     drop(lock);
     assert_eq!(
         block_on(f.access.store.load(observed.id)).unwrap().unwrap(),
         before
     );
+    drop(retained_lock);
 }
 
 #[test]
@@ -353,6 +361,7 @@ fn engine_uncertainty_reconciliation_uses_controlled_adapter_not_blocking_origin
         .unwrap()
         .unwrap();
     let lock = f.lock();
+    let retained_lock = lock.try_clone().unwrap();
     // Failure conservatively arms core's reconciliation debt.
     assert!(
         block_on(session.update_metadata_with_access(
@@ -367,12 +376,14 @@ fn engine_uncertainty_reconciliation_uses_controlled_adapter_not_blocking_origin
         block_on(session.check_metadata_revision_with_access(observed.revision, f.access.clone()))
             .is_err()
     );
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::Unlock).unwrap();
     drop(lock);
     assert_eq!(
         block_on(session.check_metadata_revision_with_access(observed.revision, f.access.clone()))
             .unwrap(),
         observed.revision
     );
+    drop(retained_lock);
 }
 
 #[test]
