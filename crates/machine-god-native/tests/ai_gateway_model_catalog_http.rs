@@ -5,7 +5,8 @@
 
 use std::future::Future;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -145,7 +146,7 @@ fn is_peer_close_error(error: &io::Error) -> bool {
     )
 }
 
-fn read_request(stream: &mut TcpStream) -> io::Result<CapturedRequest> {
+fn read_request(stream: &mut impl Read) -> io::Result<CapturedRequest> {
     let mut received = Vec::new();
     let header_end = loop {
         if let Some(offset) = received.windows(4).position(|window| window == b"\r\n\r\n") {
@@ -769,9 +770,211 @@ fn cancellation_and_drop_tear_down_pending_body_work_and_release_owned_state() {
     server.finish();
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum TimeoutObservation {
+    NoConnection,
+    ClosedBeforeHead,
+    ClosedDuringResponse,
+    ClosedAfterBodyPrefix,
+}
+
+struct TimeoutStream {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl TimeoutStream {
+    fn remaining(&self) -> io::Result<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "fixture deadline elapsed"))
+    }
+}
+
+impl Read for TimeoutStream {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream.read(bytes)
+    }
+}
+
+impl Write for TimeoutStream {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.remaining()?;
+        self.stream.flush()
+    }
+}
+
+const STALLED_BODY_PREFIX: &[u8] =
+    b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{";
+
+struct TimeoutServer {
+    address: SocketAddr,
+    finished: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<io::Result<TimeoutObservation>>>,
+}
+
+impl TimeoutServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker_finished = Arc::clone(&finished);
+        let deadline = Instant::now() + IO_TIMEOUT;
+        let worker = thread::spawn(move || {
+            let stream = loop {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "fixture accept deadline elapsed",
+                    ));
+                }
+                // Observe finish before probing, but interpret it only after
+                // accept: queued connections still need peer-closure evidence.
+                let finished = worker_finished.load(Ordering::Acquire);
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        if finished {
+                            return Ok(TimeoutObservation::NoConnection);
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            stream.set_nonblocking(false)?;
+            let mut stream = TimeoutStream { stream, deadline };
+            if let Err(error) = read_request(&mut stream) {
+                return if error.kind() == io::ErrorKind::UnexpectedEof
+                    || is_peer_close_error(&error)
+                {
+                    Ok(TimeoutObservation::ClosedBeforeHead)
+                } else {
+                    Err(error)
+                };
+            }
+            if let Err(error) = stream
+                .write_all(STALLED_BODY_PREFIX)
+                .and_then(|()| stream.flush())
+            {
+                return if is_peer_close_error(&error) {
+                    Ok(TimeoutObservation::ClosedDuringResponse)
+                } else {
+                    Err(error)
+                };
+            }
+            match stream.read(&mut [0_u8; 1]) {
+                Ok(0) => Ok(TimeoutObservation::ClosedAfterBodyPrefix),
+                Err(error) if is_peer_close_error(&error) => {
+                    Ok(TimeoutObservation::ClosedAfterBodyPrefix)
+                }
+                Ok(_) => Err(io::Error::other("unexpected bytes instead of peer closure")),
+                Err(error) => Err(error),
+            }
+        });
+        Self {
+            address,
+            finished,
+            worker: Some(worker),
+        }
+    }
+
+    fn endpoint(&self) -> AiGatewayModelCatalogHttpEndpoint {
+        AiGatewayModelCatalogHttpEndpoint::loopback_http(&format!(
+            "http://{}/coding-agent/v1/models",
+            self.address
+        ))
+        .unwrap()
+    }
+
+    fn finish(mut self) -> io::Result<TimeoutObservation> {
+        self.finished.store(true, Ordering::Release);
+        self.worker.take().unwrap().join().unwrap()
+    }
+}
+
+impl Drop for TimeoutServer {
+    fn drop(&mut self) {
+        self.finished.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            // The same absolute fixture deadline bounds accepted socket work,
+            // including when an assertion unwinds before explicit finish.
+            let _ = worker.join();
+        }
+    }
+}
+
+#[test]
+fn timeout_fixture_observes_no_connection_without_an_orphan_worker() {
+    assert_eq!(
+        TimeoutServer::start().finish().unwrap(),
+        TimeoutObservation::NoConnection
+    );
+}
+
+#[test]
+fn timeout_fixture_observes_empty_and_partial_head_peer_close() {
+    for bytes in [
+        b"".as_slice(),
+        b"GET /coding-agent/v1/models HTTP/1.1\r\nHost:",
+    ] {
+        let server = TimeoutServer::start();
+        let mut peer = TcpStream::connect(server.address).unwrap();
+        configure(&peer);
+        peer.write_all(bytes).unwrap();
+        peer.shutdown(Shutdown::Both).unwrap();
+        drop(peer);
+        assert_eq!(
+            server.finish().unwrap(),
+            TimeoutObservation::ClosedBeforeHead
+        );
+    }
+}
+
+#[test]
+fn timeout_fixture_requires_close_after_acknowledged_body_prefix() {
+    let server = TimeoutServer::start();
+    let mut peer = TcpStream::connect(server.address).unwrap();
+    configure(&peer);
+    peer.write_all(b"GET /coding-agent/v1/models HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let mut prefix = vec![0_u8; STALLED_BODY_PREFIX.len()];
+    peer.read_exact(&mut prefix).unwrap();
+    assert_eq!(prefix, STALLED_BODY_PREFIX);
+    peer.shutdown(Shutdown::Both).unwrap();
+    drop(peer);
+    assert_eq!(
+        server.finish().unwrap(),
+        TimeoutObservation::ClosedAfterBodyPrefix
+    );
+}
+
+#[test]
+fn timeout_fixture_does_not_accept_a_malformed_complete_head_as_peer_close() {
+    let server = TimeoutServer::start();
+    let mut peer = TcpStream::connect(server.address).unwrap();
+    configure(&peer);
+    peer.write_all(b"GET / HTTP/1.1\r\nmalformed header\r\n\r\n")
+        .unwrap();
+    peer.shutdown(Shutdown::Both).unwrap();
+    drop(peer);
+    assert_eq!(server.finish().unwrap_err().kind(), io::ErrorKind::Other);
+}
+
 #[test]
 fn request_timeout_is_resource_limited_and_tears_down_the_connection() {
-    let server = StalledBodyServer::start();
+    // Admission may consume the unchanged 25 ms budget before any request
+    // head or body. Connected outcomes still require actual peer closure;
+    // mandatory-ready cancellation/drop coverage uses StalledBodyServer above.
+    let server = TimeoutServer::start();
     let limits = AiGatewayModelCatalogHttpLimits::new(
         Duration::from_millis(25),
         Duration::from_millis(25),
@@ -789,7 +992,7 @@ fn request_timeout_is_resource_limited_and_tears_down_the_connection() {
         error.kind(),
         AiGatewayModelCatalogTransportErrorKind::ResourceLimit
     );
-    server.finish();
+    server.finish().unwrap();
 }
 
 struct CapacityServer {
