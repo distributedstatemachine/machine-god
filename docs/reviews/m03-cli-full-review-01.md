@@ -959,3 +959,8 @@ cause of the historical PTY failure. The correction moves ownership of the
 unchanged, non-renewable 100 ms presentation budget to the post-cleanup tail;
 the subprocess assertion retains mandatory terminal-reset recording and adds
 bounded physical-versus-recorded output diagnostics.
+
+Preparation of integrated candidate `9e92afaa` stopped at the same
+warnings-denied Clippy finding on Linux and macOS: the new startup signal test
+used an underscore-prefixed fixture field. Renaming that field and its two uses
+preserves the test and production behavior without suppressing the lint.

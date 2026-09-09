@@ -12,7 +12,7 @@ struct Harness {
     startup: Startup,
     inbox: NativeInteractivePromptInbox,
     signals: AskSignals,
-    _signal: tokio::sync::mpsc::Sender<AskSignal>,
+    signal: tokio::sync::mpsc::Sender<AskSignal>,
     work: tokio::sync::mpsc::Receiver<super::super::super::OutputWork>,
     ack: tokio::sync::mpsc::Sender<OutputAcknowledgement>,
     input_writer: std::io::PipeWriter,
@@ -95,7 +95,7 @@ async fn harness(fixture: &support::Fixture) -> Harness {
         ),
         inbox,
         signals: AskSignals::new(signals),
-        _signal: signal,
+        signal,
         work: received,
         ack,
         input_writer: writer,
@@ -367,7 +367,7 @@ fn startup_signal_keeps_output_grace_until_after_host_cleanup() {
     let mut harness = runtime.block_on(harness(&fixture));
     runtime.block_on(async {
         assert_eq!(count(&fixture).await, 0);
-        harness._signal.send(AskSignal::Interrupt).await.unwrap();
+        harness.signal.send(AskSignal::Interrupt).await.unwrap();
         poll_fn(|cx| {
             assert!(harness.startup.poll(cx, &mut harness.signals).is_ready());
             Poll::Ready(())
