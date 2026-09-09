@@ -196,6 +196,29 @@ fn optional_failure_is_joined_and_fixed_while_required_failure_is_fatal() {
 }
 
 #[test]
+fn relative_parent_destination_retains_native_walk_checks() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.root.join("nested")).unwrap();
+    let owner = Settlement::default();
+    let mut recorder = fixture
+        .start(&owner, true, Some("nested/../relative.fxtape"), None)
+        .unwrap()
+        .recorder
+        .unwrap();
+    assert!(fixture.root.join("relative.fxtape").exists());
+    let runtime = TokioWebSearchDeadline::build_runtime_pair().unwrap().0;
+    runtime.block_on(recorder.finish()).unwrap();
+    drop(recorder);
+    owner.finish().unwrap();
+    assert!(
+        fixture
+            .start(&owner, true, Some("missing/../absent.fxtape"), None)
+            .is_err()
+    );
+    assert!(!fixture.root.join("absent.fxtape").exists());
+}
+
+#[test]
 fn abandoned_tape_is_joined_but_never_reported_complete() {
     let fixture = Fixture::new();
     let owner = Settlement::default();

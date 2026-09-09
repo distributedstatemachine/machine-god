@@ -16,9 +16,11 @@ pub(super) fn validate_destination(
     destination: &TerminalTapeRecordingDestination,
 ) -> Result<(), TerminalTapeRecordingError> {
     match destination {
-        TerminalTapeRecordingDestination::Automatic { state_path, .. } => validate_path(state_path),
+        TerminalTapeRecordingDestination::Automatic { state_path, .. } => {
+            validate_path(state_path, false)
+        }
         TerminalTapeRecordingDestination::Explicit(path) => {
-            validate_path(path)?;
+            validate_path(path, true)?;
             let name = path
                 .file_name()
                 .ok_or(TerminalTapeRecordingError::InvalidRequest)?;
@@ -51,7 +53,7 @@ pub(super) fn open(
         check_cancelled(cancellation)?;
         match destination {
             TerminalTapeRecordingDestination::Automatic { store, state_path } => {
-                validate_path(&state_path)?;
+                validate_path(&state_path, false)?;
                 let root = store
                     .try_clone_root_descriptor()
                     .map_err(|_| TerminalTapeRecordingError::OpenFailed)?;
@@ -92,7 +94,7 @@ pub(super) fn open(
                 Err(TerminalTapeRecordingError::AlreadyExists)
             }
             TerminalTapeRecordingDestination::Explicit(path) => {
-                validate_path(&path)?;
+                validate_path(&path, true)?;
                 let name = path
                     .file_name()
                     .ok_or(TerminalTapeRecordingError::InvalidRequest)?;
@@ -108,14 +110,18 @@ pub(super) fn open(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn validate_path(path: &std::path::Path) -> Result<(), TerminalTapeRecordingError> {
+fn validate_path(
+    path: &std::path::Path,
+    allow_parent: bool,
+) -> Result<(), TerminalTapeRecordingError> {
     use std::os::unix::ffi::OsStrExt;
     if !path.is_absolute()
         || path.as_os_str().as_bytes().len() > 4096
         || path.as_os_str().as_bytes().contains(&0)
-        || path
-            .components()
-            .any(|part| matches!(part, std::path::Component::ParentDir))
+        || !allow_parent
+            && path
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
     {
         Err(TerminalTapeRecordingError::InvalidRequest)
     } else {
@@ -142,11 +148,19 @@ fn open_directory(
         .map_err(|_| TerminalTapeRecordingError::OpenFailed)?;
     check_cancelled(cancellation)?;
     for part in path.components() {
-        if let std::path::Component::Normal(name) = part {
-            directory = rustix::fs::openat(&directory, name, directory_flags(), Mode::empty())
-                .map_err(|_| TerminalTapeRecordingError::OpenFailed)?;
-            check_cancelled(cancellation)?;
-        }
+        let name = match part {
+            std::path::Component::Normal(name) => name,
+            std::path::Component::ParentDir => std::ffi::OsStr::new(".."),
+            std::path::Component::RootDir | std::path::Component::CurDir => continue,
+            std::path::Component::Prefix(_) => {
+                return Err(TerminalTapeRecordingError::InvalidRequest);
+            }
+        };
+        // Do not lexically cancel `directory/..`: the preceding directory must
+        // exist and must not be a symlink, even when the next step leaves it.
+        directory = rustix::fs::openat(&directory, name, directory_flags(), Mode::empty())
+            .map_err(|_| TerminalTapeRecordingError::OpenFailed)?;
+        check_cancelled(cancellation)?;
     }
     Ok(directory)
 }
