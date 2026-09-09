@@ -690,3 +690,39 @@ These were local source/caller/test reviews, not independent runtime reruns or
 remote acceptance. The documentation correction states the existing accepted
 interactive recording grammar and explicitly scopes one-prompt behavior; it
 changes no product code or tests. The candidate was not pushed or delivered.
+
+## Combined-candidate runtime regression: `7e83a77e`
+
+This candidate also corrected stale overview statements about configured
+permissions and the explicit macOS sandbox. Its pinned-toolchain formatting,
+Clippy, fresh release builds, standalone fixture checks, dependency checks,
+documentation/drift, FreeBSD/WASI and Apple ABI checks passed. The complete
+Python suite passed 255 tests with 14 existing platform skips, including the
+fresh optimized cleanup probe.
+
+The macOS full runtime run passed all CLI, core, integration and doc suites,
+but native unit tests reported 2,159 passes, four failures and twelve fixture
+helper ignores. The failures were the HTTP/TCP probe fixture and three PTY
+helper startup/reaping fixtures. Linux's initial container lacked an init
+reaper, invalidating its terminal cleanup evidence; a replacement container
+with an init reaper passed those focused checks. Its subsequent full run still
+failed the supervisor exact-owner signal fixture and two terminal deadline
+fixtures. All seven macOS/Linux timing-sensitive failures passed individually
+with unchanged binaries and deadlines after the competing platform run ended.
+Observed host load was approximately 41 on sixteen logical CPUs, with unrelated
+editor extension hosts consuming substantial CPU. Scheduling interference is
+plausible, not proven; isolated retries are not replacement full-gate acceptance.
+
+The initial Linux run additionally exposed a deterministic fixture ownership
+problem: the catalog test dropped a raw locked file and assumed immediate
+unlock. Retaining `File::try_clone()` reproduces the post-drop `Busy` failure
+without a fork race or a timing assumption. Explicit unlock releases the shared
+open-file-description lock even while that duplicate remains alive, matching
+the production store guard's existing contract. The same assumption occurs in
+three owned-resume fixtures. Their correction preserves the initial contention
+and subsequent successful-operation assertions without retries or deadline
+changes. No product review or remote delivery accepted this candidate.
+Correction `e5de4e8f` passed seven catalog-reader and eight owned-resume tests,
+with one existing child-fixture entrypoint ignored, plus formatting and native
+all-target/all-feature warnings-denied Clippy. Its clean integrated worktree
+was removed.

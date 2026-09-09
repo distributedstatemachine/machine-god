@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI verification; correcting resume documentation after full review`
-- Next gate: `replacement candidate checks and fresh reviews, then exact feature CI/Benchmark evidence`
+- Active phase: `combined CLI verification; lock fixtures corrected, replacement gate pending`
+- Next gate: `replacement full local gate with separate platform runtimes, fresh reviews and exact feature CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -233,6 +233,16 @@ documentation mismatch: interactive recording was incorrectly described as
 unsupported. The correction scopes the one-prompt restrictions and documents
 the accepted trailing interactive modifier. Replacement candidate verification
 and the exact remote feature gates remain open.
+The following candidate also aligns the security overview with the implemented
+permission and explicit macOS sandbox contracts. Its policy, compilation and
+documentation checks pass, but full runtime verification exposed a raw-file
+lock fixture that relies on descriptor drop and timing-sensitive failures under
+heavy host load. Isolated timing-case reruns pass unchanged. Four catalog/resume
+fixtures now explicitly unlock their raw files while retaining duplicate
+descriptors through the successful-operation assertions. The deterministic
+drop-only reproduction fails with `Busy`; all fifteen corrected focused tests
+pass. Complete replacement acceptance remains pending; no deadline or
+test-concurrency requirement has been relaxed.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
@@ -447,6 +457,9 @@ use this canonical full-gate recipe in one shell. Both Linux and macOS runtime
 tests require `/bin/bash`, `/bin/zsh` and tmux; install them before starting.
 Keep their normal profile behavior. Concurrent builds can contend with
 process-lifecycle fixtures, so finish worker builds before the full runtime gate.
+When Linux and macOS share one physical host, also separate their process-heavy
+runtime runs. This does not change Linux's internal default test concurrency or
+prevent independent CI runners from running in parallel.
 
 ```sh
 set -eu
