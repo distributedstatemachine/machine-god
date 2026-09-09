@@ -135,14 +135,14 @@ impl NativeSandboxLaunch {
         Ok(result)
     }
 
-    pub(crate) fn with_workspace_scope(
+    pub(crate) fn with_shared_workspace_scope(
         mut self,
-        scope: crate::NativeWorkspaceTurnScope,
+        scope: Arc<crate::NativeWorkspaceTurnScope>,
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<Self> {
         check(deadline, cancellation)?;
-        self.workspace_scope = Some(Arc::new(scope));
+        self.workspace_scope = Some(scope);
         self.validate_workspace_scope()?;
         check(deadline, cancellation)?;
         Ok(self)

@@ -1,10 +1,22 @@
 use super::invalid;
 use crate::{TerminalActionInvocation, TerminalShell};
 use machine_god_core::{BoxFuture, CancellationToken, PermissionError, TerminalActionRequest};
-use std::{fmt, fs::File};
+use std::{fmt, fs::File, sync::Arc};
 
 /// Explicit actual-host resolution authority, never a model-selected cwd resolver.
 pub trait NativePermissionTerminalResolver: Send + Sync + 'static {
+    /// Resolves using the caller's acceptance-time workspace scope, without
+    /// rediscovering a registration by IDs. Legacy explicit resolvers retain
+    /// their original behavior unless they opt into contextual authority.
+    fn resolve_with_workspace_scope(
+        &self,
+        invocation: TerminalActionInvocation,
+        _scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<NativePermissionTerminalResolution, PermissionError>> {
+        self.resolve(invocation, cancellation)
+    }
+
     fn resolve(
         &self,
         invocation: TerminalActionInvocation,

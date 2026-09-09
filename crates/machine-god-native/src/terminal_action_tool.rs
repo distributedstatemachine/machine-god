@@ -133,6 +133,12 @@ impl TerminalActionHostIdentity {
 /// Cancellation before submission prevents effects; after commitment return the
 /// actual receipt (including accepted writes), not a blind cancellation error.
 pub trait TerminalActionExecutor: Send + Sync + 'static {
+    /// Optional pure acceptance-time binding. A bound executor must reject any
+    /// different context; this hook may not acquire descriptors or start work.
+    fn for_context(&self, _context: &ToolContext) -> Option<Arc<dyn TerminalActionExecutor>> {
+        None
+    }
+
     /// Executes one already prepared and authorized normalized request.
     fn execute(
         &self,
@@ -509,6 +515,10 @@ impl Tool for TerminalActionTool {
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         let arguments = JsonValueOwner::new(arguments);
+        let executor = self
+            .executor
+            .for_context(&context)
+            .unwrap_or_else(|| Arc::clone(&self.executor));
         Box::pin(async move {
             if cancellation.is_cancelled() {
                 return Err(ToolError::new(
@@ -537,8 +547,7 @@ impl Tool for TerminalActionTool {
                     false,
                 ));
             }
-            let result = self
-                .executor
+            let result = executor
                 .execute(context, prepared.invocation.clone(), cancellation)
                 .await?;
             result
