@@ -68,11 +68,15 @@ impl FileSessionScanControl {
             Ok(())
         }
     }
-    fn lock(&self, file: &OwnedFd) -> Result<(), FileSessionScanError> {
+    fn lock<'a>(&self, file: &'a OwnedFd) -> Result<SessionLockGuard<'a>, FileSessionScanError> {
         loop {
             self.check()?;
             match rustix::fs::flock(file, FlockOperation::NonBlockingLockExclusive) {
-                Ok(()) => return self.check(),
+                Ok(()) => {
+                    let guard = SessionLockGuard(file);
+                    self.check()?;
+                    return Ok(guard);
+                }
                 Err(rustix::io::Errno::INTR) => {}
                 Err(rustix::io::Errno::WOULDBLOCK) => return Err(FileSessionScanError::Busy),
                 Err(error) => return Err(map_io_error(error).into()),
@@ -412,7 +416,7 @@ impl FileSessionStore {
     ) -> Result<SessionRecord, SessionStoreError> {
         let names = SessionNames::for_id(&record.id);
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        lock_exclusive(&lock)?;
+        let _guard = lock_exclusive(&lock)?;
         if read_record(self.root.as_fd(), &names.data, &record.id)?.is_some() {
             return Err(revision_conflict());
         }
@@ -433,7 +437,7 @@ impl FileSessionStore {
             return Ok(None);
         }
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        lock_exclusive(&lock)?;
+        let _guard = lock_exclusive(&lock)?;
         let inspection = read_session_inspection(self.root.as_fd(), &names.data, &id);
         drop(id);
         inspection
@@ -452,7 +456,7 @@ impl FileSessionStore {
         }
         let names = SessionNames::for_id(&observed.id);
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        lock_exclusive(&lock)?;
+        let _guard = lock_exclusive(&lock)?;
         let Some(current) = read_record(self.root.as_fd(), &names.data, &observed.id)? else {
             return Err(revision_conflict());
         };
@@ -672,10 +676,10 @@ impl FileSessionStore {
         let lock_name = lock_name_for_data_name(data_name);
         check_scan(control)?;
         let lock = open_lock(self.root.as_fd(), &lock_name)?;
-        match control {
+        let _guard = match control {
             Some(control) => control.lock(&lock)?,
             None => lock_exclusive(&lock)?,
-        }
+        };
         let record = match read_stored_record_controlled(
             self.root.as_fd(),
             data_name,
@@ -702,7 +706,7 @@ impl FileSessionStore {
             return Ok(None);
         }
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        lock_exclusive(&lock)?;
+        let _guard = lock_exclusive(&lock)?;
         let record = read_record(self.root.as_fd(), &names.data, id)?;
         Ok(record)
     }
@@ -719,7 +723,7 @@ impl FileSessionStore {
         }
         control.check()?;
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        control.lock(&lock)?;
+        let _guard = control.lock(&lock)?;
         self.read_controlled_locked(id, &names, control)
     }
 
@@ -760,7 +764,7 @@ impl FileSessionStore {
         control.check()?;
         let names = SessionNames::for_id(&record.id);
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        control.lock(&lock)?;
+        let _guard = control.lock(&lock)?;
         let current = self.read_controlled_locked(&record.id, &names, control)?;
         match &current {
             Some(stored) => {
@@ -799,7 +803,7 @@ impl FileSessionStore {
         }
         let names = SessionNames::for_id(&record.id);
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        lock_exclusive(&lock)?;
+        let _guard = lock_exclusive(&lock)?;
         let current = read_record(self.root.as_fd(), &names.data, &record.id)?;
         match &current {
             Some(stored) => {
@@ -1091,9 +1095,25 @@ fn map_existing_entry_open_error(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn lock_exclusive(file: &OwnedFd) -> Result<(), SessionStoreError> {
+#[must_use = "the guard must remain alive until the session operation completes"]
+struct SessionLockGuard<'a>(&'a OwnedFd);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for SessionLockGuard<'_> {
+    fn drop(&mut self) {
+        // Close alone can leave the lock held by an open-file-description
+        // duplicate inherited during a concurrent spawn. Explicit unlock is
+        // nonblocking and releases that shared description before local close.
+        // Closing the owned descriptor remains the fallback on an OS error.
+        let _ = retry_interrupted(|| rustix::fs::flock(self.0, FlockOperation::Unlock));
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn lock_exclusive(file: &OwnedFd) -> Result<SessionLockGuard<'_>, SessionStoreError> {
     retry_interrupted(|| rustix::fs::flock(file, FlockOperation::LockExclusive))
-        .map_err(map_io_error)
+        .map_err(map_io_error)?;
+    Ok(SessionLockGuard(file))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3074,6 +3094,64 @@ mod tests {
     };
 
     static NEXT_LISTING_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn completed_operation_releases_lock_even_if_its_descriptor_was_duplicated() {
+        use rustix::fd::AsFd;
+        let root = std::env::temp_dir().join(format!(
+            "mg-session-duplicated-lock-{}-{}",
+            std::process::id(),
+            NEXT_LISTING_ROOT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let store = FileSessionStore::open(&root).unwrap();
+        let control = super::FileSessionScanControl {
+            cancel: machine_god_core::CancellationToken::new(),
+            abandoned: machine_god_core::CancellationToken::new(),
+            after_read: None,
+        };
+        for controlled in [false, true] {
+            let duplicate = {
+                let lock = super::open_lock(store.root.as_fd(), "test.lock").unwrap();
+                let _guard = if controlled {
+                    control
+                        .lock(&lock)
+                        .unwrap_or_else(|_| panic!("uncontended lock"))
+                } else {
+                    super::lock_exclusive(&lock).unwrap()
+                };
+                let duplicate = rustix::io::dup(&lock).unwrap();
+                let contender = super::open_lock(store.root.as_fd(), "test.lock").unwrap();
+                assert!(matches!(
+                    control.lock(&contender),
+                    Err(super::FileSessionScanError::Busy)
+                ));
+                // A rejected acquisition must not release the actual owner's lock.
+                assert_eq!(
+                    rustix::fs::flock(
+                        &contender,
+                        rustix::fs::FlockOperation::NonBlockingLockExclusive
+                    ),
+                    Err(rustix::io::Errno::WOULDBLOCK)
+                );
+                duplicate
+            };
+            // A concurrent spawn can retain the same open-file description until
+            // exec closes CLOEXEC descriptors. Operation completion must explicitly
+            // release its lock even while that duplicate is still alive.
+            let contender = super::open_lock(store.root.as_fd(), "test.lock").unwrap();
+            assert_eq!(
+                rustix::fs::flock(
+                    &contender,
+                    rustix::fs::FlockOperation::NonBlockingLockExclusive
+                ),
+                Ok(())
+            );
+            drop(contender);
+            drop(duplicate);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn freshly_acquired_listing_descriptor_is_revalidated_after_unlink() {

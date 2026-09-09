@@ -293,3 +293,7 @@ can remain durable even if selection is later abandoned. Existing direct
 contract. No filesystem or bounded decoding call has a hard wall-clock deadline.
 The single candidate preference flush uses owned access for all interactive
 startup/transition kinds; later ordinary runtime operations do not inherit it.
+All file-session operations explicitly release an acquired advisory lock on
+scope exit before closing its descriptor. A duplicated descriptor retained by a
+concurrent process spawn therefore cannot prolong a completed operation's lock.
+This does not retry or suppress contention with another active lock owner.
