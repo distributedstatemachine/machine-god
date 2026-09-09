@@ -200,6 +200,10 @@ Launch/slash workspace selection preserves launches without a settings directory
 explicit launch roots and listing work, while persistent mutations require
 settings authority. The recording backend owns bounded FXTP writes and close
 receipts; its CLI startup, accepted-output and finalization wiring remain open.
+The recording modifier parser is integrated: one trailing `--record` selects
+only an interactive launch/resume, composes with leading workspace flags, and
+rejects one-shot, duplicate and misplaced requests before host effects. Its
+dispatch tests pass; actual production recording startup remains in progress.
 The remaining product boundary is migration/recovery/doctor cleanup, recording
 integration and remaining policy/session scenarios.
 The resumed product changes are not covered by the earlier maintenance review.
