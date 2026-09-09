@@ -333,3 +333,21 @@ and all 96 command tests; scoped CLI Clippy, formatting and diff checks pass.
 These are component checks, not fresh allowlist release proof or full-feature
 acceptance. The existing exact `bd270e5` release helper was used only by the
 private terminal fixtures; Cargo built the updated command-test executable.
+
+### All-feature WASI build remediation
+
+The previously noted all-feature failure was reproduced as E0433 at
+`permission_reviewer.rs:268`: the Tokio clock was feature-gated but its dependency
+was also non-WebAssembly-gated. The clock type, implementation, public export and
+native-only timer test now share that target guard. Portable injected reviewer
+and clock contracts remain available; no Tokio dependency or fake timer is added
+on WebAssembly. Native reviewer behavior and timer ownership are unchanged.
+
+Rust 1.94.1 warnings-denied Clippy passes for the all-feature WASI library and
+portable reviewer integration tests, and separately for the unchanged minimal
+WASI library plus unsupported background/terminal tests. All 21 native reviewer
+tests pass, including the real Tokio timer. The existing selected CI job now
+contains the all-feature regression command; 17 classification tests and the
+focused native-manifest contract test pass. Documentation-only routing remains
+unchanged. This closes the reproduced compile mismatch, not the complete feature
+or remote acceptance gates.

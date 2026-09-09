@@ -658,10 +658,16 @@ class NativeManifestTests(unittest.TestCase):
             "--test terminal_unsupported --no-default-features "
             "--target wasm32-wasip1 -- -D warnings"
         )
+        wasi_all_features_command = (
+            'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
+            "-p machine-god-native --lib --test permission_reviewer "
+            "--all-features --target wasm32-wasip1 -- -D warnings"
+        )
         self.assertEqual(workflow.count(unsupported_job), 1)
         self.assertEqual(workflow.count(install_command), 1)
         self.assertEqual(workflow.count(freebsd_clippy_command), 1)
         self.assertEqual(workflow.count(wasi_clippy_command), 1)
+        self.assertEqual(workflow.count(wasi_all_features_command), 1)
         self.assertIn(
             "CI cross-compiles and runs warnings-denied Clippy over the narrow\n"
             "feature's library plus the relevant native-tool unsupported-platform\n"

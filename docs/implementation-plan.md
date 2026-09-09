@@ -236,6 +236,11 @@ owner/control tests plus warnings-denied Clippy. CLI routing and bounded renderi
 pass ten focused allowlist tests, 295 unit tests with five private-helper ignores,
 all 96 command tests and scoped warnings-denied Clippy. Both completed component
 worktrees are removed. Fresh allowlist release evidence remains outstanding.
+The all-feature WASI build failure is corrected by matching the Tokio reviewer
+clock's implementation, export and test guards to the non-WebAssembly dependency.
+The portable reviewer remains compiled. Both all-feature reviewer and minimal
+unsupported-tool WASI lint pass, as do 21 native reviewer tests and 18 focused
+CI/manifest checks. The existing selected CI job now guards both WASI builds.
 Typed historical cards and the remaining command/session scenarios still need
 implementation; complete local, review and exact remote feature gates stay open.
 

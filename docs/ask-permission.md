@@ -256,8 +256,12 @@ Construction and unpolled review futures are inert. A polled review owns one
 futures. Cancellation and deadline readiness are checked before and after work,
 including same-poll completion and owned-state teardown. Dropping the review
 releases those futures; it does not spawn a detached task or retry. Production
-`TokioPermissionReviewClock` is available with `ai-gateway-http` and uses the
-host's existing Tokio runtime.
+`TokioPermissionReviewClock` is available with `ai-gateway-http` on non-WebAssembly
+targets and uses the host's existing Tokio runtime. The injected reviewer and
+clock contracts remain available on WebAssembly, including all-feature builds;
+enabling native HTTP features does not introduce a Tokio dependency there. CI
+cross-compiles the all-feature library and portable reviewer tests for WASI in
+addition to the no-default-feature unsupported-tool checks.
 
 The dedicated wire model is always `zai/glm-5.2`, with required tool choice,
 2,048 maximum output tokens and no inherited effort/fast controls. The complete

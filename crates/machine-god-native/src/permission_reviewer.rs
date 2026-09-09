@@ -256,10 +256,10 @@ pub trait NativePermissionReviewClock: Send + Sync + 'static {
 }
 
 /// Production monotonic deadline using the host's existing Tokio runtime.
-#[cfg(feature = "ai-gateway-http")]
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TokioPermissionReviewClock;
-#[cfg(feature = "ai-gateway-http")]
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 impl NativePermissionReviewClock for TokioPermissionReviewClock {
     fn now(&self) -> Instant {
         Instant::now()

@@ -1424,6 +1424,8 @@ jobs:
         run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test background_inspection_unsupported --test install_skill_unsupported --test memory_unsupported --test semantic_search_unsupported --test terminal_unsupported --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings
       - name: Compile unsupported-platform native surfaces for WASI
         run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test background_inspection_unsupported --test terminal_unsupported --no-default-features --target wasm32-wasip1 -- -D warnings
+      - name: Compile all-feature permission reviewer for WASI
+        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test permission_reviewer --all-features --target wasm32-wasip1 -- -D warnings
 
   ci-gate:
     name: CI gate

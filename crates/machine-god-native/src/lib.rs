@@ -540,7 +540,7 @@ pub use permission_patterns::{
     NativeConfiguredPermissionRule, NativeConfiguredPermissionRules, NativePermissionTargetKind,
     NativePreparedPermissionTarget,
 };
-#[cfg(feature = "ai-gateway-http")]
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use permission_reviewer::TokioPermissionReviewClock;
 pub use permission_reviewer::{
     AiGatewayPermissionReviewer, MAX_NATIVE_PERMISSION_REVIEW_PACKET_BYTES,

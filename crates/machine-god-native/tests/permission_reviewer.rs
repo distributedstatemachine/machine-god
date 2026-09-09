@@ -785,7 +785,7 @@ fn public_debug_and_errors_do_not_disclose_content() {
     }
 }
 
-#[cfg(feature = "ai-gateway-http")]
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 #[test]
 fn production_timer_has_owned_tokio_wakeup_and_can_be_dropped() {
     tokio::runtime::Builder::new_current_thread()
