@@ -252,6 +252,28 @@ fn unpolled_invalid_and_precancelled_start_have_no_destination_effects() {
 }
 
 #[test]
+fn explicit_file_spelling_rejects_empty_or_dot_final_components_before_admission() {
+    let fixture = Fixture::new();
+    for suffix in ["tape/", "tape/.", "../tape"] {
+        let scope = NativeOwnedWorkerScope::new();
+        scope.close();
+        let mut request = fixture.request();
+        request.destination = TerminalTapeRecordingDestination::Explicit(fixture.0.join(suffix));
+        assert_eq!(
+            block_on(TerminalTapeRecorder::start(
+                request,
+                scope.clone(),
+                CancellationToken::new()
+            ))
+            .unwrap_err(),
+            TerminalTapeRecordingError::InvalidRequest,
+        );
+        assert!(scope.completion().is_complete());
+    }
+    assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 0);
+}
+
+#[test]
 fn explicit_paths_refuse_overwrites_final_symlinks_and_symlink_ancestors() {
     let fixture = Fixture::new();
     let existing = fixture.0.join("existing");

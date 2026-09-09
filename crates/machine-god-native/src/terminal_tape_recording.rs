@@ -119,9 +119,12 @@ impl TerminalTapeRecordingRequest {
     /// Returns a fixed invalid-request or unsupported-platform error.
     pub fn validate(&self) -> Result<(), TerminalTapeRecordingError> {
         self.options.validate()?;
-        if cfg!(any(target_os = "linux", target_os = "macos")) {
-            Ok(())
-        } else {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            filesystem::validate_destination(&self.destination)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
             Err(TerminalTapeRecordingError::UnsupportedPlatform)
         }
     }

@@ -12,6 +12,30 @@ use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fs::{FileType, Mode, OFlags};
 
+pub(super) fn validate_destination(
+    destination: &TerminalTapeRecordingDestination,
+) -> Result<(), TerminalTapeRecordingError> {
+    match destination {
+        TerminalTapeRecordingDestination::Automatic { state_path, .. } => validate_path(state_path),
+        TerminalTapeRecordingDestination::Explicit(path) => {
+            validate_path(path)?;
+            let name = path
+                .file_name()
+                .ok_or(TerminalTapeRecordingError::InvalidRequest)?;
+            if path
+                .as_os_str()
+                .as_encoded_bytes()
+                .rsplit(|byte| *byte == b'/')
+                .next()
+                != Some(name.as_encoded_bytes())
+            {
+                return Err(TerminalTapeRecordingError::InvalidRequest);
+            }
+            Ok(())
+        }
+    }
+}
+
 pub(super) fn open(
     destination: TerminalTapeRecordingDestination,
     epoch_ms: i64,
