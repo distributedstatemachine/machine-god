@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-agent-readiness`
-- Active phase: `fixing Linux CI prerequisites and a Linux-only fixture lint after whole-codebase maintenance review`
+- Active phase: `verifying whole-codebase maintenance after Linux CI and bootstrap-invocation remediation`
 - Next gate: `fresh exact-release full local gate, three fresh independent reviews, then exact feature-branch CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
@@ -96,8 +96,8 @@ ownership. The coordinator retains the single live ledger and integration.
 
 The maintenance acceptance boundary is:
 
-- Select the production Apple helper whenever native or CLI runtime tests need
-  it, with a CLI-only selection regression and unchanged package selection.
+- Select the production release helper before native or CLI runtime tests in
+  quality and every supported matrix target, preserving package selection.
 - Keep one complete local-check recipe below, including platform prerequisites;
   AGENTS and README link to it instead of copying incomplete commands.
 - Compact superseded checkpoint narratives into the existing review archive.
@@ -130,9 +130,13 @@ the existing schema-v7 contract, while legacy schema-v3 coverage is preserved.
 
 The first reviewed remote candidate (`53378c8c`) passed its local gate and all
 three independent review tracks, but remote Linux checks exposed a fixture lint
-and missing release-helper provisioning. Correct these without changing test
-selection, Linux concurrency, or product behavior; the replacement requires a
-fresh local gate, three fresh reviews and exact remote evidence.
+and missing release-helper provisioning. The fixture now appends hexadecimal
+bytes directly; quality and Linux/Apple matrix jobs provision the explicit
+helper before applicable tests. Test selection, Linux concurrency and product
+behavior are unchanged. Both benchmark collectors now invoke explicit `--help`
+with matching strict evidence validation, without relabeling historical
+no-argument measurements or claiming workload equivalence. The replacement
+requires a fresh local gate, three fresh reviews and exact remote evidence.
 
 Freeze a single candidate after the complete local gate, run three fresh independent review
 tracks, fix until all are green, and require exact feature-branch CI and
