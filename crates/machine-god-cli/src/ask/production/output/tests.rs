@@ -88,7 +88,7 @@ fn actual_stdout_prefix_survives_short_writes_interruptions_and_partial_errors()
         assert_eq!(
             received_ack.try_recv().unwrap(),
             OutputAcknowledgement::Written {
-                timestamp_ms: Ok(123),
+                timestamp_ms: Ok(if stop == 0 { 0 } else { 123 }),
                 bytes: b"abcdef"[..stop].to_vec(),
                 failed: stop < 6,
             }
@@ -121,9 +121,30 @@ fn zero_progress_and_repeated_interruptions_are_bounded_failures() {
             interrupted,
             calls: 0,
         };
-        assert_eq!(write_prefix(&mut output, b"x"), (0, true));
+        assert_eq!(
+            write_prefix(&mut output, b"x", || panic!("no accepted bytes")),
+            (0, true)
+        );
         assert_eq!(output.calls, if interrupted { 4097 } else { 1 });
     }
+}
+
+#[test]
+fn receipt_time_is_observed_at_each_successful_write_not_after_later_error() {
+    let mut writer = ShortWriter {
+        bytes: Vec::new(),
+        stop: 3,
+        calls: 0,
+    };
+    let mut observed = Vec::new();
+    assert_eq!(
+        write_prefix(&mut writer, b"abcdef", || observed.push("accepted")),
+        (3, true)
+    );
+    // One initial interruption and the final failure do not retimestamp the
+    // accepted prefix; only the two successful short writes do.
+    assert_eq!(observed, ["accepted", "accepted"]);
+    assert_eq!(writer.calls, 4);
 }
 
 #[test]

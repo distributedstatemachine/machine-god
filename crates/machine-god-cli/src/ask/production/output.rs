@@ -110,8 +110,13 @@ fn serve_output_with_clock(
     while let Some(work) = work.blocking_recv() {
         let acknowledgement = match work {
             OutputWork::Write(mut bytes) => {
-                let (accepted, failed) = write_prefix(output, &bytes);
-                let timestamp_ms = clock();
+                let mut timestamp_ms = Ok(0);
+                let (accepted, failed) = write_prefix(output, &bytes, || {
+                    let observed = clock();
+                    if timestamp_ms.is_ok() {
+                        timestamp_ms = observed;
+                    }
+                });
                 bytes.truncate(accepted);
                 OutputAcknowledgement::Written {
                     bytes,
@@ -133,7 +138,11 @@ fn serve_output_with_clock(
     }
 }
 
-fn write_prefix(output: &mut dyn std::io::Write, bytes: &[u8]) -> (usize, bool) {
+fn write_prefix(
+    output: &mut dyn std::io::Write,
+    bytes: &[u8],
+    mut accepted_at: impl FnMut(),
+) -> (usize, bool) {
     let mut accepted = 0;
     // Bound zero-progress interruptions without limiting ordinary short writes.
     let mut interrupted = 0;
@@ -141,6 +150,7 @@ fn write_prefix(output: &mut dyn std::io::Write, bytes: &[u8]) -> (usize, bool) 
         match output.write(&bytes[accepted..]) {
             Ok(0) => return (accepted, true),
             Ok(count) if count <= bytes.len() - accepted => {
+                accepted_at();
                 accepted += count;
                 interrupted = 0;
             }
