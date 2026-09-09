@@ -33,7 +33,9 @@ a stopword-only query still performs no filesystem operation after permission,
 while requiring a valid live scope. Nonempty searches duplicate only the
 selected root descriptor, then use its private relative path for confined
 access. A renamed root remains the retained identity rather than the replacement
-at its original pathname.
+at its original pathname. Each execution opens its own descriptor-relative
+directory cursor, so repeated and concurrent scans never share enumeration
+offsets through the captured root descriptor.
 
 One shared scanner owns the original keyword compilation, content buffer,
 global budgets, incomplete reasons and best-200 result heap. Logical qualified
@@ -137,8 +139,9 @@ Linux rejects an unlinked retained root using its descriptor link count.
 macOS checks the descriptor's current basename against its retained parent
 descriptor with no-follow metadata, requiring the same device, inode and
 directory type; filesystem `/` is the explicit root case. The observed path
-never becomes authority for reopening the root. Every observation retains the
-same pre/post cancellation and scoped-liveness checks.
+never becomes authority for reopening the root. The shared native retained-root
+observation helper preserves every pre/post cancellation and scoped-liveness
+check, with the scanner retaining its own fixed error mapping.
 
 Directory traversal is iterative and deterministic. A directory is admitted
 atomically: execution stages no more than the global remaining non-dot entry

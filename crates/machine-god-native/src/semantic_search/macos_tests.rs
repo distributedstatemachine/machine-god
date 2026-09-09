@@ -96,3 +96,35 @@ fn filesystem_root_linkage_check_is_supported_without_directory_enumeration() {
     let tool = SemanticSearchTool::open(Path::new("/")).unwrap();
     ensure_root_is_linked(tool.root.as_fd(), &CancellationToken::new()).unwrap();
 }
+
+#[test]
+fn retained_root_observations_preserve_each_pre_and_post_call_checkpoint() {
+    struct CancelAt {
+        checks: std::cell::Cell<usize>,
+        at: usize,
+        cancellation: CancellationToken,
+    }
+    impl ScanCheck for CancelAt {
+        fn check(&self) -> Result<(), ToolError> {
+            self.checks.set(self.checks.get() + 1);
+            if self.checks.get() == self.at {
+                self.cancellation.cancel();
+            }
+            self.cancellation.check()
+        }
+    }
+    let fixture = Fixture::new("semantic-macos-link-checkpoints");
+    let tool = SemanticSearchTool::open(&fixture.primary).unwrap();
+    // fstat, getpath, retained-parent open and no-follow stat each preserve
+    // their original pre/post observation checks through the shared helper.
+    for at in 1..=8 {
+        let check = CancelAt {
+            checks: std::cell::Cell::new(0),
+            at,
+            cancellation: CancellationToken::new(),
+        };
+        let error = ensure_root_is_linked(tool.root.as_fd(), &check).unwrap_err();
+        assert_eq!(error.code, "semantic_search_cancelled");
+        assert_eq!(check.checks.get(), at);
+    }
+}

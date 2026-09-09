@@ -1893,28 +1893,17 @@ fn ensure_macos_root_is_linked(
         .map_err(|_| unavailable())?;
     let path = execution_filesystem_call(cancellation, || rustix::fs::getpath(root))?
         .map_err(|_| unavailable())?;
-    if path.as_bytes() == b"/" {
+    let Some(observation) =
+        crate::retained_root::RetainedRootObservation::new(root, &metadata, &path)
+            .map_err(|()| unavailable())?
+    else {
         return Ok(());
-    }
-    let name = path
-        .as_bytes()
-        .rsplit(|byte| *byte == b'/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(unavailable)?;
-    let name = std::ffi::CString::new(name).map_err(|_| unavailable())?;
-    let parent = execution_filesystem_call(cancellation, || {
-        rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
-    })?
-    .map_err(|_| unavailable())?;
-    let linked = execution_filesystem_call(cancellation, || {
-        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
-    })?
-    .map_err(|_| unavailable())?;
-    if linked.st_dev != metadata.st_dev
-        || linked.st_ino != metadata.st_ino
-        || !FileType::from_raw_mode(linked.st_mode).is_dir()
-    {
+    };
+    let parent = execution_filesystem_call(cancellation, || observation.open_parent())?
+        .map_err(|_| unavailable())?;
+    let linked = execution_filesystem_call(cancellation, || observation.stat_link(&parent))?
+        .map_err(|_| unavailable())?;
+    if !observation.matches(&linked) {
         return Err(unavailable());
     }
     Ok(())
