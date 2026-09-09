@@ -50,6 +50,18 @@ provenance-complete evidence object. `benchmarks/run.py` collects the local
 bootstrap record; `benchmarks/check.py` validates its schema and classification.
 CI uploads the resulting JSON as short-lived evidence.
 
+Both bootstrap collectors invoke machine-god with the fixed `--help` argument:
+no-argument startup now enters the interactive, configuration/authentication-bound
+path and is not an inert bootstrap scenario. The upstream side retains its
+pinned `FX_BENCH=1` no-argument fast path. These different workloads remain
+non-equivalent and claim-ineligible. Evidence validation requires the exact
+recorded command; arbitrary arguments and no-argument machine-god records are
+rejected. Schema 1 (local) and schema 2 (upstream) retain their existing shapes,
+with command arrays distinguishing the entrypoints and the upstream narrative
+describing `--help`. Historical no-argument artifacts are not rewritten or
+relabelled as help measurements; they retain their original provenance and do
+not satisfy the current bootstrap contract.
+
 `benchmarks/with_zig.py` provides the exact checksum-pinned upstream build tool
 in a private operating-system temporary directory on supported Linux and macOS
 hosts. Keeping the toolchain outside the checkout prevents its large ignored

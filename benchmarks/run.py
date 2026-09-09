@@ -83,7 +83,7 @@ def run_once(
     pinned.verify()
     try:
         completed = run_process(
-            [str(binary)],
+            [str(binary), "--help"],
             cwd=Path.cwd(),
             environment=environment,
             timeout_seconds=30.0,
@@ -151,7 +151,7 @@ def collect_evidence(binary: Path, runs: int, warmup: int) -> dict[str, object]:
                 "python": platform.python_version(),
             },
             "binary": collected_binary,
-            "command": [str(binary)],
+            "command": [str(binary), "--help"],
             "warmup": warmup,
             "samples_ns": samples,
             "median_ns": integer_median(samples),
