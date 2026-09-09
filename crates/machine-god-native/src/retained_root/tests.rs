@@ -36,7 +36,7 @@ impl Drop for Fixture {
 
 pub(crate) fn assert_root_states<E: Debug + Eq>(
     mut observe: impl FnMut(BorrowedFd<'_>) -> Result<(), E>,
-    unavailable: E,
+    unavailable: &E,
 ) {
     let fixture = Fixture::new();
     let root = fixture.open_root();
@@ -48,7 +48,7 @@ pub(crate) fn assert_root_states<E: Debug + Eq>(
     fs::create_dir(fixture.root()).unwrap();
     observe(root.as_fd()).unwrap();
     fs::remove_dir(&renamed).unwrap();
-    assert_eq!(observe(root.as_fd()).unwrap_err(), unavailable);
+    assert_eq!(&observe(root.as_fd()).unwrap_err(), unavailable);
     observe(File::open(Path::new("/")).unwrap().as_fd()).unwrap();
 }
 

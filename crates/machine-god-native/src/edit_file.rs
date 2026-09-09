@@ -2590,7 +2590,7 @@ fn retained_root_characterization_preserves_states_and_error_mapping() {
     for phase in [WalkPhase::Initial, WalkPhase::Revalidate] {
         crate::retained_root::tests::assert_root_states(
             |root| ensure_macos_root_is_linked(root, phase),
-            map_walk_failure(phase),
+            &map_walk_failure(phase),
         );
     }
 }

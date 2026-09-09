@@ -720,5 +720,5 @@ mod workspace;
 #[cfg(all(test, target_os = "macos"))]
 #[test]
 fn retained_root_characterization_preserves_states_and_error_mapping() {
-    crate::retained_root::tests::assert_root_states(ensure_macos_root_is_linked, unavailable());
+    crate::retained_root::tests::assert_root_states(ensure_macos_root_is_linked, &unavailable());
 }

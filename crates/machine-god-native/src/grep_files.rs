@@ -3223,7 +3223,7 @@ mod tests {
 fn retained_root_characterization_preserves_states_and_error_mapping() {
     crate::retained_root::tests::assert_root_states(
         |root| ensure_macos_root_is_linked(root, &CancellationToken::new()),
-        unavailable(),
+        &unavailable(),
     );
 }
 
