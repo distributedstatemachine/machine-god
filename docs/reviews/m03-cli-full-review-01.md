@@ -825,3 +825,52 @@ build. Production binary SHA-256 remained
 `ca299181c7593f11b5006e0ac4aeefad5ecabb7d5196bdd4314f0ac551d1937d`.
 The clean component was fast-forward integrated. Complete replacement acceptance
 remains a separate gate.
+
+## Replacement Linux rejection: `889b8e65`
+
+Exact pinned formatting, all-target/all-feature Clippy and the fresh locked
+release build passed. The default-concurrency workspace run completed under
+`--no-fail-fast`: 4,531 tests passed, four failed and seventeen existing helpers
+were ignored. Explicit workspace doc tests passed all three cases. The corrected
+FIFO timeout case passed. No test/helper processes or zombies remained afterward.
+
+Native unit failures were `production_supervisor_signals_only_the_exact_live_owner`
+(`Unavailable`), `captured_exec_accepts_exact_maximum_command_and_rejects_one_over`
+(`Process`), and `frozen_shell_capture_supports_profiles_explicit_start_and_no_ambient_shell`
+(`terminal_authority_unavailable`). One unchanged isolated run of each passed the
+first two and reproduced the third. The newly initialized container executes as
+UID 1000 but has no corresponding passwd/NSS record; current-user shell capture
+requires that record. A container-only task account with UID/GID 1000, a real
+`/bin/bash` login shell and private home was created after verifying those
+records were absent. No `HOME` override or source change was made. The unchanged
+host-authority test then passed in 0.02 seconds, confirming the environment cause.
+No cause is established for the first two full-run failures from isolated success
+alone.
+
+The HTTP catalog test `request_timeout_is_resource_limited_and_tears_down_the_connection`
+also failed: its strict stalled-body server observed peer EOF before a complete
+request head, panicked and disconnected the completion channel. The public
+25 ms attempt timeout includes admission and response-head work, so readiness
+before expiry is not guaranteed. An unchanged isolated run passed. A narrow
+test-fixture correction followed; production deadlines and mandatory-ready
+cancellation/drop coverage remain unchanged. The complete run remains rejected;
+there was no macOS replacement run, review restart, push or main advancement.
+
+Correction `ad346115` adds a private deadline-bound timeout server with owned
+worker joining. It permits no connection only after an explicit completion
+notification and a subsequent empty accept probe; connected outcomes require
+observed peer closure before headers, during the partial response, or after its
+body prefix. Malformed input, unexpected data and fixture deadline expiry remain
+errors. Accepted sockets explicitly use blocking I/O with the remaining absolute
+fixture deadline. The existing bounded parser is reused through a generic `Read`
+parameter without logic changes; the strict stalled-body fixture is unchanged.
+
+A controlled peer that connected and closed before headers reproduced the old
+strict fixture's exact `UnexpectedEof` failure. That diagnostic is not committed.
+Four deterministic replacement-fixture regressions cover no connection, empty
+and partial headers, acknowledged body-prefix closure and malformed complete
+headers. All four and the complete twenty-test HTTP catalog suite passed on the
+final source at default Linux concurrency, alongside pinned formatting,
+workspace all-target/all-feature warnings-denied Clippy and a fresh locked
+release build. The clean test-only component was fast-forward integrated;
+complete replacement acceptance remains pending.

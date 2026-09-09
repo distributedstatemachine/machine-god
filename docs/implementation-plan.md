@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI timeout fixture corrected; replacement verification pending`
+- Active phase: `combined CLI fixture corrections integrated; replacement verification pending`
 - Next gate: `complete replacement local verification, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
@@ -261,6 +261,11 @@ zombie. Controlled reproduction confirmed this; the FIFO-only correction passes
 the same focused case both normally and under an isolated subreaper.
 The correction is integrated; terminal suites and pinned Clippy pass.
 Benchmark evidence passed, but the rejected candidate is not a delivery.
+The next Linux full run exposed a missing container account and an HTTP timeout
+fixture's pre-header assumption. Account setup is corrected; the bounded HTTP
+fixture correction passes all twenty catalog HTTP tests. Two process cases
+passed unchanged in isolated diagnostics; their full-run failures remain
+unexplained, not accepted.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
