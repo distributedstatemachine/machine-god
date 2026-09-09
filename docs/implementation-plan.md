@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI verification; lock fixtures corrected, replacement gate pending`
-- Next gate: `replacement full local gate with separate platform runtimes, fresh reviews and exact feature CI/Benchmark evidence`
+- Active phase: `combined CLI verification; timeout fixture validation and native runtime diagnosis`
+- Next gate: `validate ready-shell timeout coverage, resolve macOS native failure, then replacement local and exact remote feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -243,6 +243,14 @@ descriptors through the successful-operation assertions. The deterministic
 drop-only reproduction fails with `Busy`; all fifteen corrected focused tests
 pass. Complete replacement acceptance remains pending; no deadline or
 test-concurrency requirement has been relaxed.
+The subsequent separate-platform run still rejected the candidate: Linux's
+100 ms timeout fixture assumed a shell readiness file must exist even when
+admission consumed the deadline; macOS reported a failing native unit target.
+The Linux test-only correction separates public admission-inclusive budgeting
+from mandatory-ready real-executor cleanup evidence. The macOS failure details
+must be recovered by diagnosis because the captured output was truncated.
+Neither isolated success nor the already accepted maintenance-parent merge
+closes the combined feature's remaining gates.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

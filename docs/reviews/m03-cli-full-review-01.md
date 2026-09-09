@@ -726,3 +726,33 @@ Correction `e5de4e8f` passed seven catalog-reader and eight owned-resume tests,
 with one existing child-fixture entrypoint ignored, plus formatting and native
 all-target/all-feature warnings-denied Clippy. Its clean integrated worktree
 was removed.
+
+## Combined-candidate runtime regression: `6f6e6660`
+
+Pinned formatting, workspace all-target/all-feature Clippy, fresh release
+builds, repository policy and dependency checks, FreeBSD/WASI compilation and
+Apple ABI checks passed. The Python suite passed 255 tests with fourteen
+existing platform skips. Linux and macOS runtime windows were separated.
+
+Linux passed 2,160 native unit tests with eleven existing helper ignores and
+113 fresh-release CLI command tests. Its terminal integration target passed 97
+tests and failed `linux_system_timeout_kills_a_term_ignoring_shell_before_publication`:
+the expected `timeout.pid` did not exist. The public 100 ms budget starts before
+admission and spawn, so a legitimate timeout need not produce a ready child.
+The other workspace targets and explicit doc tests passed. The initialized
+container had no remaining child processes after the run.
+
+The macOS workspace command exited 101 and identified the native library test
+target as failed. Later integration targets and workspace doc tests passed.
+The retained tool output truncated the native failure details; it does not
+establish a failure count or cause. This run is rejected, not accepted on the
+basis of earlier isolated successes. The explicit doc-test command following
+the failed workspace command was not reached.
+
+Test-only correction `ed9eebda` preserves the exact public 100 ms budget and
+bounded timeout-result assertions, and separately requires newline-complete
+post-trap readiness before closing the real executor's existing timeout cause.
+That scenario checks a live child and group before timeout, their absence at
+publication, and bounded activity-slot release. It uses the existing owned
+future for cleanup on assertion failure; no production hooks or deadline
+changes are introduced. The component commit is not full-feature acceptance.
