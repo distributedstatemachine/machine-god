@@ -5,7 +5,7 @@ use crate::test_support::*;
 use machine_god_core::BoxFuture;
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, NativeBackgroundQuery, NativeRuntimeCredentialEnvironment,
-    NativeRuntimeStatus, NativeRuntimeStatusError, NativeRuntimeStatusInput,
+    NativeRuntimeStatus, NativeRuntimeStatusError, NativeRuntimeStatusInput, PermissionMode,
     inspect_native_runtime_status,
 };
 use std::cell::{Cell, RefCell};
@@ -1131,22 +1131,34 @@ fn invalid_resume_arguments_precede_all_host_effects() {
 
 #[test]
 fn permissions_outputs_are_exact() {
+    let loaded = machine_god_native::load_native_config(
+        &machine_god_native::NativeEnvironment::new(None, None, None),
+    )
+    .unwrap();
+    let report =
+        machine_god_native::inspect_native_permissions(&loaded, std::path::Path::new("/workspace"))
+            .unwrap();
     assert_eq!(
-        permissions(PermissionMode::Ask, false),
+        crate::permissions::render(&report, false).unwrap(),
         concat!(
             "machine-god 0.1.0 (engine API 1)\n",
             "permission_mode: ask\n",
-            "persistent_rules: unsupported\n",
+            "configuration_origin: built_in_defaults\n",
+            "configured_rules_source: user\n",
+            "user_rules: 0\nlocal_rules: absent\n",
+            "saved_exact_rules: unavailable\n",
             "runtime_grants: unavailable\n",
         )
     );
     assert_eq!(
-        json_permissions(PermissionMode::Ask),
+        crate::permissions::render(&report, true).unwrap(),
         concat!(
             "{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
             "\"engine_api_version\":1,\"kind\":\"permissions\",",
             "\"permission_mode\":\"ask\",",
-            "\"persistent_rules_supported\":false,",
+            "\"configuration_origin\":\"built_in_defaults\",",
+            "\"configured_rules\":{\"effective_source\":\"user\",\"user\":[],\"local\":null},",
+            "\"saved_exact_rules_available\":false,",
             "\"runtime_grants_available\":false}\n",
         )
     );

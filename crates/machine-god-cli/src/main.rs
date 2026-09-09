@@ -1,12 +1,11 @@
 use machine_god_core::SessionId;
-use machine_god_native::{PermissionMode, load_process_config};
-use std::fmt::Write as _;
 use std::{env, ffi::OsString, io, process::ExitCode};
 mod ask;
 mod background;
 mod bounded_output;
 mod doctor;
 mod models;
+mod permissions;
 mod recording_launch;
 mod replay;
 mod session;
@@ -25,6 +24,7 @@ use background::{
 };
 use doctor::{DoctorCommandHost, ProductionDoctorCommandHost, run_doctor};
 use models::{ModelsCommandHost, ProductionModelsCommandHost, run_models};
+use permissions::{PermissionsCommandHost, ProductionPermissionsCommandHost, run_permissions};
 use replay::{ProductionReplayCommandHost, ReplayCommandHost, is_replay_command, run_replay};
 use session::{ProductionSessionCommandHost, SessionCommandHost, run_session};
 use session_maintenance_cli::{MaintenanceCommandHost, ProductionMaintenanceCommandHost};
@@ -216,6 +216,7 @@ fn is_exact_helper_arguments(
 /// Explicit borrowed command dependencies; construction does not execute a host.
 #[derive(Clone, Copy)]
 struct CommandHosts<'a> {
+    permissions: &'a dyn PermissionsCommandHost,
     models: &'a dyn ModelsCommandHost,
     doctor: &'a dyn DoctorCommandHost,
     maintenance: &'a dyn MaintenanceCommandHost,
@@ -231,6 +232,7 @@ struct CommandHosts<'a> {
 impl Default for CommandHosts<'_> {
     fn default() -> Self {
         Self {
+            permissions: &ProductionPermissionsCommandHost,
             models: &ProductionModelsCommandHost,
             doctor: &ProductionDoctorCommandHost,
             maintenance: &ProductionMaintenanceCommandHost,
@@ -392,11 +394,7 @@ fn run_parsed_command(
             return run_models(models_host, json, stdout, stderr);
         }
         Command::Permissions { json } => {
-            let Ok(loaded) = load_process_config() else {
-                let _ = stderr.write_all(CONFIGURATION_FAILURE.as_bytes());
-                return 1;
-            };
-            permissions(loaded.config().permission_mode(), json)
+            return run_permissions(hosts.permissions, json, stdout, stderr);
         }
         Command::Resume { id, prompt } => {
             return run_resume(ask_host, id, prompt, stdout, stderr, OUTPUT_FAILURE);
@@ -690,35 +688,6 @@ fn help() -> String {
         ),
         env!("CARGO_PKG_VERSION")
     )
-}
-
-fn permissions(permission_mode: PermissionMode, json: bool) -> String {
-    if json {
-        json_permissions(permission_mode)
-    } else {
-        human_permissions(permission_mode)
-    }
-}
-
-fn human_permissions(permission_mode: PermissionMode) -> String {
-    let mut output = identity();
-    let _ = writeln!(output, "permission_mode: {}", permission_mode.as_str());
-    output.push_str("persistent_rules: unsupported\n");
-    output.push_str("runtime_grants: unavailable\n");
-    output
-}
-
-fn json_permissions(permission_mode: PermissionMode) -> String {
-    let mut output = String::from("{\"name\":\"machine-god\",\"version\":");
-    push_json_string(&mut output, env!("CARGO_PKG_VERSION"));
-    let _ = write!(
-        output,
-        ",\"engine_api_version\":{},\"kind\":\"permissions\",\"permission_mode\":",
-        machine_god_native::supported_core_api_version()
-    );
-    push_json_string(&mut output, permission_mode.as_str());
-    output.push_str(",\"persistent_rules_supported\":false,\"runtime_grants_available\":false}\n");
-    output
 }
 
 fn push_json_string(output: &mut String, value: &str) {

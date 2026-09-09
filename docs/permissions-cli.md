@@ -1,141 +1,135 @@
 # Native `permissions` CLI contract
 
-The read-only top-level command reports the validated native permission mode and
-the availability of persistent rules and runtime grants. It does not construct
-an engine or complete the broader permission-management surface.
+The read-only top-level command reports configured permission mode and ordered
+user/local pattern rules. Native code owns configuration loading, workspace
+selection, source provenance and inert-row classification. This is not a live
+authorization snapshot: saved exact-action rules and runtime grants remain
+explicitly unavailable, never represented as empty observed collections.
 
 ## Command grammar
 
-The only accepted forms are:
+The accepted forms remain:
 
 ```text
 machine-god permissions
 machine-god permissions --json
 ```
 
-`--json` is accepted exactly once and only after `permissions`. Unknown,
-reordered, repeated, additional, or non-Unicode arguments fail through the
-existing invalid-arguments boundary: exit code 2, empty standard output, and
-this exact diagnostic on standard error, including the final LF:
-
-```text
-machine-god: invalid arguments
-Usage: machine-god [help | --help | -h | --version | -V | permissions [--json] | status [--json]]
-```
-
-Argument validation completes before configuration is inspected.
-
-The general `help`, `--help`, and `-h` output lists `permissions` between
-`help` and `status`, with this exact command row:
-
-```text
-  permissions  Show the permission mode and rules
-```
-
-The global one-line invalid-argument usage includes
-`permissions [--json]` before `status [--json]`. The complete exact help and
-usage transcripts are maintained in [`cli.md`](cli.md). The command does not add
-command-local help or a `/permissions` interactive slash command.
+Unknown, repeated, reordered, additional or non-Unicode arguments fail before
+host inspection: exit 2, empty stdout and the shared invalid-arguments diagnostic.
+The exact global help/usage belongs to [the CLI contract](cli.md). Help and
+identity commands do not invoke permission inspection. Interactive
+`/permissions` controls remain separate from this read-only command.
 
 ## Authority and loading
 
-After successful parsing, `permissions` calls `load_process_config()` exactly
-once and observes only the validated `NativeConfig::permission_mode()`. The
-loader's retained bytes remain bounded to 64 KiB plus one overflow witness. It
-is synchronous, read-only, and redacted on failure. On supported Unix targets,
-the selected final configuration path is opened with `O_NOFOLLOW` and
-nonblocking behavior, then authoritatively required to be regular. Hardened
-opening on non-Unix targets remains deferred. The reader allows the first 15
-cumulative interrupted results to retry and returns the existing fixed
-`Unreadable` failure on the 16th. Partial progress does not reset the count,
-and an over-reported read fails as `Unreadable`.
+`inspect_process_permissions()` calls `load_process_config()` once. The existing
+strict schema-v1 through schema-v7 parser, 64 KiB input plus overflow-witness
+bound, cumulative interrupted-read bound, and supported-Unix final-path
+`O_NOFOLLOW`/nonblocking/regular-file checks remain unchanged. Invalid selected
+configuration never falls back to defaults. Missing configuration or unavailable
+configuration location retains safe built-in defaults.
 
-A missing file or unavailable configuration location uses the safe built-in
-configuration. Valid strict schema-v1, schema-v2, schema-v3 and schema-v4 files report the
-same currently supported `ask` mode without rewriting any byte. An invalid
-selected environment, wrong file type, unreadable or oversized file, malformed
-configuration, or unsupported schema version fails closed with exit code 1,
-empty standard output, and exactly:
+The config-only environment snapshot requests `XDG_CONFIG_HOME` first and
+`HOME` only for missing or empty XDG. It never requests `XDG_STATE_HOME`.
+Nonempty invalid XDG never falls back to HOME. No state root, session store,
+engine, credential reader, provider, network, prompter or Tokio runtime is
+constructed; no directories, locks or files are created or changed.
 
-```text
-machine-god: failed to load configuration
-```
+When any workspace-local sources exist, native code captures and canonicalizes
+the process CWD once, then uses the existing exact workspace-byte source
+selection. Symlink aliases select the canonical workspace; Unix non-Unicode
+paths retain their exact bytes without displaying a lossy path. A missing or
+invalid CWD fails rather than silently reporting user rules as effective.
+When no local sources exist, CWD is not observed: user rules are authoritative
+for configuration selection even if the process has no usable working directory.
+This bounded synchronous observation promises no filesystem deadline.
 
-The diagnostic does not disclose the error kind, path, configuration content,
-model, provider, transport, credential source, or operating-system detail.
+The pure `inspect_native_permissions(&LoadedNativeConfig, &Path)` adapter accepts
+explicit normalized absolute workspace bytes and performs no filesystem I/O.
+Its retained report contains only mode, config origin and bounded rule
+projections, never unrelated settings or a raw configuration/workspace path.
+Neither adapter grants execution authority.
 
-The command performs no state-root filesystem metadata access and creates no
-state root. Its config-only environment snapshot requests `XDG_CONFIG_HOME`
-first, reads `HOME` only when XDG is missing or empty, and never requests
-`XDG_STATE_HOME`. A nonempty valid, invalid-relative, or non-Unicode XDG value
-never reads or falls back to `HOME`. Status retains its separate
-`XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`HOME` snapshot. Neither command constructs
-an engine, provider, transport, credential source, permission prompter, session
-store, or Tokio runtime; reads a credential; makes a network request; prompts;
-persists a rule; or caches a grant.
+## Sources and rows
 
-## Exact output
+The native report preserves user and selected-local lists independently and in
+configuration order. A present empty local list shadows the user list. An absent
+local list is distinct from empty; in that case the effective source is user.
+The source is reported once rather than duplicating an effective list.
+Unselected workspaces' lists are not displayed.
 
-Human output is exactly:
+Every configured allow, ask and deny row is included. Exact `web_fetch` rows
+whose patterns fail the existing canonical-domain predicate are marked inert,
+with their pattern omitted. Their decision and position remain visible. Other
+rows are labeled configured patterns, not claims that a live tool registry would
+match them. No second permission matcher or independent allowlist policy exists.
+
+These configured patterns are distinct from session-persisted exact-action
+rules and identity-bound runtime grants. The report does not load those stores
+or assert their contents. It does not mutate modes, patterns, rules or grants,
+and does not reload an interactive runtime.
+
+## Output and errors
+
+Default human output is:
 
 ```text
 machine-god 0.1.0 (engine API 1)
 permission_mode: ask
-persistent_rules: unsupported
+configuration_origin: built_in_defaults
+configured_rules_source: user
+user_rules: 0
+local_rules: absent
+saved_exact_rules: unavailable
 runtime_grants: unavailable
 ```
 
-JSON output is one compact object with stable key order and one final LF:
+File-loaded configuration reports origin `file`, even when its values equal
+defaults. Modes are the validated `ask`, `auto` or `yolo` value. Each human
+rule line contains scope, decision, JSON-quoted category and JSON-quoted pattern,
+or `[inert pattern omitted]`. Control characters cannot inject terminal lines.
+
+Default JSON is one compact object with stable key order and a final LF:
 
 ```json
-{"name":"machine-god","version":"0.1.0","engine_api_version":1,"kind":"permissions","permission_mode":"ask","persistent_rules_supported":false,"runtime_grants_available":false}
+{"name":"machine-god","version":"0.1.0","engine_api_version":1,"kind":"permissions","permission_mode":"ask","configuration_origin":"built_in_defaults","configured_rules":{"effective_source":"user","user":[],"local":null},"saved_exact_rules_available":false,"runtime_grants_available":false}
 ```
 
-`persistent_rules_supported: false` means the command does not expose or manage
-identity-safe persistent policy. `runtime_grants_available: false` means the
-read-only command has no live engine or permission-handler snapshot. Neither
-field asserts that an unobserved collection is empty.
+Each JSON rule has `permission`, `pattern`, `action`, and `inert` fields.
+An inert pattern is `null`; local absence is `null`, while an explicit empty
+shadow is `[]`. No `grants` or saved-rule array is invented. Configured rules
+may intentionally contain user-authored patterns, so successful output is not a
+secret-free export; unrelated settings, malformed inert patterns and debug/error
+details remain redacted.
 
-If writing successful output fails, the existing output boundary returns exit
-code 1 and the fixed `machine-god: failed to write output` diagnostic. No partial
-success is claimed.
+Human and JSON staging are capped at 512 KiB, accommodating worst-case escaping
+of the bounded selected config lists and row framing. A render-bound failure
+returns exit 1, empty stdout and
+`machine-god permissions: could not render report` on stderr.
+Configuration or required workspace observation failure returns exit 1, empty
+stdout and the existing `machine-god: failed to load configuration` diagnostic.
+Writing output failure returns exit 1 and
+`machine-god: failed to write output`; any already-written prefix is not a
+confirmed complete report. Diagnostics have a final LF and never include paths
+or underlying operational details.
 
-## Compatibility and deferrals
+## Compatibility and evidence
 
-Pinned fx exposes a scenario named `permissions [--json]`. Machine-god aligns
-with that read-only discovery scenario but intentionally uses its own exact
-output and supports only validated mode `ask`. The combined top-level CLI
-compatibility surface remains planned; this command does not promote the
-generated inventory.
+The pinned top-level permission-discovery scenario is implemented with native
+output rather than an invented live engine snapshot. The former delivered
+mode-only report intentionally stated persistent-rule support was unavailable;
+this combined CLI expansion replaces that field with explicit configured-rule
+discovery and separate unobserved saved-rule/runtime availability.
 
-This read-only top-level surface does not mutate modes, configured patterns,
-saved exact rules, grants or sandbox policy. Native interactive allowlist
-ownership is specified below; it does not change the top-level output contract.
-
-## Required evidence
-
-Independent tests must cover:
-
-- exact grammar, updated global help/usage, non-Unicode arguments, exit codes,
-  standard streams, JSON key order, and final LF;
-- missing and unavailable configuration defaults plus valid v1/v2/v3/v4 files;
-- invalid environment, symlink/wrong-kind, unreadable, oversized, malformed,
-  and unsupported-version failures with fixed redaction;
-- byte-identical configuration files and absence of newly created config/state
-  roots;
-- a cumulative 16-`Interrupted` read limit with deterministic injected-reader
-  success after up to 15 interruptions and fixed `Unreadable` failure on the
-  16th;
-- config-only process snapshots that read `XDG_CONFIG_HOME` first, read `HOME`
-  only for missing or empty XDG, never read `XDG_STATE_HOME`, and do not read
-  or fall back to `HOME` for nonempty valid, invalid-relative, or non-Unicode
-  XDG;
-- supported-Unix final-path `O_NOFOLLOW`, nonblocking, and authoritative
-  regularity behavior without a hardened non-Unix claim;
-- unchanged identity/version/status behavior except the intentional global
-  help and invalid-usage additions; and
-- freshly built release-binary human, JSON, invalid-config, no-create, and
-  no-rewrite smokes.
+Focused evidence covers exact defaults and grammar precedence; schemas 1–7;
+all modes and decisions; source provenance; empty local shadowing; canonical
+aliases and non-Unicode workspace bytes; unavailable/invalid workspace
+selection; inert-pattern omission and terminal escaping; large complete bounded
+output; malformed, oversized and wrong-kind configuration; fixed failure and
+output-write outcomes; unchanged config bytes and absent state artifacts.
+Full feature/release acceptance remains governed by the canonical
+[local feature gate](implementation-plan.md#local-feature-gate).
 
 ## Native interactive `/allowlist`
 
