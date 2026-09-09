@@ -180,6 +180,78 @@ fn bounds_are_checked_before_cloning_normalized_arguments_into_capability() {
         tool.prepare(call()).unwrap_err().code,
         "permission_preparation_failed"
     );
+    assert_eq!(
+        tool.prepare_for_turn(&context(), call()).unwrap_err().code,
+        "permission_preparation_failed"
+    );
+}
+
+struct ContextInteraction(bool);
+impl Tool for ContextInteraction {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: call().name,
+            description: "context interaction".into(),
+            input_schema: json!({}),
+        }
+    }
+    fn prepare(&self, _: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        panic!("wrapper must forward the contextual hook")
+    }
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        _: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        let arguments = json!({"context": context});
+        Ok(if self.0 {
+            PreparedToolCall::new(
+                Capability::Filesystem {
+                    access: FilesystemAccess::Read,
+                    path: "retained".into(),
+                },
+                arguments,
+            )
+        } else {
+            PreparedToolCall::without_authority(arguments)
+        })
+    }
+    fn execute(
+        &self,
+        _: ToolContext,
+        _: Value,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        panic!("preparation cannot execute the inner tool")
+    }
+}
+
+#[test]
+fn contextual_wrapper_preserves_selection_and_still_requires_permission() {
+    for concrete in [false, true] {
+        let tool = NativePermissionGovernedTool::new(
+            Arc::new(ContextInteraction(concrete)),
+            EngineLimits::default(),
+        );
+        let prepared = tool.prepare_for_turn(&context(), call()).unwrap();
+        let arguments = json!({"context": context()});
+        assert_eq!(prepared.arguments(), &arguments);
+        assert_eq!(
+            prepared.capability(),
+            Some(&if concrete {
+                Capability::Filesystem {
+                    access: FilesystemAccess::Read,
+                    path: "retained".into(),
+                }
+            } else {
+                Capability::Tool {
+                    name: call().name,
+                    call_id: call().id,
+                    arguments,
+                }
+            })
+        );
+    }
 }
 
 #[test]

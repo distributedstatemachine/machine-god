@@ -493,9 +493,31 @@ pub trait Tool: Send + Sync + 'static {
         Ok(PreparedToolCall::new(capability, arguments))
     }
 
+    /// Prepares a call with the exact structural context of its executing turn.
+    ///
+    /// The default delegates to [`Self::prepare`], preserving existing tools.
+    /// Overrides obey all of that method's bounded, nonblocking, effect-free
+    /// requirements. The identifiers grant no authority: a native adapter may
+    /// use them to select an already-retained immutable turn snapshot, but must
+    /// not acquire filesystem or other external resources here. Preparation
+    /// must remain deterministic for that snapshot and invocation. Wrappers
+    /// must forward this hook to preserve the wrapped tool's context selection.
+    /// Core checks cancellation before and after this synchronous callback.
+    ///
+    /// # Errors
+    /// Returns [`ToolError`] when the call or its retained context is invalid.
+    fn prepare_for_turn(
+        &self,
+        _context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        self.prepare(call)
+    }
+
     /// Executes one tool call.
     ///
-    /// Core passes the arguments validated and normalized by [`Tool::prepare`].
+    /// Core passes the arguments validated by [`Tool::prepare_for_turn`], using
+    /// the same structural context for preparation and execution.
     /// For permission-required calls, core invokes this method only after the
     /// host policy resolves their exact capability, and execution must stay
     /// within that policy-governed authority. No-authority calls skip host
@@ -521,7 +543,7 @@ pub trait Tool: Send + Sync + 'static {
     /// visible output is durably stored. Registrations never become visible in
     /// the same provider response, survive the turn, or grant authority.
     ///
-    /// Core passes the arguments validated and normalized by [`Tool::prepare`]
+    /// Core passes the arguments validated and normalized by [`Tool::prepare_for_turn`]
     /// and applies the same authorization boundary as [`Tool::execute`]. For
     /// permission-required calls, overrides must remain within the exact
     /// capability approved by host policy. No-authority calls must require no

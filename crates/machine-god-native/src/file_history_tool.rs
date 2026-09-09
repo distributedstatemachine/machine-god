@@ -150,6 +150,13 @@ impl Tool for NativeFileHistoryTool {
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
         self.tool.prepare(call)
     }
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        self.tool.prepare_for_turn(context, call)
+    }
     fn persist_arguments<'a>(
         &'a self,
         context: ToolContext,
@@ -298,6 +305,14 @@ mod tests {
             call.arguments["path"] = json!("normalized");
             Ok(PreparedToolCall::without_authority(call.arguments))
         }
+        fn prepare_for_turn(
+            &self,
+            context: &ToolContext,
+            mut call: ToolCall,
+        ) -> Result<PreparedToolCall, ToolError> {
+            call.arguments["context"] = json!(context);
+            self.prepare(call)
+        }
         fn execute(
             &self,
             _context: ToolContext,
@@ -369,6 +384,30 @@ mod tests {
             .is_err()
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+    #[test]
+    fn contextual_preparation_forwards_without_reserving_history_or_executing() {
+        let (registry, session, context) = setup("read_file");
+        let fake = fake("read_file", ToolOutput::success(json!({})));
+        let calls = fake.calls.clone();
+        let tool = NativeFileHistoryTool::new(fake, NativeFileHistoryKind::Read, registry);
+        let prepared = tool
+            .prepare_for_turn(
+                &context,
+                ToolCall {
+                    id: context.call_id.clone(),
+                    name: machine_god_core::ToolName::new("read_file").unwrap(),
+                    arguments: json!({"path": "original"}),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            prepared.arguments(),
+            &json!({"path": "normalized", "context": context})
+        );
+        assert!(prepared.capability().is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(session.snapshot().entries().is_empty());
     }
     #[test]
     fn pending_drop_records_only_unknown() {

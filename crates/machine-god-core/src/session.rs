@@ -2097,7 +2097,13 @@ async fn run_turn_inner(
                     format!("tool {call_name} disappeared after round validation"),
                 )
             })?;
-            let preparation = tool.prepare(call.clone());
+            let tool_context = ToolContext {
+                session_id: session_id.clone(),
+                session_incarnation_id: session_incarnation_id.clone(),
+                turn_id: turn_id.clone(),
+                call_id: call_id.clone(),
+            };
+            let preparation = tool.prepare_for_turn(&tool_context, call.clone());
             check_cancelled(&cancellation)?;
             let mut complete_output = None;
 
@@ -2200,12 +2206,7 @@ async fn run_turn_inner(
                         let execution_cancellation = prepared.execution_cancellation();
                         let execution = || {
                             tool.execute_for_turn(
-                                ToolContext {
-                                    session_id: session_id.clone(),
-                                    session_incarnation_id: session_incarnation_id.clone(),
-                                    turn_id: turn_id.clone(),
-                                    call_id: call_id.clone(),
-                                },
+                                tool_context,
                                 prepared.into_arguments(),
                                 cancellation.clone(),
                             )

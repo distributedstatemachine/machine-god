@@ -627,6 +627,154 @@ fn json_string_with_serialized_size(size: usize) -> Value {
     value
 }
 
+struct ContextPreparedTool {
+    observations: Arc<Mutex<Vec<(bool, ToolContext)>>>,
+    arguments: Option<Value>,
+}
+
+impl Tool for ContextPreparedTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("context-preparation").unwrap(),
+            description: "context preparation test".into(),
+            input_schema: json!({}),
+        }
+    }
+
+    fn prepare(&self, _: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        panic!("engine must dispatch the contextual override")
+    }
+
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        assert_eq!(context.call_id, call.id);
+        self.observations
+            .lock()
+            .unwrap()
+            .push((false, context.clone()));
+        let arguments = self.arguments.clone().ok_or_else(|| {
+            ToolError::new(
+                ToolErrorKind::InvalidInput,
+                "context_missing",
+                "invalid context",
+                false,
+            )
+        })?;
+        Ok(PreparedToolCall::new(
+            Capability::Tool {
+                name: call.name,
+                call_id: call.id,
+                arguments: arguments.clone(),
+            },
+            arguments,
+        ))
+    }
+
+    fn execute(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        assert_eq!(Some(&arguments), self.arguments.as_ref());
+        self.observations.lock().unwrap().push((true, context));
+        Box::pin(async { Ok(ToolOutput::success(json!({"ok": true}))) })
+    }
+}
+
+fn contextual_call() -> ToolCall {
+    ToolCall {
+        id: ToolCallId::new("context-call").unwrap(),
+        name: ToolName::new("context-preparation").unwrap(),
+        arguments: json!({"original": true}),
+    }
+}
+
+#[test]
+fn contextual_preparation_and_execution_share_exact_turn_identity() {
+    let observations = Arc::new(Mutex::new(Vec::new()));
+    let permissions = RecordingAllow::default();
+    let arguments = json!({"normalized": true});
+    let events = boundary_events(
+        "contextual-preparation",
+        contextual_call(),
+        ContextPreparedTool {
+            observations: observations.clone(),
+            arguments: Some(arguments.clone()),
+        },
+        permissions.clone(),
+        128,
+    );
+    assert!(matches!(
+        events.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    let observations = observations.lock().unwrap();
+    assert_eq!(observations.len(), 2);
+    assert!(!observations[0].0);
+    assert!(observations[1].0);
+    let context = &observations[0].1;
+    assert_eq!(&observations[1].1, context);
+    assert_eq!(context.session_id, events[0].session_id);
+    assert_eq!(
+        context.session_incarnation_id,
+        events[0].session_incarnation_id
+    );
+    assert_eq!(context.turn_id, events[0].turn_id);
+    assert_eq!(context.call_id, contextual_call().id);
+    assert_eq!(
+        permissions.requests.lock().unwrap()[0].capability,
+        Capability::Tool {
+            name: contextual_call().name,
+            call_id: context.call_id.clone(),
+            arguments,
+        }
+    );
+    assert!(events.iter().any(|event| matches!(&event.payload,
+        TurnEvent::ToolStarted { call } if call == &contextual_call())));
+}
+
+#[test]
+fn contextual_preparation_rejection_and_bounds_prevent_permission_and_execution() {
+    for arguments in [None, Some(json_string_with_serialized_size(129))] {
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let permissions = RecordingAllow::default();
+        let rejected = arguments.is_none();
+        let events = boundary_events(
+            "invalid-context-preparation",
+            contextual_call(),
+            ContextPreparedTool {
+                observations: observations.clone(),
+                arguments,
+            },
+            permissions.clone(),
+            128,
+        );
+        assert_eq!(observations.lock().unwrap().len(), 1);
+        assert!(!observations.lock().unwrap()[0].0);
+        assert!(permissions.requests.lock().unwrap().is_empty());
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+        );
+        if rejected {
+            assert!(matches!(
+                events.last().unwrap().payload,
+                TurnEvent::Completed { .. }
+            ));
+        } else {
+            assert!(matches!(
+                events.last().unwrap().payload,
+                TurnEvent::Failed { .. }
+            ));
+        }
+    }
+}
+
 fn custom_capability_with_serialized_size(size: usize) -> Capability {
     let empty = Capability::Custom {
         name: "boundary".to_owned(),

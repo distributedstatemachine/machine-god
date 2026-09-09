@@ -4,9 +4,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use machine_god_core::{
-    BoxFuture, CancellationToken, EngineLimits, PreparedToolCall, Tool, ToolCall, ToolContext,
-    ToolError, ToolErrorKind, ToolExecution, ToolInputLimits, ToolOutput, ToolOutputLimits,
-    ToolSpec,
+    BoxFuture, CancellationToken, EngineLimits, PreparedToolCall, Tool, ToolCall, ToolCallId,
+    ToolContext, ToolError, ToolErrorKind, ToolExecution, ToolInputLimits, ToolName, ToolOutput,
+    ToolOutputLimits, ToolSpec,
 };
 use serde_json::Value;
 
@@ -28,31 +28,13 @@ impl NativePermissionGovernedTool {
     pub fn new(tool: Arc<dyn Tool>, limits: EngineLimits) -> Self {
         Self { tool, limits }
     }
-}
 
-impl fmt::Debug for NativePermissionGovernedTool {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("NativePermissionGovernedTool { .. }")
-    }
-}
-
-impl Tool for NativePermissionGovernedTool {
-    fn spec(&self) -> ToolSpec {
-        self.tool.spec()
-    }
-
-    fn complete_input_limits(&self) -> Option<ToolInputLimits> {
-        self.tool.complete_input_limits()
-    }
-
-    fn complete_output_limits(&self) -> Option<ToolOutputLimits> {
-        self.tool.complete_output_limits()
-    }
-
-    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
-        let name = call.name.clone();
-        let call_id = call.id.clone();
-        let prepared = self.tool.prepare(call)?;
+    fn govern(
+        &self,
+        prepared: PreparedToolCall,
+        name: ToolName,
+        call_id: ToolCallId,
+    ) -> Result<PreparedToolCall, ToolError> {
         if prepared.capability().is_some() {
             return Ok(prepared);
         }
@@ -78,6 +60,42 @@ impl Tool for NativePermissionGovernedTool {
                 )
             })?;
         Ok(prepared.require_tool_permission(name, call_id))
+    }
+}
+
+impl fmt::Debug for NativePermissionGovernedTool {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("NativePermissionGovernedTool { .. }")
+    }
+}
+
+impl Tool for NativePermissionGovernedTool {
+    fn spec(&self) -> ToolSpec {
+        self.tool.spec()
+    }
+
+    fn complete_input_limits(&self) -> Option<ToolInputLimits> {
+        self.tool.complete_input_limits()
+    }
+
+    fn complete_output_limits(&self) -> Option<ToolOutputLimits> {
+        self.tool.complete_output_limits()
+    }
+
+    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        let name = call.name.clone();
+        let call_id = call.id.clone();
+        self.govern(self.tool.prepare(call)?, name, call_id)
+    }
+
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        let name = call.name.clone();
+        let call_id = call.id.clone();
+        self.govern(self.tool.prepare_for_turn(context, call)?, name, call_id)
     }
 
     fn persist_arguments<'a>(

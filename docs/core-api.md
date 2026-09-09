@@ -129,7 +129,7 @@ or formatting any provider-controlled value. Logging an engine therefore cannot
 trigger provider code or expose a hostile provider name.
 
 The permission decision is distinct from tool execution. A handler error never
-means approval. [`Tool::prepare`](crate::Tool::prepare) is a synchronous,
+means approval. [`Tool::prepare_for_turn`](crate::Tool::prepare_for_turn) is a synchronous,
 effect-free preflight boundary where native implementations can normalize paths,
 process arguments, and network destinations before presenting a
 [`Capability`](crate::Capability) to policy. It is trusted host code and must do
@@ -936,8 +936,16 @@ form, never the historical projection. Hosts must
 bound retained event memory and implement lossless archive retrieval; the input
 hook alone does not provide native storage or change provider transport limits.
 
-Before authorization, core passes each validated provider call by value to
-[`Tool::prepare`](crate::Tool::prepare). Its source-compatible default returns
+Before authorization, core passes each validated provider call by value and the
+exact structural `ToolContext` by reference to
+[`Tool::prepare_for_turn`](crate::Tool::prepare_for_turn). Execution receives that
+same session/incarnation/turn/call context. The identifiers carry no filesystem,
+workspace, or other ambient authority. A native tool may select an already-retained
+immutable turn snapshot through them, but may not acquire external resources.
+Preparation stays deterministic for that snapshot and invocation. Tool wrappers
+must forward the contextual hook instead of discarding context.
+The source-compatible default delegates to [`Tool::prepare`](crate::Tool::prepare),
+whose default returns
 a [`PreparedToolCall`](crate::PreparedToolCall) containing the original
 arguments and the same raw `Capability::Tool` used before preflight existed. A
 tool may instead use [`PreparedToolCall::new`](crate::PreparedToolCall::new) to
