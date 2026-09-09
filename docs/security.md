@@ -82,6 +82,14 @@ Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
 fixed denial-class error and does not cache grants.
 
+The opt-in [native permission composition](native-reference-host.md) separately
+enforces configured `ask`, `auto` and `yolo` modes, pattern rules and validated
+saved exact-action rules against newly prepared actions. Taken turns capture
+their policy; later controls do not widen already retained jobs. Saved rules
+and historical allow decisions are not restored runtime grants. The
+[permission report](permissions-cli.md) describes configuration, not live
+session authorization.
+
 Core validates every complete capability within one serialized-byte envelope
 before policy. JSON depth and node traversal applies only to an embedded JSON
 value; typed path, identity, target, and composite path-plus-target fields have
@@ -147,8 +155,14 @@ creates no background namespace or worker cohort. The first permitted, polled
 `start` performs one shared initialization; its fixed, redacted success or
 failure is reused, and cancelled waiters cannot trigger a second reconciliation
 or cohort. The retained descriptor constrains the starting directory only.
-After approval, `/bin/sh -c` can exercise every authority available to that
-process account; terminal execution is explicitly not a sandbox.
+Without separately injected sandbox authority, an approved `/bin/sh -c` can
+exercise every authority available to that process account; execution
+permission itself is not a sandbox. The explicit
+[macOS sandbox launch](terminal.md#explicit-macos-os-sandbox-launch) applies the
+captured Seatbelt profile to configured launches. Its documented write
+exceptions, permitted network/process operations and unsandboxed host helpers
+remain outside any workspace-only isolation claim. Unsupported or unavailable
+requested OS authority fails without an unsandboxed fallback.
 
 The Linux system executor owns bounded pipes, a process group, cleanup signals,
 and child reaping. Cancellation, timeout, output overflow, and drop attempt the
@@ -266,10 +280,12 @@ diagnostics.
 
 The following remain explicit future work rather than implied guarantees:
 
-- permission modes and durable grant policy beyond ask-only decisions;
+- grant lifetimes and delegation beyond the documented configured modes,
+  saved exact-action rules and runtime permission decisions;
 - encrypted/authenticated persistence, key management, and secure erasure;
 - hardened non-Unix workspace and store construction;
-- a true process sandbox or stronger descendant containment;
+- OS sandbox backends beyond the explicit macOS implementation, stronger
+  isolation than its documented profile, and stronger descendant containment;
 - private/authenticated web destinations and redirect authorization; and
 - remote or packaged skill discovery/installation, production MCP transport
   and authentication, extension/ACP authority, persistent/background subagent
