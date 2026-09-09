@@ -16,7 +16,7 @@ retains global grammar and private helper dispatch, and routes through named,
 borrowed host dependencies so tests can replace one host without rebuilding
 unrelated command wiring. Constructing that dependency set performs no effects.
 
-Doctor, models, session inspection, sessions, status, workspace and background
+Doctor, models, session inspection/maintenance, sessions, status, workspace and background
 share byte-bounded output staging. Each command keeps its own byte ceiling,
 initial capacity, escaping and error mapping; rendering completes before success
 output is written. A rejected append leaves its existing prefix unchanged.
@@ -89,12 +89,15 @@ the terminal. Termios restoration and native joins do not depend on that tail.
 | `ask [--] [<prompt...>]` | Run one noninteractive request from argv or whole stdin | [ask](ask-cli.md) |
 | `background [last\|<id>] [--json]` | Inspect bounded persisted background history | [background](background-cli.md) |
 | `doctor [--json]` | Run bounded local health checks | [doctor](doctor-cli.md) |
+| `doctor cleanup [--apply] [--json]` | Report or explicitly remove proven redundant session staging files | [cleanup](doctor-cli.md#guarded-native-session-cleanup) |
 | `models [--json]` | List the bounded AI Gateway model catalog | [models](models-cli.md) |
 | `permissions [--json]` | Report configured permission mode | [permissions](permissions-cli.md) |
 | `replay <tape> [options]` | Replay an FXTP terminal tape | [replay](replay-cli.md) |
 | `resume <id> [--] <prompt...>` | Continue one saved session with one prompt | [resume](resume-cli.md) |
 | `resume [last\|<id>]` | Resume latest or an exact saved session interactively | This page |
 | `session <id> [--json]` | Inspect one saved session summary | [session](session-cli.md) |
+| `session migrate <id> [--json]` | Upgrade native session metadata without changing its transcript | [maintenance](session-cli.md#maintenance-commands) |
+| `session recover <id> [--json]` | Publish a separate recoverable copy without changing its source | [maintenance](session-cli.md#maintenance-commands) |
 | `sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]` | Page rich saved-session summaries for the current workspace or all workspaces | [sessions](sessions-cli.md) |
 | `status [--json]` | Report the effective local runtime snapshot | This page |
 | `workspace [list] [--json]` | Report the primary workspace | [workspace](workspace-cli.md) |

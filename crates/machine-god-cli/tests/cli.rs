@@ -35,6 +35,10 @@ use machine_god_native::{
 #[path = "cli/sessions.rs"]
 mod rich_sessions;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "cli/maintenance.rs"]
+mod session_maintenance;
+
 const IDENTITY: &str = "machine-god 0.1.0 (engine API 1)\n";
 const PERMISSIONS: &str = concat!(
     "machine-god 0.1.0 (engine API 1)\n",
@@ -54,10 +58,13 @@ const HELP: &str = concat!(
     "\n",
     "Usage:\n",
     "  machine-god\n",
+    "  machine-god [<interactive-resume-options>] --record\n",
+    "  machine-god [--add-dir PATH | --add-dir=PATH]... [--no-additional-dirs] [ask ... | resume ... | <interactive-resume-options>]\n",
     "  machine-god help\n",
     "  machine-god ask [--] [<prompt...>]\n",
     "  machine-god background [last | <unsigned-decimal-u64>] [--json]\n",
     "  machine-god doctor [--json]\n",
+    "  machine-god doctor cleanup [--apply] [--json]\n",
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
     "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
@@ -68,6 +75,8 @@ const HELP: &str = concat!(
     "  machine-god session resume [last | <id>]\n",
     "  machine-god session resume --id <id>\n",
     "  machine-god session <id> [--json]\n",
+    "  machine-god session migrate <id> [--json]\n",
+    "  machine-god session recover <id> [--json]\n",
     "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
     "  machine-god status [--json]\n",
     "  machine-god workspace [list | add <path> | remove <path> | clear] [--json]\n",
@@ -94,6 +103,8 @@ const HELP: &str = concat!(
     "  --resume-last    Resume the latest workspace session\n",
     "  --resume [last | <id>]  Resume latest or an exact session\n",
     "  --resume-<id>    Resume an exact session\n",
+    "  --add-dir PATH  Add a launch-only workspace directory (repeatable, before command)\n",
+    "  --no-additional-dirs  Suppress saved additional directories for this launch\n",
 );
 const STATUS_HELP: &str = concat!(
     "machine-god status\n",
@@ -118,7 +129,7 @@ const STATUS_MISSING_AUTH_HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | doctor cleanup [--apply] [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | session migrate <id> [--json] | session recover <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -959,6 +970,9 @@ fn interactive_startup_requires_tty_before_configuration_or_session_effects() {
         &["session", "resume", "last"][..],
         &["session", "resume", "alpha"][..],
         &["session", "resume", "--id", "last"][..],
+        &["--record"][..],
+        &["--resume", "--record"][..],
+        &["session", "resume", "--record"][..],
     ] {
         let output = machine_god()
             .args(arguments)
@@ -1739,14 +1753,12 @@ fn invalid_resume_grammar_precedes_configuration_state_credentials_and_stdin() {
         &["--resume-"][..],
         &["--resume", "alpha", "prompt"][..],
         &["--resume", " \t\r\n"][..],
-        &["--resume", "--record"][..],
         &["resume", "--id"][..],
         &["resume", "--id", "last", "prompt"][..],
         &["resume", "--resume"][..],
         &["resume", "--resume", "--last", "extra"][..],
         &["session", "resume", "alpha", "prompt"][..],
         &["session", "resume", "--id", "last", "prompt"][..],
-        &["session", "resume", "--record"][..],
         &["resume", "last", "prompt"][..],
         &["resume", "--id", "alpha", "prompt"][..],
         &["resume", "--json", "prompt"][..],

@@ -10,6 +10,7 @@ mod models;
 mod recording_launch;
 mod replay;
 mod session;
+mod session_maintenance_cli;
 mod sessions;
 mod status;
 #[cfg(test)]
@@ -26,6 +27,7 @@ use doctor::{DoctorCommandHost, ProductionDoctorCommandHost, run_doctor};
 use models::{ModelsCommandHost, ProductionModelsCommandHost, run_models};
 use replay::{ProductionReplayCommandHost, ReplayCommandHost, is_replay_command, run_replay};
 use session::{ProductionSessionCommandHost, SessionCommandHost, run_session};
+use session_maintenance_cli::{MaintenanceCommandHost, ProductionMaintenanceCommandHost};
 use sessions::{ProductionSessionsCommandHost, SessionsCommandHost, SessionsOptions, run_sessions};
 use status::{ProductionStatusCommandHost, StatusCommandHost, is_status_command, run_status};
 use workspace::{
@@ -34,7 +36,7 @@ use workspace::{
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | doctor cleanup [--apply] [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | session migrate <id> [--json] | session recover <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
@@ -52,6 +54,9 @@ enum Command {
     AskStdin,
     Doctor {
         json: bool,
+    },
+    Maintenance {
+        options: session_maintenance_cli::Options,
     },
     Models {
         json: bool,
@@ -213,6 +218,7 @@ fn is_exact_helper_arguments(
 struct CommandHosts<'a> {
     models: &'a dyn ModelsCommandHost,
     doctor: &'a dyn DoctorCommandHost,
+    maintenance: &'a dyn MaintenanceCommandHost,
     session: &'a dyn SessionCommandHost,
     sessions: &'a dyn SessionsCommandHost,
     workspace: &'a dyn WorkspaceCommandHost,
@@ -227,6 +233,7 @@ impl Default for CommandHosts<'_> {
         Self {
             models: &ProductionModelsCommandHost,
             doctor: &ProductionDoctorCommandHost,
+            maintenance: &ProductionMaintenanceCommandHost,
             session: &ProductionSessionCommandHost,
             sessions: &ProductionSessionsCommandHost,
             workspace: &ProductionWorkspaceCommandHost,
@@ -378,6 +385,9 @@ fn run_parsed_command(
         Command::Doctor { json } => {
             return run_doctor(doctor_host, json, stdout, stderr);
         }
+        Command::Maintenance { options } => {
+            return session_maintenance_cli::run(hosts.maintenance, &options, stdout, stderr);
+        }
         Command::Models { json } => {
             return run_models(models_host, json, stdout, stderr);
         }
@@ -434,14 +444,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             Some(prompt) => Command::Ask { prompt },
             None => Command::AskStdin,
         },
-        "doctor" => {
-            let json = match arguments.next() {
-                None => false,
-                Some(argument) if argument == "--json" => true,
-                Some(_) => return Err(()),
-            };
-            Command::Doctor { json }
-        }
+        "doctor" => return parse_doctor_command(arguments),
         "models" => {
             let json = match arguments.next() {
                 None => false,
@@ -472,19 +475,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             Command::Interactive { selection }
         }
         "resume" => return parse_resume_command(arguments, true),
-        "session" => {
-            let target = arguments.next().ok_or(())?;
-            if target == "resume" {
-                return parse_resume_command(arguments, false);
-            }
-            let id = parse_explicit_session_id(target, SessionIdGrammar::Inspection)?;
-            let json = match arguments.next() {
-                None => false,
-                Some(argument) if argument == "--json" => true,
-                Some(_) => return Err(()),
-            };
-            Command::Session { id, json }
-        }
+        "session" => return parse_session_command(arguments),
         "sessions" => Command::Sessions {
             options: sessions::parse_options(arguments.by_ref())?,
         },
@@ -504,6 +495,45 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
         return Err(());
     }
     Ok(command)
+}
+
+fn parse_doctor_command(mut arguments: impl Iterator<Item = OsString>) -> Result<Command, ()> {
+    let json = match arguments.next() {
+        Some(argument) if argument == "cleanup" => {
+            return Ok(Command::Maintenance {
+                options: session_maintenance_cli::parse_cleanup(arguments)?,
+            });
+        }
+        None => false,
+        Some(argument) if argument == "--json" => true,
+        Some(_) => return Err(()),
+    };
+    if arguments.next().is_some() {
+        return Err(());
+    }
+    Ok(Command::Doctor { json })
+}
+
+fn parse_session_command(mut arguments: impl Iterator<Item = OsString>) -> Result<Command, ()> {
+    let target = arguments.next().ok_or(())?;
+    if target == "resume" {
+        return parse_resume_command(arguments, false);
+    }
+    if target == "migrate" || target == "recover" {
+        return Ok(Command::Maintenance {
+            options: session_maintenance_cli::parse_session(target == "recover", arguments)?,
+        });
+    }
+    let id = parse_explicit_session_id(target, SessionIdGrammar::Inspection)?;
+    let json = match arguments.next() {
+        None => false,
+        Some(argument) if argument == "--json" => true,
+        Some(_) => return Err(()),
+    };
+    if arguments.next().is_some() {
+        return Err(());
+    }
+    Ok(Command::Session { id, json })
 }
 
 fn parse_explicit_session_id(
@@ -616,6 +646,7 @@ fn help() -> String {
             "  machine-god ask [--] [<prompt...>]\n",
             "  machine-god background [last | <unsigned-decimal-u64>] [--json]\n",
             "  machine-god doctor [--json]\n",
+            "  machine-god doctor cleanup [--apply] [--json]\n",
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
             "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
@@ -626,6 +657,8 @@ fn help() -> String {
             "  machine-god session resume [last | <id>]\n",
             "  machine-god session resume --id <id>\n",
             "  machine-god session <id> [--json]\n",
+            "  machine-god session migrate <id> [--json]\n",
+            "  machine-god session recover <id> [--json]\n",
             "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
             "  machine-god status [--json]\n",
             "  machine-god workspace [list | add <path> | remove <path> | clear] [--json]\n",

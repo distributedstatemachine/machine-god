@@ -171,9 +171,9 @@ compilation. These component checks are not full-feature acceptance.
 Terminal routing is integrated and its clean released worktree removed after
 focused composition, permission, PTY/tmux and monitor checks. CLI launch/slash
 workspace selection and the native FXTP recording backend are also integrated.
-Separate workers finish component verification and implement native session
-maintenance; recording startup and output integration follow in fresh isolated
-worktrees. The coordinator owns historical cards, the live plan,
+Native session maintenance is integrated and its released clean worktree removed.
+Separate workers finish recording lifecycle and real-PTY fixture coverage in
+isolated worktrees. The coordinator owns maintenance CLI commands, historical cards, the live plan,
 shared-contract integration, cross-platform prerequisites and final gates.
 Preserve uncommitted paused work before updating a worker's base. Remove worker
 trees only after their changes are committed, integrated and released.
@@ -199,13 +199,19 @@ documentation checks pass; these are component checks, not release acceptance.
 Launch/slash workspace selection preserves launches without a settings directory:
 explicit launch roots and listing work, while persistent mutations require
 settings authority. The recording backend owns bounded FXTP writes and close
-receipts; its CLI startup, accepted-output and finalization wiring remain open.
+receipts; its CLI startup, accepted-output, finalization and explicit parent-path
+compatibility are integrated. Composed recording scenarios are being checked.
 The recording modifier parser is integrated: one trailing `--record` selects
 only an interactive launch/resume, composes with leading workspace flags, and
 rejects one-shot, duplicate and misplaced requests before host effects. Its
-dispatch tests pass; actual production recording startup remains in progress.
-The remaining product boundary is migration/recovery/doctor cleanup, recording
-integration and remaining policy/session scenarios.
+dispatch tests pass. Session migration/recovery and guarded cleanup now compose
+the native state-only, completion-owned process facade with CLI grammar, bounded
+receipts and six public subprocess tests. The integrated CLI package passes
+352 unit tests (five existing fixture helpers ignored), 105 command subprocess
+tests, ten replay tests and warnings-denied Clippy. These are component checks,
+not a fresh-release or complete-feature gate. Remaining work is recording scenario
+integration, configured-rule discovery, saved exact-rule confirmation/revocation,
+and composed policy-effect/startup-resume scenarios, then the complete gates.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

@@ -20,6 +20,8 @@ machine-god session <id> --json
 `<id>` must satisfy the core portable `SessionId` contract: 1 through 128
 ASCII bytes containing only letters, digits, `-`, `_`, `.`, or `:`. The exact
 tokens `last`, `--id`, and `--json` are reserved and invalid in ID position.
+The tokens `resume`, `migrate`, and `recover` select subcommands rather than
+positional inspection IDs.
 `last`, `--id <id>`, `--json <id>`, `--json=true`, reordered or
 repeated flags, extra arguments, missing IDs, invalid IDs, and non-Unicode
 arguments are rejected before environment or filesystem access. There is no
@@ -186,6 +188,35 @@ available only through the bounded, explicit-ID, one-prompt
 [`resume`](resume-cli.md) contract.
 
 The command makes no upstream-equivalence or product-performance claim.
+
+## Maintenance commands
+
+```text
+machine-god session migrate <id> [--json]
+machine-god session recover <id> [--json]
+```
+
+Maintenance requires one exact portable ID, not `last` or a leading-dash token.
+The optional `--json` is trailing and singleton; missing IDs, unknown flags,
+extra arguments, workspace launch modifiers and `--record` fail before host
+effects with the global exit-2 usage diagnostic. There is no `--allow-large`.
+
+These commands use native state-only authority, without configuration,
+credentials, provider startup or tool execution. The CLI waits for the native
+receipt and worker settlement before presenting a bounded 4,096-byte human or
+JSON summary. It never retries a mutation after an output error. No signal
+handler is installed: normal process interruption applies, and callers must
+reload before retrying an interrupted or uncertain operation.
+
+Migration reports `migrated` or `already_current`, the exact ID and revision.
+Recovery reports the source ID, separate new ID, message count, whether the
+source was truncated, the number of unknown tool results, and
+`source_unchanged: true`. Neither form displays transcript or metadata values.
+Confirmed success exits 0. Indeterminate recovery exits 1 and retains the new
+copy ID for exact reload without claiming a revision or durable completion.
+Other failures exit 1 with a fixed native category and reload guidance, on
+stderr in human mode or as a JSON error on stdout. Output failure uses the
+global output diagnostic; it does not imply that native changes rolled back.
 
 ## Native maintenance backend
 

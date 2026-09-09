@@ -143,7 +143,7 @@ No partial write is claimed as success. Both diagnostics end in one LF.
 
 ## Authority and side effects
 
-Doctor is a synchronous, read-only local projection. It may inspect only the
+The plain doctor report is a synchronous, read-only local projection. It may inspect only the
 selected configuration file, the two fixed credential environment values, the
 selected state-directory metadata, and compile-time platform support. It does
 not create a config or state root, repair permissions, migrate or rewrite a
@@ -177,6 +177,27 @@ Independent evidence must cover:
   isolated missing XDG roots.
 
 ## Guarded native session cleanup
+
+```text
+machine-god doctor cleanup [--apply] [--json]
+```
+
+Cleanup defaults to report-only. `--apply` explicitly requests eligible deletion;
+the two singleton flags may appear in either order. Unknown or duplicate flags,
+path operands and launch modifiers fail with exit 2 before native effects.
+It is separate from the four-check report and does not inspect configuration or
+credentials. Native workers settle before the CLI writes its summary, with
+default process signal behavior and no automatic retry after output failure.
+
+Human and JSON summaries are bounded to 4,096 bytes and report `apply`,
+`scan_complete` and counts for active, untrusted, report-only, completed and
+indeterminate outcomes, never artifact paths. A complete report-only scan exits
+0 even when it reports skipped active or untrusted artifacts. Applying cleanup
+exits 0 only when the complete scan has no skipped or indeterminate outcomes.
+Incomplete scans, uncertain effects and operational failures exit 1; partial
+receipts preserve completed effects rather than imply rollback. JSON failures
+use stdout and human failures use stderr, with fixed categories and reload
+guidance. A write error uses the global output diagnostic.
 
 The four-check doctor report above remains read-only. Session maintenance has a
 separate explicit cleanup operation with `ReportOnly` and `Apply` modes; merely
