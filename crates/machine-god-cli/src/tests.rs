@@ -229,6 +229,8 @@ fn launch_workspace_modifiers_reach_only_validated_conversation_hosts() {
 fn recording_modifier_reaches_only_validated_interactive_hosts() {
     for args in [
         vec!["--record"],
+        vec!["--resume", "--record"],
+        vec!["session", "resume", "--record"],
         vec!["resume", "saved", "--record"],
         vec![
             "--add-dir",
@@ -835,7 +837,6 @@ fn resume_aliases_reject_malformed_targets_and_tails_before_host_effects() {
         vec!["--resume", " \t\r\n"],
         vec!["--resume", "\u{a0}alpha\u{a0}"],
         vec!["--resume", "bad/session"],
-        vec!["--resume", "--record"],
         vec!["resume", "--id"],
         vec!["resume", "--id", ""],
         vec!["resume", "--id", "--record"],
@@ -845,7 +846,6 @@ fn resume_aliases_reject_malformed_targets_and_tails_before_host_effects() {
         vec!["resume", "--resume", "--last", "extra"],
         vec!["session", "resume", "alpha", "prompt"],
         vec!["session", "resume", "--id", "last", "prompt"],
-        vec!["session", "resume", "--record"],
         vec!["session", "resume", "last", "--json"],
     ] {
         let host = FakeAskHost::new(AskCommandOutcome::Completed, b"must not run");
