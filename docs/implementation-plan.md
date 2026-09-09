@@ -171,9 +171,10 @@ compilation. These component checks are not full-feature acceptance.
 Terminal routing is integrated and its clean released worktree removed after
 focused composition, permission, PTY/tmux and monitor checks. CLI launch/slash
 workspace selection and the native FXTP recording backend are also integrated.
-Native session maintenance is integrated and its released clean worktree removed.
-Separate workers finish recording lifecycle and real-PTY fixture coverage in
-isolated worktrees. The coordinator owns maintenance CLI commands, historical cards, the live plan,
+Native session maintenance and recording lifecycle/scenarios are integrated;
+their released clean worktrees are removed. Separate workers finish configured
+permission reporting, saved-rule interaction and startup-resume scenarios in
+isolated worktrees. The coordinator owns integration, historical cards, the live plan,
 shared-contract integration, cross-platform prerequisites and final gates.
 Preserve uncommitted paused work before updating a worker's base. Remove worker
 trees only after their changes are committed, integrated and released.
@@ -200,18 +201,22 @@ Launch/slash workspace selection preserves launches without a settings directory
 explicit launch roots and listing work, while persistent mutations require
 settings authority. The recording backend owns bounded FXTP writes and close
 receipts; its CLI startup, accepted-output, finalization and explicit parent-path
-compatibility are integrated. Composed recording scenarios are being checked.
+compatibility are integrated. Six real-PTY, local-Gateway recording scenarios
+exercise the private production-flow fixture seams without shipping endpoint
+overrides; they are not fresh release-binary acceptance.
 The recording modifier parser is integrated: one trailing `--record` selects
 only an interactive launch/resume, composes with leading workspace flags, and
 rejects one-shot, duplicate and misplaced requests before host effects. Its
 dispatch tests pass. Session migration/recovery and guarded cleanup now compose
 the native state-only, completion-owned process facade with CLI grammar, bounded
 receipts and six public subprocess tests. The integrated CLI package passes
-352 unit tests (five existing fixture helpers ignored), 105 command subprocess
+359 unit tests (six subprocess fixture helpers ignored), 105 command subprocess
 tests, ten replay tests and warnings-denied Clippy. These are component checks,
-not a fresh-release or complete-feature gate. Remaining work is recording scenario
-integration, configured-rule discovery, saved exact-rule confirmation/revocation,
-and composed policy-effect/startup-resume scenarios, then the complete gates.
+not a fresh-release or complete-feature gate. A positive acknowledged startup
+picker test restores the selected identity, preferences and history without new
+sessions, provider requests or repeated file effects. Remaining work is configured
+rule discovery, saved exact-rule confirmation/revocation and composed policy-effect
+and latest/exact startup-resume scenarios, then the complete gates.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
