@@ -269,4 +269,22 @@ impl TapeLane {
         self.recorder.take();
         self.queue.clear();
     }
+
+    #[cfg(test)]
+    pub(crate) fn hold_for_test(&mut self, until: tokio::sync::oneshot::Receiver<()>) {
+        let recorder = self.recorder.take().expect("idle test recorder");
+        self.pending = Some(Box::pin(async move {
+            let _ = until.await;
+            let result = Ok(recorder.completion().status());
+            Recorded {
+                recorder,
+                result,
+                stdout: false,
+                finish: false,
+            }
+        }));
+    }
 }
+
+#[cfg(test)]
+mod tests;

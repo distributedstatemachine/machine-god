@@ -887,10 +887,7 @@ mod production {
         }
     }
 
-    async fn record_signal_grace(
-        output: &mut OutputBridge,
-        state: &mut TurnDriveState,
-    ) {
+    async fn record_signal_grace(output: &mut OutputBridge, state: &mut TurnDriveState) {
         let deadline = *state
             .signal_output_deadline
             .get_or_insert_with(|| tokio::time::Instant::now() + SIGNAL_OUTPUT_GRACE);
@@ -1519,9 +1516,7 @@ mod production {
                             drain_turn(stream, signals, &mut state.requested_signal).await;
                             break;
                         }
-                        match poll_acknowledgement_or_signal(&mut output, signals)
-                            .await
-                        {
+                        match poll_acknowledgement_or_signal(&mut output, signals).await {
                             PollResult::Signal(signal) => {
                                 state.requested_signal = Some(signal);
                                 cancel();
@@ -4130,10 +4125,7 @@ mod production {
                     ..TurnDriveState::default()
                 };
 
-                let mut write_grace = Box::pin(record_signal_grace(
-                    &mut output,
-                    &mut state,
-                ));
+                let mut write_grace = Box::pin(record_signal_grace(&mut output, &mut state));
                 poll_fn(|context| {
                     assert!(write_grace.as_mut().poll(context).is_pending());
                     Poll::Ready(())

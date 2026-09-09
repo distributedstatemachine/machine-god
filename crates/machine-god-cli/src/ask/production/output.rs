@@ -135,4 +135,4 @@ fn write_prefix(output: &mut dyn std::io::Write, bytes: &[u8]) -> (usize, bool) 
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -82,6 +82,84 @@ async fn harness(fixture: &support::Fixture) -> Harness {
 }
 
 #[test]
+fn pending_tape_ack_never_owns_native_save_progress_or_host_input_cleanup() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    let tape_scope = native::NativeOwnedWorkerScope::new();
+    let recorder = runtime
+        .block_on(native::TerminalTapeRecorder::start(
+            native::TerminalTapeRecordingRequest {
+                destination: native::TerminalTapeRecordingDestination::Explicit(
+                    fixture.workspace.join("driver-tape.fxtape"),
+                ),
+                options: native::TerminalTapeRecordingOptions::new(20, 3, 100, b"test".to_vec()),
+            },
+            tape_scope.clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+    let tape_completion = recorder.completion();
+    let mut lane = super::super::super::output::tape::TapeLane::new(recorder, false);
+    let (_release, held) = tokio::sync::oneshot::channel();
+    lane.hold_for_test(held);
+    harness.driver.output.tape = Some(lane);
+    let result = runtime.block_on(async {
+        harness
+            .driver
+            .owner
+            .request_control(
+                NativeInteractiveControl::Rename {
+                    title: "save while recording waits".into(),
+                },
+                101,
+            )
+            .unwrap();
+        poll_fn(|cx| {
+            assert!(harness.driver.poll(cx, &mut harness.signals).is_pending());
+            if let Ok(OutputWork::Write(bytes)) = harness.work.try_recv() {
+                harness
+                    .ack
+                    .try_send(OutputAcknowledgement::Written {
+                        bytes,
+                        failed: false,
+                    })
+                    .unwrap();
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+        until(&mut harness, |driver| driver.control_outcome.is_some()).await;
+        assert!(
+            harness
+                .driver
+                .control_outcome
+                .as_ref()
+                .unwrap()
+                .result
+                .is_ok()
+        );
+        assert!(harness.driver.in_flight.is_some());
+        assert!(!tape_completion.status().closed);
+        finish_signal(&mut harness).await
+    });
+    // dispose joins the complete native host and input while the separate tape
+    // still owns an unacknowledged accepted stdout prefix.
+    let mut tail = dispose(harness, fixture, result);
+    assert!(!tape_completion.status().closed);
+    let result = runtime.block_on(finish_tail(&mut tail));
+    assert_eq!(result.outcome, AskCommandOutcome::Interrupted);
+    assert!(result.stalled_output_after_signal);
+    drop(tail);
+    tape_scope.close();
+    tape_scope.completion().wait_on_worker().unwrap();
+    assert!(tape_completion.status().closed);
+    assert!(!tape_completion.status().complete);
+}
+
+#[test]
 fn real_tool_rounds_and_failed_save_receipt_are_observed_independently_of_output() {
     let runtime = executor();
     let fixture = support::Fixture::new();
@@ -266,6 +344,82 @@ fn ordinary_quit_joins_host_then_finishes_all_output_without_a_signal() {
     );
     assert!(tail.presentation.outcomes.is_empty());
     assert!(tail.presentation.controls.is_empty());
+}
+
+#[test]
+fn final_presentation_records_shutdown_output_after_native_host_has_joined() {
+    use super::super::super::output;
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let tape_fixture = output::tests::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    let tape_scope = native::NativeOwnedWorkerScope::new();
+    let recorder = runtime
+        .block_on(native::TerminalTapeRecorder::start(
+            tape_fixture.request(false),
+            tape_scope.clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+    let path = recorder.path().to_owned();
+    let completion = recorder.completion();
+    harness.driver.output.tape = Some(output::tape::TapeLane::new(recorder, false));
+    let result = runtime.block_on(async {
+        harness.driver.shutdown();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| harness.driver.poll(cx, &mut harness.signals)),
+        )
+        .await
+        .unwrap()
+    });
+    let mut tail = dispose(harness, fixture, result);
+    assert!(!completion.status().closed);
+    let mut accepted = Vec::new();
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                let result = tail.presentation.poll(cx, &mut tail.signals);
+                if let Ok(work) = tail.work.try_recv() {
+                    let receipt = match work {
+                        OutputWork::Write(bytes) => {
+                            accepted.extend_from_slice(&bytes);
+                            OutputAcknowledgement::Written {
+                                bytes,
+                                failed: false,
+                            }
+                        }
+                        OutputWork::Flush => OutputAcknowledgement::Succeeded,
+                    };
+                    tail.ack.try_send(receipt).unwrap();
+                    cx.waker().wake_by_ref();
+                }
+                result
+            }),
+        )
+        .await
+        .unwrap()
+    });
+    assert_eq!(result.outcome, AskCommandOutcome::Completed);
+    assert!(completion.status().closed && completion.status().complete);
+    assert!(!completion.workers().is_complete());
+    drop(tail);
+    tape_scope.close();
+    tape_scope.completion().wait_on_worker().unwrap();
+    let replay = runtime
+        .block_on(native::replay_terminal_tape(
+            native::TerminalTapeReplayRequest::new(path, false, true, None, None),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(replay.stdout()).unwrap();
+    assert_eq!(summary["stdout_bytes"], accepted.len());
+    assert!(
+        String::from_utf8(accepted)
+            .unwrap()
+            .contains("session closed")
+    );
 }
 
 #[test]
