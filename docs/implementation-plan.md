@@ -262,8 +262,13 @@ incompatibilities. Missing-parent component checks pass 101 focused/regression
 tests and native all-target/all-feature Clippy. The combined CLI's twelve
 workspace-related command tests now pass, including real listing, first add,
 no-op clear and persistence. Scoped read/permission evidence passes six unit and
-fourteen public target tests. Production host routing for the complete tool set
-is still required; mutation and path-tool adapters proceed in isolated trees.
+fourteen public target tests. Checkpoint `7026b88` passes all 99 command tests
+through its fresh locked release binary, plus the exact CI release-smoke script
+and 18 CI classification tests. That smoke now exercises real workspace
+persistence and the implemented session JSON contract. The integrated CLI and
+configuration worktrees are cleanly removed. Production host routing for the
+complete tool set is still required; mutation, path-tool and enumeration
+adapters proceed in isolated trees. These checks are not full-feature acceptance.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal
