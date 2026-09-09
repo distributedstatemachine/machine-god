@@ -401,7 +401,7 @@ fn parse_length(raw: &[u8]) -> Option<usize> {
     (!negative || length == 0).then_some(length)
 }
 
-fn canonical_web_domain(pattern: &str) -> bool {
+pub(crate) fn canonical_web_domain(pattern: &str) -> bool {
     let Some(host) = pattern.strip_prefix("domain:") else {
         return false;
     };

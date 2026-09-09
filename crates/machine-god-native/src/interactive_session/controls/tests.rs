@@ -32,6 +32,9 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+#[path = "allowlist_tests.rs"]
+mod allowlist;
+
 fn preferences(model: &str) -> NativeModelPreferences {
     NativeModelPreferences::new(model, NativeReasoningEffort::default(), false).unwrap()
 }

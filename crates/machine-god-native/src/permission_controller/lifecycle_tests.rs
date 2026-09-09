@@ -354,3 +354,84 @@ fn dropped_rule_save_releases_permit_and_wakes_outside_policy_lock() {
     assert_eq!(f.owner.snapshot().unwrap().mode(), PermissionMode::Auto);
     assert!(lock(&f.owner.state).uncertain_rules);
 }
+
+#[test]
+fn configured_reload_changes_future_snapshots_without_rewriting_taken_policy_or_grants() {
+    let f = Fixture::new();
+    f.owner.set_sandbox_mode(NativeSandboxMode::Os).unwrap();
+    let key = NativePermissionRuleKey::new(NativePermissionRuleKind::StructuredTool, "exact-grant")
+        .unwrap();
+    block_on(f.owner.confirm_rule_change(f.proposal())).unwrap();
+    lock(&f.owner.state).grants.push(Grant {
+        key: key.clone(),
+        turn: None,
+    });
+    let old = f.owner.snapshot().unwrap();
+    let turn = block_on(f.owner.session.prompt("taken job")).unwrap();
+    let registration = f.owner.begin_turn(&turn, old.clone()).unwrap();
+    let before_record = f.owner.session.record_snapshot();
+    let rules = Arc::new(
+        NativeConfiguredPermissionRules::new(vec![
+            crate::NativeConfiguredPermissionRule::new(
+                "read",
+                "*",
+                crate::NativeConfiguredPermissionDecision::Allow,
+            )
+            .unwrap(),
+        ])
+        .unwrap(),
+    );
+    f.owner.set_configured_rules(rules.clone()).unwrap();
+    let new = f.owner.snapshot().unwrap();
+    assert!(old.configured.rules().is_empty());
+    assert!(registration.attempt.policy.configured.rules().is_empty());
+    assert!(Arc::ptr_eq(&new.configured, &rules));
+    assert_eq!(new.mode(), PermissionMode::Auto);
+    assert_eq!(new.sandbox_mode(), NativeSandboxMode::Os);
+    assert!(
+        lock(&f.owner.state)
+            .grants
+            .iter()
+            .any(|grant| grant.key == key)
+    );
+    assert_eq!(f.owner.session.record_snapshot(), before_record);
+}
+
+#[cfg(feature = "ai-gateway-http")]
+#[test]
+fn configured_reload_accepts_only_its_already_admitted_permit_during_quiescence() {
+    let f = Fixture::new();
+    let permit = f.gate.acquire().unwrap();
+    let mut quiescence = f.gate.begin_quiescence().unwrap();
+    let rules = Arc::new(
+        NativeConfiguredPermissionRules::new(vec![
+            crate::NativeConfiguredPermissionRule::new(
+                "read",
+                "*",
+                crate::NativeConfiguredPermissionDecision::Deny,
+            )
+            .unwrap(),
+        ])
+        .unwrap(),
+    );
+    assert!(f.owner.set_configured_rules(rules.clone()).is_err());
+    let foreign = LifecycleGate::new().acquire().unwrap();
+    assert!(
+        f.owner
+            .set_configured_rules_admitted(&foreign, rules.clone())
+            .is_err()
+    );
+    f.owner
+        .set_configured_rules_admitted(&permit, rules.clone())
+        .unwrap();
+    assert!(f.owner.snapshot_quiescent(&quiescence).is_err());
+    drop(permit);
+    block_on(quiescence.wait_idle()).unwrap();
+    assert!(Arc::ptr_eq(
+        &f.owner.snapshot_quiescent(&quiescence).unwrap().configured,
+        &rules
+    ));
+    quiescence.try_retire().unwrap();
+    f.owner.retire();
+    assert!(f.owner.set_configured_rules(rules).is_err());
+}

@@ -119,6 +119,12 @@ impl NativePermissionPolicySnapshot {
         self.mode
     }
 
+    /// The immutable configured-pattern selection captured for this policy.
+    #[must_use]
+    pub fn configured_rules(&self) -> &NativeConfiguredPermissionRules {
+        &self.configured
+    }
+
     /// Captures the configured preference; construction grants no OS authority.
     #[must_use]
     pub const fn with_sandbox_mode(mut self, sandbox_mode: NativeSandboxMode) -> Self {
@@ -442,6 +448,33 @@ impl NativePermissionSession {
     pub fn set_sandbox_mode(&self, mode: NativeSandboxMode) -> Result<(), PermissionError> {
         let _permit = self.acquire_lifecycle()?;
         lock(&self.state).policy.sandbox_mode = mode;
+        Ok(())
+    }
+
+    /// Changes configured patterns for future taken jobs only. Mode, sandbox,
+    /// saved exact rules and live exact grants are not replaced or revoked.
+    /// # Errors
+    /// Rejects quiescing or retired lifecycle ownership.
+    pub fn set_configured_rules(
+        &self,
+        rules: Arc<NativeConfiguredPermissionRules>,
+    ) -> Result<(), PermissionError> {
+        let _permit = self.acquire_lifecycle()?;
+        lock(&self.state).policy.configured = rules;
+        Ok(())
+    }
+
+    #[cfg(all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos", test)
+    ))]
+    pub(crate) fn set_configured_rules_admitted(
+        &self,
+        permit: &LifecyclePermit,
+        rules: Arc<NativeConfiguredPermissionRules>,
+    ) -> Result<(), PermissionError> {
+        self.check_admitted(permit)?;
+        lock(&self.state).policy.configured = rules;
         Ok(())
     }
 

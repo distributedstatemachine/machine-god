@@ -108,10 +108,9 @@ output and supports only validated mode `ask`. The combined top-level CLI
 compatibility surface remains planned; this command does not promote the
 generated inventory.
 
-Deferred work includes modes beyond `ask`, persistent rule schemas, identity-
-safe grants, allowlists, sandbox policy, mutation, interactive `/permissions`,
-and live session-grant introspection. Those authority-bearing surfaces belong
-to the frozen M04 or later boundary, not the thin CLI.
+This read-only top-level surface does not mutate modes, configured patterns,
+saved exact rules, grants or sandbox policy. Native interactive allowlist
+ownership is specified below; it does not change the top-level output contract.
 
 ## Required evidence
 
@@ -137,3 +136,64 @@ Independent tests must cover:
   help and invalid-usage additions; and
 - freshly built release-binary human, JSON, invalid-config, no-create, and
   no-rewrite smokes.
+
+## Native interactive `/allowlist`
+
+The native owner parses arguments against its retained host's actual tool
+registry before admitting effects. The CLI supplies an explicitly selected
+`NativeUserConfigStore` and renders typed results; parsing discovers no config
+location or ambient workspace. Supported forms are:
+
+```text
+/allowlist
+/allowlist view [effective|local|user]
+/allowlist [local|user] add command|tool|url|web-fetch-domain <pattern>
+/allowlist [local|user] remove command|tool|url|web-fetch-domain <pattern>
+/allowlist [local|user] reset commands|tools|urls|web-fetch-domains|all
+```
+
+Mutation scope defaults to local; reset also accepts the singular category
+spellings. Verbs, scopes and kinds are ASCII-case-insensitive. Actual tool names
+and the pinned historical categories remain case-sensitive. Tool targets map to
+their configured permission category and `*`; `tool web_fetch` is rejected and
+unquoted `tool web_search` cannot have trailing arguments. Domain targets use
+the pinned canonical `domain:` spelling, lowercase DNS and one optional root
+dot. Invalid URLs, wildcards, ports and zone identifiers are rejected. Pinned
+DNS hyphen behavior and rejection of uppercase IPv6 hex are retained.
+
+Quoting is deliberately not shell parsing: an initial double quote returns
+bytes through the first closing double quote and ignores the rest; without a
+closing quote it returns the remaining text. Backslashes and single quotes have
+no escape meaning. Empty quoted input is invalid, but a nonempty quoted pattern
+may normalize to an empty configured pattern after ASCII space/tab/CR/LF trim.
+The request is capped at 64 KiB plus 256 bytes of syntax allowance; fully encoded
+rules and the complete configuration retain the existing 64 KiB config bound.
+
+These explicit human edits need no additional confirmation and never change
+saved exact-action rules or identity-bound grants. An accepted control pins its
+current runtime principal, exact supplied store, canonical host workspace and
+actual host worker scope. The single native control slot accepts during active
+generation, rejects conflicting controls, retains receipts through blocked
+presentation and shutdown, and settles before source-changing transitions.
+Disk work never runs on the driver polling thread. Its lifecycle permit remains
+inside the actual worker through publication, fresh reload and cleanup even if
+the response is abandoned. Response completion is distinct from the host's
+full worker/thread-local cleanup join; no filesystem deadline is promised.
+
+Views return owned bounded user/local/effective rule projections, including an
+explicit empty local shadow. Native display iteration includes only Allow rows
+and excludes malformed web-fetch domain rows; raw lists remain available for
+warning counts. Every successful view reloads the effective runtime policy even
+when displaying user or local. Changed mutations, no-op adds and zero-removal
+resets reload from a fresh post-commit snapshot. A no-op remove deliberately
+does not reload: its receipt has neither a source claim nor a reload attempt.
+
+Publication is exact-byte CAS with no blind retry. Confirmed mutation receipts
+remain distinct from failed or ambiguous writes and from subsequent runtime
+reload failure. A confirmed save with failed reload keeps its durable outcome
+and rejects any waiting source-changing transition. Reload replaces only the
+configured-pattern selection for future taken jobs; captured active-job policy,
+mode, sandbox preference, canonical conversation history and exact grants stay
+unchanged. Host startup resolves the canonical workspace's effective source;
+hosts without native permission composition reject local-source configuration
+instead of silently ignoring it.

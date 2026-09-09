@@ -1091,12 +1091,8 @@ impl NativeReferenceHost {
         if self.permissions.is_none() {
             return Ok(conversation);
         }
-        let config = self.loaded_config.config();
-        let policy = crate::NativePermissionPolicySnapshot::new(
-            config.permission_mode(),
-            Arc::new(config.permission_rules().clone()),
-        )
-        .with_sandbox_mode(config.sandbox_mode());
+        let policy =
+            configured_permission_policy(self.loaded_config.config(), &self.workspace_root)?;
         self.configure_conversation_permissions_with_policy(conversation, policy)
     }
 
@@ -1154,6 +1150,21 @@ impl NativeReferenceHost {
     /// Shares the actual terminal/archive completion owner; never creates a scope.
     pub(crate) fn control_workers(&self) -> Option<crate::NativeOwnedWorkerScope> {
         self.control_workers.clone()
+    }
+
+    /// Parses explicit slash arguments using this host's actual tool registry.
+    /// No configuration, process, session or filesystem operation occurs.
+    /// # Errors
+    /// Rejects invalid grammar, unknown exact tool names and bounded-input overflow.
+    pub fn parse_allowlist(
+        &self,
+        rest: &str,
+    ) -> Result<crate::NativeAllowlistRequest, crate::NativeAllowlistParseError> {
+        crate::allowlist::parse(rest, |name| self.allowlist_tool_registered(name))
+    }
+
+    pub(crate) fn allowlist_tool_registered(&self, name: &str) -> bool {
+        ToolName::new(name).is_ok_and(|name| self.engine.tool(&name).is_some())
     }
 
     /// Creates an inert catalog reader over this exact store and canonical
@@ -1870,12 +1881,30 @@ fn validate_selections(
     if config.permission_mode() != PermissionMode::Ask
         || config.sandbox_mode() != crate::NativeSandboxMode::None
         || !config.permission_rules().rules().is_empty()
+        || config.has_workspace_permission_rules()
     {
         return Err(NativeReferenceHostBuildError::new(
             NativeReferenceHostBuildErrorKind::UnsupportedSelection,
         ));
     }
     Ok(())
+}
+
+fn configured_permission_policy(
+    config: &crate::NativeConfig,
+    workspace: &Path,
+) -> Result<crate::NativePermissionPolicySnapshot, crate::NativeConversationError> {
+    Ok(crate::NativePermissionPolicySnapshot::new(
+        config.permission_mode(),
+        Arc::new(
+            config
+                .permission_sources(workspace)
+                .map_err(|_| crate::NativeConversationError::Engine)?
+                .effective()
+                .clone(),
+        ),
+    )
+    .with_sandbox_mode(config.sandbox_mode()))
 }
 
 fn validate_prepared_selections(
@@ -1971,6 +2000,91 @@ fn consume_prepared_composition(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn allowlist_local_source_is_effective_and_never_ignored_without_composition() {
+        let config = crate::NativeConfig::default();
+        let workspace = std::path::Path::new("/workspace");
+        let (config, _) = config
+            .with_permission_mutation(
+                workspace,
+                crate::NativeConfiguredPermissionScope::User,
+                &crate::NativeConfiguredPermissionMutation::Add {
+                    permission: "read".into(),
+                    pattern: "user/*".into(),
+                },
+            )
+            .unwrap();
+        let (config, _) = config
+            .with_permission_mutation(
+                workspace,
+                crate::NativeConfiguredPermissionScope::Local,
+                &crate::NativeConfiguredPermissionMutation::Add {
+                    permission: "read".into(),
+                    pattern: "local/*".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            super::configured_permission_policy(&config, workspace)
+                .unwrap()
+                .configured_rules()
+                .rules()[0]
+                .pattern(),
+            "local/*"
+        );
+        assert_eq!(
+            super::configured_permission_policy(&config, std::path::Path::new("/other"))
+                .unwrap()
+                .configured_rules()
+                .rules()[0]
+                .pattern(),
+            "user/*"
+        );
+        let (config, _) = config
+            .with_permission_mutation(
+                workspace,
+                crate::NativeConfiguredPermissionScope::Local,
+                &crate::NativeConfiguredPermissionMutation::Remove {
+                    permission: "read".into(),
+                    pattern: "local/*".into(),
+                },
+            )
+            .unwrap();
+        assert!(
+            super::configured_permission_policy(&config, workspace)
+                .unwrap()
+                .configured_rules()
+                .rules()
+                .is_empty()
+        );
+        assert!(super::validate_selections(&crate::LoadedNativeConfig::from_file(config)).is_err());
+        let config = crate::NativeConfig::default();
+        let (config, _) = config
+            .with_permission_mutation(
+                workspace,
+                crate::NativeConfiguredPermissionScope::Local,
+                &crate::NativeConfiguredPermissionMutation::Add {
+                    permission: "read".into(),
+                    pattern: "local/*".into(),
+                },
+            )
+            .unwrap();
+        let (config, _) = config
+            .with_permission_mutation(
+                workspace,
+                crate::NativeConfiguredPermissionScope::Local,
+                &crate::NativeConfiguredPermissionMutation::Remove {
+                    permission: "read".into(),
+                    pattern: "local/*".into(),
+                },
+            )
+            .unwrap();
+        assert!(config.permission_rules().rules().is_empty());
+        assert!(
+            super::validate_selections(&crate::LoadedNativeConfig::from_file(config)).is_err(),
+            "explicit empty local scope still requires native composition"
+        );
+    }
     use super::{
         NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
         NativeReferenceHostTerminalOptions, map_vision_deadline_error,

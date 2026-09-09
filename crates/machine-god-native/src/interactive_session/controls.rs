@@ -36,6 +36,11 @@ pub enum NativeInteractiveControl {
     ConfirmPermissionRule {
         proposal: NativePermissionRuleProposal,
     },
+    /// Explicit human slash edits configured patterns, not exact-action grants.
+    Allowlist {
+        request: crate::NativeAllowlistRequest,
+        store: Arc<NativeUserConfigStore>,
+    },
 }
 
 impl fmt::Debug for NativeInteractiveControl {
@@ -57,6 +62,7 @@ pub enum NativeInteractiveControlError {
     Undo(FileUndoError),
     Runtime(NativeConversationRuntimeError),
     Permission(PermissionError),
+    Allowlist(crate::NativeAllowlistError),
     Unavailable,
 }
 impl fmt::Debug for NativeInteractiveControlError {
@@ -85,6 +91,7 @@ pub enum NativeInteractiveControlReceipt {
     ModelSession(NativeModelPreferencePersistence),
     ModelDefaults(NativeModelPreferenceCommit),
     PermissionRuleConfirmed(SessionRevision),
+    Allowlist(crate::NativeAllowlistReceipt),
 }
 impl fmt::Debug for NativeInteractiveControlReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -109,6 +116,7 @@ impl NativeInteractiveControlOutcome {
             Ok(NativeInteractiveControlReceipt::ModelDefaults(commit)) => {
                 commit.session.is_err() || commit.user_defaults.is_err()
             }
+            Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) => receipt.failed(),
             Ok(_) => false,
         }
     }
@@ -122,6 +130,16 @@ pub(super) struct OwnedControl {
 }
 
 impl NativeInteractiveSession {
+    /// Parses against the retained host without granting the CLI another host handle.
+    /// # Errors
+    /// Returns the native grammar/size error without any effects.
+    pub fn parse_allowlist(
+        &self,
+        rest: &str,
+    ) -> Result<crate::NativeAllowlistRequest, crate::NativeAllowlistParseError> {
+        self.host.parse_allowlist(rest)
+    }
+
     /// Accepts one exact-current-runtime control. Saves remain inert until owner
     /// progress; continuation performs only its existing synchronous queue check.
     ///
@@ -172,6 +190,29 @@ impl NativeInteractiveSession {
         };
         let runtime = self.current.clone();
         let future = match control {
+            NativeInteractiveControl::Allowlist { request, store } => {
+                request
+                    .validate_registry(|name| self.host.allowlist_tool_registered(name))
+                    .map_err(|_| NativeInteractiveError::Configuration)?;
+                if runtime.permissions().is_none() {
+                    return Err(NativeInteractiveError::Configuration);
+                }
+                let future = crate::allowlist::service::execute(
+                    runtime,
+                    store,
+                    self.host.workspace_root().to_path_buf(),
+                    self.host
+                        .control_workers()
+                        .ok_or(NativeInteractiveError::Configuration)?,
+                    request,
+                );
+                Box::pin(async move {
+                    future
+                        .await
+                        .map(NativeInteractiveControlReceipt::Allowlist)
+                        .map_err(NativeInteractiveControlError::Allowlist)
+                }) as BoxFuture<'static, _>
+            }
             NativeInteractiveControl::UndoLast => undo::execute(
                 runtime,
                 self.host
@@ -313,7 +354,9 @@ async fn execute(
                     .map_err(NativeInteractiveControlError::Permission)?,
             )
         }
-        NativeInteractiveControl::Continue { .. } | NativeInteractiveControl::UndoLast => {
+        NativeInteractiveControl::Continue { .. }
+        | NativeInteractiveControl::UndoLast
+        | NativeInteractiveControl::Allowlist { .. } => {
             unreachable!("specialized control checked before retention")
         }
     })
