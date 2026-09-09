@@ -105,20 +105,25 @@ impl PermissionComposition {
             .as_ref()
             .map(|file| file.try_clone().map_err(|_| error()))
             .transpose()?;
+        let workspace_contexts = tools
+            .workspace_binding
+            .as_ref()
+            .map(|binding| Arc::clone(&binding.contexts));
+        let sandbox =
+            NativeTerminalPermissionPolicy::new(vec![root], executable).map_err(|_| error())?;
+        let sandbox = match &workspace_contexts {
+            Some(contexts) => sandbox.with_workspace_contexts(contexts.clone()),
+            None => sandbox,
+        };
         Ok(Self {
-            workspace_contexts: tools
-                .workspace_binding
-                .as_ref()
-                .map(|binding| Arc::clone(&binding.contexts)),
+            workspace_contexts,
             root: clone_root()?,
             workspace,
             files: Arc::new(
                 NativeFileApprovalAuthority::from_directory(clone_root()?).map_err(|_| error())?,
             ),
             registry: Arc::new(NativeFileApprovalRegistry::new()),
-            sandbox: Arc::new(
-                NativeTerminalPermissionPolicy::new(vec![root], executable).map_err(|_| error())?,
-            ),
+            sandbox: Arc::new(sandbox),
             contexts: options.contexts,
             clock: options.clock,
         })
@@ -332,6 +337,14 @@ impl ReferenceHostToolCatalog {
                 .push(NativePermissionTargetTool::Grep(Arc::clone(&tool)));
         }
         self.push(tool, Some(NativeFileHistoryKind::Grep));
+    }
+
+    pub(super) fn vision(&mut self, tool: crate::VisionTool) {
+        let tool = match &self.workspace_contexts {
+            Some(contexts) => tool.with_workspace_contexts(contexts.clone()),
+            None => tool,
+        };
+        self.add(tool, None);
     }
 
     pub(super) fn terminal(

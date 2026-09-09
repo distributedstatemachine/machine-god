@@ -1374,7 +1374,7 @@ impl NativeReferenceHost {
         catalog.add(memory, None);
         catalog.add(read_tool_result, None);
         catalog.terminal(terminal, terminal_concrete)?;
-        catalog.add(vision, None);
+        catalog.vision(vision);
         catalog.add(web_fetch, None);
         catalog.add(web_search, None);
         let permissions = catalog.finish_permissions(

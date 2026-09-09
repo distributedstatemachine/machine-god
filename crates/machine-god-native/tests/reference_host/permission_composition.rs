@@ -9,7 +9,12 @@ pub(super) fn configured(base: &Path, mode: &str, rules: &Value) -> LoadedNative
     configured_sandbox(base, mode, rules, "none")
 }
 
-fn configured_sandbox(base: &Path, mode: &str, rules: &Value, sandbox: &str) -> LoadedNativeConfig {
+pub(super) fn configured_sandbox(
+    base: &Path,
+    mode: &str,
+    rules: &Value,
+    sandbox: &str,
+) -> LoadedNativeConfig {
     load_config(
         base,
         &json!({

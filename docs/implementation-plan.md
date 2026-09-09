@@ -276,10 +276,18 @@ composition now shares the exact workspace context with these tools, reads,
 all five mutations, permission preparation, undo and history. State-directory
 aliases compare retained object identities rather than spelling. Qualified
 history paths and outer mutation approval stamps survive the real wrapper chain.
-All 51 composed-host tests, nine mutation tests, eight history-wrapper regressions,
-native all-target/all-feature Clippy and bounded docs checks pass. Vision,
-terminal roots, semantic search (including the macOS reader), and actual launch/
-slash selection remain in integration. These checks are not full-feature acceptance.
+Vision (`5189a97`), scoped sandbox roots (`0697c59`) and Linux semantic routing
+(`e9209e0`) are integrated and their clean component worktrees removed. The host
+also connects actual vision and sandbox scopes, and native interactive startup/
+transitions attach the selected workspace automatically. All 54 composed-host
+tests, eight interactive-owner regressions, nine mutation tests, eight history-wrapper
+regressions, native all-target/
+all-feature Clippy and bounded docs checks pass. The sandbox component's first
+broad PTY run had ten inventory-startup timeouts; both its serial diagnostic and
+same-binary default-concurrency retry without competing builds pass 685 tests
+with two existing helper ignores. No deadline or concurrency gate was weakened.
+The macOS semantic reader/scan, terminal cwd routing and actual launch/slash
+selection remain in integration. These checks are not full-feature acceptance.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal
