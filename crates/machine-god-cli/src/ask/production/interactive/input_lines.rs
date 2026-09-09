@@ -129,6 +129,17 @@ impl InputLines {
         cx: &mut Context<'_>,
         binding: InputBinding,
     ) -> Poll<Option<Result<(String, InputBinding), LineError>>> {
+        self.poll_line_recorded(cx, binding, |_| {})
+    }
+
+    /// Observe each exact native chunk once, before framing or rejected-input
+    /// transformations. The observer must remain bounded and nonblocking.
+    pub fn poll_line_recorded(
+        &mut self,
+        cx: &mut Context<'_>,
+        binding: InputBinding,
+        mut received: impl FnMut(&[u8]),
+    ) -> Poll<Option<Result<(String, InputBinding), LineError>>> {
         if self.composer.is_some() {
             return Poll::Ready(Some(Err(LineError::Input(
                 NativeInteractiveInputError::Unavailable,
@@ -152,6 +163,7 @@ impl InputLines {
                     }));
                 }
                 Poll::Ready(Ok(Some(chunk))) => {
+                    received(chunk.as_bytes());
                     self.chunk = Some(chunk);
                     self.offset = 0;
                     self.chunk_binding = binding;
@@ -190,6 +202,16 @@ impl InputLines {
         cx: &mut Context<'_>,
         binding: InputBinding,
         context: ComposerContext,
+    ) -> Poll<Option<Result<(ComposerEvent, InputBinding), LineError>>> {
+        self.poll_event_recorded(cx, binding, context, |_| {})
+    }
+
+    pub fn poll_event_recorded(
+        &mut self,
+        cx: &mut Context<'_>,
+        binding: InputBinding,
+        context: ComposerContext,
+        mut received: impl FnMut(&[u8]),
     ) -> Poll<Option<Result<(ComposerEvent, InputBinding), LineError>>> {
         if self.composer.is_none() {
             return Poll::Ready(Some(Err(LineError::Input(
@@ -234,6 +256,7 @@ impl InputLines {
                     return Poll::Ready(None);
                 }
                 Poll::Ready(Ok(Some(chunk))) => {
+                    received(chunk.as_bytes());
                     self.chunk = Some(chunk);
                     self.offset = 0;
                     self.chunk_binding = binding;

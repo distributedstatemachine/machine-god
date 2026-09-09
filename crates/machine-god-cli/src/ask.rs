@@ -155,10 +155,12 @@ impl AskCommandExecution {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ProductionAskCommandHost {
     workspace: crate::workspace::launch::LaunchWorkspaceOptions,
+    record_requested: bool,
 }
 
 pub(crate) static PRODUCTION_ASK_HOST: ProductionAskCommandHost = ProductionAskCommandHost {
     workspace: crate::workspace::launch::LaunchWorkspaceOptions::EMPTY,
+    record_requested: false,
 };
 
 pub(crate) fn parse_prompt_arguments(
@@ -336,6 +338,7 @@ mod production {
     mod interactive;
     mod output;
     mod piped_prompt;
+    mod recording_startup;
     use output::{OutputAcknowledgement, OutputBridge, OutputWork, serve_output};
     use std::future::{Future, poll_fn};
     use std::pin::Pin;
@@ -879,25 +882,22 @@ mod production {
     }
 
     async fn acknowledgement_finishes_within_signal_grace(
-        acknowledgements: &mut tokio::sync::mpsc::Receiver<OutputAcknowledgement>,
+        output: &mut OutputBridge,
         deadline: tokio::time::Instant,
     ) -> SignalGraceResult {
-        match tokio::time::timeout_at(deadline, acknowledgements.recv()).await {
+        match tokio::time::timeout_at(deadline, output.acknowledgement()).await {
             Ok(acknowledgement) => SignalGraceResult::Acknowledged(acknowledgement),
             Err(_) => SignalGraceResult::TimedOut,
         }
     }
 
-    async fn record_signal_grace(
-        acknowledgements: &mut tokio::sync::mpsc::Receiver<OutputAcknowledgement>,
-        state: &mut TurnDriveState,
-    ) {
+    async fn record_signal_grace(output: &mut OutputBridge, state: &mut TurnDriveState) {
         let deadline = *state
             .signal_output_deadline
             .get_or_insert_with(|| tokio::time::Instant::now() + SIGNAL_OUTPUT_GRACE);
-        match acknowledgement_finishes_within_signal_grace(acknowledgements, deadline).await {
+        match acknowledgement_finishes_within_signal_grace(output, deadline).await {
             SignalGraceResult::Acknowledged(Some(OutputAcknowledgement::Succeeded)) => {}
-            SignalGraceResult::Acknowledged(Some(OutputAcknowledgement::Failed) | None) => {
+            SignalGraceResult::Acknowledged(Some(_) | None) => {
                 state.output_failed = true;
             }
             SignalGraceResult::TimedOut => state.stalled_output_after_signal = true,
@@ -905,14 +905,14 @@ mod production {
     }
 
     async fn poll_acknowledgement_or_signal<G: SignalSource>(
-        acknowledgements: &mut tokio::sync::mpsc::Receiver<OutputAcknowledgement>,
+        output: &mut OutputBridge,
         signals: &mut G,
     ) -> PollResult<Option<OutputAcknowledgement>> {
         poll_fn(|context| {
             if let Poll::Ready(signal) = signals.poll_signal(context) {
                 return Poll::Ready(PollResult::Signal(signal));
             }
-            acknowledgements.poll_recv(context).map(PollResult::Value)
+            output.poll_acknowledgement(context).map(PollResult::Value)
         })
         .await
     }
@@ -940,18 +940,18 @@ mod production {
             return;
         }
         if state.requested_signal.is_some() {
-            record_signal_grace(&mut output.acknowledgements, state).await;
+            record_signal_grace(output, state).await;
             return;
         }
-        match poll_acknowledgement_or_signal(&mut output.acknowledgements, signals).await {
+        match poll_acknowledgement_or_signal(output, signals).await {
             PollResult::Signal(signal) => {
                 if state.requested_signal.is_none() {
                     state.requested_signal = Some(signal);
                 }
-                record_signal_grace(&mut output.acknowledgements, state).await;
+                record_signal_grace(output, state).await;
             }
             PollResult::Value(Some(OutputAcknowledgement::Succeeded)) => {}
-            PollResult::Value(Some(OutputAcknowledgement::Failed) | None) => {
+            PollResult::Value(Some(_) | None) => {
                 state.output_failed = true;
             }
         }
@@ -987,13 +987,18 @@ mod production {
             workspace: crate::workspace::launch::LaunchWorkspaceOptions,
             record_requested: bool,
         ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
-            if record_requested {
-                return Err(());
-            }
-            Ok(Box::new(Self { workspace }))
+            Ok(Box::new(Self {
+                workspace,
+                record_requested,
+            }))
         }
 
         fn execute_stdin(&self, output: &mut dyn std::io::Write) -> AskCommandExecution {
+            if self.record_requested {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            }
             let Ok(mut controller) = AskSignalController::spawn() else {
                 return AskCommandExecution::without_finalizer(
                     AskCommandOutcome::OperationalFailure,
@@ -1042,8 +1047,13 @@ mod production {
                     controller,
                 );
             }
-            let (outcome, controller) =
-                interactive::execute(&self.workspace, selection, output, controller);
+            let (outcome, controller) = interactive::execute(
+                &self.workspace,
+                self.record_requested,
+                selection,
+                output,
+                controller,
+            );
             AskCommandExecution::with_finalizer(outcome, controller)
         }
         fn execute(
@@ -1052,6 +1062,11 @@ mod production {
             prompt: String,
             output: &mut dyn std::io::Write,
         ) -> AskCommandExecution {
+            if self.record_requested {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            }
             let Ok(controller) = AskSignalController::spawn() else {
                 return AskCommandExecution::without_finalizer(
                     AskCommandOutcome::OperationalFailure,
@@ -1092,6 +1107,7 @@ mod production {
                             host,
                             runtime,
                             workspace,
+                            state_path: _state_path,
                             model_routes,
                             observations,
                             catalog,
@@ -1121,6 +1137,7 @@ mod production {
                                 OutputBridge {
                                     work: work_sender,
                                     acknowledgements: acknowledgement_receiver,
+                                    tape: None,
                                 },
                                 signals,
                                 &control,
@@ -1144,6 +1161,7 @@ mod production {
         host: NativeReferenceHost,
         runtime: machine_god_native::TokioWebSearchRuntime,
         workspace: std::path::PathBuf,
+        state_path: std::path::PathBuf,
         model_routes: Arc<NativeConversationModelRoutes>,
         observations: Arc<NativeConversationObservations>,
         catalog: Option<Arc<NativeModelCatalog>>,
@@ -1189,6 +1207,7 @@ mod production {
             PreparedNativeRoots::prepare(root_selection.clone()).map_err(|_| ())?;
         let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
         let workspace = prepared_roots.workspace_root().to_owned();
+        let state_path = prepared_roots.state_root().to_owned();
         let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
         // Validate inference access before any catalog request.
         // Catalog loading precedes terminal-host acquisition:
@@ -1237,6 +1256,7 @@ mod production {
             host,
             runtime,
             workspace,
+            state_path,
             model_routes,
             observations,
             catalog,
@@ -1523,18 +1543,16 @@ mod production {
                             drain_turn(stream, signals, &mut state.requested_signal).await;
                             break;
                         }
-                        match poll_acknowledgement_or_signal(&mut output.acknowledgements, signals)
-                            .await
-                        {
+                        match poll_acknowledgement_or_signal(&mut output, signals).await {
                             PollResult::Signal(signal) => {
                                 state.requested_signal = Some(signal);
                                 cancel();
                                 drain_turn(stream, signals, &mut state.requested_signal).await;
-                                record_signal_grace(&mut output.acknowledgements, &mut state).await;
+                                record_signal_grace(&mut output, &mut state).await;
                                 break;
                             }
                             PollResult::Value(Some(OutputAcknowledgement::Succeeded)) => {}
-                            PollResult::Value(Some(OutputAcknowledgement::Failed) | None) => {
+                            PollResult::Value(Some(_) | None) => {
                                 state.output_failed = true;
                                 cancel();
                                 drain_turn(stream, signals, &mut state.requested_signal).await;
@@ -2207,6 +2225,7 @@ mod production {
                     OutputBridge {
                         work: work_sender,
                         acknowledgements: acknowledgement_receiver,
+                        tape: None,
                     },
                 ));
                 let output = output_worker.join().expect("output worker should join");
@@ -2825,6 +2844,7 @@ mod production {
                         OutputBridge {
                             work: work_sender,
                             acknowledgements: acknowledgement_receiver,
+                            tape: None,
                         },
                         &mut signals,
                         &control,
@@ -3868,6 +3888,7 @@ mod production {
                             OutputBridge {
                                 work: work_sender,
                                 acknowledgements: acknowledgement_receiver,
+                                tape: None,
                             },
                         )
                         .await;
@@ -4124,16 +4145,14 @@ mod production {
                 let mut output = OutputBridge {
                     work: work_sender,
                     acknowledgements: acknowledgement_receiver,
+                    tape: None,
                 };
                 let mut state = TurnDriveState {
                     requested_signal: Some(AskSignal::Interrupt),
                     ..TurnDriveState::default()
                 };
 
-                let mut write_grace = Box::pin(record_signal_grace(
-                    &mut output.acknowledgements,
-                    &mut state,
-                ));
+                let mut write_grace = Box::pin(record_signal_grace(&mut output, &mut state));
                 poll_fn(|context| {
                     assert!(write_grace.as_mut().poll(context).is_pending());
                     Poll::Ready(())
@@ -4200,10 +4219,10 @@ impl AskCommandHost for ProductionAskCommandHost {
         workspace: crate::workspace::launch::LaunchWorkspaceOptions,
         record_requested: bool,
     ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
-        if record_requested {
-            return Err(());
-        }
-        Ok(Box::new(Self { workspace }))
+        Ok(Box::new(Self {
+            workspace,
+            record_requested,
+        }))
     }
 
     fn execute(
@@ -4212,7 +4231,7 @@ impl AskCommandHost for ProductionAskCommandHost {
         _prompt: String,
         _output: &mut dyn io::Write,
     ) -> AskCommandExecution {
-        let _ = &self.workspace;
+        let _ = (&self.workspace, self.record_requested);
         AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
     }
 }

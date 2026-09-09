@@ -66,6 +66,7 @@ async fn harness(fixture: &support::Fixture) -> Harness {
             input,
             inbox,
             OutputBridge {
+                tape: None,
                 work: send,
                 acknowledgements,
             },
