@@ -802,9 +802,9 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertLess(matrix.index(name), matrix.index("Test target natively"))
         self.assertNotIn("tmux", job(self.ci, "documentation-policy"))
 
-    def test_production_helper_is_built_only_for_selected_apple_native_tests(self) -> None:
+    def test_production_helper_is_built_only_for_selected_apple_runtime_tests(self) -> None:
         matrix = job(self.ci, "native-target-tests")
-        name = "Build production terminal helper for selected Apple native tests"
+        name = "Build production terminal helper for selected Apple runtime tests"
         block = re.search(
             rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)"
             r"(?=^      - name:|\Z)",
@@ -815,6 +815,7 @@ class CiChangeClassificationTests(unittest.TestCase):
         condition = (
             "if: ${{ endsWith(matrix.target, '-apple-darwin') && "
             "(needs.change-classification.outputs.native == 'true' || "
+            "needs.change-classification.outputs.cli == 'true' || "
             "needs.change-classification.outputs.full_workspace == 'true') }}"
         )
         self.assertIn(condition, block.group("body"))
@@ -856,9 +857,69 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertNotIn("--skip", apple)
         self.assertNotIn("--ignored", apple)
 
+    def test_apple_helper_prerequisite_follows_its_test_consumers(self) -> None:
+        matrix = job(self.ci, "native-target-tests")
+        name = "Build production terminal helper for selected Apple runtime tests"
+        block = matrix.split(f"      - name: {name}\n", 1)[1].split(
+            "      - name:", 1
+        )[0]
+        condition = re.search(r"(?m)^        if: \$\{\{ (.*) \}\}$", block)
+        self.assertIsNotNone(condition)
+        assert condition is not None
+        # Execute this one fixed prerequisite expression, not a general Actions
+        # interpreter. The separate shape test pins every supported operand.
+        shell_condition = condition.group(1).replace(
+            "endsWith(matrix.target, '-apple-darwin')",
+            '[[ "${TARGET}" == *-apple-darwin ]]',
+        )
+        for package in ("native", "cli", "full_workspace"):
+            shell_condition = shell_condition.replace(
+                f"needs.change-classification.outputs.{package} == 'true'",
+                f'[[ "${{{package.upper()}}}" == true ]]',
+            )
+        cases = (
+            ("cli-source", {"CLI_ANY": "true", "CLI_SOURCE": "true"}, True),
+            ("cli-test", {"CLI_ANY": "true"}, True),
+            ("native-test", {"NATIVE_ANY": "true"}, True),
+            ("workspace", {"RUST_GLOBAL": "true"}, True),
+            ("core-test", {"CORE_ANY": "true"}, False),
+            ("testkit-test", {"TESTKIT_ANY": "true"}, False),
+            ("binding-test", {"TERMINAL_SYS_ANY": "true"}, False),
+            ("format", {"RUST_FORMAT": "true"}, False),
+            ("docs", {"DOCUMENTATION": "true"}, False),
+        )
+        for label, inputs, runtime_consumer in cases:
+            route = run_route(self.ci, CI_ROUTE_INPUTS, inputs)
+            if label.startswith("cli-"):
+                self.assertEqual(route["cli"], "true")
+                self.assertEqual(route["native"], "false")
+                self.assertEqual(route["native_matrix"], "true")
+            for target in (
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin",
+                "x86_64-unknown-linux-gnu",
+            ):
+                with self.subTest(case=label, target=target):
+                    result = subprocess.run(
+                        ["bash", "-c", f"if {shell_condition}; then echo true; else echo false; fi"],
+                        env={
+                            **os.environ,
+                            "TARGET": target,
+                            "NATIVE": route["native"],
+                            "CLI": route["cli"],
+                            "FULL_WORKSPACE": route["full_workspace"],
+                        },
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    expected = runtime_consumer and target.endswith("-apple-darwin")
+                    self.assertEqual(result.stdout.strip(), str(expected).lower())
+
     def test_production_helper_export_requires_build_success_and_executable(self) -> None:
         script = step_script(
-            self.ci, "Build production terminal helper for selected Apple native tests"
+            self.ci, "Build production terminal helper for selected Apple runtime tests"
         )
         for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
             for build_exit, executable in ((0, True), (1, True), (0, False)):

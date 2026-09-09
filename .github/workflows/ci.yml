@@ -1421,8 +1421,8 @@ jobs:
           xcrun clang -arch arm64 -fsyntax-only -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/process_inventory_abi.c
           xcrun clang -arch x86_64 -fsyntax-only -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/process_inventory_abi.c
           cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-terminal-sys --all-targets --all-features --target "${{ matrix.target }}" -- -D warnings
-      - name: Build production terminal helper for selected Apple native tests
-        if: ${{ endsWith(matrix.target, '-apple-darwin') && (needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.full_workspace == 'true') }}
+      - name: Build production terminal helper for selected Apple runtime tests
+        if: ${{ endsWith(matrix.target, '-apple-darwin') && (needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' || needs.change-classification.outputs.full_workspace == 'true') }}
         run: |
           set -euo pipefail
           cargo +"${RUST_TOOLCHAIN}" build --locked --release --package machine-god-cli --bin machine-god --target "${{ matrix.target }}" --target-dir "${GITHUB_WORKSPACE}/target"

@@ -45,14 +45,14 @@ the risk of implementing the proposed change, not vulnerability severity.
 
 Evidence:
 
-- [.github/workflows/ci.yml](../../.github/workflows/ci.yml), lines 428–452,
+- [.github/workflows/ci.yml](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/.github/workflows/ci.yml), lines 428–452,
   selects CLI independently of native and enables the platform matrix.
 - The same workflow, line 1425, builds and exports the production terminal
   helper only for native or full-workspace selections. Lines 1467–1469 still
   execute selected Apple CLI tests.
-- [terminal_lifetime_tests.rs](../../crates/machine-god-cli/src/ask/production/interactive/terminal_lifetime_tests.rs),
+- [terminal_lifetime_tests.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-cli/src/ask/production/interactive/terminal_lifetime_tests.rs),
   lines 23–29, requires `MACHINE_GOD_TERMINAL_RELEASE_BINARY` on macOS.
-- [test_ci_change_classification.py](../../tests/test_ci_change_classification.py),
+- [test_ci_change_classification.py](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/tests/test_ci_change_classification.py),
   lines 815–820, asserts the incomplete prerequisite condition.
 
 Impact: a CLI-only change reaches macOS tests without their mandatory fixture,
@@ -65,8 +65,8 @@ selections; this does not require running more packages' tests.
 
 ### 2. Keep one complete local-check recipe
 
-Evidence: [AGENTS.md](../../AGENTS.md), lines 30–40, and
-[README.md](../../README.md), line 55 onward, present the four-command gate
+Evidence: [AGENTS.md](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/AGENTS.md), lines 30–40, and
+[README.md](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/README.md), line 55 onward, present the four-command gate
 without helper setup. The [implementation plan](../implementation-plan.md),
 lines 492–508, repeats the commands before explaining that macOS runtime checks
 need a freshly built release CLI and its absolute helper path.
@@ -99,11 +99,11 @@ Keep the canonical live fields and do not expand the Markdown scanner.
 ### 4. Share the CLI bounded-output mechanism
 
 Evidence: equivalent bounded `fmt::Write` implementations appear in
-[main.rs](../../crates/machine-god-cli/src/main.rs), lines 67, 97, and 127;
-[status.rs](../../crates/machine-god-cli/src/status.rs), line 53;
-[sessions.rs](../../crates/machine-god-cli/src/sessions.rs), line 277;
-[workspace.rs](../../crates/machine-god-cli/src/workspace.rs), line 291; and
-[background.rs](../../crates/machine-god-cli/src/background.rs), line 584.
+[main.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-cli/src/main.rs), lines 67, 97, and 127;
+[status.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-cli/src/status.rs), line 53;
+[sessions.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-cli/src/sessions.rs), line 277;
+[workspace.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-cli/src/workspace.rs), line 291; and
+[background.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-cli/src/background.rs), line 584.
 
 Impact: changes to byte-limit enforcement require repeated edits. Implementations
 already use different arithmetic and initialization patterns for the same job.
@@ -116,9 +116,9 @@ turning this into a general rendering framework.
 
 ### 5. Make included test fragments visible to formatting checks
 
-Evidence: [terminal_host.rs](../../crates/machine-god-native/src/terminal_host.rs),
+Evidence: [terminal_host.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/terminal_host.rs),
 line 1035, uses `include!` for
-[terminal_permission_policy/host_tests.rs](../../crates/machine-god-native/src/terminal_permission_policy/host_tests.rs).
+[terminal_permission_policy/host_tests.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/terminal_permission_policy/host_tests.rs).
 The workflow's formatting steps use Cargo formatting.
 
 The coordinator reproduced the gap at the reviewed revision: the first command
@@ -141,15 +141,15 @@ Treat verification-tool maintenance separately from product feature work.
 
 Evidence:
 
-- [file_history_tool.rs](../../crates/machine-god-native/src/file_history_tool.rs),
+- [file_history_tool.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/file_history_tool.rs),
   lines 198 and 218, constructs the wrapped execution future only when polled.
   Its test at line 417 deliberately requires no inner construction before polling.
-- [write_file.rs](../../crates/machine-god-native/src/write_file.rs), line 319,
+- [write_file.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/write_file.rs), line 319,
   captures an approval ticket when its execution future is constructed.
-- [file_approval.rs](../../crates/machine-god-native/src/file_approval.rs),
+- [file_approval.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/file_approval.rs),
   lines 389–408, explains that this construction stamp prevents an old unpolled
   execution from consuming a later replacement grant.
-- [reference_host/permissions.rs](../../crates/machine-god-native/src/reference_host/permissions.rs),
+- [reference_host/permissions.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/reference_host/permissions.rs),
   lines 208, 221, and 365–371, retains outer history wrapping for the supported
   non-workspace mutation composition. Scoped mutations use a different order.
 
@@ -169,11 +169,11 @@ and unpolled-construction expectations.
 
 ### 7. Consolidate redundant private-source test graphs
 
-Evidence: [terminal_pty_component.rs](../../crates/machine-god-native/tests/terminal_pty_component.rs),
-line 47; [terminal_state_components.rs](../../crates/machine-god-native/tests/terminal_state_components.rs),
-line 10; and [native lib.rs](../../crates/machine-god-native/src/lib.rs), line 399,
+Evidence: [terminal_pty_component.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/tests/terminal_pty_component.rs),
+line 47; [terminal_state_components.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/tests/terminal_state_components.rs),
+line 10; and [native lib.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/lib.rs), line 399,
 each compile `terminal_display_width.rs`, including its identical pure unit tests
-at [line 248](../../crates/machine-god-native/src/terminal_display_width.rs).
+at [line 248](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-native/src/terminal_display_width.rs).
 
 Static inspection found 54 direct `../src` inclusions across five integration
 targets: 38 PTY, eight state-component, six background, one parser, and one
@@ -191,7 +191,7 @@ helpers, not triplicating unrelated pure display tests. Consolidate incrementall
 
 ### 8. Finish separating CLI command responsibilities
 
-Evidence: [main.rs](../../crates/machine-god-cli/src/main.rs) contains model
+Evidence: [main.rs](https://github.com/distributedstatemachine/machine-god/blob/3a0df99098f62e88aa6d2f29c826797a7320abab/crates/machine-god-cli/src/main.rs) contains model
 composition at line 454, model signal driving at line 741, command-specific
 rendering from line 1708, and dispatch through a positional seven-host tuple
 at line 1346. Test injection helpers repeat that tuple from line 1135 onward.
