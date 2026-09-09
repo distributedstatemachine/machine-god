@@ -50,12 +50,32 @@ struct Entry {
     wake: Option<Waker>,
 }
 
+impl Drop for Entry {
+    fn drop(&mut self) {
+        self.invalidate_rule();
+    }
+}
+
+impl Entry {
+    fn invalidate_rule(&self) {
+        if let Payload::Permission {
+            rule: Some(rule), ..
+        } = self.payload.as_ref()
+        {
+            rule.invalidate();
+        }
+    }
+}
+
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|poison| {
             let mut state = poison.into_inner();
             // Never recover possible partial admission into new authority.
             state.closed = true;
+            for entry in &state.entries {
+                entry.invalidate_rule();
+            }
             state
         })
     }
@@ -77,6 +97,9 @@ impl Shared {
             let scope = Scope(state.next_scope);
             state.next_scope = next;
             state.scope = Some((scope, owner));
+            for entry in &state.entries {
+                entry.invalidate_rule();
+            }
             state.bytes = 0;
             (
                 scope,
@@ -94,6 +117,9 @@ impl Shared {
             let mut state = self.lock();
             state.closed |= close;
             state.scope = None;
+            for entry in &state.entries {
+                entry.invalidate_rule();
+            }
             state.bytes = 0;
             (std::mem::take(&mut state.entries), state.ui_wake.take())
         };
@@ -212,6 +238,12 @@ impl Shared {
                 return Err(Error::Stale);
             }
             entry.payload.validate_response(&response)?;
+            if let Payload::Permission {
+                rule: Some(rule), ..
+            } = entry.payload.as_ref()
+            {
+                rule.invalidate();
+            }
             entry.response = Some(response);
             (entry.wake.take(), state.ui_wake.take())
         };
@@ -232,7 +264,7 @@ impl Shared {
                 .find(|entry| entry.token == *token)
                 .ok_or(Error::Stale)?;
             match entry.payload.as_ref() {
-                Payload::Permission(_) => Response::Permission(PermissionPromptDecision::Deny),
+                Payload::Permission { .. } => Response::Permission(PermissionPromptDecision::Deny),
                 Payload::Question { .. } => Response::Question(QuestionPromptOutcome::Cancelled),
             }
         };
@@ -247,12 +279,39 @@ impl Shared {
             .position(|entry| entry.token == *token)
             .and_then(|index| state.entries.remove(index));
         let wake = if let Some(entry) = &removed {
+            entry.invalidate_rule();
             state.bytes -= entry.bytes;
             state.ui_wake.take()
         } else {
             None
         };
         (removed, wake)
+    }
+
+    pub fn propose_rule_change(
+        &self,
+        token: &Token,
+        decision: crate::NativePermissionRuleDecision,
+    ) -> Result<crate::NativePermissionRuleProposal, Error> {
+        let rule = {
+            let state = self.lock();
+            if state.closed {
+                return Err(Error::Closed);
+            }
+            let entry = state
+                .entries
+                .iter()
+                .find(|entry| entry.token == *token && entry.displayed && entry.response.is_none())
+                .ok_or(Error::Stale)?;
+            let Payload::Permission {
+                rule: Some(rule), ..
+            } = entry.payload.as_ref()
+            else {
+                return Err(Error::InvalidResponse);
+            };
+            rule.clone()
+        };
+        rule.propose(decision).map_err(|_| Error::Stale)
     }
 }
 

@@ -21,7 +21,9 @@ use crate::{
     NativeSessionPermissionRules, PermissionMode, PermissionPromptDecision, PermissionPrompter,
 };
 
-pub use rules::{NativePermissionRuleChange, NativePermissionRuleProposal};
+pub use rules::{
+    NativePermissionRuleChange, NativePermissionRulePrompt, NativePermissionRuleProposal,
+};
 
 const MAX_SESSIONS: usize = 64;
 const MAX_GRANTS: usize = 1024;
@@ -767,9 +769,13 @@ impl PermissionHandler for NativePermissionController {
                     }
                 };
             }
+            let rule_prompt =
+                rules::RulePromptLifetime(action.saved_rule_key().cloned().map(|key| {
+                    NativePermissionRulePrompt::new(&owner, &attempt, epoch, rules_epoch, key)
+                }));
             let decision = self
                 .prompter
-                .prompt(request)
+                .prompt_with_rule(request, rule_prompt.0.clone())
                 .await
                 .map_err(|_| unavailable())?;
             proof.revalidate()?;

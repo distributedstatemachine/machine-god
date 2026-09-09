@@ -132,14 +132,18 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new() -> Self {
-        Self::configured(false)
+        Self::with_prompter(Arc::new(AllowPrompter))
+    }
+
+    pub fn with_prompter(prompter: Arc<dyn PermissionPrompter>) -> Self {
+        Self::configured(false, prompter)
     }
 
     pub fn new_with_workspace() -> Self {
-        Self::configured(true)
+        Self::configured(true, Arc::new(AllowPrompter))
     }
 
-    fn configured(with_workspace: bool) -> Self {
+    fn configured(with_workspace: bool, prompter: Arc<dyn PermissionPrompter>) -> Self {
         let temporary = TemporaryDirectory::new();
         let workspace = temporary.0.join("workspace");
         let state = temporary.0.join("state");
@@ -223,7 +227,7 @@ impl Fixture {
         let host = Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             config, Arc::new(transport.clone()), NetworkTarget {
                 scheme: "https".into(), host: "ai-gateway.vercel.sh".into(), port: None,
-            }, roots, Arc::new(AllowPrompter), Arc::new(NoQuestions), Arc::new(NeverDeadline), options,
+            }, roots, prompter, Arc::new(NoQuestions), Arc::new(NeverDeadline), options,
         ).unwrap());
         Self {
             host,

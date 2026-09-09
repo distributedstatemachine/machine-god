@@ -24,6 +24,7 @@ mod recording_lifetime_tests;
 #[cfg(test)]
 mod recording_process_tests;
 mod resize;
+mod saved_rules;
 #[cfg(test)]
 mod terminal_lifetime_tests;
 #[cfg(test)]
@@ -519,6 +520,8 @@ struct Driver {
     inbox: NativeInteractivePromptInbox,
     output: OutputBridge,
     modal: Option<Modal>,
+    saved_rule: Option<saved_rules::Confirmation>,
+    rule_generation: u64,
     render: Option<Render>,
     in_flight: Option<InFlight>,
     notice: Option<Vec<u8>>,
@@ -576,6 +579,8 @@ impl Driver {
             inbox,
             output,
             modal: None,
+            saved_rule: None,
+            rule_generation: 0,
             render: None,
             in_flight: None,
             notice: Some(
@@ -676,6 +681,7 @@ impl Driver {
         self.scope_active = false;
         self.modal.take();
         self.input.input.request_stop();
+        self.saved_rule.take();
         self.owner.request_shutdown();
     }
     fn note(&mut self, text: &'static [u8]) {

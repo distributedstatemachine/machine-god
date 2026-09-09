@@ -54,6 +54,7 @@ impl Driver {
             }
         }
         self.poll_modal(cx);
+        self.poll_saved_rule();
         self.poll_resize(cx);
         if let Some(picker) = &mut self.picker {
             picker.poll(cx);
@@ -224,18 +225,23 @@ impl Driver {
     }
 
     fn poll_input(&mut self, cx: &mut Context<'_>, now_ms: i64) {
-        let binding = self.picker_binding().unwrap_or_else(|| {
-            self.modal.as_ref().map_or_else(
-                || {
-                    if self.scope_active {
-                        InputBinding::Command
-                    } else {
-                        InputBinding::AwaitingPrompt
-                    }
-                },
-                Modal::binding,
-            )
-        });
+        let binding = self
+            .saved_rule
+            .as_ref()
+            .map(super::saved_rules::Confirmation::binding)
+            .or_else(|| self.picker_binding())
+            .unwrap_or_else(|| {
+                self.modal.as_ref().map_or_else(
+                    || {
+                        if self.scope_active {
+                            InputBinding::Command
+                        } else {
+                            InputBinding::AwaitingPrompt
+                        }
+                    },
+                    Modal::binding,
+                )
+            });
         if self.frontend.is_some() {
             self.poll_raw_input(cx, binding, now_ms);
             return;
@@ -382,6 +388,16 @@ impl Driver {
             self.command(line.trim(), now_ms);
             return;
         }
+        if self.prompt_policy_command(line, binding, now_ms) {
+            return;
+        }
+        if self.saved_rule.is_some() {
+            self.answer_saved_rule(line, binding, now_ms);
+            return;
+        }
+        if self.propose_prompt_rule(line, binding) {
+            return;
+        }
         if let Some(modal) = &mut self.modal {
             match modal.answer(line, binding) {
                 Ok(Some(response)) => {
@@ -464,6 +480,7 @@ impl Driver {
         if let Some(InFlight::Flush { confirm, receipt }) = self.in_flight.take() {
             if let Some(binding) = &confirm {
                 self.acknowledge_picker(binding);
+                self.acknowledge_saved_rule(binding);
             }
             if let (Some(binding), Some(modal)) = (confirm, &mut self.modal)
                 && modal.presentation_binding() == binding
@@ -580,6 +597,11 @@ impl Driver {
             )
         } else if let Some(notice) = self.notice.take() {
             (Ok(notice), None, None)
+        } else if let Some(confirmation) = &self.saved_rule {
+            let Some((bytes, binding)) = confirmation.render() else {
+                return;
+            };
+            (Ok(bytes), Some(binding), None)
         } else if let Some(modal) = &self.modal {
             if modal.displayed {
                 return;

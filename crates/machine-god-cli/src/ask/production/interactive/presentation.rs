@@ -43,8 +43,12 @@ impl Modal {
             escaped(&mut text, &request.reason)?;
             text.write_char('\n').map_err(|_| ())?;
             render_capability(&mut text, &request.capability)?;
-            text.write_str("\n[y] allow once  [t] allow turn  [s] allow session  [n] deny\n> ")
+            text.write_str("\n[y] allow once  [t] allow turn  [s] allow session  [n] deny\n")
                 .map_err(|_| ())?;
+            if self.view.can_save_rule() {
+                text.write_str("[a] propose saved exact allow  [d] propose saved exact deny (separate confirmation)\n").map_err(|_| ())?;
+            }
+            text.write_str("> ").map_err(|_| ())?;
         } else {
             let (_, request) = self.view.question().ok_or(())?;
             let question = request.questions().get(self.answers.len()).ok_or(())?;

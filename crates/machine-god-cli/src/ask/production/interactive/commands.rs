@@ -22,6 +22,7 @@ const HELP: &[u8] = b"\nCommands implemented in this host:\n\
 /help /status /version /quit (/exit) /cancel\n\
 /clear /new /reset /resume (picker) /continue /rename <title> /compact /undo /copy\n\
 /permissions [ask|auto|yolo|reset] /sandbox [os|none] /allowlist\n\
+/permissions rules [offset] /permissions revoke <id> (separate confirmation)\n\
 /models /model [id-or-query|effort <name>|save|save-default] /fast\n\
 Model selection and /fast request native session and available user-default saves;\n\
 their independent results are reported separately. /resume has no arguments.\n\
@@ -125,6 +126,9 @@ impl Driver {
     }
 
     fn cancel_command(&mut self) {
+        if self.cancel_saved_rule() {
+            return;
+        }
         if let Some(modal) = self.modal.take() {
             if self.inbox.cancel(modal.view.token()).is_ok() {
                 self.note(b"\n[prompt cancelled]\n> ");
@@ -208,6 +212,9 @@ impl Driver {
     }
 
     fn permissions_command(&mut self, payload: &str) {
+        if self.saved_rules_command(payload) {
+            return;
+        }
         if !payload.is_empty() && self.control_outcome.is_some() {
             self.note(BUSY);
             return;
@@ -233,6 +240,16 @@ impl Driver {
         if result.is_err() {
             self.note(UNAVAILABLE);
             return;
+        }
+        if payload.eq_ignore_ascii_case("reset") {
+            if self.inbox.activate(super::principal(&self.owner)).is_err() {
+                self.native_failed = true;
+                self.shutdown();
+                return;
+            }
+            self.scope_active = true;
+            self.modal.take();
+            self.saved_rule.take();
         }
         self.show_policy(payload.eq_ignore_ascii_case("reset"));
     }

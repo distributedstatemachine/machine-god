@@ -5,7 +5,113 @@ use crate::{
 };
 use machine_god_core::{BoxFuture, PermissionError, SessionRevision, TurnMetadataEditor};
 use std::fmt;
-use std::sync::{Arc, Weak};
+use std::sync::{
+    Arc, Weak,
+    atomic::{AtomicBool, Ordering},
+};
+
+/// Native-prepared exact action associated with one still-pending prompt.
+/// Hosts cannot construct this value or obtain an execution grant from it.
+#[derive(Clone)]
+pub struct NativePermissionRulePrompt {
+    owner: Weak<NativePermissionSession>,
+    attempt: Weak<super::Attempt>,
+    epoch: u64,
+    rules_epoch: u64,
+    key: NativePermissionRuleKey,
+    live: Arc<AtomicBool>,
+}
+
+impl fmt::Debug for NativePermissionRulePrompt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativePermissionRulePrompt { .. }")
+    }
+}
+
+impl NativePermissionRulePrompt {
+    pub(super) fn new(
+        owner: &Arc<NativePermissionSession>,
+        attempt: &Arc<super::Attempt>,
+        epoch: u64,
+        rules_epoch: u64,
+        key: NativePermissionRuleKey,
+    ) -> Self {
+        Self {
+            owner: Arc::downgrade(owner),
+            attempt: Arc::downgrade(attempt),
+            epoch,
+            rules_epoch,
+            key,
+            live: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub(crate) fn invalidate(&self) {
+        self.live.store(false, Ordering::Release);
+    }
+
+    fn validate(&self) -> Result<Arc<NativePermissionSession>, PermissionError> {
+        if !self.live.load(Ordering::Acquire) {
+            return Err(unavailable());
+        }
+        let owner = self.owner.upgrade().ok_or_else(unavailable)?;
+        let attempt = self.attempt.upgrade().ok_or_else(unavailable)?;
+        let (current, epoch, rules_epoch) = owner.attempt(attempt.handle.id())?;
+        if !Arc::ptr_eq(&current, &attempt)
+            || epoch != self.epoch
+            || rules_epoch != self.rules_epoch
+        {
+            return Err(unavailable());
+        }
+        Ok(owner)
+    }
+
+    fn validate_publication(&self, state: &super::State) -> Result<(), PermissionError> {
+        let attempt = self.attempt.upgrade().ok_or_else(unavailable)?;
+        if !self.live.load(Ordering::Acquire)
+            || state.retired
+            || state.epoch != self.epoch
+            || state.rules_epoch != self.rules_epoch
+            || state
+                .active
+                .as_ref()
+                .is_none_or(|active| !Arc::ptr_eq(active, &attempt))
+            || attempt.handle.is_cancelled()
+            || !attempt.editor.is_active()
+        {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn propose(
+        &self,
+        decision: NativePermissionRuleDecision,
+    ) -> Result<NativePermissionRuleProposal, PermissionError> {
+        use std::fmt::Write;
+        let owner = self.validate()?;
+        let mut display_identity = format!("Exact prepared {:?} action sha256:", self.key.kind());
+        for byte in self.key.digest() {
+            write!(display_identity, "{byte:02x}").map_err(|_| unavailable())?;
+        }
+        let mut proposal = owner.propose_rule_change(NativePermissionRuleChange::Set {
+            key: self.key.clone(),
+            display_identity,
+            decision,
+        })?;
+        proposal.prompt = Some(self.clone());
+        Ok(proposal)
+    }
+}
+
+pub(super) struct RulePromptLifetime(pub Option<NativePermissionRulePrompt>);
+impl Drop for RulePromptLifetime {
+    fn drop(&mut self) {
+        if let Some(prompt) = &self.0 {
+            prompt.invalidate();
+        }
+    }
+}
 
 /// An explicit host-requested change. Preparing it is not confirmation.
 #[derive(Clone, Debug)]
@@ -27,6 +133,8 @@ pub struct NativePermissionRuleProposal {
     owner: Weak<NativePermissionSession>,
     change: NativePermissionRuleChange,
     expected_generation: Option<u64>,
+    expected_epoch: u64,
+    prompt: Option<NativePermissionRulePrompt>,
 }
 
 impl fmt::Debug for NativePermissionRuleProposal {
@@ -61,6 +169,8 @@ impl NativePermissionSession {
             owner: Arc::downgrade(self),
             change,
             expected_generation,
+            expected_epoch: state.epoch,
+            prompt: None,
         };
         proposal.apply(&rules)?;
         Ok(proposal)
@@ -80,12 +190,18 @@ impl NativePermissionSession {
             if !Arc::ptr_eq(self, &owner) {
                 return Err(unavailable());
             }
+            if let Some(prompt) = &proposal.prompt {
+                prompt.validate()?;
+            }
+            if lock(&self.state).epoch != proposal.expected_epoch {
+                return Err(unavailable());
+            }
             let mut operation = RuleOperation::begin(self)?;
             let revision = if let Some(editor) = operation.editor.clone() {
                 let snapshot = editor.read_entry().await.map_err(|_| unavailable())?;
                 let rules = decode(snapshot.entry())?;
                 let candidate = proposal.apply(&rules)?;
-                operation.arm()?;
+                operation.arm(&proposal)?;
                 editor
                     .compare_exchange(snapshot, Some(candidate.to_value()))
                     .await
@@ -100,7 +216,7 @@ impl NativePermissionSession {
                     NATIVE_SESSION_PERMISSION_RULES_KEY.to_owned(),
                     candidate.to_value(),
                 );
-                operation.arm()?;
+                operation.arm(&proposal)?;
                 self.session
                     .update_metadata(snapshot.revision, metadata)
                     .await
@@ -205,9 +321,15 @@ impl<'a> RuleOperation<'a> {
         })
     }
 
-    fn arm(&mut self) -> Result<(), PermissionError> {
-        self.armed = true;
+    fn arm(&mut self, proposal: &NativePermissionRuleProposal) -> Result<(), PermissionError> {
         let mut state = lock(&self.owner.state);
+        if state.epoch != proposal.expected_epoch {
+            return Err(unavailable());
+        }
+        if let Some(prompt) = &proposal.prompt {
+            prompt.validate_publication(&state)?;
+        }
+        self.armed = true;
         state.uncertain_rules = true;
         state.rules_epoch = state.rules_epoch.checked_add(1).ok_or_else(unavailable)?;
         Ok(())
