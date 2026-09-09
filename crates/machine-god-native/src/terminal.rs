@@ -7533,14 +7533,24 @@ mod tests {
     #[test]
     fn linux_ready_term_ignoring_shell_is_reaped_before_timeout_publication() {
         let temporary = TimeoutReadyDirectory::new();
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            temporary.0.join("timeout.fifo"),
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
         let tool = TerminalTool::open(&temporary.0).unwrap();
         let activity = ExecutionActivity::acquire(&tool.active, 1).unwrap();
         let cancellation = CancellationToken::new();
         let started = Instant::now();
         let deadline = started + TERMINAL_DEFAULT_TIMEOUT;
         let mut arguments = deadline_test_arguments();
-        arguments.command = "trap '' TERM; printf '%s\\n' \"$$\" > timeout.pid; \
-                             while :; do /bin/sleep 1; done"
+        // A builtin read on the shell's own read/write FIFO blocks without
+        // EOF or descendants. An external sleep can become an adopted zombie
+        // when other unit fixtures make this process a subreaper; that would
+        // correctly prevent production from claiming group disappearance.
+        arguments.command = "trap '' TERM; exec 3<> timeout.fifo; \
+                             printf '%s\\n' \"$$\" > timeout.pid; read -r ignored <&3"
             .to_owned();
         let request = tool
             .execution_request(
