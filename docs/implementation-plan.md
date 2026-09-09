@@ -167,10 +167,11 @@ Internal component commits are not deliveries. Their implementation inventory is
   revision before load; consuming adoption rechecks durable/live state. A
   prepared association publication is not rolled back by dropping adoption.
 
-Remaining work includes picker startup/in-session selection, allowlist editing,
+Remaining work includes allowlist editing,
 workspace handlers, migration/recovery/doctor cleanup, and remaining
-policy/workspace scenarios. Bare/latest/exact startup, shared cache/human prompts
-and owned raw input are composed. Clear/new/reset allocate fresh IDs;
+policy/workspace scenarios. Bare/latest/exact/picker startup, in-session picker
+selection, shared cache/human prompts and owned raw input are composed.
+Clear/new/reset allocate fresh IDs;
 clear/new carry terminals forward, while reset and live resume stop/forget.
 Started transitions and uncertain outcomes stay owned through settlement.
 The complete combined feature and all final gates remain open.
@@ -216,15 +217,17 @@ selection and output-acknowledged input identities. Combined CLI checks pass
 284 unit tests with five private-helper ignores, all 96 command tests, scoped
 warnings-denied Clippy, formatting and bounded documentation checks. Owned
 nonblocking preparation/adoption and candidate preference publication are
-integrated at `99544ee`; workspace Clippy and its fresh release build pass.
-The combined runtime run rejects that candidate on concurrent fresh-startup
-lock contention. Fix scoped lock release and rerun replacement integration checks;
-the separate loading-frame test has been corrected and passes its focused check.
-Picker busy/changed/missing rejection receipts now retain retry semantics through
-output acknowledgement and native-free shutdown. A composed stale-row test passes
-blocked and acknowledged receipt paths plus explicit refreshed-selection success;
-scoped all-target/all-feature CLI Clippy passes. Combined replacement checks await
-the native lock-fix integration, so this is not feature acceptance.
+integrated at `99544ee`. That checkpoint's concurrent fresh-startup contention is
+fixed by scoped advisory unlock at `bd270e5`; the independent loading-frame fixture
+and retryable picker receipts are also corrected. Replacement CLI checks pass
+285 tests with five private-helper ignores across three default-concurrency runs,
+plus workspace warnings-denied Clippy, formatting and bounded docs checks. The
+fresh locked `bd270e5` release passes all 96 command tests, seven production-input
+tests and all 285 CLI unit tests with five private-helper ignores. These checks
+include blocked and acknowledged stale-row rejection receipts and explicit
+refreshed-selection success; they are not full-feature acceptance.
+Allowlist implementation now proceeds in isolated configuration/storage and
+native grammar/runtime-service worktrees, with CLI integration owned centrally.
 Typed historical cards and the remaining command/session scenarios still need
 implementation; complete local, review and exact remote feature gates stay open.
 

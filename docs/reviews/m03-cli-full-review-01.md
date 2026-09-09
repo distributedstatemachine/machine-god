@@ -283,3 +283,21 @@ successful shutdown, and explicit successful selection after a fresh display.
 Its focused test passes all three receipt/retry scenarios; CLI all-target and
 all-feature warnings-denied Clippy passes. Combined replacement checks remain
 separate from this focused evidence.
+
+Component `b4ee3d7`, integrated as `bd270e5`, replaces close-only session lock
+release with scoped advisory unlock, including EINTR-only retry. A surviving
+duplicated-descriptor regression fails against the old implementation and passes
+after the fix; actual active holders still produce `Busy`. Final component checks
+pass six store tests, 27 resume tests with one private-helper ignore, 284 CLI
+tests with five private-helper ignores, and native warnings-denied Clippy.
+Earlier repeated concurrent runs also pass with the parent's loading-frame
+fixture correction, restored before the native-only component commit. The clean
+native worktree was integrated and removed, retaining its commit.
+
+Combined `bd270e5` passes 285 CLI unit tests with five private-helper ignores in
+three default-concurrency runs, workspace all-target/all-feature warnings-denied
+Clippy, formatting, bounded documentation and diff checks. Its fresh locked
+release build completes in 9m16s. That exact binary passes all 96 command tests,
+all seven production-input tests and all 285 CLI unit tests with five private-helper
+ignores. The complete combined CLI feature still requires its remaining command
+scenarios and final exact local, fresh-review and remote gates.
