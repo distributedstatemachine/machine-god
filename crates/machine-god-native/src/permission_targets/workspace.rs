@@ -1,10 +1,10 @@
 //! Scoped mutation evidence is acquired only on the preparer's owned worker.
 
 use super::{NativePermissionTargetAuthority, invalid, paths, validate_workspace_binding};
-use crate::NativeWorkspaceTurnScope;
 use crate::file_approval::NativeFileEndpoint;
+use crate::{NativeFileApprovalKind, NativeWorkspaceTurnScope};
 use machine_god_core::{PermissionError, PermissionRequest, ToolCall};
-use std::{fs::File, path::Path, sync::Arc};
+use std::path::Path;
 
 pub(crate) struct ScopedFileEndpoints {
     pub(crate) scope: NativeWorkspaceTurnScope,
@@ -25,46 +25,28 @@ impl NativePermissionTargetAuthority {
             .snapshot_for_permission(request)
             .map_err(|_| invalid())?;
         validate_workspace_binding(&self.root, &self.workspace, Some(&scope))?;
-        let (source_key, target_key) = match call.name.as_str() {
-            "copy_file" => (Some("source"), "destination"),
-            "rename_file" => (Some("old_path"), "new_path"),
-            "write_file" | "edit_file" | "delete_file" => (None, "path"),
+        let kind = match call.name.as_str() {
+            "copy_file" => NativeFileApprovalKind::Copy,
+            "rename_file" => NativeFileApprovalKind::Rename,
+            "write_file" => NativeFileApprovalKind::Write,
+            "edit_file" => NativeFileApprovalKind::Edit,
+            "delete_file" => NativeFileApprovalKind::Delete,
             _ => return Err(invalid()),
         };
-        let endpoint = |key: &str| -> Result<NativeFileEndpoint, PermissionError> {
-            let raw = call
-                .arguments
-                .get(key)
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(invalid)?;
-            let route = scope
-                .snapshot()
-                .map_err(|_| invalid())?
-                .route(Path::new(raw))
-                .map_err(|_| invalid())?;
-            let relative = route
-                .relative_path()
-                .to_str()
-                .ok_or_else(invalid)?
-                .to_owned();
-            let logical = if Path::new(raw).is_absolute() {
-                route
-                    .root_identity()
-                    .join(&relative)
-                    .to_str()
-                    .ok_or_else(invalid)?
-                    .to_owned()
-            } else {
-                relative.clone()
-            };
-            if logical != raw {
-                return Err(invalid());
-            }
-            let root = File::from(route.root_descriptor().try_clone().map_err(|_| invalid())?);
-            NativeFileEndpoint::new(Arc::new(root), relative, logical).map_err(|_| invalid())
-        };
-        let source = source_key.map(endpoint).transpose()?;
-        let target = endpoint(target_key)?;
+        let projection = crate::workspace_mutation::project(
+            &scope.snapshot().map_err(|_| invalid())?,
+            kind,
+            &call.arguments,
+        )
+        .map_err(|_| invalid())?;
+        if projection.logical_arguments() != &call.arguments {
+            return Err(invalid());
+        }
+        let source = projection
+            .source()
+            .map(|endpoint| endpoint.retain().map_err(|_| invalid()))
+            .transpose()?;
+        let target = projection.target().retain().map_err(|_| invalid())?;
         if !scope.is_live() {
             return Err(invalid());
         }

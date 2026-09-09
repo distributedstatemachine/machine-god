@@ -360,8 +360,9 @@ Explicit workspace-context composition uses the exact active turn's retained
 root for each endpoint. The reviewed paths remain canonical logical paths;
 private descriptor-relative paths do not replace the review identity. Source
 and destination may belong to different active roots, including identical
-relative basenames. Their observations and inverse-operation locations retain
-each root independently. Cross-device rename remains an error, without a
+relative basenames. The endpoint adapter and permission preparer share the same
+bounded logical/private path projection. Their observations and inverse-operation
+locations retain each root independently. Cross-device rename remains an error, without a
 copy/delete fallback. Missing or expired workspace contexts do not fall back
 to primary-root authority. Ordinary scoped path observations likewise retain
 their selected roots and expire with the owning turn.

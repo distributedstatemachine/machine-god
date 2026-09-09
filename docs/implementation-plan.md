@@ -267,8 +267,11 @@ through its fresh locked release binary, plus the exact CI release-smoke script
 and 18 CI classification tests. That smoke now exercises real workspace
 persistence and the implemented session JSON contract. The integrated CLI and
 configuration worktrees are cleanly removed. Production host routing for the
-complete tool set is still required; mutation, path-tool and enumeration
-adapters proceed in isolated trees. These checks are not full-feature acceptance.
+complete tool set is still required. Mutation adapter `797bf6f` integrates 381
+component regression tests; its shared projection also passes eight combined
+root tests after permission-preparer wiring. Its clean worktree is removed.
+Path-tool and enumeration adapters proceed in isolated trees. These checks are
+not full-feature acceptance.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal
