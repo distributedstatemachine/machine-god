@@ -1037,6 +1037,24 @@ class CiChangeClassificationTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, release_smoke)
 
+    def test_release_smoke_exercises_real_workspace_persistence_and_read_only_defaults(self) -> None:
+        release_smoke = step_script(self.ci, "Release smoke test")
+        self.assertNotIn("additional_directories_supported", release_smoke)
+        for fragment in (
+            '"primary_directory": {"text": str(workspace_root), "bytes_hex": None}',
+            'cleared_defaults = workspace_receipt("clear")',
+            'added = workspace_receipt("add", str(workspace_additional))',
+            'removed = workspace_receipt("remove", str(workspace_additional))',
+            'cleared = workspace_receipt("clear")',
+            'workspace_receipt("list")["additional_directories"]',
+            "workspace inspection created an isolated missing root",
+            "workspace no-op clear created an isolated missing root",
+            "workspace mutation created unrelated state/home roots",
+            "len(result.stdout.encode()) > 1048576",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, release_smoke)
+
     def test_benchmark_keeps_a_stable_affected_evidence_gate(self) -> None:
         for evidence_job in ("bootstrap-evidence", "pinned-upstream-evidence"):
             self.assertIn(

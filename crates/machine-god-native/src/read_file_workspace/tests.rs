@@ -7,8 +7,9 @@ use futures_executor::block_on;
 use futures_util::StreamExt;
 use machine_god_core::{
     BoxFuture, Engine, ModelEvent, PermissionDecision, PermissionError, PermissionGrantScope,
-    PermissionHandler, PermissionRequest, SessionId, SessionIncarnationId, SessionRecord,
-    SessionRevision, StopReason, Tool, ToolCallId,
+    PermissionHandler, PermissionInvocation, PermissionRequest, PermissionRequestId,
+    PermissionRisk, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, StopReason,
+    Tool, ToolCallId,
 };
 use machine_god_testkit::{InMemorySessionStore, ModelProviderStep, ScriptedModelProvider};
 use rustix::fs::{Mode, OFlags};
@@ -286,4 +287,75 @@ fn scope_does_not_allow_foreign_contexts_traversal_symlinks_or_cancelled_reads()
     cancellation.cancel();
     let error = block_on(tool.execute(key, json!({"path":"same"}), cancellation)).unwrap_err();
     assert_eq!(error.kind, ToolErrorKind::Cancelled);
+}
+
+fn targets(
+    fixture: &Fixture,
+    context: &ToolContext,
+    path: &str,
+) -> Result<crate::NativePreparedPermissionTargets, PermissionError> {
+    let tool = Arc::new(fixture.tool());
+    let authority = crate::NativePermissionTargetAuthority::new(
+        std::fs::File::open(&fixture.primary).unwrap(),
+        fixture.primary.to_str().unwrap().to_owned(),
+        vec![crate::NativePermissionTargetTool::Ordinary(tool.clone())],
+    )
+    .unwrap()
+    .with_workspace_contexts(fixture.contexts.clone());
+    let call = call(path);
+    let prepared = tool
+        .prepare_for_turn(context, call.clone())
+        .map_err(|_| PermissionError::new("invalid", "invalid"))?;
+    let request = PermissionRequest {
+        id: PermissionRequestId::new("permission").unwrap(),
+        session_id: context.session_id.clone(),
+        session_incarnation_id: context.session_incarnation_id.clone(),
+        turn_id: context.turn_id.clone(),
+        capability: prepared.capability().unwrap().clone(),
+        risk: PermissionRisk::Critical,
+        reason: "untrusted hint".into(),
+    };
+    block_on(authority.prepare(
+        &request,
+        PermissionInvocation {
+            tool_name: &call.name,
+            call_id: &call.id,
+            arguments: prepared.arguments(),
+        },
+        CancellationToken::new(),
+    ))
+}
+
+#[test]
+fn native_permission_observations_retain_each_selected_root_and_expire_with_turn() {
+    let fixture = Fixture::new();
+    let conversation = fixture.conversation(vec![finished()], Arc::new(Allow::default()));
+    let turn = block_on(conversation.prompt("read".into(), 1)).unwrap();
+    let key = context(&conversation, &turn);
+    let target = fixture.additional.join("same");
+    let evidence = targets(&fixture, &key, target.to_str().unwrap()).unwrap();
+    assert_eq!(evidence.targets()[0].path(), target.to_str().unwrap());
+    assert!(evidence.revalidate().is_ok());
+    let retained = fixture.base.join("retained");
+    std::fs::rename(&fixture.additional, &retained).unwrap();
+    assert!(evidence.revalidate().is_ok());
+    let after_rename = targets(&fixture, &key, target.to_str().unwrap()).unwrap();
+    assert!(after_rename.revalidate().is_ok());
+    std::fs::rename(retained.join("same"), retained.join("original")).unwrap();
+    std::fs::write(retained.join("same"), "replacement").unwrap();
+    assert!(evidence.revalidate().is_err());
+    assert!(after_rename.revalidate().is_err());
+    let primary_evidence = targets(&fixture, &key, "same").unwrap();
+    drop(turn);
+    assert!(primary_evidence.revalidate().is_err());
+}
+
+#[test]
+fn native_permission_routing_rejects_missing_scope_instead_of_primary_fallback() {
+    let fixture = Fixture::new();
+    let conversation = fixture.conversation(vec![finished()], Arc::new(Allow::default()));
+    let turn = block_on(conversation.prompt("read".into(), 1)).unwrap();
+    let mut key = context(&conversation, &turn);
+    key.session_incarnation_id = SessionIncarnationId::new("foreign").unwrap();
+    assert!(targets(&fixture, &key, "same").is_err());
 }

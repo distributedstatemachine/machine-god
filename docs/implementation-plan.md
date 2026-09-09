@@ -255,10 +255,15 @@ Provisional directory sources now resolve once and remain pinned after retargeti
 Owned startup `b65c1ae` and explicit scoped `read_file` composition pass 84
 workspace-related tests, four real scoped-read tests, 19 public read tests and 14
 permission-target tests. Native all-target/all-feature Clippy and all-feature
-WASI lint pass after the portable metadata-description fix. Top-level CLI and
-cross-root mutation/approval/undo work proceed in isolated trees. Latest-state
-alias capacity and first-use missing-config-parent handling remain active
-refinements; production host routing for the complete tool set is still required.
+WASI lint pass after the portable metadata-description fix. Top-level workspace
+management is integrated at `fdb51de`; latest-state alias provenance at `0dd1767`
+and first-use missing-config-parent handling at `68bd09c` correct real native
+incompatibilities. Missing-parent component checks pass 101 focused/regression
+tests and native all-target/all-feature Clippy. The combined CLI's twelve
+workspace-related command tests now pass, including real listing, first add,
+no-op clear and persistence. Scoped read/permission evidence passes six unit and
+fourteen public target tests. Production host routing for the complete tool set
+is still required; mutation and path-tool adapters proceed in isolated trees.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal

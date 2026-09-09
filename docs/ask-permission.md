@@ -356,10 +356,20 @@ Copy and rename expose both source and destination; their destination must be
 absent. Copy retains its complete source once, and borrows that same allocation
 as its expected result.
 
+Explicit workspace-context composition uses the exact active turn's retained
+root for each endpoint. The reviewed paths remain canonical logical paths;
+private descriptor-relative paths do not replace the review identity. Source
+and destination may belong to different active roots, including identical
+relative basenames. Their observations and inverse-operation locations retain
+each root independently. Cross-device rename remains an error, without a
+copy/delete fallback. Missing or expired workspace contexts do not fall back
+to primary-root authority. Ordinary scoped path observations likewise retain
+their selected roots and expire with the owning turn.
+
 Each complete preimage is bounded to 16 MiB; edit retains its existing 48-KiB
 preimage/result bounds. A registry admits at most four retained preparations,
 admissions, or executions. Its derived retained payload ceiling is four times
-16 MiB plus 128 KiB for bounded arguments, paths, identities, and write/edit
+16 MiB plus 256 KiB for bounded arguments, paths, identities, and write/edit
 results per slot. Each file read/compare has at most 4,096 native calls, at most
 16 cumulative interrupted results, and an exact-size overflow witness. Copies
 of borrowed preview data made by a caller are that caller's responsibility.

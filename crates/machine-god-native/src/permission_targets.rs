@@ -2,6 +2,7 @@
 
 mod paths;
 mod terminal;
+mod workspace;
 pub use terminal::{NativePermissionTerminalResolution, NativePermissionTerminalResolver};
 #[cfg(any(test, feature = "ai-gateway-http"))]
 mod host;
@@ -45,6 +46,7 @@ pub struct NativePermissionTargetAuthority {
     root: Arc<File>,
     workspace: String,
     tools: Vec<NativePermissionTargetTool>,
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
 }
 impl fmt::Debug for NativePermissionTargetAuthority {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -61,8 +63,9 @@ impl NativePermissionTargetAuthority {
         paths::validate_root(files.directory(), &self.workspace)
     }
 
-    /// Projects existing file evidence without duplicating preimages or I/O.
-    /// The caller retains the approval and its same-workspace execution binding.
+    /// Projects existing file evidence without duplicating preimages.
+    /// Revalidates the retained workspace binding; the caller retains the
+    /// approval and its same-workspace execution binding.
     /// # Errors
     /// Rejects mismatched names and bounded argument/path failures.
     pub fn from_file(
@@ -71,10 +74,40 @@ impl NativePermissionTargetAuthority {
         invocation: PermissionInvocation<'_>,
         cancellation: &CancellationToken,
     ) -> Result<NativePreparedPermissionTargets, PermissionError> {
+        self.project_file(file, invocation, cancellation, None)
+    }
+
+    pub(crate) fn from_scoped_file(
+        &self,
+        file: &crate::PreparedFileApproval,
+        invocation: PermissionInvocation<'_>,
+        cancellation: &CancellationToken,
+        scope: crate::NativeWorkspaceTurnScope,
+    ) -> Result<NativePreparedPermissionTargets, PermissionError> {
+        self.project_file(file, invocation, cancellation, Some(scope))
+    }
+
+    fn project_file(
+        &self,
+        file: &crate::PreparedFileApproval,
+        invocation: PermissionInvocation<'_>,
+        cancellation: &CancellationToken,
+        workspace_scope: Option<crate::NativeWorkspaceTurnScope>,
+    ) -> Result<NativePreparedPermissionTargets, PermissionError> {
         check_cancel(cancellation)?;
         if file.tool_name() != invocation.tool_name.as_str() {
             return Err(invalid());
         }
+        validate_workspace_binding(&self.root, &self.workspace, workspace_scope.as_ref())?;
+        let target = workspace::file_path(
+            &self.workspace,
+            workspace_scope.as_ref(),
+            file.target_path(),
+        )?;
+        let source = file
+            .source_path()
+            .map(|path| workspace::file_path(&self.workspace, workspace_scope.as_ref(), path))
+            .transpose()?;
         let mut result = NativePreparedPermissionTargets {
             root: Arc::clone(&self.root),
             workspace: self.workspace.clone(),
@@ -82,10 +115,10 @@ impl NativePermissionTargetAuthority {
             arguments_json: bounded_arguments(invocation.arguments, false, cancellation)?,
             targets: Vec::new(),
             observations: Vec::new(),
+            workspace_scope,
             bypass: Bypass::Never,
             terminal: None,
         };
-        let target = paths::absolute(&self.workspace, file.target_path())?;
         match file.kind() {
             crate::NativeFileApprovalKind::Write | crate::NativeFileApprovalKind::Edit => {
                 let parent = target
@@ -102,8 +135,7 @@ impl NativePermissionTargetAuthority {
                 result.add("target", target, Kind::PathExisting);
             }
             crate::NativeFileApprovalKind::Copy | crate::NativeFileApprovalKind::Rename => {
-                let source =
-                    paths::absolute(&self.workspace, file.source_path().ok_or_else(invalid)?)?;
+                let source = source.ok_or_else(invalid)?;
                 result.add("source", source, Kind::None);
                 result.add("destination", target, Kind::None);
             }
@@ -126,7 +158,20 @@ impl NativePermissionTargetAuthority {
             root: Arc::new(root),
             workspace,
             tools,
+            workspace_contexts: None,
         })
+    }
+
+    /// Selects the exact live turn's descriptor scope for native path evidence.
+    /// Retaining the registry is inert and does not grant permission. Registered
+    /// tools must use that same registry for contextual preparation/execution.
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
     }
 
     /// Validates actual canonical invocation/capability agreement before observing
@@ -174,7 +219,16 @@ impl NativePermissionTargetAuthority {
                 }
             };
             check_cancel(&cancellation)?;
-            paths::validate_root(&self.root, &self.workspace)?;
+            let workspace_scope = self
+                .workspace_contexts
+                .as_ref()
+                .map(|contexts| {
+                    contexts
+                        .snapshot_for_permission(request)
+                        .map_err(|_| invalid())
+                })
+                .transpose()?;
+            validate_workspace_binding(&self.root, &self.workspace, workspace_scope.as_ref())?;
             let mut prepared = NativePreparedPermissionTargets {
                 root: Arc::clone(&self.root),
                 workspace: self.workspace.clone(),
@@ -182,6 +236,7 @@ impl NativePermissionTargetAuthority {
                 arguments_json,
                 targets: Vec::new(),
                 observations: Vec::new(),
+                workspace_scope,
                 bypass: Bypass::Never,
                 terminal: None,
             };
@@ -287,7 +342,8 @@ pub struct NativePreparedPermissionTargets {
     tool_name: String,
     arguments_json: String,
     targets: Vec<NativePermissionOwnedTarget>,
-    observations: Vec<paths::Observation>,
+    observations: Vec<(Arc<File>, paths::Observation)>,
+    workspace_scope: Option<crate::NativeWorkspaceTurnScope>,
     bypass: Bypass,
     terminal: Option<NativePermissionTerminalResolution>,
 }
@@ -381,9 +437,9 @@ impl NativePreparedPermissionTargets {
     /// # Errors
     /// Rejects root, parent, selected-entry replacement, or missing-entry changes.
     pub fn revalidate(&self) -> Result<(), PermissionError> {
-        paths::validate_root(&self.root, &self.workspace)?;
-        for observed in &self.observations {
-            observed.revalidate(&self.root)?;
+        validate_workspace_binding(&self.root, &self.workspace, self.workspace_scope.as_ref())?;
+        for (root, observed) in &self.observations {
+            observed.revalidate(root)?;
         }
         Ok(())
     }
@@ -392,13 +448,37 @@ impl NativePreparedPermissionTargets {
             .push(NativePermissionOwnedTarget { role, path, kind });
     }
     fn path(&mut self, raw: &str, create: bool) -> Result<String, PermissionError> {
+        if let Some(scope) = &self.workspace_scope {
+            let route = scope
+                .snapshot()
+                .map_err(|_| invalid())?
+                .route(std::path::Path::new(raw))
+                .map_err(|_| invalid())?;
+            let relative = route.relative_path().to_str().ok_or_else(invalid)?;
+            let relative = if relative.is_empty() { "." } else { relative };
+            let root = Arc::new(File::from(
+                route.root_descriptor().try_clone().map_err(|_| invalid())?,
+            ));
+            let observation =
+                paths::observe(&root, relative, create, self.tool_name == "file_info")?;
+            let canonical = if relative == "." {
+                route.root_identity().to_path_buf()
+            } else {
+                route.root_identity().join(relative)
+            };
+            let canonical = canonical.to_str().ok_or_else(invalid)?.to_owned();
+            paths::validate_workspace(&canonical)?;
+            self.observations.push((root, observation));
+            return Ok(canonical);
+        }
         let observation = paths::observe(&self.root, raw, create, self.tool_name == "file_info")?;
         let canonical = if raw == "." {
             self.workspace.clone()
         } else {
             format!("{}/{raw}", self.workspace.trim_end_matches('/'))
         };
-        self.observations.push(observation);
+        self.observations
+            .push((Arc::clone(&self.root), observation));
         Ok(canonical)
     }
     fn prepare_terminal(&mut self, resolution: NativePermissionTerminalResolution) {
@@ -500,7 +580,7 @@ impl NativePreparedPermissionTargets {
                         if !self
                             .observations
                             .last()
-                            .is_some_and(paths::Observation::is_regular)
+                            .is_some_and(|(_, observation)| observation.is_regular())
                             || self.targets.iter().any(|target| target.path == path)
                         {
                             return Err(invalid());
@@ -520,6 +600,33 @@ impl NativePreparedPermissionTargets {
         }
         Ok(())
     }
+}
+
+fn validate_workspace_binding(
+    root: &File,
+    workspace: &str,
+    scope: Option<&crate::NativeWorkspaceTurnScope>,
+) -> Result<(), PermissionError> {
+    let Some(scope) = scope else {
+        return paths::validate_root(root, workspace);
+    };
+    let snapshot = scope.snapshot().map_err(|_| invalid())?;
+    if snapshot.primary_identity() != std::path::Path::new(workspace) {
+        return Err(invalid());
+    }
+    let primary = snapshot
+        .route(std::path::Path::new("."))
+        .map_err(|_| invalid())?;
+    let retained = rustix::fs::fstat(root).map_err(|_| invalid())?;
+    let scoped = rustix::fs::fstat(primary.root_descriptor()).map_err(|_| invalid())?;
+    if !rustix::fs::FileType::from_raw_mode(retained.st_mode).is_dir()
+        || retained.st_nlink == 0
+        || retained.st_dev != scoped.st_dev
+        || retained.st_ino != scoped.st_ino
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 fn validate_ordinary(

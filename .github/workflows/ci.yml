@@ -995,8 +995,9 @@ jobs:
 
           encoded_workspace_path = json.dumps(str(workspace_root), ensure_ascii=False)
           expected_workspace_human = (
-              f"[workspace] primary={encoded_workspace_path}\n"
-              "[workspace] additional_directories=unsupported\n"
+              f"[workspace] action=list primary={encoded_workspace_path} generation=1 saved_suppressed=false\n"
+              "[workspace] additional_directories=0\n"
+              "[workspace] saved_changed=false runtime_changed=false reconciliation=refreshed launch_flag_can_restore=false\n"
           )
           if workspace_human_default.stdout != expected_workspace_human:
               raise SystemExit(
@@ -1012,9 +1013,15 @@ jobs:
                   {
                       "kind": "workspace",
                       "action": "list",
-                      "primary_directory": str(workspace_root),
-                      "additional_directories_supported": False,
+                      "primary_directory": {"text": str(workspace_root), "bytes_hex": None},
+                      "generation": 1,
+                      "saved_suppressed": False,
                       "additional_directories": [],
+                      "saved_changed": False,
+                      "runtime_changed": False,
+                      "reconciliation": "refreshed",
+                      "reconciliation_error": None,
+                      "launch_flag_can_restore": False,
                   },
                   ensure_ascii=False,
                   separators=(",", ":"),
@@ -1034,11 +1041,17 @@ jobs:
               "kind",
               "action",
               "primary_directory",
-              "additional_directories_supported",
+              "generation",
+              "saved_suppressed",
               "additional_directories",
+              "saved_changed",
+              "runtime_changed",
+              "reconciliation",
+              "reconciliation_error",
+              "launch_flag_can_restore",
           ]:
               raise SystemExit("workspace JSON top-level key order changed")
-          if any(len(result.stdout.encode()) > 32768 for result in workspace_results):
+          if any(len(result.stdout.encode()) > 1048576 for result in workspace_results):
               raise SystemExit("workspace success output bound changed")
           if list(workspace_root.iterdir()):
               raise SystemExit("workspace inspection changed its dedicated current directory")
@@ -1047,6 +1060,53 @@ jobs:
               for path in (workspace_config_root, workspace_state_root, workspace_home)
           ):
               raise SystemExit("workspace inspection created an isolated missing root")
+
+          def workspace_receipt(*arguments: str) -> dict:
+              result = run_workspace("workspace", *arguments, "--json")
+              if result.returncode != 0 or result.stderr:
+                  raise SystemExit(f"workspace command failed: {arguments!r}: {result!r}")
+              if not result.stdout.endswith("\n") or len(result.stdout.encode()) > 1048576:
+                  raise SystemExit("workspace receipt framing or bound changed")
+              receipt = json.loads(result.stdout)
+              if receipt["reconciliation_error"] is not None:
+                  raise SystemExit("workspace command reported incomplete reconciliation")
+              return receipt
+
+          cleared_defaults = workspace_receipt("clear")
+          if cleared_defaults["saved_changed"] is not False or cleared_defaults["additional_directories"]:
+              raise SystemExit("workspace defaults clear was not a saved-state no-op")
+          if any(path.exists() for path in (workspace_config_root, workspace_state_root, workspace_home)):
+              raise SystemExit("workspace no-op clear created an isolated missing root")
+
+          workspace_additional = workspace_smoke_root / "additional workspace"
+          workspace_additional.mkdir()
+          added = workspace_receipt("add", str(workspace_additional))
+          expected_entry = {
+              "source": {"text": str(workspace_additional), "bytes_hex": None},
+              "identity": {"text": str(workspace_additional), "bytes_hex": None},
+              "identity_canonical": True,
+              "saved": True,
+              "launch": False,
+              "available": True,
+              "active": True,
+          }
+          if added["saved_changed"] is not True or added["additional_directories"] != [expected_entry]:
+              raise SystemExit("workspace first add did not publish its actual active root")
+          if workspace_receipt("list")["additional_directories"] != [expected_entry]:
+              raise SystemExit("workspace saved root did not survive a fresh CLI process")
+          removed = workspace_receipt("remove", str(workspace_additional))
+          if removed["saved_changed"] is not True or removed["additional_directories"]:
+              raise SystemExit("workspace remove did not remove the saved root")
+          workspace_receipt("add", str(workspace_additional))
+          cleared = workspace_receipt("clear")
+          if cleared["saved_changed"] is not True or cleared["additional_directories"]:
+              raise SystemExit("workspace clear did not remove the saved root")
+          if workspace_receipt("list")["additional_directories"]:
+              raise SystemExit("workspace clear did not persist")
+          if any(path.exists() for path in (workspace_state_root, workspace_home)):
+              raise SystemExit("workspace mutation created unrelated state/home roots")
+          if list(workspace_root.iterdir()) or list(workspace_additional.iterdir()):
+              raise SystemExit("workspace commands wrote inside a selected workspace")
 
           sessions_root = Path(
               tempfile.mkdtemp(prefix="machine-god-sessions-", dir=runner_temp)
@@ -1086,12 +1146,11 @@ jobs:
           if sessions_human.stdout != "[sessions] no saved sessions\n":
               raise SystemExit(f"unexpected human sessions output: {sessions_human.stdout!r}")
           sessions_report = json.loads(sessions_machine.stdout)
-          if list(sessions_report) != ["kind", "count", "truncated", "sessions"]:
+          if list(sessions_report) != ["kind", "count", "sessions"]:
               raise SystemExit("sessions JSON top-level key order changed")
           if sessions_report != {
               "kind": "sessions",
               "count": 0,
-              "truncated": False,
               "sessions": [],
           }:
               raise SystemExit(f"unexpected sessions JSON report: {sessions_report!r}")

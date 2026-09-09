@@ -158,6 +158,20 @@ fn prepare_on_worker(
         call.name.as_str(),
         "write_file" | "edit_file" | "delete_file" | "rename_file" | "copy_file"
     ) {
+        if let Some(endpoints) = targets.file_endpoints_on_worker(request, call)? {
+            check(cancellation)?;
+            let file = futures_executor::block_on(registry.prepare_endpoints(
+                endpoints.source,
+                endpoints.target,
+                request,
+                invocation,
+                cancellation.clone(),
+            ))
+            .map_err(|_| invalid())?;
+            let projection =
+                targets.from_scoped_file(&file, invocation, cancellation, endpoints.scope)?;
+            return Ok((projection, Some(file)));
+        }
         targets.validate_file_authority(files)?;
         let file = futures_executor::block_on(registry.prepare(
             files,
