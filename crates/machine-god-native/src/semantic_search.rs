@@ -162,6 +162,8 @@ impl Error for SemanticSearchToolOpenError {}
 
 /// A bounded lexical concept search confined to one retained workspace root.
 pub struct SemanticSearchTool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
     #[cfg(target_os = "linux")]
     root: OwnedFd,
     #[cfg(all(target_os = "macos", feature = "ai-gateway-http"))]
@@ -174,14 +176,32 @@ pub struct SemanticSearchTool {
 }
 
 impl SemanticSearchTool {
+    /// Routes contextual preparation through the exact live turn's workspace.
+    /// This inert opt-in does not enable execution on unsupported platforms.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
+    }
+
     #[cfg(target_os = "linux")]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self {
+            workspace_contexts: None,
+            root,
+        }
     }
 
     #[cfg(all(target_os = "macos", feature = "ai-gateway-http"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { _root: root }
+        Self {
+            workspace_contexts: None,
+            _root: root,
+        }
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -253,10 +273,21 @@ impl ExecutionArguments {
 
 impl Tool for SemanticSearchTool {
     fn spec(&self) -> ToolSpec {
+        let schema = semantic_search_input_schema();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let schema = if self.workspace_contexts.is_some() {
+            let mut schema = schema;
+            schema["properties"]["path"]["description"] = json!(
+                "Primary-relative file or directory, or absolute path within an active workspace root; defaults to the primary root"
+            );
+            schema
+        } else {
+            schema
+        };
         ToolSpec {
             name: semantic_search_name(),
             description: SEMANTIC_SEARCH_DESCRIPTION.to_owned(),
-            input_schema: semantic_search_input_schema(),
+            input_schema: schema,
         }
     }
 
@@ -279,13 +310,36 @@ impl Tool for SemanticSearchTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let scope = self
+            .workspace_contexts
+            .as_ref()
+            .map(|contexts| contexts.snapshot_for_tool(&context));
+        let _ = context;
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(scope) = scope {
+                return workspace::execute(scope, arguments, &cancellation);
+            }
             let arguments = decode_execution_arguments(arguments)?;
             validate_canonical_arguments(&arguments)?;
 
@@ -302,6 +356,9 @@ impl Tool for SemanticSearchTool {
         })
     }
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace;
 
 fn semantic_search_input_schema() -> Value {
     json!({
@@ -584,7 +641,7 @@ impl ScanBudget {
         Ok(())
     }
 
-    fn observe_match_step(&mut self, cancellation: &CancellationToken) -> Result<(), ToolError> {
+    fn observe_match_step(&mut self, cancellation: &impl ScanCheck) -> Result<(), ToolError> {
         if self.match_steps.is_multiple_of(CANCELLATION_CHECK_INTERVAL) {
             check_cancellation(cancellation)?;
         }
@@ -778,7 +835,7 @@ impl Keyword {
     fn compile(
         raw: &str,
         budget: &mut ScanBudget,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<Self, ToolError> {
         let mut folded = Vec::with_capacity(raw.len());
         for (index, byte) in raw.as_bytes().iter().copied().enumerate() {
@@ -812,7 +869,7 @@ impl Keyword {
         &self,
         haystack: &[u8],
         budget: &mut ScanBudget,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<bool, ToolError> {
         let mut matched = 0_usize;
         for byte in haystack.iter().copied().map(fold_ascii) {
@@ -837,7 +894,7 @@ fn charged_byte_equality(
     left: u8,
     right: u8,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<bool, ToolError> {
     budget.observe_match_step(cancellation)?;
     Ok(left == right)
@@ -848,7 +905,7 @@ fn probe_keyword_presence(
     keyword: &Keyword,
     haystack: &[u8],
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<bool, ToolError> {
     budget.observe_match_step(cancellation)?;
     keyword.is_present(haystack, budget, cancellation)
@@ -859,7 +916,17 @@ impl SemanticSearchTool {
     fn execute_linux(
         &self,
         arguments: &ExecutionArguments,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
+    ) -> Result<ToolOutput, ToolError> {
+        Self::execute_scan(arguments, cancellation, || {
+            self.open_search_root(&arguments.path, cancellation)
+        })
+    }
+
+    fn execute_scan(
+        arguments: &ExecutionArguments,
+        cancellation: &impl ScanCheck,
+        open: impl FnOnce() -> Result<SearchRoot, ToolError>,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(cancellation)?;
         let raw_keywords = split_search_keywords(&arguments.query, cancellation)?;
@@ -872,7 +939,7 @@ impl SemanticSearchTool {
         for raw in raw_keywords {
             keywords.push(Keyword::compile(raw, &mut outcome.budget, cancellation)?);
         }
-        let root = self.open_search_root(&arguments.path, cancellation)?;
+        let root = open()?;
         let mut content_buffer = ContentBuffer::default();
         scan_root(
             root,
@@ -888,7 +955,7 @@ impl SemanticSearchTool {
     fn open_search_root(
         &self,
         search_path: &str,
-        cancellation: &CancellationToken,
+        cancellation: &impl ScanCheck,
     ) -> Result<SearchRoot, ToolError> {
         let mut current = execution_filesystem_call(cancellation, || {
             rustix::fs::openat(
@@ -951,7 +1018,7 @@ impl SemanticSearchTool {
 #[cfg(target_os = "linux")]
 fn split_search_keywords<'a>(
     query: &'a str,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<Vec<&'a str>, ToolError> {
     let mut keywords = Vec::with_capacity(MAX_SEMANTIC_SEARCH_KEYWORDS);
     let mut start = None;
@@ -1010,7 +1077,7 @@ fn scan_root(
     keywords: &[Keyword],
     outcome: &mut ScanOutcome,
     content_buffer: &mut ContentBuffer,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     match root {
         SearchRoot::File(file) => {
@@ -1046,7 +1113,7 @@ fn scan_directory_tree(
     keywords: &[Keyword],
     outcome: &mut ScanOutcome,
     content_buffer: &mut ContentBuffer,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     let mut stack = vec![make_directory_frame(
         directory,
@@ -1096,7 +1163,7 @@ fn process_directory_entry(
     keywords: &[Keyword],
     outcome: &mut ScanOutcome,
     content_buffer: &mut ContentBuffer,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<Option<DirectoryFrame>, ToolError> {
     match entry.kind {
         EntryKind::Directory => {
@@ -1190,7 +1257,7 @@ fn make_directory_frame(
     relative_path: String,
     depth: usize,
     outcome: &mut ScanOutcome,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<DirectoryFrame, ToolError> {
     let entries = read_directory_entries(
         directory.as_fd(),
@@ -1230,7 +1297,7 @@ fn read_directory_entries(
     directory: rustix::fd::BorrowedFd<'_>,
     budget: &mut ScanBudget,
     incomplete: &mut IncompleteReasons,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<Vec<DirectoryEntry>, ToolError> {
     let raw_entries = {
         let mut buffer = [MaybeUninit::uninit(); DIRECTORY_READ_BUFFER_BYTES];
@@ -1276,7 +1343,7 @@ fn stage_directory_entry_names(
     stream: &mut impl DirectoryEntryReader,
     budget: &mut ScanBudget,
     incomplete: &mut IncompleteReasons,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<Vec<Vec<u8>>, ToolError> {
     let remaining = budget.remaining_entries()?;
     let mut raw_entries = Vec::new();
@@ -1321,7 +1388,7 @@ fn score_open_file(
     budget: &mut ScanBudget,
     stats: &mut ScanStats,
     content_buffer: &mut ContentBuffer,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<Option<SearchResult>, ToolError> {
     let metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(file))?
         .map_err(|_| read_failed())?;
@@ -1368,7 +1435,7 @@ fn read_bounded_content<'a>(
     file: &OwnedFd,
     content_buffer: &'a mut ContentBuffer,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<&'a [u8], ToolError> {
     read_bounded_content_with(content_buffer, budget, cancellation, |window| {
         rustix::io::read(file, window)
@@ -1379,7 +1446,7 @@ fn read_bounded_content<'a>(
 fn read_bounded_content_with<'a>(
     content_buffer: &'a mut ContentBuffer,
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
     mut read: impl FnMut(&mut [u8]) -> Result<usize, rustix::io::Errno>,
 ) -> Result<&'a [u8], ToolError> {
     content_buffer.reset();
@@ -1430,7 +1497,7 @@ fn score_text_file(
     workspace_path: &str,
     keywords: &[Keyword],
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<Option<SearchResult>, ToolError> {
     let mut total_score = 0_u64;
     let mut best_line_score = 0_u64;
@@ -1501,7 +1568,7 @@ fn score_line(
     line_number: u64,
     keywords: &[Keyword],
     budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
     total_score: &mut u64,
     best_line_score: &mut u64,
     best_line_number: &mut u64,
@@ -1544,7 +1611,7 @@ fn clip_utf8(text: &str, maximum_bytes: usize) -> &str {
 #[cfg(target_os = "linux")]
 fn render_empty_output(
     arguments: &ExecutionArguments,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<ToolOutput, ToolError> {
     check_cancellation(cancellation)?;
     let value = output_value(arguments, &[], &[], &ScanOutcome::default());
@@ -1560,7 +1627,7 @@ fn render_output(
     arguments: &ExecutionArguments,
     keywords: &[Keyword],
     mut outcome: ScanOutcome,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<ToolOutput, ToolError> {
     check_cancellation(cancellation)?;
     let mut ranked = std::mem::take(&mut outcome.retained).into_records();
@@ -1687,7 +1754,7 @@ fn checked_workspace_path_length(
     } else {
         search_path
             .len()
-            .checked_add(1)
+            .checked_add(usize::from(search_path != "/"))
             .and_then(|length| length.checked_add(relative_length))
             .ok_or_else(scan_limit)
     }
@@ -1717,7 +1784,9 @@ fn join_workspace_path(search_path: &str, relative_path: &str) -> Result<String,
     } else {
         let mut path = String::with_capacity(capacity);
         path.push_str(search_path);
-        path.push('/');
+        if search_path != "/" {
+            path.push('/');
+        }
         path.push_str(relative_path);
         Ok(path)
     }
@@ -1755,7 +1824,7 @@ fn classify_post_observation_result<T>(
 
 #[cfg(target_os = "linux")]
 fn execution_filesystem_call<ResultValue>(
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
     call: impl FnOnce() -> ResultValue,
 ) -> Result<ResultValue, ToolError> {
     check_cancellation(cancellation)?;
@@ -1784,7 +1853,7 @@ const fn content_open_flags() -> OFlags {
 #[cfg(target_os = "linux")]
 fn ensure_root_is_linked(
     root: rustix::fd::BorrowedFd<'_>,
-    cancellation: &CancellationToken,
+    cancellation: &impl ScanCheck,
 ) -> Result<(), ToolError> {
     let metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(root))?
         .map_err(|_| unavailable())?;
@@ -1878,16 +1947,28 @@ fn map_content_open_error(error: rustix::io::Errno) -> ToolError {
 }
 
 #[cfg(target_os = "linux")]
-fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
-    if cancellation.is_cancelled() {
-        Err(ToolError::new(
-            ToolErrorKind::Cancelled,
-            "semantic_search_cancelled",
-            "semantic_search execution was cancelled",
-            false,
-        ))
-    } else {
-        Ok(())
+fn check_cancellation(cancellation: &impl ScanCheck) -> Result<(), ToolError> {
+    cancellation.check()
+}
+
+#[cfg(target_os = "linux")]
+trait ScanCheck {
+    fn check(&self) -> Result<(), ToolError>;
+}
+
+#[cfg(target_os = "linux")]
+impl ScanCheck for CancellationToken {
+    fn check(&self) -> Result<(), ToolError> {
+        if self.is_cancelled() {
+            Err(ToolError::new(
+                ToolErrorKind::Cancelled,
+                "semantic_search_cancelled",
+                "semantic_search execution was cancelled",
+                false,
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 

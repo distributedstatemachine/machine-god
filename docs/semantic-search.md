@@ -7,6 +7,49 @@ concept-keyword search: it uses no embeddings, model call, network request,
 vector database, persistent index, cache, watcher, Git process, or shell
 command.
 
+## Exact-turn workspace routing
+
+`with_workspace_contexts(Arc<NativeWorkspaceContexts>)` is an inert native
+opt-in. Contextual preparation preserves the strict `{query,path}` envelope
+and query bytes. An omitted or relative `path` selects the primary workspace;
+an absolute path selects one captured active root or a file/subtree beneath it.
+There is no automatic all-root scan. Additional-root results carry their
+qualified logical path. Raw and normalized paths retain the 4,096-byte bound,
+and paths outside the captured scope or containing forbidden characters or
+parent traversal are rejected without filesystem effects.
+
+Preparation is purely lexical and checks the exact live session, incarnation
+and turn; it opens and duplicates no descriptor. The same registered tool
+allocation can reprepare the canonical two-field object for permission
+evidence, requiring `SearchContent` at the identical logical path. Scoped
+permission evidence retains the selected root identity independently of later
+configuration changes.
+
+The execution future captures that exact scope when constructed. Its first
+poll validates canonical arguments and the captured scope, never substituting
+a later registration or falling back to the standalone root. Linux execution
+extracts keywords before invoking even the descriptor-acquisition closure:
+a stopword-only query still performs no filesystem operation after permission,
+while requiring a valid live scope. Nonempty searches duplicate only the
+selected root descriptor, then use its private relative path for confined
+access. A renamed root remains the retained identity rather than the replacement
+at its original pathname.
+
+One shared scanner owns the original keyword compilation, content buffer,
+global budgets, incomplete reasons and best-200 result heap. Logical qualified
+path bytes are charged before descendant allocation, scoring, ranking and
+rendering; no alias map or post-scan path rewriting is used. Every existing
+Linux syscall, directory, content, matcher and rendering cancellation checkpoint
+also checks scope liveness, including final publication. Expiration rejects the
+complete operation without publishing a partial result. The fixed additional
+context error is `PermissionDenied` / `workspace_context_unavailable`, message
+`workspace context is unavailable`, non-retryable.
+
+This adapter does not add model routing, network dispatch or worker receipts:
+the search remains local lexical scoring. It does not enable the macOS directory
+reader; that platform still has the unsupported execution behavior below. The
+standalone constructors and grammar remain unchanged.
+
 ## Provider input and authority
 
 The advertised schema and preflight accept exactly one required `query` string
