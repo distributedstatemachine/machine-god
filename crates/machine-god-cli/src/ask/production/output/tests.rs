@@ -15,9 +15,9 @@ use std::{
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-struct Fixture(PathBuf);
+pub(in crate::ask::production) struct Fixture(PathBuf);
 impl Fixture {
-    fn new() -> Self {
+    pub(in crate::ask::production) fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
             "mg-cli-tape-{}-{}",
             std::process::id(),
@@ -26,7 +26,7 @@ impl Fixture {
         fs::create_dir(&path).unwrap();
         Self(fs::canonicalize(path).unwrap())
     }
-    fn request(&self, stdin: bool) -> TerminalTapeRecordingRequest {
+    pub(in crate::ask::production) fn request(&self, stdin: bool) -> TerminalTapeRecordingRequest {
         let mut options = TerminalTapeRecordingOptions::new(12, 2, 100, b"test".to_vec());
         options.record_stdin = stdin;
         TerminalTapeRecordingRequest {
@@ -41,7 +41,7 @@ impl Drop for Fixture {
     }
 }
 
-fn runtime() -> tokio::runtime::Runtime {
+pub(super) fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -234,5 +234,46 @@ fn partial_output_failure_records_only_accepted_prefix_then_closes_incomplete() 
         .await
         .unwrap();
         assert_eq!(replay.stdout(), b"|acc         |\n|            |\n");
+    });
+}
+
+#[test]
+fn native_recording_limit_failure_is_an_explicit_output_failure() {
+    let fixture = Fixture::new();
+    let scope = NativeOwnedWorkerScope::new();
+    runtime().block_on(async {
+        let mut request = fixture.request(false);
+        request.options.max_frames = 1;
+        let recorder =
+            TerminalTapeRecorder::start(request, scope.clone(), CancellationToken::new())
+                .await
+                .unwrap();
+        let completion = recorder.completion();
+        let (work, _received) = tokio::sync::mpsc::channel(1);
+        let (ack, acknowledgements) = tokio::sync::mpsc::channel(1);
+        let mut output = OutputBridge {
+            work,
+            acknowledgements,
+            tape: Some(tape::TapeLane::new(recorder, false)),
+        };
+        output.tape.as_mut().unwrap().marker(b"one frame allowed");
+        ack.send(OutputAcknowledgement::Written {
+            bytes: b"accepted".to_vec(),
+            failed: false,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            output.acknowledgement().await,
+            Some(OutputAcknowledgement::Failed)
+        );
+        drop(output);
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(
+            completion.status().failure,
+            Some(machine_god_native::TerminalTapeRecordingError::LimitExceeded)
+        );
+        assert!(!completion.status().complete);
     });
 }
