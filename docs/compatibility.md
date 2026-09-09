@@ -21,8 +21,8 @@ machine-readable artifact.
 
 | Surface | Status | Milestone | Notes |
 | --- | --- | --- | --- |
-| Top\-level CLI commands | planned | 03 | Match the provider\-neutral user outcomes while keeping the machine\-god CLI a thin host with its own naming where required\. |
-| Slash command kinds | planned | 03\-05 | Core session and host commands arrive with the native CLI; extension commands follow their MCP, skills, and subagent owners\. |
+| Top\-level CLI commands | planned | 03\-06 | Native CLI contracts cover help/status, ask/resume, permissions, models, doctor, session/sessions, workspace and offline replay with documented machine\-god semantics\. The aggregate surface remains planned: ACP/teams and extension ownership follow milestone 05, while account, setup, PR/issue and usage commands follow milestone 06\. Name coverage alone does not establish upstream equivalence\. |
+| Slash command kinds | planned | 03\-06 | The native CLI owns general, session, model, security and workspace scenarios under its command contracts\. Extension and agent commands follow milestone 05; account, media, product and appearance commands follow milestone 06\. Compatibility is scenario\-based, not literal shortcut or presentation parity\. |
 | Built\-in tool names | planned | 03\-05 | Implement equivalent permission\-gated capabilities behind provider\-neutral core contracts; extension tools follow milestone 05\. |
 | SDK exports | deferred | 06 | Rust embedding is primary; JavaScript, Node, and browser compatibility begins after the engine and native host stabilize\. |
 | E2E owners | intentional difference | 01\-07 | Retain upstream owners as behavioral coverage evidence, but use Rust\-focused deterministic tests and benchmark workloads rather than file\-for\-file test parity\. |
@@ -199,8 +199,8 @@ Counts: 30 training, 16 verification-only, and 12 intentional exclusions (58 tot
 
 ## Intentional differences
 
-- `state_namespace` (sessions and configuration): machine\-god will not read or write upstream \.fx profile or session state; migration requires a future explicit, versioned contract\.
-- `cli_implementation_ownership` (CLI and product state): The CLI remains a thin native host; reusable product state and orchestration live in machine\-god\-core rather than the executable\.
+- `state_namespace` (sessions and configuration): machine\-god does not read or write upstream \.fx profile or session state\. Native metadata migration and separate recovery copies operate only in its own state namespace; foreign import requires a later explicit, versioned contract\.
+- `cli_implementation_ownership` (CLI and product state): The CLI remains a thin native host\. Provider\-neutral contracts and orchestration live in machine\-god\-core; operating\-system, network, persistence and native product\-state effects live in machine\-god\-native rather than the executable\.
 - `e2e_file_layout` (E2E owners): Compatibility is judged by observable scenarios and retained evidence, not by reproducing upstream Bun, tmux, PGSO, or source\-file ownership layouts\.
 
 ## Regeneration and drift check
