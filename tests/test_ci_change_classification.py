@@ -1086,6 +1086,25 @@ class CiChangeClassificationTests(unittest.TestCase):
                 "crates/machine-god-terminal-sys/tests/process_inventory_abi.c",
                 apple_binding_script,
             )
+            self.assertIn(
+                f"xcrun clang -arch {architecture} -Wall -Wextra -Werror "
+                "crates/machine-god-terminal-sys/tests/macos_directory_abi.c "
+                f'-o "${{RUNNER_TEMP}}/machine-god-directory-abi-{architecture}"',
+                apple_binding_script,
+            )
+        self.assertIn('case "${RUNNER_ARCH}" in', apple_binding_script)
+        self.assertIn(
+            'ARM64) "${RUNNER_TEMP}/machine-god-directory-abi-arm64" ;;',
+            apple_binding_script,
+        )
+        self.assertIn(
+            'X64) "${RUNNER_TEMP}/machine-god-directory-abi-x86_64" ;;',
+            apple_binding_script,
+        )
+        self.assertIn(
+            '*) echo "unsupported Apple runner architecture" >&2; exit 1 ;;',
+            apple_binding_script,
+        )
         self.assertNotIn("xcrun clang", quality)
         self.assertIn("terminal_unicode_tests == 'true'", quality)
         self.assertIn("tests/test_terminal_unicode_generator.py", quality)

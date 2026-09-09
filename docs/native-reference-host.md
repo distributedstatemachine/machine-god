@@ -18,11 +18,11 @@ The complete reference host is compiled when all of these are true:
 Individual native contracts may expose portable injected seams or narrower
 system implementations. The explicit terminal-options constructors support
 foreground and interactive terminal execution on Linux and macOS. Constructors
-without those options retain the legacy adapter: its foreground executor and
-the production `semantic_search` remain Linux-only. That legacy catalog retains
-both tools on macOS:
-`semantic_search` and terminal `exec` return their fixed unsupported results
-after strict preparation and permission, while terminal `start` uses the
+without those options retain the legacy terminal adapter: its foreground
+executor remains Linux-only, while production `semantic_search` scans retained
+workspace roots on Linux and macOS. That legacy catalog retains terminal `exec`
+on macOS with its fixed unsupported result after strict preparation and
+permission, while terminal `start` uses the
 Linux/macOS background helper, terminal `read` uses the lazy starter's shared
 process-local same-incarnation output registry, terminal `signal` uses its
 identity-checked live native-control registry and bounded blocking executor,
@@ -93,6 +93,14 @@ the helper under their existing deadlines. Configuration cannot retain an idle
 helper or delay host completion, and unresolved cleanup remains owned. Inventory
 does not grant process authority by itself; see
 [ADR 0004](decisions/0004-macos-process-inventory-helper.md).
+
+When conversation options select workspace authority, the complete terminal
+host receives those same exact turn contexts whether or not native permission
+options are also selected. Working-directory admission therefore uses the
+captured primary/additional roots and state exclusion; omitting permission
+composition does not revert terminal cwd resolution to the primary-only host.
+A conversation must attach the host's workspace contexts before tool execution.
+Hosts without workspace selection retain their existing terminal composition.
 
 The root, transport, and MCP composition paths are:
 
@@ -477,10 +485,11 @@ and atomic publication boundary are defined by the
 transport rather than a workspace descriptor. `vision` combines its retained
 workspace identity with that target in one disclosure capability and uses the
 shared transport only after approval and descriptor-relative image
-verification. On Linux, `semantic_search` uses only its retained workspace
-identity; it does not use the provider, transport, or an embedding index. Its
-macOS placeholder retains the clone only for catalog stability and never
-inspects it.
+verification. On Linux and macOS, `semantic_search` uses only its retained
+workspace authority; it does not use the provider, transport, or an embedding
+index. Both scanners retain bounded descriptor-relative traversal. The macOS
+reader exposes each directory refill so that the same scanner budget can charge
+it explicitly; see [ADR 0005](decisions/0005-macos-directory-reader.md).
 
 Catalog membership does not imply that every platform can complete every
 effect. Each tool still performs strict preparation, permission handling when

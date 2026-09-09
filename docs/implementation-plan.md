@@ -223,11 +223,12 @@ The classification contract remains in
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
 - Unsafe Rust is forbidden in the product crates. The isolated macOS
-  PTY, exact process-incarnation, fixed uptime-clock and read-only inventory
+  PTY, exact process-incarnation, fixed uptime-clock, read-only inventory and metered directory-refill
   bindings are the sole exception under
   [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md) and
-  [ADR 0004](decisions/0004-macos-process-inventory-helper.md); they remain subject
-  to the full terminal feature's adversarial and platform gates.
+  [ADR 0004](decisions/0004-macos-process-inventory-helper.md), with directory
+  refills under [ADR 0005](decisions/0005-macos-directory-reader.md). New bindings
+  remain subject to the complete feature's adversarial and platform gates.
 - Constructors and futures must preserve the documented inert-before-poll,
   cancellation, resource-bound, redaction, and authority invariants.
 
