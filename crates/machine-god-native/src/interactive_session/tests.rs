@@ -19,6 +19,9 @@ mod controls;
 #[path = "controls/undo/tests.rs"]
 mod undo;
 
+#[path = "clipboard/tests.rs"]
+mod clipboard;
+
 #[derive(Default)]
 struct Gate {
     ready: AtomicBool,

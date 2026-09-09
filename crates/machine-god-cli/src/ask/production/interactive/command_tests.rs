@@ -153,6 +153,9 @@ fn aliases_envelopes_and_unknown_prompt_routing_reuse_native_submission_semantic
         "/undo last",
         "/undo --",
         "/undo\r",
+        "/copy last",
+        "/copy --",
+        "/copy\r",
     ] {
         assert!(submission(invalid).is_err(), "{invalid}");
     }
@@ -165,6 +168,10 @@ fn aliases_envelopes_and_unknown_prompt_routing_reuse_native_submission_semantic
     assert!(matches!(
         submission(" \t/undo \t"),
         Ok(Submission::Slash(NativeSlashCommand::Undo, ""))
+    ));
+    assert!(matches!(
+        submission(" \t/copy \t"),
+        Ok(Submission::Slash(NativeSlashCommand::Copy, ""))
     ));
 }
 
@@ -407,7 +414,7 @@ fn missing_explicit_resources_and_fast_capabilities_fail_without_false_success()
                 .unwrap()
                 .contains("does not advertise")
         );
-        for command in ["/allowlist", "/copy", "/workspace list"] {
+        for command in ["/allowlist", "/workspace list"] {
             driver.command(command, 200);
             assert!(
                 String::from_utf8(driver.notice.take().unwrap())
@@ -442,11 +449,9 @@ fn status_escapes_dynamic_content_and_help_does_not_claim_unwired_features() {
         assert!(output.contains("\\u202e"));
         driver.command("/help", 200);
         let help = String::from_utf8(driver.notice.take().unwrap()).unwrap();
-        assert!(help.contains("/compact /undo"));
+        assert!(help.contains("/compact /undo /copy"));
         assert!(
-            help.contains(
-                "Picker, allowlist editing, /copy and workspace editing are not yet wired."
-            )
+            help.contains("Picker, allowlist editing and workspace editing are not yet wired.")
         );
         driver.command("/version", 200);
         assert!(

@@ -17,6 +17,32 @@ missing historical facts.
 These operations neither restore permission grants nor reconstruct volatile
 file-undo history. The host must scope those resources independently.
 
+### Clipboard reply observation
+
+Conversation and runtime `record_snapshot()` wrappers retain the core's immutable
+`Arc<SessionRecord>` without cloning transcript or metadata payloads. This is a
+canonical-memory observation, not a new store receipt or uncertain-write
+reconciliation. Later commits do not retarget an already captured snapshot.
+
+`NativeClipboardReplySelection` selects from one such snapshot without effects.
+Construction does not scan history. Each `next_step` visits at most 256
+message/block positions and incrementally copies at most 4,096 text bytes. It
+chooses the newest assistant message with no tool-call blocks and nonempty text,
+concatenating all text blocks in original order with no separators or rendering.
+Whitespace, Markdown and control bytes remain exact clipboard data. Other roles,
+JSON and tool payloads are not reply text. Group lifecycle state does not define
+reply kind: a canonically saved final assistant remains eligible even when later
+native metadata finalization fails and recovery marks its group interrupted.
+
+Eligibility and the `MAX_FILE_SESSION_BYTES` payload cap (8,651,165 bytes) are
+checked before allocating reply text. An oversized latest eligible reply returns
+`ResourceLimit`, never an older fallback. The final safe conversion to `Arc<str>`
+separately copies at most that cap once, with at most twice the cap in logical
+owned payload during conversion, excluding allocator overhead and the retained
+snapshot. `Progress`, `Selected(Arc<str>)`, `Empty` and resource failure are
+explicit; terminal results are fused and debug output is redacted. Selection
+itself never invokes a clipboard backend, model, tool or metadata writer.
+
 ## Turn admission
 
 `prompt(Prompt, now_ms)` and `continue_turn(InferenceOptions, now_ms)` return

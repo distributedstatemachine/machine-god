@@ -168,7 +168,7 @@ Internal component commits are not deliveries. Their implementation inventory is
   prepared association publication is not rolled back by dropping adoption.
 
 Remaining work includes picker startup/in-session selection, allowlist editing,
-copy/workspace handlers, migration/recovery/doctor cleanup, and remaining
+workspace handlers, migration/recovery/doctor cleanup, and remaining
 policy/workspace scenarios. Bare/latest/exact startup, shared cache/human prompts
 and owned raw input are composed. Clear/new/reset allocate fresh IDs;
 clear/new carry terminals forward, while reset and live resume stop/forget.
@@ -189,15 +189,25 @@ tests and ten replay tests, with three native/five CLI private-helper ignores.
 Workspace and WASI CLI Clippy, formatting and bounded docs checks pass. Its fresh
 locked release passes all 96 command tests and all seven production-input tests;
 the 254 CLI unit tests also pass using that exact release helper.
-The next integration composes `/undo` with the host's real file tracker and
+Checkpoint `65886bf` composes `/undo` with the host's real file tracker and
 owned worker scope, preserving typed receipts through active turns, blocked
 output, transitions and shutdown. A tracked destination reconstruction no
 longer makes a valid inverse rename report uncertainty; external replacements
 remain rejected. Combined checks pass 48 undo and 34 owner/control tests,
-257 CLI unit tests with
-five private-helper ignores, 96 command tests and ten replay tests, plus
-workspace warnings-denied Clippy. These checks use the preceding release for
-private helper dispatch, not as executable acceptance of the new handler.
+257 CLI unit tests with five private-helper ignores, 96 command tests and ten
+replay tests, plus workspace warnings-denied Clippy. Its fresh locked release
+passes all 96 command tests and all seven production-input tests; all 257 CLI
+unit tests also pass using that exact release helper.
+The next integration composes `/copy` from an acceptance-time canonical snapshot
+through independent native selection/process ownership and acknowledged CLI
+receipts. Clipboard work neither blocks generation nor retargets after a session
+change; shutdown settles it before native-free final output. Three component
+trees are integrated and removed with their commits retained. Their focused
+checks pass. Combined checks pass 34 clipboard tests with one private-helper
+ignore, all 44 owner/control tests, 261 CLI unit tests with five private-helper
+ignores, 96 command tests and ten replay tests. Replacement workspace Clippy,
+WASI CLI Clippy, formatting and bounded docs checks pass. The fresh checkpoint
+release and production-helper checks are next, not final feature acceptance.
 Typed historical cards and the remaining command/session scenarios still need
 implementation; complete local, review and exact remote feature gates stay open.
 

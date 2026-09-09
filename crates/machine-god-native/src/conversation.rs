@@ -366,6 +366,13 @@ impl NativeConversation {
         self.session.record()
     }
 
+    /// Pins canonical memory without cloning transcript or metadata payloads.
+    /// This is not a store receipt or uncertain-write reconciliation.
+    #[must_use]
+    pub fn record_snapshot(&self) -> Arc<SessionRecord> {
+        self.session.record_snapshot()
+    }
+
     #[must_use]
     pub fn is_busy(&self) -> bool {
         self.active.load(Ordering::Acquire) || self.session.has_active_turn()

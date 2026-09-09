@@ -117,6 +117,14 @@ pub use interactive_terminal::{
 pub use interactive_terminal_size::{
     NativeInteractiveTerminalSizeError, NativeInteractiveTerminalSizeReader,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod clipboard;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use clipboard::{NativeClipboard, NativeClipboardError, NativeClipboardExecutable};
+mod clipboard_reply;
+pub use clipboard_reply::{
+    NativeClipboardReplyError, NativeClipboardReplySelection, NativeClipboardReplyStep,
+};
 mod interactive_prompts;
 pub use interactive_prompts::{
     MAX_NATIVE_INTERACTIVE_PROMPT_PAYLOAD_BYTES, MAX_NATIVE_INTERACTIVE_PROMPTS,
@@ -221,10 +229,12 @@ mod reference_host;
 ))]
 pub use interactive_session::{
     NativeInteractiveControl, NativeInteractiveControlError, NativeInteractiveControlId,
-    NativeInteractiveControlOutcome, NativeInteractiveControlReceipt, NativeInteractiveError,
-    NativeInteractiveInitialSession, NativeInteractiveOutcome, NativeInteractiveRequestId,
-    NativeInteractiveRequestReceipt, NativeInteractiveSession, NativeInteractiveSessionOptions,
-    NativeInteractiveTransition, NativeInteractiveTransitionReceipt,
+    NativeInteractiveControlOutcome, NativeInteractiveControlReceipt, NativeInteractiveCopyError,
+    NativeInteractiveCopyId, NativeInteractiveCopyOutcome, NativeInteractiveCopyReceipt,
+    NativeInteractiveError, NativeInteractiveInitialSession, NativeInteractiveOutcome,
+    NativeInteractiveRequestId, NativeInteractiveRequestReceipt, NativeInteractiveSession,
+    NativeInteractiveSessionOptions, NativeInteractiveTransition,
+    NativeInteractiveTransitionReceipt,
 };
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -15,7 +15,12 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+mod clipboard;
 mod controls;
+pub use clipboard::{
+    NativeInteractiveCopyError, NativeInteractiveCopyId, NativeInteractiveCopyOutcome,
+    NativeInteractiveCopyReceipt,
+};
 pub use controls::{
     NativeInteractiveControl, NativeInteractiveControlError, NativeInteractiveControlId,
     NativeInteractiveControlOutcome, NativeInteractiveControlReceipt,
@@ -34,6 +39,10 @@ pub struct NativeInteractiveSessionOptions {
     defaults: NativeModelPreferences,
     process_model: Option<String>,
     catalog: Option<Arc<NativeModelCatalog>>,
+    clipboard: Option<(
+        crate::NativeClipboardExecutable,
+        Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    )>,
 }
 impl fmt::Debug for NativeInteractiveSessionOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -55,6 +64,7 @@ impl NativeInteractiveSessionOptions {
             defaults: workspace_defaults,
             process_model: None,
             catalog: None,
+            clipboard: None,
         })
     }
     /// Applies only to initial startup; fresh transitions use workspace defaults.
@@ -74,6 +84,17 @@ impl NativeInteractiveSessionOptions {
     #[must_use]
     pub fn with_catalog(mut self, catalog: Arc<NativeModelCatalog>) -> Self {
         self.catalog = Some(catalog);
+        self
+    }
+    /// Retains explicit clipboard authority without inspecting or starting it.
+    /// Missing or invalid optional clipboard authority never prevents startup.
+    #[must_use]
+    pub fn with_clipboard(
+        mut self,
+        executable: crate::NativeClipboardExecutable,
+        environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    ) -> Self {
+        self.clipboard = Some((executable, environment));
         self
     }
 }
@@ -210,6 +231,10 @@ pub struct NativeInteractiveSession {
     control: Option<controls::OwnedControl>,
     control_outcome: Option<NativeInteractiveControlOutcome>,
     next_control: u64,
+    clipboard: Result<crate::NativeClipboard, crate::NativeClipboardError>,
+    copy: Option<clipboard::OwnedCopy>,
+    copy_outcome: Option<NativeInteractiveCopyOutcome>,
+    next_copy: u64,
     cancel_requested: bool,
     shutting_down: bool,
     closed: bool,
@@ -227,7 +252,7 @@ impl NativeInteractiveSession {
     #[must_use]
     pub fn open(
         host: Arc<NativeReferenceHost>,
-        options: NativeInteractiveSessionOptions,
+        mut options: NativeInteractiveSessionOptions,
         initial: NativeInteractiveInitialSession,
         now_ms: i64,
     ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
@@ -270,6 +295,18 @@ impl NativeInteractiveSession {
                 )
                 .await
                 .map_err(NativeInteractiveError::Terminal)?;
+            let clipboard = options.clipboard.take().map_or(
+                Err(crate::NativeClipboardError::Unavailable),
+                |(executable, environment)| {
+                    crate::NativeClipboard::new(
+                        executable,
+                        options.workspace.clone(),
+                        environment,
+                        host.control_workers()
+                            .ok_or(crate::NativeClipboardError::Unavailable)?,
+                    )
+                },
+            );
             Ok(Self {
                 host,
                 options,
@@ -284,6 +321,10 @@ impl NativeInteractiveSession {
                 control: None,
                 control_outcome: None,
                 next_control: 1,
+                clipboard,
+                copy: None,
+                copy_outcome: None,
+                next_copy: 1,
                 cancel_requested: false,
                 shutting_down: false,
                 closed: false,
@@ -343,11 +384,13 @@ impl NativeInteractiveSession {
                 .map(|transition| transition.request.id)
         });
         self.pending = Some(Request { id, kind, now_ms });
+        self.cancel_copy();
         self.presentation.take();
         self.notify();
         Ok(NativeInteractiveRequestReceipt { id, superseded })
     }
     pub fn request_shutdown(&mut self) {
+        self.cancel_copy();
         self.shutting_down = true;
         self.pending.take();
         self.presentation.take();

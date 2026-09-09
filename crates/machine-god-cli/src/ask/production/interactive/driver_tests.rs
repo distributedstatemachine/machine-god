@@ -467,6 +467,159 @@ fn output_failure_still_settles_native_owner_before_return() {
     assert_eq!(result.outcome, AskCommandOutcome::OutputFailure);
 }
 
+#[test]
+fn copy_renderer_preserves_fixed_outcomes_without_echoing_reply_or_failure_details() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    let result = runtime.block_on(async {
+        let before = harness.driver.owner.runtime().record();
+        harness.driver.command("/copy extra", 101);
+        assert!(!harness.driver.owner.has_pending_copy());
+        harness.driver.command("/copy", 102);
+        until(&mut harness, |driver| driver.copy_outcome.is_some()).await;
+        let mut receipt = harness.driver.copy_outcome.take().unwrap();
+        assert!(matches!(
+            receipt.result,
+            Ok(native::NativeInteractiveCopyReceipt::Empty)
+        ));
+        assert!(
+            String::from_utf8(super::super::clipboard::render(&receipt).unwrap())
+                .unwrap()
+                .contains("No assistant reply to copy.")
+        );
+        receipt.result = Ok(native::NativeInteractiveCopyReceipt::Copied);
+        assert!(
+            String::from_utf8(super::super::clipboard::render(&receipt).unwrap())
+                .unwrap()
+                .contains("Copied to clipboard.")
+        );
+        for error in [
+            native::NativeClipboardError::InvalidAuthority,
+            native::NativeClipboardError::ResourceLimit,
+            native::NativeClipboardError::Busy,
+            native::NativeClipboardError::Unavailable,
+            native::NativeClipboardError::Cancelled,
+            native::NativeClipboardError::TimedOut,
+            native::NativeClipboardError::WriteFailed,
+            native::NativeClipboardError::ExitFailed,
+        ] {
+            receipt.result = Err(native::NativeInteractiveCopyError::Clipboard(error));
+            let bytes = super::super::clipboard::render(&receipt).unwrap();
+            assert!(bytes.len() < 128);
+            assert!(
+                String::from_utf8(bytes)
+                    .unwrap()
+                    .contains("Failed to copy to clipboard.")
+            );
+        }
+        for error in [
+            native::NativeInteractiveCopyError::ResourceLimit,
+            native::NativeInteractiveCopyError::Cancelled,
+        ] {
+            receipt.result = Err(error);
+            assert!(
+                String::from_utf8(super::super::clipboard::render(&receipt).unwrap())
+                    .unwrap()
+                    .contains("Failed to copy to clipboard.")
+            );
+        }
+        assert_eq!(harness.driver.owner.runtime().record(), before);
+        assert!(fixture.transport.requests().is_empty());
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_tail(&mut tail));
+}
+
+#[test]
+fn copy_failure_survives_blocked_output_and_final_flush_without_failing_the_session() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    let (result, receipt_id) = runtime.block_on(async {
+        fixture.transport.push(support::answer());
+        harness
+            .driver
+            .owner
+            .enqueue("produce a saved reply".into())
+            .unwrap();
+        let _ = pump_until(&mut harness, |driver| {
+            presentation_idle(driver) && driver.owner.runtime().status().queued_jobs == 0
+        })
+        .await;
+        let before = harness.driver.owner.runtime().record();
+        harness.driver.note(b"\n[blocked output]\n");
+        until(&mut harness, |driver| driver.in_flight.is_some()).await;
+        std::io::Write::write_all(&mut harness.input_writer, b"/copy\n").unwrap();
+        until(&mut harness, |driver| driver.copy_outcome.is_some()).await;
+        let receipt = harness.driver.copy_outcome.as_ref().unwrap();
+        assert!(matches!(
+            receipt.result,
+            Err(native::NativeInteractiveCopyError::Clipboard(
+                native::NativeClipboardError::Unavailable
+            ))
+        ));
+        let receipt_id = receipt.id;
+        harness.driver.command("/copy", 201);
+        assert!(
+            !harness.driver.owner.has_pending_copy(),
+            "unacknowledged receipt bounds further copy admission"
+        );
+        assert_eq!(harness.driver.owner.runtime().record(), before);
+        assert_eq!(fixture.transport.requests().len(), 1);
+        assert!(
+            !harness.driver.native_failed,
+            "optional clipboard failure is not a failed conversation"
+        );
+        harness.driver.shutdown();
+        let result = poll_fn(|cx| harness.driver.poll(cx, &mut harness.signals)).await;
+        assert_eq!(result.outcome, AskCommandOutcome::Completed);
+        (result, receipt_id)
+    });
+    let mut tail = dispose(harness, fixture, result);
+    assert_eq!(tail.presentation.copies.front().unwrap().id, receipt_id);
+    let mut saw_message = false;
+    let mut saw_flush = false;
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                let result = tail.presentation.poll(cx, &mut tail.signals);
+                if let Ok(work) = tail.work.try_recv() {
+                    match work {
+                        OutputWork::Write(bytes) => {
+                            assert!(bytes.len() <= 4096);
+                            if String::from_utf8_lossy(&bytes)
+                                .contains("Failed to copy to clipboard.")
+                            {
+                                saw_message = true;
+                                assert_eq!(
+                                    tail.presentation.copies.front().unwrap().id,
+                                    receipt_id
+                                );
+                            }
+                        }
+                        OutputWork::Flush if saw_message && !saw_flush => {
+                            saw_flush = true;
+                            assert_eq!(tail.presentation.copies.front().unwrap().id, receipt_id);
+                        }
+                        OutputWork::Flush => {}
+                    }
+                    tail.ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
+                    cx.waker().wake_by_ref();
+                }
+                result
+            }),
+        )
+        .await
+        .unwrap()
+    });
+    assert!(saw_message && saw_flush);
+    assert!(tail.presentation.copies.is_empty());
+    assert_eq!(result.outcome, AskCommandOutcome::Completed);
+}
+
 fn permission(harness: &Harness, id: &str) -> PermissionRequest {
     PermissionRequest {
         id: PermissionRequestId::new(id).unwrap(),

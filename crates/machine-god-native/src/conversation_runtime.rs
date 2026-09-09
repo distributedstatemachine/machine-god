@@ -290,6 +290,13 @@ impl NativeConversationRuntime {
         self.conversation.record()
     }
 
+    /// Pins canonical memory without cloning transcript or metadata payloads.
+    /// Later commits cannot retarget this observation; writers remain unblocked.
+    #[must_use]
+    pub fn record_snapshot(&self) -> Arc<SessionRecord> {
+        self.conversation.record_snapshot()
+    }
+
     /// Closes new admission and requests cancellation of an owned active turn.
     /// The caller must keep polling its admission/turn and native finalizer.
     /// Dropping the returned guard reopens admission without changing inputs.

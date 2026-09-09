@@ -1,5 +1,6 @@
 //! Interactive presentation host. Native owns sessions, policy and persistence.
 
+mod clipboard;
 mod commands;
 mod composer;
 mod composer_view;
@@ -30,11 +31,11 @@ use driver::FinalPresentation;
 use input_lines::{InputBinding, InputLines};
 use machine_god_core::BackgroundOutputOwner;
 use machine_god_native::{
-    NativeInteractiveControlOutcome, NativeInteractiveInitialSession, NativeInteractiveInput,
-    NativeInteractiveInputHelper, NativeInteractiveInputSource, NativeInteractiveOutcome,
-    NativeInteractivePromptBridge, NativeInteractivePromptInbox, NativeInteractivePromptLimits,
-    NativeInteractiveSession, NativeInteractiveSessionOptions, NativeInteractiveTerminal,
-    NativeResumeTarget,
+    NativeInteractiveControlOutcome, NativeInteractiveCopyOutcome, NativeInteractiveInitialSession,
+    NativeInteractiveInput, NativeInteractiveInputHelper, NativeInteractiveInputSource,
+    NativeInteractiveOutcome, NativeInteractivePromptBridge, NativeInteractivePromptInbox,
+    NativeInteractivePromptLimits, NativeInteractiveSession, NativeInteractiveSessionOptions,
+    NativeInteractiveTerminal, NativeResumeTarget,
 };
 use presentation::Modal;
 use std::{
@@ -83,6 +84,7 @@ pub(super) fn execute(
                     } = prepare_conversation_host_with_activation(bridge.clone(), bridge, || {
                         control.activate_turn()
                     })?;
+                    let clipboard = clipboard::capture(&workspace);
                     settle(
                         host,
                         InputSettlement {
@@ -103,6 +105,7 @@ pub(super) fn execute(
                                 if let Some(catalog) = &catalog {
                                     options = options.with_catalog(catalog.clone());
                                 }
+                                let options = clipboard::configure(options, clipboard);
                                 let replay_history =
                                     !matches!(selection, InteractiveSessionSelection::Fresh);
                                 let owner = NativeInteractiveSession::open(
@@ -292,6 +295,7 @@ struct Render {
 enum ReceiptKind {
     Outcome,
     Control,
+    Copy,
 }
 enum InFlight {
     Bytes,
@@ -316,6 +320,7 @@ struct Driver {
     notice: Option<Vec<u8>>,
     outcome: Option<NativeInteractiveOutcome>,
     control_outcome: Option<NativeInteractiveControlOutcome>,
+    copy_outcome: Option<NativeInteractiveCopyOutcome>,
     scope_active: bool,
     shutting_down: bool,
     input_ended: bool,
@@ -362,6 +367,7 @@ impl Driver {
             ),
             outcome: None,
             control_outcome: None,
+            copy_outcome: None,
             scope_active: true,
             shutting_down: false,
             input_ended: false,

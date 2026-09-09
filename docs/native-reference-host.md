@@ -509,6 +509,39 @@ Display and debug output include only the stable stage, never a token, path,
 environment value, endpoint diagnostic, operating-system error, or injected
 component detail.
 
+## Interactive clipboard ownership
+
+`NativeInteractiveSessionOptions::with_clipboard` retains explicit executable
+and environment inputs without effects. Opening the interactive owner binds
+the optional clipboard capability to the verified workspace and the exact
+reference host's control-worker scope. Missing or invalid clipboard authority
+does not prevent interactive startup; an eligible copy reports its fixed
+availability error. Empty history succeeds without invoking the backend.
+
+`request_copy` captures one immutable canonical snapshot and its exact source
+principal at acceptance. Incremental selection and the clipboard response have
+one independent operation slot and one retained outcome slot. An unread copy
+receipt blocks another copy, not model admission, active inference, durable
+controls, or session transitions. Each owner poll performs at most one selection
+step or response poll before continuing its other work. Copied text never
+becomes a prompt, transcript mutation, or terminal output payload.
+
+Transitions and shutdown cancel the copy's private token immediately. They
+discard unfinished selection and retain a cancellation receipt; a started
+backend response remains polled independently without delaying the transition.
+Every receipt retains its original source even after a different session is
+active. Ordinary turn cancellation does not cancel clipboard work. Errors do
+not imply that an external clipboard was unchanged.
+
+`has_pending_copy` remains true while an accepted copy needs polling, including
+after the session reports closed or a shutdown failure. The presentation host
+must continue polling until it is false and transfer the retained
+`take_copy_outcome` result before switching to native-free final output. A copy
+response is not a child-reap or worker-join receipt: the full reference-host
+completion still covers actual worker and deferred child cleanup, independently
+of blocked presentation output. Dropping a started response requests backend
+private cancellation rather than cancelling any caller's token.
+
 ## Deferred composition
 
 The reference host does not itself supply a full interactive CLI/TUI,

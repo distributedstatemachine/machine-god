@@ -20,12 +20,12 @@ const BUSY: &[u8] = b"\n[previous control is still pending; wait for its receipt
 const UNAVAILABLE: &[u8] = b"\n[command unavailable in this interactive host]\n> ";
 const HELP: &[u8] = b"\nCommands implemented in this host:\n\
 /help /status /version /quit (/exit) /cancel\n\
-/clear /new /reset /resume (latest) /continue /rename <title> /compact /undo\n\
+/clear /new /reset /resume (latest) /continue /rename <title> /compact /undo /copy\n\
 /permissions [ask|auto|yolo|reset] /sandbox [os|none]\n\
 /models /model [id-or-query|effort <name>|save|save-default] /fast\n\
 Model selection and /fast request native session and available user-default saves;\n\
 their independent results are reported separately. /resume has no arguments.\n\
-Picker, allowlist editing, /copy and workspace editing are not yet wired.\n> ";
+Picker, allowlist editing and workspace editing are not yet wired.\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -112,12 +112,13 @@ impl Driver {
             ),
             Command::Compact => self.control_command(NativeInteractiveControl::Compact, now_ms),
             Command::Undo => self.control_command(NativeInteractiveControl::UndoLast, now_ms),
+            Command::Copy => self.copy_command(),
             Command::Permissions => self.permissions_command(payload),
             Command::Sandbox => self.sandbox_command(payload),
             Command::Model => self.model_command(payload, now_ms),
             Command::Models => self.show_models(),
             Command::Fast => self.fast_command(now_ms),
-            Command::Allowlist | Command::Copy | Command::Workspace => {
+            Command::Allowlist | Command::Workspace => {
                 self.note(UNAVAILABLE);
             }
         }
@@ -134,6 +135,12 @@ impl Driver {
             self.note(b"\n[cancellation requested; native work will settle]\n> ");
         } else {
             self.note(b"\n[no cancellable current work]\n> ");
+        }
+    }
+
+    fn copy_command(&mut self) {
+        if self.copy_outcome.is_some() || self.owner.request_copy().is_err() {
+            self.note(b"\n[copy unavailable or previous copy receipt still pending]\n> ");
         }
     }
 

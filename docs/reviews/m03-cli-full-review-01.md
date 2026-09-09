@@ -176,3 +176,45 @@ source changes; no fixture or production behavior is weakened.
 
 Both original worker trees are integrated and removed, with commits retained.
 These are internal component checks, not final adversarial or remote gates.
+
+Exact integration `65886bf` subsequently passes a fresh locked release build,
+all 96 production command tests and all seven production-input tests. All
+257 CLI unit tests also pass using that exact release helper, with the same
+five private-helper ignores. Its integration worktree is removed.
+
+## Interactive clipboard integration
+
+Components `0a801a1`, `28489e0` and `68c35e8` provide the explicit process
+capability, incremental canonical reply selection and independent native owner
+lane. Their focused checks pass 16 backend tests with one private helper ignore,
+eight selector tests and 44 owner/control tests including ten clipboard scenarios.
+Each component passes scoped Rust 1.94.1 warnings-denied Clippy, formatting and
+bounded documentation checks. Their clean worker trees are integrated and removed.
+
+The selector regression saves a final assistant reply, fails native metadata
+finalization, reloads and recovers interrupted history without discarding that
+valid saved answer. Owner tests retain the acceptance snapshot after a newer
+reply is saved and exercise real fixture child cancellation/full-host joining.
+No tests invoke the user's clipboard. Initial fixture corrections supplied the
+required permission handler and monotonic native timestamps; production checks
+were not relaxed. A backend invalid-image fixture also established macOS
+`std::process` executable-format behavior; a missing interpreter now exercises
+the distinct spawn-failure category without guessing from executable headers.
+
+CLI composition captures startup authority, dispatches `/copy`, and preserves
+typed receipts through blocked output and final flush acknowledgement. An
+optional clipboard failure does not fail the conversation. The replacement
+combined CLI suite passes 261 tests with five private-helper ignores after its
+FIFO fixture was changed to the repository's existing POSIX `mkfifo` convention;
+the attempted Rust fixture functions were unavailable on this target. The
+complete feature's final local, fresh-review and exact remote gates remain open.
+
+Combined native checks pass 34 clipboard tests with one private-helper ignore
+and all 44 owner/control tests. Initial workspace Clippy rejected the startup
+function at 104 lines; optional clipboard configuration was extracted into its
+own presentation module without suppressing the lint. The replacement passes
+all 261 CLI unit tests with five private-helper ignores, all 96 command tests,
+ten replay tests, workspace all-target/all-feature warnings-denied Clippy and
+WASI CLI Clippy. Formatting, bounded documentation and diff checks pass. These
+checks use the preserved exact `9273ac4` release for private helper dispatch;
+fresh release acceptance of this clipboard checkpoint remains separate.

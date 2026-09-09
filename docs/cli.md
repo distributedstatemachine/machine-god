@@ -155,7 +155,7 @@ establish CLI support. `/help` describes the handlers actually wired in this hos
 
 The wired handlers include `/help`, `/status`, `/version`, `/quit` (`/exit`),
 `/cancel`, `/clear`, `/new`, `/reset`, argumentless `/resume` (latest), `/continue`,
-`/rename <title>`, `/compact` and argumentless `/undo`. Policy selection uses
+`/rename <title>`, `/compact` and argumentless `/undo` and `/copy`. Policy selection uses
 `/permissions [ask|auto|yolo|reset]` and `/sandbox [os|none]`. Model controls are
 `/models`, `/model [id-or-query|effort <name>|save|save-default]` and `/fast`.
 Model/effort/fast changes request native session and explicitly injected
@@ -183,6 +183,32 @@ artifacts are retained; no automatic retry or rollback is promised. As with
 other controls, the exact native receipt stays owned until output acknowledgement,
 including blocked output and the native-free shutdown tail. New controls wait
 while an earlier receipt is pending.
+
+`/copy` captures the current canonical transcript when accepted and asks native
+to select the newest nonempty assistant reply without tool calls. It preserves
+the saved text bytes, not rendered terminal output or an uncommitted stream.
+An empty history reports “No assistant reply to copy.” without invoking a
+clipboard backend. Normal successful clipboard completion reports “Copied to
+clipboard.”; unavailable authority, cancellation, limits and process failures
+report “Failed to copy to clipboard.” without echoing the payload or environment.
+Clipboard failure alone does not turn a successful conversation into a failure.
+
+The blocking startup host resolves only `pbcopy` on macOS or `xclip` on Linux
+from its frozen PATH, with at most 512 search entries and bounded path spelling,
+and supplies a retained executable and frozen environment. Native constructs
+the actual clipboard operation in the complete host's worker scope. Missing
+clipboard support does not prevent interactive startup. No fallback clipboard
+protocol or shell command is constructed; process behavior is defined by the
+[native clipboard capability](clipboard.md).
+
+Clipboard selection/process work has an independent polling lane: it does not
+cancel or delay model generation or durable controls. A session transition or
+shutdown cancels pending copy work without retargeting its original snapshot.
+The CLI retains its typed receipt through blocked output and final flush
+acknowledgement; another copy waits for that receipt, but ordinary prompts do
+not. Started clipboard work settles before conversion to the native-free output
+tail, and full host completion still joins its real worker and child cleanup
+before the tail is presented.
 
 ## Identity
 

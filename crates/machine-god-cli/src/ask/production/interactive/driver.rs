@@ -3,8 +3,9 @@
 use super::input_lines::LineError;
 use super::{
     AskCommandOutcome, AskSignals, Context, Driver, InFlight, InputBinding, Modal,
-    NativeInteractiveControlOutcome, NativeInteractiveOutcome, OutputAcknowledgement, OutputWork,
-    Poll, ReceiptKind, Render, SIGNAL_OUTPUT_GRACE, TurnDriveResult, principal, wall_clock_ms,
+    NativeInteractiveControlOutcome, NativeInteractiveCopyOutcome, NativeInteractiveOutcome,
+    OutputAcknowledgement, OutputWork, Poll, ReceiptKind, Render, SIGNAL_OUTPUT_GRACE,
+    TurnDriveResult, principal, wall_clock_ms,
 };
 use machine_god_core::{EngineEvent, ModelEvent, TurnEvent};
 use machine_god_native::{
@@ -55,7 +56,7 @@ impl Driver {
         self.poll_output_grace(cx);
 
         let native_settled = self.owner.is_closed() || self.owner.shutdown_error().is_some();
-        if self.shutting_down && native_settled {
+        if self.shutting_down && native_settled && !self.owner.has_pending_copy() {
             return Poll::Ready(TurnDriveResult {
                 outcome: self.signal.map_or_else(
                     || {
@@ -85,6 +86,9 @@ impl Driver {
         let mut controls = std::collections::VecDeque::with_capacity(2);
         controls.extend(self.control_outcome.take());
         controls.extend(self.owner.take_control_outcome());
+        let mut copies = std::collections::VecDeque::with_capacity(2);
+        copies.extend(self.copy_outcome.take());
+        copies.extend(self.owner.take_copy_outcome());
         let native_failed = self.native_failed
             || outcomes.iter().any(outcome_failed)
             || controls.iter().any(control_failed);
@@ -95,6 +99,7 @@ impl Driver {
             notice: self.notice,
             outcomes,
             controls,
+            copies,
             result,
             native_failed,
             output_failed: self.output_failed,
@@ -121,6 +126,9 @@ impl Driver {
     }
 
     fn observe_outcomes(&mut self) {
+        if self.copy_outcome.is_none() {
+            self.copy_outcome = self.owner.take_copy_outcome();
+        }
         if self.control_outcome.is_none()
             && let Some(outcome) = self.owner.take_control_outcome()
         {
@@ -411,6 +419,9 @@ impl Driver {
                 Some(ReceiptKind::Control) => {
                     self.control_outcome.take();
                 }
+                Some(ReceiptKind::Copy) => {
+                    self.copy_outcome.take();
+                }
                 None => {}
             }
         }
@@ -461,6 +472,12 @@ impl Driver {
             (render_outcome(outcome), None, Some(ReceiptKind::Outcome))
         } else if let Some(outcome) = &self.control_outcome {
             (render_control(outcome), None, Some(ReceiptKind::Control))
+        } else if let Some(outcome) = &self.copy_outcome {
+            (
+                super::clipboard::render(outcome),
+                None,
+                Some(ReceiptKind::Copy),
+            )
         } else if let Some(notice) = self.notice.take() {
             (Ok(notice), None, None)
         } else if let Some(modal) = &self.modal {
@@ -572,6 +589,7 @@ pub(super) struct FinalPresentation {
     notice: Option<Vec<u8>>,
     outcomes: std::collections::VecDeque<NativeInteractiveOutcome>,
     controls: std::collections::VecDeque<NativeInteractiveControlOutcome>,
+    copies: std::collections::VecDeque<NativeInteractiveCopyOutcome>,
     result: TurnDriveResult,
     native_failed: bool,
     output_failed: bool,
@@ -637,6 +655,9 @@ impl FinalPresentation {
                             Some(ReceiptKind::Control) => {
                                 self.controls.pop_front();
                             }
+                            Some(ReceiptKind::Copy) => {
+                                self.copies.pop_front();
+                            }
                             None => {}
                         }
                     }
@@ -652,6 +673,8 @@ impl FinalPresentation {
                 Some((render_outcome(outcome), Some(ReceiptKind::Outcome)))
             } else if let Some(control) = self.controls.front() {
                 Some((render_control(control), Some(ReceiptKind::Control)))
+            } else if let Some(copy) = self.copies.front() {
+                Some((super::clipboard::render(copy), Some(ReceiptKind::Copy)))
             } else if let Some(notice) = self.notice.take() {
                 Some((Ok(notice), None))
             } else {

@@ -16,6 +16,9 @@ const MAX_PROGRESS_STEPS: usize = 32;
 impl NativeInteractiveSession {
     pub(super) fn drive(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
         self.wake = Some(cx.waker().clone());
+        // Clipboard response/cleanup is independent of durable controls and
+        // never prevents active provider, transition, or shutdown progress.
+        self.poll_copy(cx);
         // Finish accepted saves before closing admission or the actual turn's
         // metadata editor. This lane never waits for presentation consumption.
         if self.poll_control(cx).is_pending() {
@@ -109,7 +112,7 @@ impl NativeInteractiveSession {
                 return Poll::Ready(());
             }
             if self.current.status().queued_jobs == 0 {
-                return Poll::Pending;
+                return self.readiness();
             }
             let runtime = Arc::clone(&self.current);
             self.admission = Some(Box::pin(async move { runtime.start_next(now_ms).await }));
@@ -164,6 +167,7 @@ impl NativeInteractiveSession {
     fn readiness(&self) -> Poll<()> {
         if self.outcome.is_some()
             || self.control_outcome.is_some()
+            || self.copy_outcome.is_some()
             || self.presentation.is_some()
             || self.closed
             || self.shutdown_error.is_some()
