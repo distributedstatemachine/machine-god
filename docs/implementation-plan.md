@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `finish resume/session lifecycle, interactive commands and remaining policy/workspace scenarios before the full feature gates`
+- Next gate: `finish workspace authority/CLI, migration/recovery/doctor, recording and remaining session scenarios before the full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -167,8 +167,8 @@ Internal component commits are not deliveries. Their implementation inventory is
   revision before load; consuming adoption rechecks durable/live state. A
   prepared association publication is not rolled back by dropping adoption.
 
-Remaining work includes allowlist editing,
-workspace handlers, migration/recovery/doctor cleanup, and remaining
+Remaining work includes workspace handlers and actual multi-root tools,
+migration/recovery/doctor cleanup, recording, and remaining
 policy/workspace scenarios. Bare/latest/exact/picker startup, in-session picker
 selection, shared cache/human prompts and owned raw input are composed.
 Clear/new/reset allocate fresh IDs;
@@ -240,6 +240,15 @@ tests, seven production-input tests and all 295 CLI unit tests with five
 private-helper ignores. Workspace configuration, retained multi-root authority
 and context-aware tool preparation are now being implemented in isolated trees;
 actual tool/approval/sandbox/search integration and CLI handlers remain required.
+Contextual tool preparation is integrated at `a2a14ca`: core and wrapper tests,
+61 tool-loop tests, 295 CLI unit tests with five private-helper ignores, all 96
+command tests, workspace warnings-denied Clippy and core WASI lint pass. The clean
+preparation worktree is removed. Descriptor scope component `a18661b` passes 17
+focused tests; its public wiring and real install caller remain integration work.
+Schema-v7 workspace persistence is integrated at `df7bdb5`, with 113 scoped tests,
+native warnings-denied Clippy and both WASI feature checks passing. The clean
+configuration and authority worktrees are removed. The operation service and
+permission-independent exact-turn scope ownership are being composed separately.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal

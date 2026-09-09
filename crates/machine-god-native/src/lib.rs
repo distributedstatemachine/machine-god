@@ -74,7 +74,7 @@ mod user_config_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use user_config_store::{
     NativeUserConfigError, NativeUserConfigSnapshot, NativeUserConfigStore,
-    NativeUserPermissionCommit,
+    NativeUserPermissionCommit, NativeUserWorkspaceCommit, NativeWorkspaceCommitDurability,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation;
@@ -586,7 +586,8 @@ pub use config::{
     NativeConfigError, NativeConfigErrorKind, NativeConfiguredPermissionMutation,
     NativeConfiguredPermissionMutationOutcome, NativeConfiguredPermissionReset,
     NativeConfiguredPermissionScope, NativeConfiguredPermissionSources, NativeCredentialSourceKind,
-    NativeProviderKind, NativeTransportKind, load_native_config, load_process_config,
+    NativeProviderKind, NativeSavedWorkspaceDirectory, NativeTransportKind,
+    NativeWorkspaceDirectoryMutation, load_native_config, load_process_config,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation::{

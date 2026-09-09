@@ -361,3 +361,31 @@ five private-helper ignores. Workspace all-target/all-feature warnings-denied
 Clippy passes. The scoped WASI-fix review reports zero actionable findings and
 its clean isolated checkout is removed. These close the allowlist checkpoint's
 release evidence, not the combined CLI feature or its final review/remote gates.
+
+## Workspace authority integration
+
+Context-preparation component `e3571cb`, integrated as `a2a14ca`, forwards the
+exact session/incarnation/turn/call tuple through effect-free preparation and the
+native history/permission wrappers. Existing tools retain their default preflight.
+All core tests and two doc tests, 61 tool-loop tests, eight history-wrapper and
+four permission-wrapper tests pass. Combined CLI checks pass 295 unit tests with
+five private-helper ignores and all 96 command tests, using Cargo's new command
+executable and the exact `d55a45a` terminal helper. Workspace warnings-denied
+Clippy, core all-target WASI lint, formatting and documentation checks pass.
+The clean preparation worktree is removed after integration.
+
+Authority component `79f2553`, integrated as `a18661b`, passes 17 descriptor/scope
+tests, formatting and documentation checks. Its standalone lint run has exactly
+two integration-only unused findings: the private install method and its manager
+token, pending the real operation-service caller. They are not suppressed and
+that run is not called green. Public module wiring remains part of integration.
+The component's clean worktree is removed.
+
+Configuration component `0c0a5c3`, integrated as `df7bdb5`, passes 44 config-unit,
+19 store-unit, 32 config-integration and 18 store-integration tests. Latest-state
+directory edits retain before/intended sets through uncertain publication and
+check saved-plus-staged-launch capacity under the writer lock. Existing model
+and permission CAS routes remain unchanged. Native all-target/all-feature Clippy,
+minimal and all-feature WASI lint, formatting and bounded documentation checks
+pass. Temporary exports were restored before commit and its clean worktree is
+removed. Actual service, turn binding and tool/CLI integration remain required.

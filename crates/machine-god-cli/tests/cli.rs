@@ -1859,7 +1859,7 @@ fn doctor_config_failures_are_report_data_and_never_reflect_inputs() {
         ),
         (
             "unsupported",
-            br#"{"schema_version":7,"future":"CLI_DOCTOR_VERSION_SECRET"}"#.to_vec(),
+            br#"{"schema_version":8,"future":"CLI_DOCTOR_VERSION_SECRET"}"#.to_vec(),
             "native configuration schema version is unsupported",
             "CLI_DOCTOR_VERSION_SECRET",
         ),
@@ -3303,7 +3303,7 @@ fn invalid_permission_configs_are_fixed_redacted_failures_without_writes() {
         ),
         (
             "unsupported",
-            br#"{"schema_version":7,"future_secret":"CLI_UNSUPPORTED_SECRET"}"#.to_vec(),
+            br#"{"schema_version":8,"future_secret":"CLI_UNSUPPORTED_SECRET"}"#.to_vec(),
         ),
         ("oversized", oversized),
     ];
