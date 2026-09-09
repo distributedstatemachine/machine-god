@@ -304,6 +304,15 @@ mod session_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_lifecycle;
 mod session_listing;
+mod session_maintenance;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use session_maintenance::NativeSessionMaintenance;
+pub use session_maintenance::{
+    NativeSessionCleanupMode, NativeSessionCleanupReport, NativeSessionCleanupStatus,
+    NativeSessionMaintenanceError, NativeSessionMaintenanceReceipt,
+    NativeSessionMaintenanceRequest, NativeSessionMigration, NativeSessionRecovery,
+    execute_process_session_maintenance,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_metadata;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

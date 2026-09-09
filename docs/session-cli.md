@@ -1,6 +1,6 @@
 # Top-level session command
 
-The `session` command performs a strict, engine-free inspection of one
+The positional `session <id>` inspection form performs a strict, engine-free inspection of one
 current-schema machine-god session record. It exposes structural summary data
 only. It does not expose transcript content or metadata values, and it does not
 construct the native reference host. Historical candidates, findings, and
@@ -8,9 +8,9 @@ delivery evidence are retained in the
 [`session` review ledger](reviews/m03-session-cli-review-01.md); this page states
 only the durable command contract.
 
-## Grammar and exits
+## Inspection grammar and exits
 
-The only accepted invocations are:
+The accepted inspection invocations are:
 
 ```text
 machine-god session <id>
@@ -176,7 +176,7 @@ ID, `--id <id>`, or workspace-relative `last`, optionally with JSON. Its exact-
 ID detail owns timestamps, language, history length, and full ordered history;
 the same command family also participates in resume, migration, and recovery.
 
-Machine-god instead inspects only an explicit positional ID in its global,
+The positional inspection form accepts only an explicit ID in the global,
 separate state namespace and returns the six structural fields above. It has no
 authoritative workspace, timestamp, language, title, preview, history-length,
 or terminal-tape fields and does not read upstream `.fx` data. The top-level
@@ -186,3 +186,58 @@ available only through the bounded, explicit-ID, one-prompt
 [`resume`](resume-cli.md) contract.
 
 The command makes no upstream-equivalence or product-performance claim.
+
+## Native maintenance backend
+
+The inspection contract above is separate from native session maintenance.
+`NativeSessionMaintenance` retains an explicitly supplied `FileSessionStore`
+and owned-worker scope. Its futures are inert until polled; reads, nonblocking
+record locks, randomness, writes and synchronization run on owned workers.
+Cancellation and response abandonment are checked between bounded operations;
+filesystem calls and JSON decoding do not have a hard wall-clock deadline.
+The process entry point selects only the existing state hierarchy, generates
+recovery identities in native code, and joins its operation scope before a
+normal receipt. Missing state is not created. Unsupported targets fail before
+native effects.
+
+Migration keeps the native file envelope at version 1. It upgrades supported
+native presentation metadata from schema 1 to schema 2, preserving transcript,
+incarnation, turn allocator and unrelated metadata while advancing the revision.
+Missing metadata becomes explicit unknown schema 2; workspace, origin workspace
+and historical times are never inferred. Valid schema 2 is already current and
+is not rewritten. Unsupported versions, corrupt inputs, busy writers and inputs
+over 8,651,165 bytes fail without replacing the original. There is no unbounded
+`allow-large` bypass and no foreign `.fx` migration.
+
+Recovery publishes a separate new ID and incarnation at revision 1; it never
+rewrites its source or overwrites an existing destination. A fully decoded native
+envelope may be sanitized even when its native control metadata is malformed.
+Truncated recovery is deliberately narrower: the canonical envelope/version and
+all identity, revision and allocator fields must have fully decoded, followed by
+at least one complete message. EOF inside the message sequence may discard only
+the unfinished message. EOF after metadata has begun is rejected; torn metadata
+cannot prove its version. Noncanonical headers, duplicate JSON keys, malformed
+syntax, unknown envelope/native metadata versions and unproven headers are not
+repaired. No JSON text is synthesized to complete quoted fields or objects.
+
+Recovery preserves complete messages and confirmed tool outputs, closes missing
+tool results with explicit `tool_result_unknown` errors, and rejects orphan or
+duplicate tool results. It never executes or retries tools. Old continuation,
+context, model preferences and other metadata are cleared; recovered provenance
+is explicit, while old workspace and time remain unknown. The original proven
+turn allocator is retained. The new record must fit default engine transcript,
+metadata and native JSON bounds before publication.
+
+Maintenance uses exclusive, uniquely named staging files and atomic publication.
+An interrupted partial stage does not prevent a later fresh staging attempt.
+Before publication the old record remains authoritative; after publication a
+directory-sync failure is `Indeterminate`, requiring an exact reload rather than
+an assumed rollback. Cancellation after the atomic effect boundary does not hide
+a committed receipt. Guarded staging cleanup is described in
+[`doctor-cli.md`](doctor-cli.md#guarded-native-session-cleanup).
+
+The process wrapper preserves a generated recovery destination even when copy
+publication or subsequent worker-join observation is indeterminate. Its explicit
+`RecoveryIndeterminate` receipt identifies the separate copy to reload; it does
+not assert a confirmed revision, durable completion or successful worker join.
+The source remains unchanged. This is an uncertainty outcome, not recovery success.
