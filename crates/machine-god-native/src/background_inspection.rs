@@ -909,10 +909,10 @@ pub(crate) mod supported {
     fn state_base_and_suffix(
         environment: &NativeEnvironment,
     ) -> Result<(PathBuf, &'static [&'static str]), NativeBackgroundInspectionError> {
-        if let Some(value) = nonempty(environment.xdg_state_home.as_deref()) {
+        if let Some(value) = nonempty(environment.xdg_state_home()) {
             let base = validate_state_base(value)?;
             Ok((base, &[crate::STATE_NAMESPACE, BACKGROUND_DIRECTORY]))
-        } else if let Some(value) = nonempty(environment.home.as_deref()) {
+        } else if let Some(value) = nonempty(environment.home()) {
             let base = validate_state_base(value)?;
             Ok((
                 base,

@@ -201,11 +201,11 @@ impl NativeRootSelection {
 fn select_state(
     environment: &NativeEnvironment,
 ) -> Result<StateSelection, NativeRootSelectionError> {
-    if let Some(value) = nonempty(environment.xdg_state_home.as_deref()) {
+    if let Some(value) = nonempty(environment.xdg_state_home()) {
         Ok(StateSelection::Xdg {
             base: validated_state_base(value)?,
         })
-    } else if let Some(value) = nonempty(environment.home.as_deref()) {
+    } else if let Some(value) = nonempty(environment.home()) {
         Ok(StateSelection::Home {
             base: validated_state_base(value)?,
         })

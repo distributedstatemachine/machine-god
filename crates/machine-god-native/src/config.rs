@@ -26,11 +26,12 @@ pub(crate) use workspaces::validate_launch as validate_workspace_directory_launc
 pub use workspaces::{NativeSavedWorkspaceDirectory, NativeWorkspaceDirectoryMutation};
 
 use super::ai_gateway::{AI_GATEWAY_DEFAULT_MODEL, valid_model};
+use super::native_environment::{ResolvedPath, resolve_config_file};
 use super::{
     NativeConfiguredPermissionDecision, NativeConfiguredPermissionRule,
     NativeConfiguredPermissionRules, NativeSandboxMode,
 };
-use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file};
+use super::{NativeEnvironment, PermissionMode};
 use super::{NativeModelPreferences, NativeReasoningEffort};
 
 /// Current configuration schema version used by this native host.
