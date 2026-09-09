@@ -55,12 +55,6 @@ fn real_macos_reader_preserves_shared_admission_and_refill_ceiling() {
 
 #[test]
 fn deleted_record_adapter_is_exactly_one_dot_skip_without_name_or_visit_charge() {
-    let skipped = macos_entry_name(MacosDirectoryEntry::Skipped);
-    assert_eq!(skipped, b".");
-    assert_eq!(
-        macos_entry_name(MacosDirectoryEntry::Name(b"..".to_vec())),
-        b".."
-    );
     struct OneSkipped {
         calls: usize,
     }
@@ -73,6 +67,12 @@ fn deleted_record_adapter_is_exactly_one_dot_skip_without_name_or_visit_charge()
             (self.calls == 1).then(|| Ok(macos_entry_name(MacosDirectoryEntry::Skipped)))
         }
     }
+    let skipped = macos_entry_name(MacosDirectoryEntry::Skipped);
+    assert_eq!(skipped, b".");
+    assert_eq!(
+        macos_entry_name(MacosDirectoryEntry::Name(b"..".to_vec())),
+        b".."
+    );
     let mut reader = OneSkipped { calls: 0 };
     let mut budget = ScanBudget::default();
     let mut incomplete = IncompleteReasons::default();

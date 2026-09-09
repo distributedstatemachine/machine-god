@@ -174,7 +174,7 @@ impl NativeTerminalHost {
         state_root: OwnedFd,
         host_identity: SessionIncarnationId,
     ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
-        Self::compose(inputs, state_root, host_identity, None)
+        Self::compose(inputs, state_root, host_identity, None, None)
     }
 
     pub(crate) fn compose_with_permission_on_worker(
@@ -183,7 +183,23 @@ impl NativeTerminalHost {
         host_identity: SessionIncarnationId,
         permission: Arc<NativeTerminalPermissionPolicy>,
     ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
-        Self::compose(inputs, state_root, host_identity, Some(permission))
+        Self::compose(inputs, state_root, host_identity, Some(permission), None)
+    }
+
+    pub(crate) fn compose_with_workspace_on_worker(
+        inputs: TerminalHostAuthorityInputs,
+        state_root: OwnedFd,
+        host_identity: SessionIncarnationId,
+        workspace_contexts: Arc<crate::NativeWorkspaceContexts>,
+        permission: Option<Arc<NativeTerminalPermissionPolicy>>,
+    ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
+        Self::compose(
+            inputs,
+            state_root,
+            host_identity,
+            permission,
+            Some(workspace_contexts),
+        )
     }
 
     fn compose(
@@ -191,6 +207,7 @@ impl NativeTerminalHost {
         state_root: OwnedFd,
         host_identity: SessionIncarnationId,
         permission: Option<Arc<NativeTerminalPermissionPolicy>>,
+        workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
     ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
         let workers = NativeOwnedWorkerScope::new();
         let PreparedHost {
@@ -263,15 +280,14 @@ impl NativeTerminalHost {
             .with_worker_scope(workers.clone()),
         );
         let identity = host.identity().clone();
-        let permission_resolver = Arc::new(crate::permission_targets::HostPermissionResolver::new(
-            Arc::clone(&host),
-            workers.clone(),
-            stop.clone(),
-        ));
+        let permission_resolver =
+            host_permission_resolver(&host, &workers, &stop, workspace_contexts.is_some());
         let executor = NativeTerminalActionExecutor {
             principals,
             access: None,
             permission,
+            workspace_contexts,
+            workspace_binding: None,
             requester,
             host,
             preparer,
@@ -294,11 +310,31 @@ impl NativeTerminalHost {
     }
 }
 
+fn host_permission_resolver(
+    host: &Arc<CapturedTerminalHostAuthority>,
+    workers: &NativeOwnedWorkerScope,
+    stop: &CancellationToken,
+    workspace_required: bool,
+) -> Arc<crate::permission_targets::HostPermissionResolver> {
+    let resolver = crate::permission_targets::HostPermissionResolver::new(
+        Arc::clone(host),
+        workers.clone(),
+        stop.clone(),
+    );
+    Arc::new(if workspace_required {
+        resolver.with_workspace_scope_required()
+    } else {
+        resolver
+    })
+}
+
 #[derive(Clone)]
 struct NativeTerminalActionExecutor {
     principals: TerminalAccessPrincipals,
     access: Option<CancellationToken>,
     permission: Option<Arc<NativeTerminalPermissionPolicy>>,
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
+    workspace_binding: Option<WorkspaceBinding>,
     requester: Requester,
     host: Arc<CapturedTerminalHostAuthority>,
     preparer: Arc<TerminalHostProbePreparer>,
@@ -310,14 +346,22 @@ struct NativeTerminalActionExecutor {
 }
 
 impl TerminalActionExecutor for NativeTerminalActionExecutor {
+    fn for_context(&self, context: &ToolContext) -> Option<Arc<dyn TerminalActionExecutor>> {
+        self.workspace_contexts.as_ref()?;
+        Some(Arc::new(self.bind_context(context)))
+    }
+
     fn execute(
         &self,
         context: ToolContext,
         invocation: TerminalActionInvocation,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<TerminalActionResult, ToolError>> {
-        let mut host = self.clone();
+        // Binding is pure and happens before returning even a direct executor future.
+        let mut host = self.bind_context(&context);
+        let accepted = host.validate_context(&context);
         Box::pin(async move {
+            accepted?;
             check(&cancellation, &host.stop)?;
             let mut authority = resident_authority(context.clone());
             let owner = authority.owner.clone();
@@ -343,7 +387,91 @@ impl TerminalActionExecutor for NativeTerminalActionExecutor {
     }
 }
 
+#[derive(Clone)]
+struct WorkspaceBinding {
+    context: ToolContext,
+    scope: Result<Arc<crate::NativeWorkspaceTurnScope>, crate::NativeWorkspaceContextError>,
+}
+
+fn capture_sandbox(
+    permission: Option<&NativeTerminalPermissionPolicy>,
+    scope: Option<&Arc<crate::NativeWorkspaceTurnScope>>,
+    context: &ToolContext,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+) -> Result<Option<Arc<NativeSandboxLaunch>>, crate::NativeSandboxError> {
+    if scope.is_some_and(|scope| !scope.is_live()) {
+        return Err(crate::NativeSandboxError::Unavailable);
+    }
+    let captured = permission
+        .map(|permission| match scope {
+            Some(scope) => permission.capture_with_shared_workspace_scope(
+                context,
+                Some(Arc::clone(scope)),
+                deadline,
+                cancellation,
+            ),
+            None => permission.capture_on_worker(context, deadline, cancellation),
+        })
+        .transpose()?;
+    let Some(scope) = scope else {
+        return Ok(captured);
+    };
+    let captured = match captured {
+        Some(captured) => captured.as_ref().clone(),
+        None => NativeSandboxLaunch::capture(
+            crate::NativeSandboxMode::None,
+            crate::PermissionMode::Ask,
+            Vec::new(),
+            None,
+            false,
+            deadline,
+            cancellation,
+        )?,
+    };
+    Ok(Some(Arc::new(captured.with_shared_workspace_scope(
+        Arc::clone(scope),
+        deadline,
+        cancellation,
+    )?)))
+}
+
 impl NativeTerminalActionExecutor {
+    fn bind_context(&self, context: &ToolContext) -> Self {
+        let mut bound = self.clone();
+        if bound.workspace_binding.is_none() {
+            bound.workspace_binding =
+                self.workspace_contexts
+                    .as_ref()
+                    .map(|contexts| WorkspaceBinding {
+                        context: context.clone(),
+                        scope: contexts.snapshot_for_tool(context).map(Arc::new),
+                    });
+        }
+        bound
+    }
+
+    fn validate_context(&self, context: &ToolContext) -> Result<(), ToolError> {
+        if let Some(binding) = &self.workspace_binding {
+            let accepted = &binding.context;
+            if accepted.session_id != context.session_id
+                || accepted.session_incarnation_id != context.session_incarnation_id
+                || accepted.turn_id != context.turn_id
+                || accepted.call_id != context.call_id
+                || !binding.scope.as_ref().is_ok_and(|scope| scope.is_live())
+            {
+                return Err(unavailable());
+            }
+        }
+        Ok(())
+    }
+
+    fn workspace_scope(&self) -> Option<&Arc<crate::NativeWorkspaceTurnScope>> {
+        self.workspace_binding
+            .as_ref()
+            .and_then(|binding| binding.scope.as_ref().ok())
+    }
+
     fn execute_scoped(
         self,
         context: ToolContext,
@@ -402,6 +530,7 @@ impl NativeTerminalActionExecutor {
     ) -> BoxFuture<'static, Result<TerminalActionResult, ToolError>> {
         let host = Arc::clone(&self.host);
         let permission = self.permission.clone();
+        let workspace_scope = self.workspace_scope().cloned();
         let access = self.access.clone();
         let future = self.captured.execute_prepared(
             move |deadline, cancellation, stop| {
@@ -410,7 +539,12 @@ impl NativeTerminalActionExecutor {
                     return Err(TerminalCapturedExecError::Cancelled);
                 }
                 let resolved = host
-                    .resolve_on_worker(invocation, deadline, cancellation)
+                    .resolve_on_worker_with_scope(
+                        invocation,
+                        workspace_scope.as_deref(),
+                        deadline,
+                        cancellation,
+                    )
                     .map_err(|_| TerminalCapturedExecError::Invalid)?;
                 let TerminalActionRequest::Exec { request } = resolved.request else {
                     return Err(TerminalCapturedExecError::Invalid);
@@ -418,18 +552,18 @@ impl NativeTerminalActionExecutor {
                 let mut shell = host
                     .exec_shell(&request)
                     .map_err(|_| TerminalCapturedExecError::Invalid)?;
-                if let Some(permission) = permission {
-                    let sandbox = permission
-                        .capture_on_worker(&context, deadline, cancellation)
-                        .map_err(|error| match error {
-                            crate::NativeSandboxError::Cancelled => {
-                                TerminalCapturedExecError::Cancelled
-                            }
-                            crate::NativeSandboxError::Timeout => {
-                                TerminalCapturedExecError::Process
-                            }
-                            _ => TerminalCapturedExecError::Invalid,
-                        })?;
+                if let Some(sandbox) = capture_sandbox(
+                    permission.as_deref(),
+                    workspace_scope.as_ref(),
+                    &context,
+                    deadline,
+                    cancellation,
+                )
+                .map_err(|error| match error {
+                    crate::NativeSandboxError::Cancelled => TerminalCapturedExecError::Cancelled,
+                    crate::NativeSandboxError::Timeout => TerminalCapturedExecError::Process,
+                    _ => TerminalCapturedExecError::Invalid,
+                })? {
                     shell = shell.with_sandbox(sandbox);
                 }
                 Ok(TerminalCapturedAuthority {
@@ -516,9 +650,12 @@ impl NativeTerminalActionExecutor {
         Box::pin(async move {
             check(&cancellation, &self.stop)?;
             self.check_access()?;
-            let resolved = self
-                .host
-                .resolve_on_worker(invocation, deadline, &cancellation)?;
+            let resolved = self.host.resolve_on_worker_with_scope(
+                invocation,
+                self.workspace_scope().map(AsRef::as_ref),
+                deadline,
+                &cancellation,
+            )?;
             let needs_launch = match &resolved.request {
                 TerminalActionRequest::Start { .. } => true,
                 TerminalActionRequest::Monitor {
@@ -533,17 +670,17 @@ impl NativeTerminalActionExecutor {
                 _ => false,
             };
             let sandbox = if needs_launch {
-                self.permission
-                    .as_ref()
-                    .map(|permission| {
-                        permission
-                            .capture_on_worker(&context, deadline, &cancellation)
-                            .map_err(|error| match error {
-                                crate::NativeSandboxError::Cancelled => cancelled(),
-                                _ => unavailable(),
-                            })
-                    })
-                    .transpose()?
+                capture_sandbox(
+                    self.permission.as_deref(),
+                    self.workspace_scope(),
+                    &context,
+                    deadline,
+                    &cancellation,
+                )
+                .map_err(|error| match error {
+                    crate::NativeSandboxError::Cancelled => cancelled(),
+                    _ => unavailable(),
+                })?
             } else {
                 None
             };
@@ -630,10 +767,11 @@ impl NativeTerminalActionExecutor {
         let mut prepared = Vec::with_capacity(request.initial_monitors.len());
         for definition in &request.initial_monitors {
             check(&cancellation, &self.stop)?;
-            prepared.push(self.preparer.prepare_on_worker(
+            prepared.push(self.preparer.prepare_on_worker_with_scope(
                 definition,
                 &request.cwd,
                 sandbox.clone(),
+                self.workspace_scope(),
                 deadline,
                 &cancellation,
             )?);
@@ -769,10 +907,11 @@ impl NativeTerminalActionExecutor {
                 let cwd = self
                     .monitor_cwd(authority.owner.clone(), id.clone(), cancellation.clone())
                     .await?;
-                Some(self.preparer.prepare_on_worker(
+                Some(self.preparer.prepare_on_worker_with_scope(
                     definition,
                     &cwd,
                     sandbox,
+                    self.workspace_scope(),
                     deadline,
                     &cancellation,
                 )?)
@@ -797,6 +936,9 @@ impl NativeTerminalActionExecutor {
                     TerminalMonitorActivation::default,
                     PreparedTerminalMonitor::activation,
                 );
+                if let Some(prepared) = &preparation {
+                    prepared.validate_workspace()?;
+                }
                 let mutation = context
                     .registry
                     .mutate_with_profile(

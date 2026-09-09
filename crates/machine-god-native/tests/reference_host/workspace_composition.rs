@@ -343,6 +343,11 @@ fn workspace_host_routes_metadata_enumeration_and_grep_with_policy_and_history()
 
 #[test]
 fn workspace_host_terminal_cwd_uses_bound_roots_with_and_without_native_policy() {
+    let helper = PathBuf::from(
+        std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY")
+            .expect("select the production release helper before terminal integration tests"),
+    );
+    assert!(helper.is_absolute() && helper.is_file());
     for governed in [false, true] {
         for bind in [false, true] {
             for selected in ["additional", "state", "outside"] {
@@ -451,7 +456,14 @@ fn workspace_host_vision_reads_additional_root_through_actual_permission_and_tra
                     authority(&primary, &state, &additional),
                     Arc::new(NativeWorkspaceContexts::new()),
                 )
-                .with_terminal(complete_terminal_options())
+                .with_terminal(
+                    NativeReferenceHostTerminalOptions::new(
+                        helper.clone(),
+                        Some("/bin/bash".into()),
+                        vec![("PATH".into(), "/usr/bin:/bin".into())],
+                    )
+                    .unwrap(),
+                )
                 .with_permissions(NativeReferenceHostPermissionOptions::new(
                     Arc::new(NativePermissionContexts::new()),
                     Arc::new(TokioPermissionReviewClock),

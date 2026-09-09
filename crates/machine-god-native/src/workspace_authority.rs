@@ -220,6 +220,37 @@ struct Scope {
 pub struct NativeWorkspaceScopeSnapshot(Arc<Scope>);
 
 impl NativeWorkspaceScopeSnapshot {
+    /// Worker-only exclusion for a resolved terminal cwd. A state directory
+    /// remains excluded by retained object identity even after a native rename.
+    #[cfg(all(
+        any(test, feature = "ai-gateway-http"),
+        any(target_os = "linux", target_os = "macos")
+    ))]
+    pub(crate) fn validate_directory_outside_state(
+        &self,
+        directory: &OwnedFd,
+        mut check: impl FnMut() -> Result<()>,
+    ) -> Result<()> {
+        check()?;
+        if self.0.state.exists {
+            if descriptor_ancestor_checked(
+                &self.0.state.ancestor.descriptor,
+                directory,
+                &mut check,
+            )? {
+                return Err(NativeWorkspaceAuthorityError::OverlappingState);
+            }
+        } else {
+            revalidate_root(&self.0.state.ancestor)?;
+            check()?;
+            let (_, projected) = nearest_directory(&self.0.state.identity)?;
+            if projected != self.0.state.identity {
+                return Err(NativeWorkspaceAuthorityError::OverlappingState);
+            }
+        }
+        check()
+    }
+
     #[cfg(feature = "ai-gateway-http")]
     pub(crate) fn validate_host_binding(
         &self,
@@ -805,6 +836,15 @@ fn reject_state_overlap(root: &Root, state: &StateRoot) -> Result<()> {
 }
 
 fn descriptor_ancestor(ancestor: &OwnedFd, descendant: &OwnedFd) -> Result<bool> {
+    descriptor_ancestor_checked(ancestor, descendant, || Ok(()))
+}
+
+fn descriptor_ancestor_checked(
+    ancestor: &OwnedFd,
+    descendant: &OwnedFd,
+    mut check: impl FnMut() -> Result<()>,
+) -> Result<bool> {
+    check()?;
     let ancestor =
         rustix::fs::fstat(ancestor).map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
     let mut current = descendant
@@ -812,16 +852,20 @@ fn descriptor_ancestor(ancestor: &OwnedFd, descendant: &OwnedFd) -> Result<bool>
         .map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
     // Explicitly bounded even if a concurrently renamed ancestry never reaches its root.
     for _ in 0..MAX_PATH_BYTES {
+        check()?;
         let metadata =
             rustix::fs::fstat(&current).map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
         if same_identity(&ancestor, &metadata) {
+            check()?;
             return Ok(true);
         }
+        check()?;
         let parent = rustix::fs::openat(&current, "..", DIRECTORY_FLAGS, Mode::empty())
             .map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
         let parent_metadata =
             rustix::fs::fstat(&parent).map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
         if same_identity(&metadata, &parent_metadata) {
+            check()?;
             return Ok(false);
         }
         current = parent;

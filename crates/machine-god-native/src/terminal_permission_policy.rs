@@ -82,12 +82,30 @@ impl NativeTerminalPermissionPolicy {
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<Arc<NativeSandboxLaunch>, NativeSandboxError> {
-        if cancellation.is_cancelled() {
-            return Err(NativeSandboxError::Cancelled);
-        }
-        if Instant::now() >= deadline {
-            return Err(NativeSandboxError::Timeout);
-        }
+        check_capture(deadline, cancellation)?;
+        let scope = self
+            .workspace_contexts
+            .as_ref()
+            .map(|contexts| {
+                contexts
+                    .snapshot_for_tool(context)
+                    .map(Arc::new)
+                    .map_err(|_| NativeSandboxError::Unavailable)
+            })
+            .transpose()?;
+        self.capture_with_shared_workspace_scope(context, scope, deadline, cancellation)
+    }
+
+    /// The actual host passes its acceptance-time scope; do not rediscover a
+    /// potentially replaced registration between cwd and sandbox root selection.
+    pub(crate) fn capture_with_shared_workspace_scope(
+        &self,
+        context: &ToolContext,
+        scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<Arc<NativeSandboxLaunch>, NativeSandboxError> {
+        check_capture(deadline, cancellation)?;
         let controller = self
             .controller
             .get()
@@ -96,15 +114,11 @@ impl NativeTerminalPermissionPolicy {
         let policy = controller
             .policy_for_execution(context)
             .map_err(|_| NativeSandboxError::Unavailable)?;
-        let scope = self
-            .workspace_contexts
-            .as_ref()
-            .map(|contexts| {
-                contexts
-                    .snapshot_for_tool(context)
-                    .map_err(|_| NativeSandboxError::Unavailable)
-            })
-            .transpose()?;
+        if (self.workspace_contexts.is_some() && scope.is_none())
+            || scope.as_ref().is_some_and(|scope| !scope.is_live())
+        {
+            return Err(NativeSandboxError::Unavailable);
+        }
         let roots = match &scope {
             Some(scope)
                 if policy.effective_sandbox_mode() == NativeSandboxMode::Os
@@ -134,10 +148,23 @@ impl NativeTerminalPermissionPolicy {
             cancellation,
         )?;
         let launch = match scope {
-            Some(scope) => launch.with_workspace_scope(scope, deadline, cancellation)?,
+            Some(scope) => launch.with_shared_workspace_scope(scope, deadline, cancellation)?,
             None => launch,
         };
         Ok(Arc::new(launch))
+    }
+}
+
+fn check_capture(
+    deadline: Instant,
+    cancellation: &CancellationToken,
+) -> Result<(), NativeSandboxError> {
+    if cancellation.is_cancelled() {
+        Err(NativeSandboxError::Cancelled)
+    } else if Instant::now() >= deadline {
+        Err(NativeSandboxError::Timeout)
+    } else {
+        Ok(())
     }
 }
 
