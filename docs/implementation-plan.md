@@ -169,9 +169,11 @@ Their focused tests cover real macOS scanning, concurrent cursors, exact roots,
 both Apple ABI/link probes, Linux compilation and FreeBSD/WASI unsupported
 compilation. These component checks are not full-feature acceptance.
 Terminal routing is integrated and its clean released worktree removed after
-focused composition, permission, PTY/tmux and monitor checks. Separate workers
-own native session maintenance, CLI launch/slash workspace selection, and the
-native FXTP recording backend. The coordinator owns historical cards, the live plan,
+focused composition, permission, PTY/tmux and monitor checks. CLI launch/slash
+workspace selection and the native FXTP recording backend are also integrated.
+Separate workers finish component verification and implement native session
+maintenance; recording startup and output integration follow in fresh isolated
+worktrees. The coordinator owns historical cards, the live plan,
 shared-contract integration, cross-platform prerequisites and final gates.
 Preserve uncommitted paused work before updating a worker's base. Remove worker
 trees only after their changes are committed, integrated and released.
@@ -194,9 +196,12 @@ saved evidence without execution, filesystem reads or invented current state.
 Focused history tests and the CLI unit suite, all-target Clippy, formatting and
 documentation checks pass; these are component checks, not release acceptance.
 
-The remaining product boundary is actual launch/slash
-workspace selection (including launches without a settings directory), migration/recovery/doctor cleanup,
-recording and remaining policy/session scenarios.
+Launch/slash workspace selection preserves launches without a settings directory:
+explicit launch roots and listing work, while persistent mutations require
+settings authority. The recording backend owns bounded FXTP writes and close
+receipts; its CLI startup, accepted-output and finalization wiring remain open.
+The remaining product boundary is migration/recovery/doctor cleanup, recording
+integration and remaining policy/session scenarios.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
