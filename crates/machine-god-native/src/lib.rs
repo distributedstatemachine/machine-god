@@ -69,6 +69,11 @@ pub use allowlist::{
     NativeAllowlistRequest, NativeAllowlistSources, NativeAllowlistView,
 };
 mod config;
+mod permission_inspection;
+pub use permission_inspection::{
+    NativePermissionInspection, NativePermissionInspectionError, NativePermissionInspectionRule,
+    inspect_native_permissions, inspect_process_permissions,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod user_config_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
