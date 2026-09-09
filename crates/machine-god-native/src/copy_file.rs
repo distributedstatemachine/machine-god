@@ -1779,7 +1779,7 @@ impl CopyFileTool {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn approval_ticket(
+    pub(crate) fn approval_ticket(
         &self,
         context: &ToolContext,
     ) -> Option<Result<crate::file_approval::NativeFileApprovalClaim, crate::NativeFileApprovalError>>
@@ -1790,7 +1790,7 @@ impl CopyFileTool {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn approval_bound(
+    pub(crate) fn approval_bound(
         &self,
         context: &ToolContext,
         arguments: &Value,

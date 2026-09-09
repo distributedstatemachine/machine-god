@@ -11,6 +11,9 @@ use machine_god_core::{
 use serde_json::Value;
 use std::sync::Arc;
 
+pub(crate) mod binding;
+use binding::{MutationBinding, MutationStamp};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeFileHistoryKind {
     Read,
@@ -52,6 +55,7 @@ impl NativeFileHistoryKind {
 }
 pub(crate) struct NativeFileHistoryTool {
     tool: Arc<dyn Tool>,
+    mutation: Option<Arc<dyn MutationBinding>>,
     kind: NativeFileHistoryKind,
     registry: Arc<NativeConversationObservations>,
     workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
@@ -73,9 +77,38 @@ impl NativeFileHistoryTool {
     ) -> Self {
         Self {
             tool,
+            mutation: None,
             kind,
             registry,
             workspace_contexts: None,
+        }
+    }
+
+    /// Binds only the known native mutation's read-only approval stamp. The
+    /// arbitrary Tool path remains entirely deferred until history admission.
+    pub(crate) fn shared_mutation<T: Tool + MutationBinding>(
+        tool: Arc<T>,
+        kind: NativeFileHistoryKind,
+        registry: Arc<NativeConversationObservations>,
+    ) -> Self {
+        let mut history = Self::shared(tool.clone(), kind, registry);
+        history.mutation = Some(tool);
+        history
+    }
+
+    fn execution_tool(
+        &self,
+        context: &ToolContext,
+        args: &Value,
+        cancellation: &CancellationToken,
+        stamp: Option<MutationStamp>,
+    ) -> Result<Arc<dyn Tool>, ToolError> {
+        match (&self.mutation, stamp) {
+            (Some(mutation), Some(stamp)) => Ok(mutation
+                .bind(context, args, cancellation, stamp)?
+                .unwrap_or_else(|| Arc::clone(&self.tool))),
+            (None, None) => Ok(Arc::clone(&self.tool)),
+            _ => Err(observation_error()),
         }
     }
     pub(crate) fn with_workspace_contexts(
@@ -192,10 +225,18 @@ impl Tool for NativeFileHistoryTool {
         args: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        let stamp = self
+            .mutation
+            .as_ref()
+            .map(|mutation| mutation.capture(&context));
         let mut args = Arguments(Some(args));
         Box::pin(async move {
             let reservation = self.reserve(&context, args.get())?;
-            let result = self.tool.execute(context, args.take(), cancellation).await;
+            let result = async {
+                let tool = self.execution_tool(&context, args.get(), &cancellation, stamp)?;
+                tool.execute(context, args.take(), cancellation).await
+            }
+            .await;
             let success = result.as_ref().is_ok_and(|output| !output.is_error);
             let full = result
                 .as_ref()
@@ -210,13 +251,19 @@ impl Tool for NativeFileHistoryTool {
         args: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        let stamp = self
+            .mutation
+            .as_ref()
+            .map(|mutation| mutation.capture(&context));
         let mut args = Arguments(Some(args));
         Box::pin(async move {
             let reservation = self.reserve(&context, args.get())?;
-            let result = self
-                .tool
-                .execute_for_turn(context, args.take(), cancellation)
-                .await;
+            let result = async {
+                let tool = self.execution_tool(&context, args.get(), &cancellation, stamp)?;
+                tool.execute_for_turn(context, args.take(), cancellation)
+                    .await
+            }
+            .await;
             let success = result
                 .as_ref()
                 .is_ok_and(|execution| !execution.tool_output().is_error);

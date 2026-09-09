@@ -145,6 +145,18 @@ contracts; native conversation finalization owns history publication. Compositio
 does not collect observations or write session history itself. Constructors
 without this option retain their existing unwrapped tools.
 
+For non-workspace file mutations, the history wrapper captures the trusted
+backend's existing read-only approval ticket when the outer execution future
+is constructed. It retains both success and denial outcomes; a later grant
+cannot revive an older future. Construction opens no file, claims no approval,
+reserves no history, and does not construct the inner execution future.
+After polling successfully reserves the exact history observation, the backend
+consumes that captured ticket and retains the ordinary preimage, revocation,
+cancellation and final-effect checks. Dropped unpolled futures and failed
+history admission leave the grant and filesystem untouched. This binding is
+native-only and limited to the five concrete mutation backends; arbitrary
+wrapped tools remain fully deferred until polling.
+
 `with_workspace(NativeWorkspaceAuthority, Arc<NativeWorkspaceContexts>)` selects
 captured workspace routing for reads, metadata, folder creation, enumeration,
 grep, vision and the five file mutations. This option is independent of permission

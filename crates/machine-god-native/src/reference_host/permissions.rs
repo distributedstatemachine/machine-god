@@ -1,5 +1,9 @@
 //! Explicit authority and exact tool allocations for native permission composition.
 
+#[cfg(test)]
+#[path = "permissions_history_tests.rs"]
+mod history_tests;
+
 use super::{
     AiGatewayTransport, AskUserQuestionTool, EngineLimits, NativeFileHistoryKind,
     NativeFileHistoryTool, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
@@ -204,44 +208,24 @@ impl ReferenceHostToolCatalog {
             .map(|binding| Arc::clone(&binding.contexts));
         let undo = tools.undo_tracker.clone();
         self.workspace_contexts.clone_from(&contexts);
-        let observations = self.observations.clone();
-        let history = |kind| contexts.is_none().then_some(kind);
-        let mutation = |kind, primary: Arc<dyn Tool>| -> Arc<dyn Tool> {
-            match &contexts {
-                Some(contexts) => Arc::new(
-                    crate::workspace_mutation::WorkspaceMutationTool::new(
-                        kind,
-                        primary,
-                        Arc::clone(contexts),
-                        registry.cloned(),
-                        undo.clone(),
-                    )
-                    .with_observations(observations.clone()),
-                ),
-                None => primary,
-            }
-        };
-        self.add_shared(
-            mutation(
-                crate::NativeFileApprovalKind::Copy,
-                Arc::new(tools.copy_file),
-            ),
-            history(NativeFileHistoryKind::Copy),
+        self.mutation(
+            tools.copy_file,
+            crate::NativeFileApprovalKind::Copy,
+            registry,
+            undo.clone(),
         );
         self.add(tools.create_folder, None);
-        self.add_shared(
-            mutation(
-                crate::NativeFileApprovalKind::Delete,
-                Arc::new(tools.delete_file),
-            ),
-            history(NativeFileHistoryKind::Delete),
+        self.mutation(
+            tools.delete_file,
+            crate::NativeFileApprovalKind::Delete,
+            registry,
+            undo.clone(),
         );
-        self.add_shared(
-            mutation(
-                crate::NativeFileApprovalKind::Edit,
-                Arc::new(tools.edit_file),
-            ),
-            history(NativeFileHistoryKind::Edit),
+        self.mutation(
+            tools.edit_file,
+            crate::NativeFileApprovalKind::Edit,
+            registry,
+            undo.clone(),
         );
         self.add(tools.file_info, None);
         self.add(tools.glob_files, Some(NativeFileHistoryKind::Glob));
@@ -250,21 +234,19 @@ impl ReferenceHostToolCatalog {
         self.add(tools.list_files, Some(NativeFileHistoryKind::List));
         self.add(tools.open_file, None);
         self.add(tools.read_file, Some(NativeFileHistoryKind::Read));
-        self.add_shared(
-            mutation(
-                crate::NativeFileApprovalKind::Rename,
-                Arc::new(tools.rename_file),
-            ),
-            history(NativeFileHistoryKind::Rename),
+        self.mutation(
+            tools.rename_file,
+            crate::NativeFileApprovalKind::Rename,
+            registry,
+            undo.clone(),
         );
         self.add(tools.semantic_search, None);
         self.add(tools.skill, None);
-        self.add_shared(
-            mutation(
-                crate::NativeFileApprovalKind::Write,
-                Arc::new(tools.write_file),
-            ),
-            history(NativeFileHistoryKind::Write),
+        self.mutation(
+            tools.write_file,
+            crate::NativeFileApprovalKind::Write,
+            registry,
+            undo,
         );
         ReferenceHostWorkspaceAuthority {
             vision_root: tools.vision_root,
@@ -311,6 +293,51 @@ impl ReferenceHostToolCatalog {
     pub(super) fn add(&mut self, tool: impl Tool, history: Option<NativeFileHistoryKind>) {
         let tool: Arc<dyn Tool> = Arc::new(tool);
         self.add_shared(tool, history);
+    }
+
+    fn mutation<T: Tool + crate::file_history_tool::binding::MutationBinding>(
+        &mut self,
+        tool: T,
+        kind: crate::NativeFileApprovalKind,
+        registry: Option<&Arc<NativeFileApprovalRegistry>>,
+        undo: Option<Arc<crate::FileUndoTracker>>,
+    ) {
+        let primary = Arc::new(tool);
+        if let Some(contexts) = &self.workspace_contexts {
+            let tool = crate::workspace_mutation::WorkspaceMutationTool::new(
+                kind,
+                primary,
+                Arc::clone(contexts),
+                registry.cloned(),
+                undo,
+            )
+            .with_observations(self.observations.clone());
+            self.add_shared(Arc::new(tool), None);
+            return;
+        }
+        // Register the exact primary allocation before optional instrumentation.
+        if self.governed {
+            self.registrations
+                .push(NativePermissionTargetTool::Ordinary(primary.clone()));
+        }
+        let tool: Arc<dyn Tool> = match &self.observations {
+            Some(observations) => {
+                let history = match kind {
+                    crate::NativeFileApprovalKind::Write => NativeFileHistoryKind::Write,
+                    crate::NativeFileApprovalKind::Edit => NativeFileHistoryKind::Edit,
+                    crate::NativeFileApprovalKind::Delete => NativeFileHistoryKind::Delete,
+                    crate::NativeFileApprovalKind::Copy => NativeFileHistoryKind::Copy,
+                    crate::NativeFileApprovalKind::Rename => NativeFileHistoryKind::Rename,
+                };
+                Arc::new(NativeFileHistoryTool::shared_mutation(
+                    primary,
+                    history,
+                    Arc::clone(observations),
+                ))
+            }
+            None => primary,
+        };
+        self.push(tool, None);
     }
 
     fn add_shared(&mut self, tool: Arc<dyn Tool>, history: Option<NativeFileHistoryKind>) {
