@@ -322,3 +322,40 @@ parsing, interactive picker, resume admission, or compatibility promotion.
 The `sessions-json` comparison remains non-equivalent, not measured, and
 claim-ineligible. This contract establishes no samples, thresholds, product-
 performance result, compatibility promotion, or upstream-equivalence claim.
+
+## Owned picker catalog reads
+
+`NativeReferenceHost::session_catalog_reader()` constructs an inert
+`NativeSessionCatalogReader` over that host's exact `Arc<FileSessionStore>`,
+canonical workspace spelling, and existing owned-worker completion scope.
+Legacy hosts without that scope return fixed `Unavailable`; no replacement
+scope, state root, working directory, or environment is discovered. Reader
+clones share one scan admission and retain no engine or host-lifetime vote.
+
+`reader.list(scope, limit, continuation, cancel)` accepts `CurrentWorkspace` or
+`All`, a pure 1–100 presentation limit, and the existing optional catalog cursor.
+It constructs the query itself: only current-workspace scope adds the exact
+workspace predicate, and neither scope adds search. Picker search operates on
+already loaded pages. Both scopes use `SkipAndReport`, preserving explicit
+invalid-record counts, ordering, unknown metadata, byte/entry limits and honest
+continuation semantics from the ordinary catalog. No second scanner or stored
+index exists.
+
+First poll validates the query, checks cancellation, and reserves one scan
+before submitting it to the actual host worker scope. The same scanner checks
+cancellation before directory iteration, each record and lock, each 8,192-byte
+read (including interrupted-read retries), and before/after bounded decoding
+and projection. Picker record locks use nonblocking exclusive acquisition;
+contention returns fixed `Busy`, not skipped corruption or a successful partial
+page. Cancellation returns fixed `Cancelled` with no page. Other catalog errors
+retain their fixed categories. Ordinary catalog and ID-only listing keep their
+existing synchronous blocking-lock behavior.
+
+Dropping an unpolled request is effect-free. Dropping a polled response requests
+private cancellation without cancelling the caller's token or closing the host
+scope. The actual worker owns the store, query, scan and admission until scan
+cleanup returns, even after response abandonment. Response readiness is not
+full worker/thread-local cleanup completion; the host's existing completion
+handle remains authoritative. No filesystem or serde operation is promised a
+hard wall-clock deadline. Reads can create the existing permanent private lock
+sidecars but never modify session records.

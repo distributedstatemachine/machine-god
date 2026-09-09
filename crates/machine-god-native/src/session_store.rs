@@ -29,6 +29,62 @@ use rustix::fs::{AtFlags, Dir, FileType, FlockOperation, Mode, OFlags};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use sha2::{Digest, Sha256};
 
+/// Controlled scans keep interruption distinct from record corruption.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) enum FileSessionScanError {
+    Store(SessionStoreError),
+    Busy,
+    Cancelled,
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl From<SessionStoreError> for FileSessionScanError {
+    fn from(error: SessionStoreError) -> Self {
+        Self::Store(error)
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FileSessionScanError {
+    fn ordinary(self) -> SessionStoreError {
+        match self {
+            Self::Store(error) => error,
+            Self::Busy | Self::Cancelled => unreachable!("ordinary scans have no control policy"),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) struct FileSessionScanControl {
+    pub(crate) cancel: machine_god_core::CancellationToken,
+    pub(crate) abandoned: machine_god_core::CancellationToken,
+    #[cfg(test)]
+    pub(crate) after_read: Option<std::sync::Arc<dyn Fn(usize) + Send + Sync>>,
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FileSessionScanControl {
+    fn check(&self) -> Result<(), FileSessionScanError> {
+        if self.cancel.is_cancelled() || self.abandoned.is_cancelled() {
+            Err(FileSessionScanError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+    fn lock(&self, file: &OwnedFd) -> Result<(), FileSessionScanError> {
+        loop {
+            self.check()?;
+            match rustix::fs::flock(file, FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => return self.check(),
+                Err(rustix::io::Errno::INTR) => {}
+                Err(rustix::io::Errno::WOULDBLOCK) => return Err(FileSessionScanError::Busy),
+                Err(error) => return Err(map_io_error(error).into()),
+            }
+        }
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn check_scan(control: Option<&FileSessionScanControl>) -> Result<(), FileSessionScanError> {
+    control.map_or(Ok(()), FileSessionScanControl::check)
+}
+
 /// Schema version written by [`FileSessionStore`].
 pub const FILE_SESSION_SCHEMA_VERSION: u32 = 1;
 
@@ -425,15 +481,18 @@ impl FileSessionStore {
         after_directory_open: impl FnOnce(),
     ) -> Result<FileSessionList, SessionStoreError> {
         let mut session_ids = Vec::new();
-        let scan = self.visit_session_records(
-            Some(MAX_LIST_SESSIONS),
-            false,
-            after_directory_open,
-            |record| {
-                session_ids.push(record.id.clone());
-                Ok(())
-            },
-        )?;
+        let scan = self
+            .visit_session_records(
+                Some(MAX_LIST_SESSIONS),
+                false,
+                None,
+                after_directory_open,
+                |record| {
+                    session_ids.push(record.id.clone());
+                    Ok(())
+                },
+            )
+            .map_err(FileSessionScanError::ordinary)?;
         session_ids.sort_unstable();
         session_ids.dedup();
         Ok(FileSessionList {
@@ -451,7 +510,17 @@ impl FileSessionStore {
         skip_invalid: bool,
         visit: impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
     ) -> Result<FileSessionScan, SessionStoreError> {
-        self.visit_session_records(None, skip_invalid, || {}, visit)
+        self.visit_session_records(None, skip_invalid, None, || {}, visit)
+            .map_err(FileSessionScanError::ordinary)
+    }
+
+    pub(crate) fn scan_session_records_controlled(
+        &self,
+        skip_invalid: bool,
+        control: &FileSessionScanControl,
+        visit: impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
+    ) -> Result<FileSessionScan, FileSessionScanError> {
+        self.visit_session_records(None, skip_invalid, Some(control), || {}, visit)
     }
 
     /// Exact projection does not depend on a directory scan or presentation cap.
@@ -469,8 +538,10 @@ impl FileSessionStore {
 
     fn session_candidates(
         &self,
+        control: Option<&FileSessionScanControl>,
         after_directory_open: impl FnOnce(),
-    ) -> Result<(Vec<String>, bool), SessionStoreError> {
+    ) -> Result<(Vec<String>, bool), FileSessionScanError> {
+        check_scan(control)?;
         let directory = rustix::fs::openat(
             self.root.as_fd(),
             ".",
@@ -490,6 +561,7 @@ impl FileSessionStore {
         let mut truncated = false;
 
         loop {
+            check_scan(control)?;
             let Some(entry) = stream.next() else {
                 break;
             };
@@ -521,14 +593,16 @@ impl FileSessionStore {
         &self,
         record_limit: Option<usize>,
         skip_invalid: bool,
+        control: Option<&FileSessionScanControl>,
         after_directory_open: impl FnOnce(),
         mut visit: impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
-    ) -> Result<FileSessionScan, SessionStoreError> {
-        let (candidates, mut truncated) = self.session_candidates(after_directory_open)?;
+    ) -> Result<FileSessionScan, FileSessionScanError> {
+        let (candidates, mut truncated) = self.session_candidates(control, after_directory_open)?;
         let mut records = 0;
         let mut skipped_invalid = 0;
         let mut total_record_bytes = 0_usize;
         for data_name in candidates {
+            check_scan(control)?;
             if record_limit.is_some_and(|limit| records >= limit) {
                 truncated = true;
                 break;
@@ -546,6 +620,7 @@ impl FileSessionStore {
                 &data_name,
                 remaining_bytes,
                 &mut bytes_read,
+                control,
                 &mut visit,
             );
             // Charge transferred bytes even when decoding, native metadata,
@@ -560,7 +635,9 @@ impl FileSessionStore {
                 Ok(SessionCandidateObservation::Missing) => {}
                 Ok(SessionCandidateObservation::Record) => records += 1,
                 Ok(SessionCandidateObservation::ByteLimit) => truncated = true,
-                Err(error) if skip_invalid && error.kind == SessionStoreErrorKind::Corrupt => {
+                Err(FileSessionScanError::Store(error))
+                    if skip_invalid && error.kind == SessionStoreErrorKind::Corrupt =>
+                {
                     skipped_invalid += 1;
                 }
                 Err(error) => return Err(error),
@@ -571,6 +648,7 @@ impl FileSessionStore {
             }
         }
 
+        check_scan(control)?;
         Ok(FileSessionScan {
             complete: !truncated,
             records,
@@ -584,28 +662,37 @@ impl FileSessionStore {
         data_name: &str,
         remaining_bytes: usize,
         bytes_read: &mut usize,
+        control: Option<&FileSessionScanControl>,
         visit: &mut impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
-    ) -> Result<SessionCandidateObservation, SessionStoreError> {
+    ) -> Result<SessionCandidateObservation, FileSessionScanError> {
+        check_scan(control)?;
         if !probe_data(self.root.as_fd(), data_name)? {
             return Ok(SessionCandidateObservation::Missing);
         }
         let lock_name = lock_name_for_data_name(data_name);
+        check_scan(control)?;
         let lock = open_lock(self.root.as_fd(), &lock_name)?;
-        lock_exclusive(&lock)?;
-        let record = match read_stored_record_counted(
+        match control {
+            Some(control) => control.lock(&lock)?,
+            None => lock_exclusive(&lock)?,
+        }
+        let record = match read_stored_record_controlled(
             self.root.as_fd(),
             data_name,
             remaining_bytes,
             bytes_read,
+            control,
         )? {
             StoredRecordRead::Missing => return Ok(SessionCandidateObservation::Missing),
             StoredRecordRead::ByteLimit => return Ok(SessionCandidateObservation::ByteLimit),
             StoredRecordRead::Record { record, .. } => RecordOwner::new(record),
         };
         if SessionNames::for_id(&record.get().id).data != data_name {
-            return Err(corrupt());
+            return Err(corrupt().into());
         }
+        check_scan(control)?;
         visit(record.get())?;
+        check_scan(control)?;
         Ok(SessionCandidateObservation::Record)
     }
 
@@ -2073,6 +2160,19 @@ fn read_stored_record_counted(
     byte_limit: usize,
     bytes_read: &mut usize,
 ) -> Result<StoredRecordRead, SessionStoreError> {
+    read_stored_record_controlled(root, name, byte_limit, bytes_read, None)
+        .map_err(FileSessionScanError::ordinary)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_stored_record_controlled(
+    root: rustix::fd::BorrowedFd<'_>,
+    name: &str,
+    byte_limit: usize,
+    bytes_read: &mut usize,
+    control: Option<&FileSessionScanControl>,
+) -> Result<StoredRecordRead, FileSessionScanError> {
+    check_scan(control)?;
     let file = match rustix::fs::openat(
         root,
         name,
@@ -2083,15 +2183,15 @@ fn read_stored_record_counted(
         Err(error) if error == rustix::io::Errno::NOENT => {
             return Ok(StoredRecordRead::Missing);
         }
-        Err(error) => return Err(map_existing_entry_open_error(root, name, error)),
+        Err(error) => return Err(map_existing_entry_open_error(root, name, error).into()),
     };
     let metadata = ensure_regular(&file)?;
     if metadata.st_size < 0 {
-        return Err(corrupt());
+        return Err(corrupt().into());
     }
     let metadata_bytes = usize::try_from(metadata.st_size).map_err(|_| corrupt())?;
     if metadata_bytes > MAX_FILE_SESSION_BYTES {
-        return Err(corrupt());
+        return Err(corrupt().into());
     }
     if metadata_bytes > byte_limit {
         return Ok(StoredRecordRead::ByteLimit);
@@ -2099,41 +2199,54 @@ fn read_stored_record_counted(
     let mut bytes = Vec::with_capacity(metadata_bytes);
     let mut chunk = [0_u8; 8192];
     loop {
+        check_scan(control)?;
         let file_remaining = (MAX_FILE_SESSION_BYTES + 1).saturating_sub(bytes.len());
         if file_remaining == 0 {
-            return Err(corrupt());
+            return Err(corrupt().into());
         }
         let budget_remaining = byte_limit.saturating_add(1).saturating_sub(bytes.len());
         if budget_remaining == 0 {
             return Ok(StoredRecordRead::ByteLimit);
         }
         let chunk_limit = file_remaining.min(budget_remaining).min(chunk.len());
-        let read = retry_interrupted(|| rustix::io::read(&file, &mut chunk[..chunk_limit]))
-            .map_err(map_io_error)?;
+        let read = loop {
+            check_scan(control)?;
+            match rustix::io::read(&file, &mut chunk[..chunk_limit]) {
+                Err(rustix::io::Errno::INTR) => {}
+                result => break result.map_err(map_io_error)?,
+            }
+        };
         if read == 0 {
             break;
         }
         bytes.extend_from_slice(&chunk[..read]);
         *bytes_read = bytes.len();
+        #[cfg(test)]
+        if let Some(hook) = control.and_then(|control| control.after_read.as_ref()) {
+            hook(bytes.len());
+        }
         if bytes.len() > MAX_FILE_SESSION_BYTES {
-            return Err(corrupt());
+            return Err(corrupt().into());
         }
         if bytes.len() > byte_limit {
             return Ok(StoredRecordRead::ByteLimit);
         }
     }
-    let ObjectOnly(envelope): ObjectOnly<StoredEnvelope> =
-        serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
+    check_scan(control)?;
+    let decoded = serde_json::from_slice::<ObjectOnly<StoredEnvelope>>(&bytes);
+    check_scan(control)?;
+    let ObjectOnly(envelope) = decoded.map_err(|_| corrupt())?;
     if envelope.schema_version != FILE_SESSION_SCHEMA_VERSION {
-        return Err(corrupt());
+        return Err(corrupt().into());
     }
     let record = SessionRecord::from(envelope.record.0);
     if record.revision == SessionRevision(0)
         || record.next_turn_sequence == 0
         || validate_record_json(&record).is_err()
     {
-        return Err(corrupt());
+        return Err(corrupt().into());
     }
+    check_scan(control)?;
     Ok(StoredRecordRead::Record { record })
 }
 

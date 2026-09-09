@@ -1156,6 +1156,24 @@ impl NativeReferenceHost {
         self.control_workers.clone()
     }
 
+    /// Creates an inert catalog reader over this exact store and canonical
+    /// workspace, using the actual host-owned completion scope. No discovery or
+    /// fallback worker scope occurs. Clones of the reader share scan admission.
+    /// # Errors
+    /// Legacy hosts without owned workers return `Unavailable`.
+    pub fn session_catalog_reader(
+        &self,
+    ) -> Result<crate::NativeSessionCatalogReader, crate::NativeSessionCatalogReadError> {
+        let workers = self
+            .control_workers()
+            .ok_or(crate::NativeSessionCatalogReadError::Unavailable)?;
+        Ok(crate::NativeSessionCatalogReader::new(
+            Arc::clone(&self.session_store),
+            self.workspace_root.clone(),
+            workers,
+        ))
+    }
+
     /// Returns the exact optional current-model registry injected into search.
     /// No registry or conversation registration is created by this accessor.
     #[must_use]

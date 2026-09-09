@@ -228,29 +228,54 @@ fn list_from_store(
     store: &FileSessionStore,
     query: &NativeSessionCatalogQuery,
 ) -> Result<NativeSessionCatalogPage, NativeSessionCatalogError> {
+    list_from_store_with_control(store, query, None).map_err(|error| match error {
+        crate::session_catalog_reader::NativeSessionCatalogReadError::Catalog(error) => error,
+        _ => unreachable!("ordinary catalog scans have no cancellation policy"),
+    })
+}
+
+pub(crate) fn list_from_store_with_control(
+    store: &FileSessionStore,
+    query: &NativeSessionCatalogQuery,
+    control: Option<&crate::session_store::FileSessionScanControl>,
+) -> Result<NativeSessionCatalogPage, crate::session_catalog_reader::NativeSessionCatalogReadError>
+{
+    use crate::session_catalog_reader::NativeSessionCatalogReadError as ReadError;
+    use crate::session_store::FileSessionScanError;
     let mut page = NativeSessionCatalogPage::empty();
     let mut scratch = Vec::new();
-    let scan = store
-        .scan_session_records(query.skips_invalid(), |record| {
-            let entry = NativeSessionCatalogEntry::project(record)?;
-            if query.matches(&entry, &mut scratch) {
-                page.matched_count += 1;
-                page.unknown_activity_count +=
-                    usize::from(entry.native_metadata().updated_at_ms().is_none());
-                let index = page
-                    .entries
-                    .binary_search_by(|current| projection::newest_first(current, &entry))
-                    .unwrap_or_else(|index| index);
-                if index < query.limit() {
-                    if page.entries.len() == query.limit() {
-                        page.entries.pop();
-                    }
-                    page.entries.insert(index, entry);
+    let visit = |record: &machine_god_core::SessionRecord| {
+        let entry = NativeSessionCatalogEntry::project(record)?;
+        if query.matches(&entry, &mut scratch) {
+            page.matched_count += 1;
+            page.unknown_activity_count +=
+                usize::from(entry.native_metadata().updated_at_ms().is_none());
+            let index = page
+                .entries
+                .binary_search_by(|current| projection::newest_first(current, &entry))
+                .unwrap_or_else(|index| index);
+            if index < query.limit() {
+                if page.entries.len() == query.limit() {
+                    page.entries.pop();
                 }
+                page.entries.insert(index, entry);
             }
-            Ok(())
-        })
-        .map_err(|error| map_store_error(&error))?;
+        }
+        Ok(())
+    };
+    let scan = match control {
+        Some(control) => {
+            store.scan_session_records_controlled(query.skips_invalid(), control, visit)
+        }
+        None => store
+            .scan_session_records(query.skips_invalid(), visit)
+            .map_err(FileSessionScanError::Store),
+    }
+    .map_err(|error| match error {
+        FileSessionScanError::Store(error) => ReadError::Catalog(map_store_error(&error)),
+        FileSessionScanError::Busy => ReadError::Busy,
+        FileSessionScanError::Cancelled => ReadError::Cancelled,
+    })?;
     page.scan_complete = scan.complete;
     page.scanned_records = scan.records;
     page.scanned_record_bytes = scan.bytes;
