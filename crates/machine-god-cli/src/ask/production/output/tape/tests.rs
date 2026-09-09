@@ -48,12 +48,14 @@ fn blocked_recording_retains_stdout_and_wakes_after_receipt_without_a_thread_per
         )
         .await
         .unwrap();
+        let path = recorder.path().to_owned();
         let completion = recorder.completion();
         let mut lane = TapeLane::new(recorder, false);
+        lane.clock = || Ok(900);
         let (release, until) = tokio::sync::oneshot::channel();
         lane.hold_for_test(until);
         let bytes = vec![b'x'; MAX_TERMINAL_TAPE_RECORDING_FRAME_BYTES + 1];
-        lane.stdout(bytes.clone(), false);
+        lane.stdout(bytes.clone(), false, Ok(107));
         poll_fn(|cx| {
             assert!(matches!(lane.poll_stdout(cx), Some(Poll::Pending)));
             Poll::Ready(())
@@ -73,6 +75,45 @@ fn blocked_recording_retains_stdout_and_wakes_after_receipt_without_a_thread_per
         scope.close();
         scope.completion().wait_on_worker().unwrap();
         assert!(completion.status().complete);
+        let replay = machine_god_native::replay_terminal_tape(
+            machine_god_native::TerminalTapeReplayRequest::new(path, false, true, None, None),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let summary: serde_json::Value = serde_json::from_slice(replay.stdout()).unwrap();
+        assert_eq!(summary["frames"][0]["delta_ms"], 7);
+        assert_eq!(summary["frames"][1]["delta_ms"], 0);
+    });
+}
+
+#[test]
+fn signals_observed_after_final_close_admission_cannot_reopen_the_tape() {
+    let fixture = Fixture::new();
+    let scope = NativeOwnedWorkerScope::new();
+    runtime().block_on(async {
+        let recorder = TerminalTapeRecorder::start(
+            fixture.request(false),
+            scope.clone(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let completion = recorder.completion();
+        let mut lane = TapeLane::new(recorder, false);
+        poll_fn(|cx| {
+            assert!(lane.poll_finish(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        lane.sigint();
+        assert!(lane.queue.is_empty());
+        poll_fn(|cx| lane.poll_finish(cx)).await.unwrap();
+        drop(lane);
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(completion.status().frames, 0);
+        assert!(completion.status().complete);
     });
 }
 
@@ -90,8 +131,7 @@ fn clock_failure_on_an_accepted_stdout_receipt_reports_failure_without_panicking
         .unwrap();
         let completion = recorder.completion();
         let mut lane = TapeLane::new(recorder, false);
-        lane.clock = || Err(());
-        lane.stdout(b"accepted".to_vec(), false);
+        lane.stdout(b"accepted".to_vec(), false, Err(()));
         assert_eq!(
             poll_fn(|cx| lane.poll_stdout(cx).unwrap()).await,
             OutputAcknowledgement::Failed

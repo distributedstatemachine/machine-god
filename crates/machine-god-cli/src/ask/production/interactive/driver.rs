@@ -127,7 +127,7 @@ impl Driver {
             }),
         }
         // The remaining owner, inbox and input fields drop here. FinalPresentation
-        // has no lifetime vote in any native host or input worker scope.
+        // has no lifetime vote in the conversation host or input worker scope.
     }
 
     fn poll_signals(&mut self, cx: &mut Context<'_>, signals: &mut AskSignals) {
@@ -683,8 +683,9 @@ impl Driver {
     }
 }
 
-/// Native-free tail. The host joins input and every native worker before this
-/// value is polled, so a blocking output write cannot postpone native cleanup.
+/// Conversation-free tail. The host joins input and its terminal workers before
+/// this value is polled. Its independent tape lane records the final output;
+/// neither stdout nor tape acknowledgements can postpone conversation cleanup.
 pub(super) struct FinalPresentation {
     output: super::OutputBridge,
     render: Option<Render>,

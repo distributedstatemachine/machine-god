@@ -368,7 +368,7 @@ mod tests {
                     Duration::from_secs(10),
                     poll_fn(|cx| {
                         input.poll_line_recorded(cx, InputBinding::Command, |bytes| {
-                            observed.extend_from_slice(bytes)
+                            observed.extend_from_slice(bytes);
                         })
                     }),
                 )

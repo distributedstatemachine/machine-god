@@ -13,6 +13,7 @@ pub(super) enum OutputAcknowledgement {
     Written {
         bytes: Vec<u8>,
         failed: bool,
+        timestamp_ms: Result<i64, ()>,
     },
 }
 
@@ -44,9 +45,13 @@ impl OutputBridge {
             return Poll::Pending;
         };
         match acknowledgement {
-            Some(OutputAcknowledgement::Written { bytes, failed }) => {
+            Some(OutputAcknowledgement::Written {
+                bytes,
+                failed,
+                timestamp_ms,
+            }) => {
                 if let Some(tape) = &mut self.tape {
-                    tape.stdout(bytes, failed);
+                    tape.stdout(bytes, failed, timestamp_ms);
                     tape.poll_stdout(cx)
                         .expect("stdout receipt is retained")
                         .map(Some)
@@ -89,16 +94,30 @@ impl OutputBridge {
 }
 
 pub(super) fn serve_output(
+    work: tokio::sync::mpsc::Receiver<OutputWork>,
+    acknowledgements: &tokio::sync::mpsc::Sender<OutputAcknowledgement>,
+    output: &mut dyn std::io::Write,
+) {
+    serve_output_with_clock(work, acknowledgements, output, super::wall_clock_ms);
+}
+
+fn serve_output_with_clock(
     mut work: tokio::sync::mpsc::Receiver<OutputWork>,
     acknowledgements: &tokio::sync::mpsc::Sender<OutputAcknowledgement>,
     output: &mut dyn std::io::Write,
+    clock: fn() -> Result<i64, ()>,
 ) {
     while let Some(work) = work.blocking_recv() {
         let acknowledgement = match work {
             OutputWork::Write(mut bytes) => {
                 let (accepted, failed) = write_prefix(output, &bytes);
+                let timestamp_ms = clock();
                 bytes.truncate(accepted);
-                OutputAcknowledgement::Written { bytes, failed }
+                OutputAcknowledgement::Written {
+                    bytes,
+                    failed,
+                    timestamp_ms,
+                }
             }
             OutputWork::Flush => {
                 if output.flush().is_ok() {

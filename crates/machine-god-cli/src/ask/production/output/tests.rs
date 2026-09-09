@@ -84,10 +84,11 @@ fn actual_stdout_prefix_survives_short_writes_interruptions_and_partial_errors()
         work.try_send(OutputWork::Write(b"abcdef".to_vec()))
             .unwrap();
         drop(work);
-        serve_output(received, &ack, &mut output);
+        serve_output_with_clock(received, &ack, &mut output, || Ok(123));
         assert_eq!(
             received_ack.try_recv().unwrap(),
             OutputAcknowledgement::Written {
+                timestamp_ms: Ok(123),
                 bytes: b"abcdef"[..stop].to_vec(),
                 failed: stop < 6,
             }
@@ -152,6 +153,7 @@ fn output_bridge_roundtrips_exact_stdout_and_opted_in_events_through_real_replay
         lane.sigint();
         lane.marker(b"cli-test");
         ack.send(OutputAcknowledgement::Written {
+            timestamp_ms: Ok(107),
             bytes: b"accepted".to_vec(),
             failed: false,
         })
@@ -258,6 +260,7 @@ fn native_recording_limit_failure_is_an_explicit_output_failure() {
         };
         output.tape.as_mut().unwrap().marker(b"one frame allowed");
         ack.send(OutputAcknowledgement::Written {
+            timestamp_ms: Ok(107),
             bytes: b"accepted".to_vec(),
             failed: false,
         })
