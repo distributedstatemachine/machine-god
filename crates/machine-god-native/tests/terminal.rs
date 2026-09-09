@@ -6329,7 +6329,7 @@ fn linux_trivial_exit_completes_inside_a_sub_term_grace_deadline() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn linux_system_timeout_kills_a_term_ignoring_shell_before_publication() {
+fn linux_system_timeout_includes_admission_in_the_first_poll_budget() {
     if !require_linux_executable("/bin/sleep") {
         return;
     }
@@ -6343,27 +6343,21 @@ fn linux_system_timeout_kills_a_term_ignoring_shell_before_publication() {
 
     let output = futures_executor::block_on(tool.execute(
         context(),
-        exact_arguments(
-            "trap '' TERM; printf '%s' \"$$\" > timeout.pid; while :; do /bin/sleep 1; done",
-            ".",
-        ),
+        exact_arguments("trap '' TERM; while :; do /bin/sleep 1; done", "."),
         CancellationToken::new(),
     ))
     .unwrap();
 
-    let pid = read_linux_pid(&temporary.path().join("timeout.pid"));
-    let cleanup = EscapedProcessGuard::new(pid);
+    // The 100 ms budget includes admission and can expire before shell spawn or
+    // readiness. This public-boundary test therefore makes no child-readiness
+    // claim. The private real-executor test
+    // linux_ready_term_ignoring_shell_is_reaped_before_timeout_publication
+    // requires readiness before closing timeout and proves cleanup separately.
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(output.is_error);
     assert_eq!(output.content["status"], "timed_out");
     assert_eq!(output.content["exit_code"], Value::Null);
     assert_eq!(output.content["signal"], Value::Null);
-    assert_eq!(
-        rustix::process::test_kill_process(pid),
-        Err(rustix::io::Errno::SRCH),
-        "timed-out TERM-ignoring shell survived output publication"
-    );
-    drop(cleanup);
 }
 
 #[cfg(target_os = "linux")]

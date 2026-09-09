@@ -7503,6 +7503,130 @@ mod tests {
         assert_eq!(tool.active.load(Ordering::Acquire), 0);
     }
 
+    #[cfg(target_os = "linux")]
+    struct TimeoutReadyDirectory(std::path::PathBuf);
+
+    #[cfg(target_os = "linux")]
+    impl TimeoutReadyDirectory {
+        fn new() -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "mg-terminal-ready-timeout-{}-{nonce}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for TimeoutReadyDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_ready_term_ignoring_shell_is_reaped_before_timeout_publication() {
+        let temporary = TimeoutReadyDirectory::new();
+        let tool = TerminalTool::open(&temporary.0).unwrap();
+        let activity = ExecutionActivity::acquire(&tool.active, 1).unwrap();
+        let cancellation = CancellationToken::new();
+        let started = Instant::now();
+        let deadline = started + TERMINAL_DEFAULT_TIMEOUT;
+        let mut arguments = deadline_test_arguments();
+        arguments.command = "trap '' TERM; printf '%s\\n' \"$$\" > timeout.pid; \
+                             while :; do /bin/sleep 1; done"
+            .to_owned();
+        let request = tool
+            .execution_request(
+                arguments,
+                started,
+                deadline,
+                Arc::clone(&activity),
+                &cancellation,
+            )
+            .unwrap();
+        let timer = DeadlineTimer::new(deadline, Arc::clone(&activity)).unwrap();
+        let future = tool.executor.execute(request, cancellation.clone());
+        let mut execution = Box::pin(await_executor(
+            future,
+            &cancellation,
+            deadline,
+            started,
+            timer,
+            Arc::clone(&activity),
+        ));
+
+        // The public integration test retains the actual 100 ms first-poll
+        // budget, including admission. Here the ordinary request deadline is
+        // only a fail-safe: explicitly close the production timeout cause after
+        // mandatory readiness so startup scheduling cannot erase TERM/KILL
+        // coverage. No request deadline is reset or extended. On every panic,
+        // the owned real executor future drops and aborts/joins its worker.
+        let ready_started = Instant::now();
+        let pid = loop {
+            assert!(
+                execution
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending(),
+                "shell execution finished before the controlled timeout"
+            );
+            assert!(
+                ready_started.elapsed() < Duration::from_secs(2),
+                "shell did not report complete post-trap readiness"
+            );
+            match std::fs::read_to_string(temporary.0.join("timeout.pid")) {
+                Ok(record) if record.ends_with('\n') => {
+                    let raw = record.strip_suffix('\n').unwrap().parse::<i32>().unwrap();
+                    break rustix::process::Pid::from_raw(raw).unwrap();
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("could not read shell readiness: {error}"),
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert_eq!(activity.cause(), ExecutionCause::Open);
+        assert!(rustix::process::test_kill_process(pid).is_ok());
+        assert!(rustix::process::test_kill_process_group(pid).is_ok());
+        assert_eq!(tool.active.load(Ordering::Acquire), 1);
+
+        let cleanup_started = Instant::now();
+        assert_eq!(activity.close_timeout(), ExecutionCause::TimedOut);
+        let outcome = futures_executor::block_on(execution).unwrap();
+        let output = super::render_output(".", &outcome).unwrap();
+        assert!(cleanup_started.elapsed() < Duration::from_secs(2));
+        assert!(output.is_error);
+        assert_eq!(output.content["status"], "timed_out");
+        assert_eq!(output.content["exit_code"], serde_json::Value::Null);
+        assert_eq!(output.content["signal"], serde_json::Value::Null);
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH),
+            "ready TERM-ignoring shell survived timeout publication"
+        );
+        assert_eq!(
+            rustix::process::test_kill_process_group(pid),
+            Err(rustix::io::Errno::SRCH),
+            "ready shell's process group survived timeout publication"
+        );
+        drop(activity);
+        // Publication can leave only a Waker notification tail holding the
+        // slot. Require its actual release within the same cleanup bound.
+        while tool.active.load(Ordering::Acquire) != 0
+            && cleanup_started.elapsed() < Duration::from_secs(2)
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(tool.active.load(Ordering::Acquire), 0);
+    }
+
     #[cfg(unix)]
     #[test]
     fn independent_deadline_stops_and_drops_a_pending_executor() {
