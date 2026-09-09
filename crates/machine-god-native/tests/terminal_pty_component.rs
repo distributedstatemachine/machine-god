@@ -9,6 +9,7 @@ use machine_god_native::{
 };
 #[path = "../src/os_sandbox/launch.rs"]
 mod os_sandbox;
+use machine_god_native::NativeWorkspaceTurnScope;
 #[cfg(target_os = "macos")]
 use os_sandbox::NativeSandboxRoot;
 use os_sandbox::{

@@ -75,6 +75,7 @@ pub struct NativeSandboxLaunch {
     roots: Arc<[NativeSandboxRoot]>,
     executable: Option<Arc<File>>,
     profile: Arc<str>,
+    workspace_scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
 }
 impl fmt::Debug for NativeSandboxLaunch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -128,9 +129,46 @@ impl NativeSandboxLaunch {
             roots: roots.into(),
             executable: executable.map(Arc::new),
             profile: profile.into(),
+            workspace_scope: None,
         };
         result.revalidate(deadline, cancellation)?;
         Ok(result)
+    }
+
+    pub(crate) fn with_workspace_scope(
+        mut self,
+        scope: crate::NativeWorkspaceTurnScope,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<Self> {
+        check(deadline, cancellation)?;
+        self.workspace_scope = Some(Arc::new(scope));
+        self.validate_workspace_scope()?;
+        check(deadline, cancellation)?;
+        Ok(self)
+    }
+
+    /// Called only while constructing an installed monitor's independent grant.
+    /// This pure transfer keeps immutable OS authority, not the source turn alive.
+    /// Ordinary process launches must retain their live-turn proof until release.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) fn for_installed_monitor(&self) -> Result<Self> {
+        self.validate_workspace_scope()?;
+        let mut retained = self.clone();
+        retained.workspace_scope = None;
+        Ok(retained)
+    }
+
+    fn validate_workspace_scope(&self) -> Result<()> {
+        if self
+            .workspace_scope
+            .as_ref()
+            .is_some_and(|scope| !scope.is_live())
+        {
+            Err(NativeSandboxError::Unavailable)
+        } else {
+            Ok(())
+        }
     }
 
     #[must_use]
@@ -152,6 +190,7 @@ impl NativeSandboxLaunch {
     /// Rejects changed authority, unavailable isolation, cancellation or expiry.
     pub fn revalidate(&self, deadline: Instant, cancellation: &CancellationToken) -> Result<()> {
         check(deadline, cancellation)?;
+        self.validate_workspace_scope()?;
         if self.effective == NativeSandboxMode::None {
             return Ok(());
         }
@@ -172,7 +211,8 @@ impl NativeSandboxLaunch {
             deadline,
             cancellation,
         )?;
-        check(deadline, cancellation)
+        check(deadline, cancellation)?;
+        self.validate_workspace_scope()
     }
 
     /// Bounded, effect-free argv wrapping. The original shell remains an exact

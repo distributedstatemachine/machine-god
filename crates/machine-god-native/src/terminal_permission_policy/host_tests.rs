@@ -40,22 +40,33 @@ fn permission_host_taken_os_missing_executable_never_falls_back() {
 #[cfg(target_os = "macos")]
 #[test]
 fn permission_host_taken_os_routes_foreground_pty_and_custom_monitors() {
-    use crate::{NATIVE_SANDBOX_EXECUTABLE, NativeSandboxRoot};
+    use crate::{NATIVE_SANDBOX_EXECUTABLE, NativeWorkspaceAuthority, NativeWorkspaceContexts, NativeWorkspaceEntrySpec, NativeWorkspaceSource};
     use std::fs::File;
 
     let owner = PolicyFixture::new(PermissionMode::Auto, NativeSandboxMode::Os);
-    let (_turn, registration, context) = owner.turn();
+    let (turn, registration, context) = owner.turn();
+    let contexts = Arc::new(NativeWorkspaceContexts::new());
+    let workspace_owner = contexts.register(&owner.session).unwrap();
+    let mut workspace_registration = None;
+    let mut authority = None;
     let mut fixture = Fixture::with_permission(|workspace| {
         // The Darwin fixture must not live under the pinned writable /tmp exception.
         assert!(!workspace.starts_with("/private/tmp") && !workspace.starts_with("/tmp"));
-        let root =
-            NativeSandboxRoot::new(File::open(workspace).unwrap(), workspace.to_owned()).unwrap();
+        let parent = workspace.parent().unwrap();
+        let extra = parent.join("extra");
+        std::fs::create_dir(&extra).unwrap();
+        let scope = NativeWorkspaceAuthority::open_blocking(
+            open(workspace), workspace.to_owned(), Some(open(&parent.join("state"))), parent.join("state"),
+            vec![NativeWorkspaceEntrySpec::new(NativeWorkspaceSource::new(extra.clone(),extra,true).unwrap(),false,true).unwrap()], false,
+        ).unwrap();
+        workspace_registration = Some(workspace_owner.begin(&turn, scope.snapshot().unwrap()).unwrap());
+        authority = Some(scope);
         let policy = Arc::new(
             NativeTerminalPermissionPolicy::new(
-                vec![root],
+                vec![],
                 Some(File::open(NATIVE_SANDBOX_EXECUTABLE).unwrap()),
             )
-            .unwrap(),
+            .unwrap().with_workspace_contexts(contexts.clone()),
         );
         policy.bind_controller(&owner.controller).unwrap();
         Some(policy)
@@ -66,28 +77,35 @@ fn permission_host_taken_os_routes_foreground_pty_and_custom_monitors() {
     owner.owner.reset().unwrap();
     let outside = fixture.root.join("forbidden");
     let quoted = outside.to_str().unwrap().replace('\'', "'\\''");
-    fixture.action(json!({"action":"exec","profile":"clean","command":format!("printf allowed > foreground; (printf no > '{quoted}') 2>/dev/null; printf done")}));
+    fixture.action(json!({"action":"exec","profile":"clean","command":format!("printf allowed > foreground; printf extra > ../extra/foreground; (printf no > '{quoted}') 2>/dev/null; printf done")}));
     assert!(fixture.root.join("workspace/foreground").exists());
+    assert_eq!(std::fs::read(fixture.root.join("extra/foreground")).unwrap(), b"extra");
     assert!(!outside.exists());
-    let initial = json!({"condition":{"kind":"custom_probe","command":format!("(printf no > '{quoted}') 2>/dev/null; printf allowed > initial-probe"),"cwd":"."},"check_interval_ms":10,"notify":{"kind":"on_match"},"lifetime":{"kind":"until_session_end"}});
-    let TerminalActionResult::Start { session, .. } = fixture.action(json!({"action":"start","profile":"clean","initial_monitors":[initial],"command":format!("printf allowed > pty; (printf no > '{quoted}') 2>/dev/null; exec /bin/sleep 30")})) else { panic!("start receipt"); };
+    let initial = json!({"condition":{"kind":"custom_probe","command":format!("(printf no > '{quoted}') 2>/dev/null; printf extra > ../extra/initial-probe; printf allowed > initial-probe"),"cwd":"."},"check_interval_ms":10,"notify":{"kind":"on_match"},"lifetime":{"kind":"until_session_end"}});
+    let TerminalActionResult::Start { session, .. } = fixture.action(json!({"action":"start","profile":"clean","initial_monitors":[initial],"command":format!("printf extra > ../extra/pty; printf allowed > pty; (printf no > '{quoted}') 2>/dev/null; exec /bin/sleep 30")})) else { panic!("start receipt"); };
     let id = session.session_id;
     let deadline = Instant::now() + Duration::from_secs(5);
     while !fixture.root.join("workspace/pty").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(fixture.root.join("workspace/pty").exists());
+    assert_eq!(std::fs::read(fixture.root.join("extra/pty")).unwrap(), b"extra");
     assert!(!outside.exists());
-    let definition = json!({"condition":{"kind":"custom_probe","command":format!("(printf no > '{quoted}') 2>/dev/null; printf allowed > probe"),"cwd":"."},"check_interval_ms":10,"notify":{"kind":"on_match"},"lifetime":{"kind":"until_session_end"}});
+    let authority = authority.unwrap();
+    authority.install(authority.prepare_blocking(vec![], false).unwrap()).unwrap();
+    let definition = json!({"condition":{"kind":"custom_probe","command":format!("(printf no > '{quoted}') 2>/dev/null; printf extra > ../extra/probe; printf allowed > probe"),"cwd":"."},"check_interval_ms":10,"notify":{"kind":"on_match"},"lifetime":{"kind":"until_session_end"}});
     fixture.action(json!({"action":"monitor","session_id":id.as_str(),"monitor":{"kind":"add","definition":definition}}));
     // The monitor retains the admission-time snapshot after its source turn ends.
     drop(registration);
+    drop(workspace_registration);
     let deadline = Instant::now() + Duration::from_secs(5);
     while !fixture.root.join("workspace/probe").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(fixture.root.join("workspace/probe").exists());
     assert!(fixture.root.join("workspace/initial-probe").exists());
+    assert_eq!(std::fs::read(fixture.root.join("extra/probe")).unwrap(), b"extra");
+    assert_eq!(std::fs::read(fixture.root.join("extra/initial-probe")).unwrap(), b"extra");
     assert!(!outside.exists());
     fixture.close(&id);
 }

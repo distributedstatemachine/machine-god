@@ -6,6 +6,7 @@
 )]
 #[path = "../src/os_sandbox/launch.rs"]
 mod os_sandbox;
+use machine_god_native::NativeWorkspaceTurnScope;
 use machine_god_native::{NativeSandboxMode, PermissionMode};
 use os_sandbox::{
     MAX_NATIVE_SANDBOX_PROFILE_BYTES, NATIVE_SANDBOX_EXECUTABLE, NativeSandboxError,

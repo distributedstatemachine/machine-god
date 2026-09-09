@@ -61,6 +61,20 @@ impl TerminalProbeCustomContext {
     ) -> Self {
         Self { shell, environment }
     }
+
+    fn for_installed_monitor(self: &Arc<Self>) -> Result<Arc<Self>> {
+        let Some(sandbox) = self.shell.sandbox() else {
+            return Ok(Arc::clone(self));
+        };
+        Ok(Arc::new(Self::with_environment(
+            self.shell.clone().with_sandbox(Arc::new(
+                sandbox
+                    .for_installed_monitor()
+                    .map_err(|_| TerminalProbeFailure::Denied)?,
+            )),
+            Arc::clone(&self.environment),
+        )))
+    }
 }
 
 /// Supplied only after the host separately approves this exact effect. DNS
@@ -619,6 +633,7 @@ fn capture_authority(
             request
                 .validate()
                 .map_err(|_| TerminalProbeFailure::InvalidEvidence)?;
+            let context = context.for_installed_monitor()?;
             (
                 TerminalProbeTarget::Custom {
                     command,
@@ -1001,6 +1016,8 @@ mod tests {
             std::fs::remove_dir_all(&self.root).unwrap();
         }
     }
+
+    include!("terminal_permission_policy/workspace/probe_tests.rs");
 
     #[test]
     fn probe_grants_bind_owner_generation_target_sequence_and_budget_without_effects() {

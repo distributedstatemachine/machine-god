@@ -289,6 +289,26 @@ context resolves the exact live session incarnation and turn's taken policy.
 Unbound, expired, closed or uncertain routes fail closed, including effective
 `none`; a missing OS executable never selects an unsandboxed fallback.
 
+`NativeTerminalPermissionPolicy::with_workspace_contexts` additionally binds
+capture to the exact live workspace registration for that same session
+incarnation and turn. The builder is inert. On the already-owned launch worker,
+effective `os` derives primary and active additional roots from the captured
+scope, never the current workspace manager or constructor root list. Routing
+deduplicates canonical root identities, including an additional directory
+already covered by primary, before applying the original seventeen-root bound.
+Inactive and suppressed entries do not become sandbox roots. Descriptor copies,
+root/launcher validation and profile construction remain under the original
+deadline and cancellation token.
+
+Effective `none` and `yolo` still require the exact live workspace registration,
+but do not acquire OS roots or a launcher or require UTF-8 profile representation
+of otherwise valid workspace identities. Scoped snapshots retain a live-turn
+proof and check it before final native release even in those modes. Missing or
+retired registrations never fall back to constructor authority. Once an
+ordinary process has successfully committed, its lifetime and cleanup remain
+with the existing native process owner; finishing the source turn does not
+invalidate an already-running process through this launch-only proof.
+
 Foreground execution attaches that snapshot to its selected shell. Staged PTY
 and tmux starts retain the same snapshot through release, and initial or newly
 added/updated custom monitor commands retain it in their authorized shell
@@ -299,6 +319,16 @@ source conversation turn alive. Existing probe grants, deadlines and cleanup
 ownership remain authoritative, and the snapshot itself is not an execution
 grant. This composition does not enable optional localhost listening. Without
 the explicit policy option, the existing host constructor remains unchanged.
+
+For scoped custom monitors, successful grant construction checks the exact
+source workspace registration and transfers the immutable captured sandbox
+roots/policy to that independent owner/session/monitor-generation grant. A stale
+registration cannot create a new grant. This pure transfer occurs only on the
+existing grant-installation path, not on ordinary process launch or monitor
+description preparation. Later probe launches still revalidate retained OS
+roots and launcher, but use the monitor grant's revocation and deadlines rather
+than requiring the original conversation turn to stay open. Removing a root in
+a later turn does not rewrite a previously authorized monitor's captured policy.
 
 The profile ceiling is derived from seventeen worst-case escaped paths plus
 fixed policy syntax. The private helper frame adds only that bounded profile,
