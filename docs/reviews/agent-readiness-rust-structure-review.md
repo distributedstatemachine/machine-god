@@ -421,3 +421,110 @@ The original eight findings formed the initial selected maintenance scope.
 Findings 9–12 broaden the advisory review and are not silently added to that
 implementation batch. Accepted work and its delivery status belong in the
 existing implementation plan, not this historical document.
+
+## Test execution and parallelism follow-up
+
+Assessment date: 2026-09-09. This follow-up examines maintenance revision
+`0193fab9926cd0aa9b6e348fffabd11e8e3d4e46`, not the original reviewed revision.
+It combines the coordinator's recorded local gate timings with read-only
+inspection of test orchestration and official nextest documentation. No nextest
+comparison was run; the recommendations below are not measured speedup claims
+or an expansion of the original twelve-finding acceptance boundary. Any selected
+implementation belongs in the single live plan as separate test-infrastructure
+maintenance, not in product-tool iterations.
+
+### Observed bottlenecks
+
+| Area | Recorded local elapsed time | Interpretation |
+| --- | ---: | --- |
+| macOS native library tests | 434.31 seconds; 2,064 passed, 12 existing helper tests ignored | The serial native suite dominates Rust test execution. |
+| CLI unit tests | 6.56 seconds; 302 passed, 5 existing helper tests ignored | Not the principal runtime bottleneck. |
+| CLI integration tests | 10.45 seconds; 99 passed | Smaller optimization opportunity. |
+| Repository Python suite | 317.524 seconds; 107 tests | Includes a fresh release compilation, not just Python execution. |
+
+These are individual gate observations, not controlled before/after benchmarks.
+Compilation, test execution, host load, and warm versus cold caches must be
+measured separately before choosing concurrency or claiming a gain.
+
+Evidence at the follow-up revision:
+
+- `.github/workflows/ci.yml`, lines 1465–1480, serializes every selected Apple
+  package's tests to avoid shared process-table contention. Linux retains its
+  default test concurrency; platform jobs already run in parallel.
+- `tests/test_native_manifest.py`, lines 111–184, creates a fresh temporary
+  target directory and builds the release panic-cleanup example with locked,
+  offline Rust 1.94.1 before running it. This rebuild is part of the Python gate.
+- The CI workflow has no Rust build-cache step and installs pinned cargo-deny
+  and cargo-audit from source. Its existing dependency-aware path selection
+  already avoids unrelated checks; nextest is complementary to that selection.
+- `crates/machine-god-native/src/background_process.rs` defines
+  `GROUP_SNAPSHOT_TEST_LOCK`; process, PTY, tmux and host fixtures use it.
+  Locks protecting process-local fault hooks must be distinguished from locks
+  protecting shared host resources before changing runner semantics.
+- The implementation plan's review ordering places three independent review
+  tracks after the complete local gate and remote verification after review.
+  The review tracks themselves already run concurrently.
+
+### Safe parallelism boundaries
+
+| Work | Proposed scheduling | Constraint |
+| --- | --- | --- |
+| Pure core, testkit, JSON, codec and parsing tests | Concurrent execution | Tiny tests may be faster under Cargo because process startup has a cost; measure both runners. |
+| Independent native filesystem/configuration tests | Bounded concurrency | Verify isolated temporary roots, environment assumptions and absence of shared host state first. |
+| Terminal, process inventory, PTY and tmux lifecycle tests | Explicit limited/serial groups or a dedicated runner | Preserve original deadlines, ownership assertions and child cleanup; do not overlap host-sensitive fixtures with unrelated heavy builds. |
+| Lightweight repository checks | Overlap independent Rust work | Separate the release-compiling probe from genuinely lightweight Python checks. |
+| Frozen-candidate reviews and CI | Overlap independent verification | Requires an explicit workflow amendment; all required results must still pass for the exact accepted SHA. |
+
+Nextest runs each test in a separate process. Existing static mutexes cannot
+provide inter-test mutual exclusion across those processes. Process-local
+fault-injection state may become naturally isolated, while host-wide resources
+still need runner-level coordination. See the official
+[execution model](https://nexte.st/docs/design/why-process-per-test/).
+
+Use nextest [test groups](https://nexte.st/docs/configuration/test-groups/) to
+limit related tests. A group with `max-threads = 1` serializes only its members,
+not all other tests. Tests requiring exclusive access within one runner can use
+`threads-required = "num-test-threads"`; this does not coordinate separate runner
+or Cargo processes. Truly host-sensitive work may need a dedicated machine.
+See [heavy-test scheduling](https://nexte.st/docs/configuration/threads-required/).
+
+Verify ignored subprocess-helper entrypoints, exact test names, custom harnesses,
+environment fixtures, failure propagation and leak/timeout handling before
+substituting runners. Keep doctests under `cargo test --doc --workspace`.
+Preserve existing shared-process concurrency coverage during the trial; process
+isolation can change which interference bugs tests expose. Do not relax product
+deadlines, silently drop tests, or use retries to hide new flakes.
+
+### Build reuse and bounded rollout
+
+First investigate building the exact release panic probe once and supplying its
+verified path to the harness, preserving release-mode cleanup coverage and its
+build configuration. Cache pinned tooling and compatible Rust dependencies with
+explicit OS, architecture, toolchain, lockfile and build-configuration inputs.
+Do not trust a stale helper merely because its path exists. Avoid multiple
+agents independently compiling the same frozen candidate or contending on one
+mutable Cargo target directory.
+
+If execution still warrants CI sharding, build once per compatible target and
+configuration, then distribute test binaries and required helpers/fixtures to
+matching runners at the same source SHA. Account for archive transfer and setup
+costs. Nextest supports [build archives](https://nexte.st/docs/ci-features/archiving/);
+it does not make binaries portable across incompatible operating systems or
+architectures. Keep benchmark provenance requirements separate from test-cache
+reuse.
+
+Suggested implementation ownership, using isolated worktrees:
+
+- Runner agent: test inventory, nextest configuration and lifecycle grouping.
+- Build-reuse agent: release-probe harness and its focused regression tests.
+- CI agent: pinned tooling/build caching and workflow scheduling.
+- Coordinator: shared configuration agreements, integration, exact-SHA gates
+  and the existing live ledger. Remove each integrated clean worktree afterward;
+  preserve unrelated paused product worktrees.
+
+Start with a pinned runner version and a small measured concurrency trial,
+compare complete selected-test inventories and warm/cold elapsed times against
+Cargo, and repeat lifecycle checks on Linux and macOS. Review the integrated
+change adversarially before adoption. Prefer build reuse and selective native
+concurrency first; add remote sharding only if measured savings justify its
+complexity. No new gate dashboard or Markdown-parser work is needed.

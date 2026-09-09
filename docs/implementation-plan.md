@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-agent-readiness`
-- Active phase: `verifying whole-codebase maintenance after Linux CI and bootstrap-invocation remediation`
-- Next gate: `fresh exact-release full local gate, three fresh independent reviews, then exact feature-branch CI/Benchmark evidence`
+- Active phase: `whole-codebase maintenance accepted on stacked feature branch; documentation seal`
+- Next gate: `documentation-only lightweight aggregate gates, then resume the retained CLI/tools boundary; no main promotion`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -77,6 +77,10 @@ ACP, teams and extension slash commands retain their later milestone ownership.
 
 ### Active maintenance work
 
+Feature candidate: `0193fab9926cd0aa9b6e348fffabd11e8e3d4e46`.
+Feature CI: `34363000919` (`GREEN`).
+Feature Benchmark evidence: `34363001004` (`GREEN`).
+
 The active branch is stacked on `agent/m60-cli-shell` at `3a0df99` to implement
 all twelve findings from the [agent-readiness review](reviews/agent-readiness-rust-structure-review.md).
 This bounded maintenance task does not deliver the unfinished combined CLI
@@ -119,7 +123,7 @@ The maintenance acceptance boundary is:
 - Extract native environment/status implementation behind compatible root
   exports with unchanged feature/platform behavior.
 
-All twelve changes are integrated; acceptance remains open. Component checks
+All twelve changes are integrated and accepted on the stacked branch. Component checks
 preserved the original 2,089 unique native test identities while removing 965
 duplicate executions. The broader run also identified a stale model-save error
 fixture; it now uses a deterministically obstructed parent, with its original
@@ -136,12 +140,23 @@ helper before applicable tests. Test selection, Linux concurrency and product
 behavior are unchanged. Both benchmark collectors now invoke explicit `--help`
 with matching strict evidence validation, without relabeling historical
 no-argument measurements or claiming workload equivalence. The replacement
-requires a fresh local gate, three fresh reviews and exact remote evidence.
+passed its complete pinned-toolchain local gate and all three fresh independent
+review tracks with no actionable findings. Remote quality, dependency policy,
+FreeBSD/WASI, documentation, both Linux targets and both macOS targets are green,
+including the aggregate CI gate. Both expected exact-candidate benchmark
+artifacts are retained and unexpired through 2026-12-08. No performance milestone
+claim follows from these gates.
 
-Freeze a single candidate after the complete local gate, run three fresh independent review
-tracks, fix until all are green, and require exact feature-branch CI and
-Benchmark evidence. Clean up only committed, integrated maintenance worktrees.
-The unfinished parent feature remains outside this maintenance acceptance.
+All integrated maintenance implementation and review worktrees are cleaned up;
+the three earlier unfinished product worktrees remain preserved. The remaining
+documentation-only seal requires its exact lightweight aggregate gates, without
+another product review or new benchmark artifacts. The unfinished parent feature
+remains outside this acceptance and must not be promoted to main.
+
+The agent-readiness review also records a separately scoped test-speed follow-up:
+selective nextest concurrency, release-probe/build reuse, and overlapping frozen
+candidate verification. This is advisory, not an unmeasured runner migration or
+an amendment to the existing gates. Keep it separate from product-tool work.
 
 ### Retained combined CLI boundary
 
