@@ -297,7 +297,10 @@ automatic retained-store destination. Paths are trimmed only of ASCII space,
 tab, CR and LF, retain non-UTF-8 bytes, and resolve relative to the captured
 working directory without shell expansion. The resolved absolute path is
 bounded to 4,096 bytes and remains subject to native no-symlink/no-overwrite
-validation. Automatic recording uses the selected native state authority, not
+validation. Parent-directory components are walked through retained directory
+descriptors: `real/../tape` works, while `missing/../tape` and
+`symlink/../tape` fail instead of skipping those prefixes. Automatic state labels
+remain normalized. Automatic recording uses the selected native state authority, not
 an independently discovered home or temporary-directory fallback.
 
 Stdin recording is off by default. `FX_RECORD_INPUT`, after the same trimming,
@@ -323,6 +326,12 @@ events; opted-in stdin is copied once at native chunk receipt. Resize, SIGINT
 and the explicit `machine-god:interactive` startup marker use their respective
 FXTP frame kinds. Saturation, clock failure and native write failure make a
 tape incomplete rather than silently dropping captured events.
+Stdout timestamps are captured at the actual accepted-write boundary, not when
+the presentation later consumes a receipt: the last successful write's time
+survives subsequent write errors and acknowledgement/tape backpressure. Raw
+stdin timestamps are captured when its native chunk is observed, not when a
+later parser consumes a retained remainder. Once final tape close is requested,
+event admission ends; later signals still affect exit without reopening the tape.
 
 Input and native conversation/terminal cleanup progress independently of tape
 acknowledgements and blocked stdout. Final presentation still records accepted

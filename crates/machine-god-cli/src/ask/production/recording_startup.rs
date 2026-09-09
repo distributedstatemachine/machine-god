@@ -41,7 +41,7 @@ impl Selection {
         )
     }
 
-    fn from_values(
+    pub(super) fn from_values(
         required: bool,
         workspace: &Path,
         path: Option<OsString>,
