@@ -2,6 +2,7 @@
 
 mod gateway;
 mod host;
+mod resume;
 mod support;
 
 use gateway::Gateway;
@@ -15,9 +16,18 @@ fn recording_process_child() {
     let host = host::Host {
         required: std::env::var("RECORDING_TEST_REQUIRED").unwrap() == "1",
     };
+    let selection = match std::env::var("RECORDING_TEST_SELECTION").as_deref() {
+        Err(std::env::VarError::NotPresent) => crate::ask::InteractiveSessionSelection::Fresh,
+        Ok("latest") => crate::ask::InteractiveSessionSelection::Latest,
+        Ok("exact") => crate::ask::InteractiveSessionSelection::Exact(
+            machine_god_core::SessionId::new(std::env::var("RECORDING_TEST_SESSION").unwrap())
+                .unwrap(),
+        ),
+        other => panic!("invalid explicit subprocess selection: {other:?}"),
+    };
     let code = crate::ask::run_interactive(
         &host,
-        crate::ask::InteractiveSessionSelection::Fresh,
+        selection,
         &mut std::io::stdout(),
         &mut std::io::stderr(),
         "machine-god: failed to write output\n",
