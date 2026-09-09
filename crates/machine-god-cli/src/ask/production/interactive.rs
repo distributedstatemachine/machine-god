@@ -130,6 +130,7 @@ pub(super) fn execute(
                                     output: OutputBridge {
                                         work,
                                         acknowledgements,
+                                        tape: None,
                                     },
                                     size_reader,
                                 };
