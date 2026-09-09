@@ -195,10 +195,10 @@ impl Drop for PreparedToolCall {
         if let PreparedToolAuthorization::PermissionRequired(capability) = &mut self.authorization {
             match capability {
                 Capability::Tool { arguments, .. } => {
-                    crate::session::drop_json_value_iterative(std::mem::take(arguments));
+                    crate::json_bounds::drop_json_value_iterative(std::mem::take(arguments));
                 }
                 Capability::Custom { details, .. } => {
-                    crate::session::drop_json_value_iterative(std::mem::take(details));
+                    crate::json_bounds::drop_json_value_iterative(std::mem::take(details));
                 }
                 Capability::Filesystem { .. }
                 | Capability::FilesystemRename { .. }
@@ -209,7 +209,7 @@ impl Drop for PreparedToolCall {
                 | Capability::Vision { .. } => {}
             }
         }
-        crate::session::drop_json_value_iterative(std::mem::take(&mut self.arguments));
+        crate::json_bounds::drop_json_value_iterative(std::mem::take(&mut self.arguments));
     }
 }
 
@@ -278,7 +278,7 @@ impl fmt::Debug for TurnToolRegistration {
 
 impl Drop for TurnToolRegistration {
     fn drop(&mut self) {
-        crate::session::drop_json_value_iterative(std::mem::take(&mut self.spec.input_schema));
+        crate::json_bounds::drop_json_value_iterative(std::mem::take(&mut self.spec.input_schema));
     }
 }
 
@@ -367,9 +367,9 @@ impl ToolExecution {
     }
 
     pub(crate) fn drain_owned_json(&mut self) {
-        crate::session::drop_json_value_iterative(std::mem::take(&mut self.output.content));
+        crate::json_bounds::drop_json_value_iterative(std::mem::take(&mut self.output.content));
         if let Some(output) = &mut self.persisted_output {
-            crate::session::drop_json_value_iterative(std::mem::take(&mut output.content));
+            crate::json_bounds::drop_json_value_iterative(std::mem::take(&mut output.content));
         }
     }
 }

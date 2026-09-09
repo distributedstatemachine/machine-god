@@ -1,5 +1,6 @@
 //! Thin top-level workspace grammar, native ownership composition, and presentation.
 
+use crate::bounded_output::BoundedOutput;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io;
@@ -242,7 +243,7 @@ impl WorkspaceCommandHost for ProductionWorkspaceCommandHost {
 }
 
 pub(super) fn run_workspace(
-    host: &impl WorkspaceCommandHost,
+    host: &(impl WorkspaceCommandHost + ?Sized),
     options: &WorkspaceOptions,
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
@@ -288,17 +289,6 @@ fn write_failure(
     1
 }
 
-struct BoundedOutput(String);
-impl std::fmt::Write for BoundedOutput {
-    fn write_str(&mut self, value: &str) -> std::fmt::Result {
-        if value.len() > MAX_OUTPUT_BYTES - self.0.len() {
-            return Err(std::fmt::Error);
-        }
-        self.0.push_str(value);
-        Ok(())
-    }
-}
-
 fn validate_path(path: &Path, absolute: bool) -> Result<(), WorkspaceOperationalFailure> {
     let bytes = path.as_os_str().as_encoded_bytes();
     if bytes.is_empty()
@@ -323,14 +313,14 @@ fn render(
         validate_path(&entry.source, false)?;
         validate_path(&entry.identity, true)?;
     }
-    let mut output = BoundedOutput(String::with_capacity(8192));
+    let mut output = BoundedOutput::with_capacity(MAX_OUTPUT_BYTES, 8192);
     if options.json {
         render_json(&mut output, snapshot, &options.action)
     } else {
         render_human(&mut output, snapshot, &options.action)
     }
     .map_err(|_| WorkspaceOperationalFailure::ResourceLimit)?;
-    Ok(output.0)
+    Ok(output.finish())
 }
 
 fn write_path(output: &mut BoundedOutput, path: &Path, json: bool) -> std::fmt::Result {

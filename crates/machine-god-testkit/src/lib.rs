@@ -18,8 +18,8 @@ pub use session_store::{
 };
 pub use subagent::{RecordedSubagentRequest, ScriptedSubagentAuthority, SubagentStep};
 pub use tool::{
-    RecordedToolInvocation, RecordedToolPreparation, ScriptedPreparedTool, ScriptedTool,
-    ToolPrepareStep, ToolStep,
+    RecordedToolInvocation, RecordedToolPreparation, RecordedToolPreparationWithContext,
+    ScriptedPreparedTool, ScriptedTool, ToolPrepareStep, ToolStep,
 };
 
 /// Testkit version aligned with the core API version.

@@ -83,7 +83,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
                 "machine": "test64",
                 "python": "3",
             },
-            "command": ["test-binary"],
+            "command": ["test-binary", "--help"],
             "warmup": 1,
             "samples_ns": [1] * 10,
             "median_ns": 1,
@@ -113,6 +113,39 @@ class BenchmarkScriptsTest(unittest.TestCase):
     def test_checker_accepts_valid_bootstrap_evidence(self) -> None:
         completed = self.run_checker(self.valid_evidence())
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_checker_rejects_historical_and_arbitrary_bootstrap_arguments(self) -> None:
+        for arguments in ([], ["help"], ["--version"], ["--help", "--extra"]):
+            with self.subTest(arguments=arguments):
+                evidence = self.valid_evidence()
+                evidence["command"] = ["test-binary", *arguments]
+                completed = self.run_checker(evidence)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn("followed by --help", completed.stderr)
+
+    def test_collector_executes_and_records_only_explicit_help(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "binary"
+            binary.write_bytes(b"pinned executable fixture")
+            binary.chmod(0o755)
+            commands = []
+
+            def require_help(command, **options):
+                commands.append(command)
+                self.assertEqual(command, [str(binary), "--help"])
+                self.assertEqual(options["timeout_seconds"], 30.0)
+                self.assertFalse(options["capture_output"])
+                return mock.Mock(elapsed_ns=1, returncode=0)
+
+            with (
+                mock.patch.object(benchmark_run, "run_process", side_effect=require_help),
+                mock.patch.object(benchmark_run, "repository_head", return_value="1" * 40),
+            ):
+                evidence = benchmark_run.collect_evidence(binary, runs=10, warmup=1)
+            self.assertEqual(commands, [[str(binary), "--help"]] * 11)
+            self.assertEqual(evidence["command"], [str(binary), "--help"])
+            completed = self.run_checker(evidence)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_checker_rejects_missing_provenance(self) -> None:
         evidence = self.valid_evidence()
@@ -188,7 +221,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
 
     def test_checker_rejects_command_binary_mismatch(self) -> None:
         evidence = self.valid_evidence()
-        evidence["command"] = ["different-binary"]
+        evidence["command"] = ["different-binary", "--help"]
         completed = self.run_checker(evidence)
         self.assertNotEqual(completed.returncode, 0)
 
@@ -216,7 +249,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
             root = Path(directory)
             missing_binary = root / "missing-binary"
             evidence["binary"]["path"] = str(missing_binary)
-            evidence["command"] = [str(missing_binary)]
+            evidence["command"] = [str(missing_binary), "--help"]
             evidence_path = root / "evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
             completed = subprocess.run(
@@ -244,7 +277,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
             non_regular_binary = root / "binary-directory"
             non_regular_binary.mkdir()
             evidence["binary"]["path"] = str(non_regular_binary)
-            evidence["command"] = [str(non_regular_binary)]
+            evidence["command"] = [str(non_regular_binary), "--help"]
             evidence_path = root / "evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
             completed = subprocess.run(
@@ -281,7 +314,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
                 "bytes": binary.stat().st_size,
                 "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
             }
-            evidence["command"] = [str(binary)]
+            evidence["command"] = [str(binary), "--help"]
             evidence_path = root / "evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
             completed = subprocess.run(
@@ -944,7 +977,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
             binary.write_bytes(b"test executable")
             binary.chmod(0o755)
             evidence = self.valid_evidence()
-            evidence["command"] = [str(binary)]
+            evidence["command"] = [str(binary), "--help"]
             evidence["binary"] = {
                 "path": str(binary),
                 "bytes": binary.stat().st_size,
@@ -1327,7 +1360,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                 {
                     "project": project,
                     "status": "measured",
-                    "command": [str(binary)],
+                    "command": [str(binary)] + (["--help"] if project == "machine-god" else []),
                     "cwd": str(machine_source),
                     "environment": environment,
                     "timeout_seconds": 1.0,
@@ -1658,6 +1691,30 @@ class UpstreamHarnessTest(unittest.TestCase):
         evidence["workloads"][0]["equivalence"] = "equivalent"
         evidence["workloads"][0]["claim_eligible"] = True
         with self.assertRaises(ValueError):
+            validate_upstream_evidence(evidence)
+
+    def test_rejects_historical_and_arbitrary_bootstrap_commands(self) -> None:
+        for project, arguments in (
+            (1, []),
+            (1, ["help"]),
+            (1, ["--version"]),
+            (1, ["--help", "--extra"]),
+            (0, ["--help"]),
+        ):
+            with self.subTest(project=project, arguments=arguments):
+                evidence = self.valid_upstream_evidence()
+                measurement = evidence["workloads"][0]["implementations"][project]
+                measurement["command"] = [measurement["command"][0], *arguments]
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
+    def test_rejects_relabelled_historical_bootstrap_narrative(self) -> None:
+        evidence = self.valid_upstream_evidence()
+        evidence["workloads"][0]["reason"] = (
+            "fx uses its FX_BENCH no-argument fast path while machine-god prints its "
+            "bootstrap identity; these samples validate the harness and are not product-equivalent"
+        )
+        with self.assertRaisesRegex(ValueError, "narrative is not canonical"):
             validate_upstream_evidence(evidence)
 
     def test_rejects_undeclared_claim_and_measurement_fields(self) -> None:

@@ -1,49 +1,8 @@
-#![cfg(any(target_os = "linux", target_os = "macos"))]
+//! Private process integration assertions run once, against the library's real
+//! lifecycle implementation. Helper entrypoints self-spawn this same test binary.
 
-#[allow(
-    dead_code,
-    reason = "shared sandbox launch implementation also serves foreground and PTY components"
-)]
-#[path = "../src/os_sandbox/launch.rs"]
-mod os_sandbox;
-use machine_god_native::NativeWorkspaceTurnScope;
-use machine_god_native::{NativeSandboxMode, PermissionMode};
-use os_sandbox::{
-    MAX_NATIVE_SANDBOX_PROFILE_BYTES, NATIVE_SANDBOX_EXECUTABLE, NativeSandboxError,
-    NativeSandboxLaunch,
-};
-
-#[path = "../src/background_input.rs"]
-mod background_input;
-#[path = "../src/background_process.rs"]
-mod background_process;
-#[cfg(target_os = "macos")]
-#[allow(
-    dead_code,
-    reason = "shared private inventory protocol is exercised through lifecycle ownership"
-)]
-#[path = "../src/process_inventory_helper.rs"]
-mod process_inventory_helper;
-#[cfg(target_os = "macos")]
-#[path = "../src/process_inventory_protocol.rs"]
-#[allow(
-    dead_code,
-    reason = "shared service entrypoint is exercised through explicit test registration"
-)]
-mod process_inventory_protocol;
-#[cfg(target_os = "macos")]
-use machine_god_native::NativeOwnedWorkerScopeIdentity;
-#[cfg(target_os = "macos")]
-use process_inventory_protocol::PROCESS_INVENTORY_SERVICE_ARGUMENT;
-#[allow(
-    dead_code,
-    reason = "shared private helper dependency for the directly included lifecycle implementation"
-)]
-#[path = "../src/terminal_helper.rs"]
-mod terminal_helper;
-
-use background_process::BackgroundProcessHelper;
-use background_process::{
+use super::BackgroundProcessHelper;
+use super::{
     BACKGROUND_PROCESS_TERM_GRACE, BackgroundProcessErrorKind, BackgroundProcessExit,
     BackgroundProcessOutcome, BackgroundProcessRequest, BackgroundProcessSignal,
     BackgroundProcessSignalErrorKind, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
@@ -56,8 +15,8 @@ use background_process::{
     permission_denied_group_signal_is_failure_for_test, reset_group_signal_attempts_for_test,
     reset_leader_observations_for_test, run_background_process_helper,
 };
+use crate::background_input;
 use machine_god_core::CancellationToken;
-use machine_god_native::{NativeOwnedWorkerCleanup, NativeOwnedWorkerScope};
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStringExt;
@@ -125,7 +84,7 @@ fn adapter() -> SystemBackgroundProcessAdapter {
         std::env::current_exe().unwrap(),
         vec![
             OsString::from("--exact"),
-            OsString::from("helper_process_entry"),
+            OsString::from("background_process::integration_tests::helper_process_entry"),
             OsString::from("--test-threads=1"),
             OsString::from("--quiet"),
         ],
@@ -286,7 +245,7 @@ fn incompatible_sigchld_modes_fail_before_the_requested_child_is_spawned() {
         let output = Command::new(&executable)
             .args([
                 "--exact",
-                "child_reaping_mode_entry",
+                "background_process::integration_tests::child_reaping_mode_entry",
                 "--test-threads=1",
                 "--quiet",
             ])
@@ -804,6 +763,9 @@ fn group_cleanup_fails_closed_for_permission_denial_and_surviving_members() {
 
 #[test]
 fn waitid_and_snapshot_spawn_failures_keep_wait_precedence_and_cleanup() {
+    let _snapshot_guard = super::GROUP_SNAPSHOT_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let directory = FreshDirectory::new("waitid-cleanup-failure");
     let pid_file = directory.path().join("descendant.pid");
     let mut prepared = adapter()
@@ -829,6 +791,9 @@ fn waitid_and_snapshot_spawn_failures_keep_wait_precedence_and_cleanup() {
 
 #[test]
 fn group_snapshot_failure_after_observation_still_cleans_and_reaps() {
+    let _snapshot_guard = super::GROUP_SNAPSHOT_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let directory = FreshDirectory::new("snapshot-cleanup-failure");
     let pid_file = directory.path().join("descendant.pid");
     let owned = adapter()

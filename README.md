@@ -50,18 +50,12 @@ reference-host library composition is available on Linux and macOS with the
 
 Read [AGENTS.md](AGENTS.md) and the
 [implementation plan](docs/implementation-plan.md) before changing code. The
-required local gate is:
-
-```sh
-cargo +1.94.1 fmt --all -- --check
-cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings
-cargo +1.94.1 test --workspace
-cargo +1.94.1 test --doc --workspace
-```
-
-Run focused tests before the full workspace and exercise user-visible behavior
-through a freshly built release binary. Feature delivery also requires three
-fresh product reviews and exact-commit remote CI as described in the plan.
+complete [local gate recipe](docs/implementation-plan.md#local-feature-gate)
+includes platform prerequisites and the fresh release helper required before
+macOS runtime tests. Run focused tests before the full workspace and exercise
+user-visible behavior through that freshly built release binary.
+Feature delivery also requires three fresh product reviews and exact-commit
+remote CI as described in the plan.
 
 ## Documentation
 

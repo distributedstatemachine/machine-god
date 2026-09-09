@@ -93,7 +93,15 @@ fn workspace_invalid_grammar_precedes_host_effects() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         assert_eq!(
-            crate::run_with_workspace_host(arguments, &mut stdout, &mut stderr, &host),
+            crate::run_with_hosts(
+                arguments,
+                &mut stdout,
+                &mut stderr,
+                crate::CommandHosts {
+                    workspace: &host,
+                    ..Default::default()
+                }
+            ),
             2
         );
         assert_eq!(host.calls.get(), 0);
@@ -210,10 +218,10 @@ fn workspace_maximum_cardinality_and_escaped_paths_fit_atomic_output_bound() {
         render(&value, &options(true)),
         Err(WorkspaceOperationalFailure::ResourceLimit)
     );
-    let mut output = BoundedOutput(String::new());
+    let mut output = BoundedOutput::with_capacity(MAX_OUTPUT_BYTES, 0);
     output.write_str(&"x".repeat(MAX_OUTPUT_BYTES)).unwrap();
     assert!(output.write_str("x").is_err());
-    assert_eq!(output.0.len(), MAX_OUTPUT_BYTES);
+    assert_eq!(output.finish().len(), MAX_OUTPUT_BYTES);
 }
 
 struct Broken;
@@ -228,28 +236,46 @@ impl io::Write for Broken {
 
 #[test]
 fn workspace_errors_use_exact_redacted_output_channels() {
-    for json in [false, true] {
-        let host = Host {
-            result: Err(WorkspaceOperationalFailure::Unavailable),
-            calls: Cell::new(0),
-        };
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        assert_eq!(
-            run_workspace(&host, &options(json), &mut stdout, &mut stderr),
-            1
-        );
-        if json {
-            assert_eq!(stdout, b"{\"kind\":\"workspace\",\"action\":\"list\",\"error\":\"workspace operation failed\",\"code\":\"Unavailable\"}\n");
-            assert!(stderr.is_empty());
-        } else {
-            assert!(stdout.is_empty());
+    use WorkspaceOperationalFailure as Failure;
+    for (failure, category) in [
+        (Failure::Busy, "Busy"),
+        (Failure::InvalidPath, "InvalidPath"),
+        (Failure::UnknownDirectory, "UnknownDirectory"),
+        (Failure::ResourceLimit, "ResourceLimit"),
+        (Failure::DuplicateRoot, "DuplicateRoot"),
+        (Failure::OverlappingState, "OverlappingState"),
+        (Failure::Conflict, "Conflict"),
+        (Failure::InvalidConfiguration, "InvalidConfiguration"),
+        (Failure::UnsafePath, "UnsafePath"),
+        (Failure::Persistence, "Persistence"),
+        (Failure::Ambiguous, "Ambiguous"),
+        (Failure::Unavailable, "Unavailable"),
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        (Failure::Unsupported, "Unsupported"),
+    ] {
+        for json in [false, true] {
+            let host = Host {
+                result: Err(failure),
+                calls: Cell::new(0),
+            };
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             assert_eq!(
-                stderr,
-                b"machine-god workspace: operation failed: Unavailable\n"
+                run_workspace(&host, &options(json), &mut stdout, &mut stderr),
+                1
             );
+            if json {
+                assert_eq!(stdout, format!("{{\"kind\":\"workspace\",\"action\":\"list\",\"error\":\"workspace operation failed\",\"code\":\"{category}\"}}\n").as_bytes());
+                assert!(stderr.is_empty());
+            } else {
+                assert!(stdout.is_empty());
+                assert_eq!(
+                    stderr,
+                    format!("machine-god workspace: operation failed: {category}\n").as_bytes()
+                );
+            }
+            assert_eq!(host.calls.get(), 1);
         }
-        assert_eq!(host.calls.get(), 1);
     }
 }
 

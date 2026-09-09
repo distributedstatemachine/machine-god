@@ -311,7 +311,9 @@ mod tests {
         let rules = NativeConfiguredPermissionRules::new(vec![rule("skill", &pattern)]).unwrap();
         let mut output = Output::default();
         render_groups(&mut output, rules.rules().iter()).unwrap();
-        assert!(output.0.len() > crate::MAX_MODELS_OUTPUT_BYTES);
+        assert!(
+            output.0.len() > crate::ask::production::interactive::MAX_PRESENTATION_OUTPUT_BYTES
+        );
         assert_eq!(
             output.0,
             format!("  tools:\n    skill: {}\n", "\\u0085".repeat(20_000))

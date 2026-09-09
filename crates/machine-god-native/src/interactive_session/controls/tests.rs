@@ -671,7 +671,9 @@ fn partial_model_save_keeps_both_targets_and_rejects_pending_reset() {
         let fixture = Fixture::new();
         let mut session = owner(&fixture).await;
         session.set_model_preferences(preferences("session/saved")).unwrap();
-        let store = Arc::new(NativeUserConfigStore::new(fixture.workspace.join("missing-parent/defaults")));
+        let blocked_parent = fixture.workspace.join("blocked-parent");
+        std::fs::write(&blocked_parent, b"not a directory").unwrap();
+        let store = Arc::new(NativeUserConfigStore::new(blocked_parent.join("defaults")));
         session.request_control(Control::SaveModelDefaults { store }, 200).unwrap();
         let request = session.request_transition(NativeInteractiveTransition::Reset, 210).unwrap();
         assert!(matches!(outcome(&mut session).await, NativeInteractiveOutcome::Rejected { request: rejected, error: NativeInteractiveError::ControlFailed, .. } if rejected == request.id));

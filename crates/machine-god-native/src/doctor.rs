@@ -3,10 +3,8 @@
 use std::fmt;
 
 use super::config::{ConfigOrigin, NativeConfigErrorKind, load_native_config};
-use super::{
-    NativeEnvironment, ResolvedPath, StateDirectoryState, inspect_state_directory,
-    resolve_state_directory,
-};
+use super::native_environment::{ResolvedPath, inspect_state_directory, resolve_state_directory};
+use super::{NativeEnvironment, StateDirectoryState};
 
 /// Number of checks in every native doctor report.
 pub const NATIVE_DOCTOR_CHECK_COUNT: usize = 4;

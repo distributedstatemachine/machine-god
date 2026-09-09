@@ -1021,31 +1021,20 @@ fn ensure_macos_root_is_linked(
         .map_err(|_| map_parent_revalidation_failure(phase))?;
     let root_path = precommit_call(cancellation, || rustix::fs::getpath(root))?
         .map_err(|_| map_parent_revalidation_failure(phase))?;
-    let root_path = root_path.as_bytes();
-    if root_path == b"/" {
+    let Some(observation) =
+        crate::retained_root::RetainedRootObservation::new(root, &root_metadata, &root_path)
+            .map_err(|()| map_parent_revalidation_failure(phase))?
+    else {
         return Ok(());
+    };
+    let parent = precommit_call(cancellation, || observation.open_parent())?
+        .map_err(|_| map_parent_revalidation_failure(phase))?;
+    let linked = precommit_call(cancellation, || observation.stat_link(&parent))?
+        .map_err(|_| map_parent_revalidation_failure(phase))?;
+    if !observation.matches(&linked) {
+        return Err(map_parent_revalidation_failure(phase));
     }
-    let name = root_path
-        .rsplit(|byte| *byte == b'/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| map_parent_revalidation_failure(phase))?;
-    let name = std::ffi::CString::new(name).map_err(|_| map_parent_revalidation_failure(phase))?;
-    let parent = precommit_call(cancellation, || {
-        rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
-    })?
-    .map_err(|_| map_parent_revalidation_failure(phase))?;
-    let linked = precommit_call(cancellation, || {
-        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
-    })?
-    .map_err(|_| map_parent_revalidation_failure(phase))?;
-    if FileType::from_raw_mode(linked.st_mode).is_dir()
-        && FileIdentity::from_stat(&root_metadata) == FileIdentity::from_stat(&linked)
-    {
-        Ok(())
-    } else {
-        Err(map_parent_revalidation_failure(phase))
-    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1779,7 +1768,7 @@ impl CopyFileTool {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn approval_ticket(
+    pub(crate) fn approval_ticket(
         &self,
         context: &ToolContext,
     ) -> Option<Result<crate::file_approval::NativeFileApprovalClaim, crate::NativeFileApprovalError>>
@@ -1790,7 +1779,7 @@ impl CopyFileTool {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn approval_bound(
+    pub(crate) fn approval_bound(
         &self,
         context: &ToolContext,
         arguments: &Value,
@@ -2192,4 +2181,30 @@ impl CopyFileTool {
             }
         }
     }
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn retained_root_characterization_preserves_states_and_error_mapping() {
+    for phase in [WalkPhase::Initial, WalkPhase::Revalidate] {
+        crate::retained_root::tests::assert_root_states(
+            |root| ensure_macos_root_is_linked(root, phase, &CancellationToken::new()),
+            &map_parent_revalidation_failure(phase),
+        );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn retained_root_precommit_cancellation_precedes_syscall_errors() {
+    let cancellation = CancellationToken::new();
+    let result = precommit_call(&cancellation, || {
+        cancellation.cancel();
+        Err::<(), _>(rustix::io::Errno::NOENT)
+    });
+    assert_eq!(result.unwrap_err(), cancelled());
+    let root = std::fs::File::open("/").unwrap();
+    assert_eq!(
+        ensure_macos_root_is_linked(root.as_fd(), WalkPhase::Initial, &cancellation).unwrap_err(),
+        cancelled()
+    );
 }

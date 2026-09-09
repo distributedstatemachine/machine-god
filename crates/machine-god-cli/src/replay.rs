@@ -160,7 +160,7 @@ pub(crate) fn is_replay_command(argument: &OsStr) -> bool {
 }
 
 pub(crate) fn run_replay(
-    host: &impl ReplayCommandHost,
+    host: &(impl ReplayCommandHost + ?Sized),
     arguments: &[OsString],
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,

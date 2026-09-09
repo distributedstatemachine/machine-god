@@ -1,3 +1,4 @@
+use crate::bounded_output::BoundedOutput;
 use std::ffi::OsStr;
 #[cfg(test)]
 use std::ffi::OsString;
@@ -178,7 +179,7 @@ pub(super) fn is_background_command(argument: &OsStr) -> bool {
 }
 
 pub(super) fn run_background<I, S>(
-    host: &impl BackgroundCommandHost,
+    host: &(impl BackgroundCommandHost + ?Sized),
     arguments: I,
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
@@ -388,7 +389,7 @@ fn render_snapshot(
     json: bool,
 ) -> Result<String, BackgroundOperationalFailure> {
     validate_snapshot(snapshot)?;
-    let mut output = BoundedBackgroundOutput::new();
+    let mut output = BoundedOutput::with_capacity(MAX_BACKGROUND_OUTPUT_BYTES, 1024);
     let result = match (snapshot, json) {
         (BackgroundSnapshot::List(list), false) => write_human_list(&mut output, list),
         (BackgroundSnapshot::List(list), true) => write_json_list(&mut output, list),
@@ -399,10 +400,7 @@ fn render_snapshot(
     Ok(output.finish())
 }
 
-fn write_human_list(
-    output: &mut BoundedBackgroundOutput,
-    list: &BackgroundListSnapshot,
-) -> std::fmt::Result {
+fn write_human_list(output: &mut BoundedOutput, list: &BackgroundListSnapshot) -> std::fmt::Result {
     if list.records.is_empty() && !list.truncated {
         return output.write_str("[background] no persisted background records\n");
     }
@@ -422,10 +420,7 @@ fn write_human_list(
     Ok(())
 }
 
-fn write_json_list(
-    output: &mut BoundedBackgroundOutput,
-    list: &BackgroundListSnapshot,
-) -> std::fmt::Result {
+fn write_json_list(output: &mut BoundedOutput, list: &BackgroundListSnapshot) -> std::fmt::Result {
     write!(
         output,
         "{{\"kind\":\"background\",\"count\":{},\"truncated\":{},\"records\":[",
@@ -454,7 +449,7 @@ fn write_json_list(
 }
 
 fn write_human_detail(
-    output: &mut BoundedBackgroundOutput,
+    output: &mut BoundedOutput,
     detail: &BackgroundDetailSnapshot,
 ) -> std::fmt::Result {
     writeln!(output, "[background] id={}", detail.id)?;
@@ -482,7 +477,7 @@ fn write_human_detail(
 }
 
 fn write_optional_number(
-    output: &mut BoundedBackgroundOutput,
+    output: &mut BoundedOutput,
     label: &str,
     value: Option<impl std::fmt::Display>,
 ) -> std::fmt::Result {
@@ -494,7 +489,7 @@ fn write_optional_number(
 }
 
 fn write_optional_string(
-    output: &mut BoundedBackgroundOutput,
+    output: &mut BoundedOutput,
     label: &str,
     value: Option<&str>,
 ) -> std::fmt::Result {
@@ -508,7 +503,7 @@ fn write_optional_string(
 }
 
 fn write_json_detail(
-    output: &mut BoundedBackgroundOutput,
+    output: &mut BoundedOutput,
     detail: &BackgroundDetailSnapshot,
 ) -> std::fmt::Result {
     write!(
@@ -537,7 +532,7 @@ fn write_json_detail(
 }
 
 fn write_json_optional_number(
-    output: &mut BoundedBackgroundOutput,
+    output: &mut BoundedOutput,
     value: Option<impl std::fmt::Display>,
 ) -> std::fmt::Result {
     match value {
@@ -546,10 +541,7 @@ fn write_json_optional_number(
     }
 }
 
-fn write_json_optional_string(
-    output: &mut BoundedBackgroundOutput,
-    value: Option<&str>,
-) -> std::fmt::Result {
+fn write_json_optional_string(output: &mut BoundedOutput, value: Option<&str>) -> std::fmt::Result {
     match value {
         Some(value) => write_json_string(output, value),
         None => output.write_str("null"),
@@ -580,37 +572,7 @@ fn write_failure(
     1
 }
 
-#[derive(Debug)]
-struct BoundedBackgroundOutput {
-    value: String,
-}
-
-impl BoundedBackgroundOutput {
-    fn new() -> Self {
-        Self {
-            value: String::with_capacity(1024),
-        }
-    }
-
-    fn finish(self) -> String {
-        self.value
-    }
-}
-
-impl std::fmt::Write for BoundedBackgroundOutput {
-    fn write_str(&mut self, value: &str) -> std::fmt::Result {
-        let Some(new_len) = self.value.len().checked_add(value.len()) else {
-            return Err(std::fmt::Error);
-        };
-        if new_len > MAX_BACKGROUND_OUTPUT_BYTES {
-            return Err(std::fmt::Error);
-        }
-        self.value.push_str(value);
-        Ok(())
-    }
-}
-
-fn write_json_string(output: &mut BoundedBackgroundOutput, value: &str) -> std::fmt::Result {
+fn write_json_string(output: &mut BoundedOutput, value: &str) -> std::fmt::Result {
     output.write_char('"')?;
     for character in value.chars() {
         match character {
@@ -731,7 +693,10 @@ mod tests {
         })
     }
 
-    fn invoke(host: &impl BackgroundCommandHost, arguments: &[&str]) -> (u8, Vec<u8>, Vec<u8>) {
+    fn invoke(
+        host: &(impl BackgroundCommandHost + ?Sized),
+        arguments: &[&str],
+    ) -> (u8, Vec<u8>, Vec<u8>) {
         let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();

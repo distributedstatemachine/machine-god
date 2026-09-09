@@ -1,11 +1,8 @@
-#[path = "../src/terminal_action_parse.rs"]
-mod terminal_action_parse;
-
 use machine_god_core::{
     TerminalActionRequest, TerminalProfile, TerminalReturnCondition, TerminalWritePayload,
 };
+use machine_god_native::{decode_terminal_action, terminal_action_requested_cwd};
 use serde_json::{Value, json};
-use terminal_action_parse::{decode_terminal_action, terminal_action_requested_cwd};
 
 fn parse(value: &Value) -> TerminalActionRequest {
     decode_terminal_action(value, "/trusted/workspace").unwrap()
@@ -712,7 +709,7 @@ fn complete_envelope_fits_32_maximum_probes_and_control_arrays() {
 
 #[test]
 fn serialized_envelope_rejects_before_allocating_decoded_fields() {
-    let oversized = json!({"action":"exec","command":"\u{1b}".repeat(terminal_action_parse::MAX_TERMINAL_ACTION_ARGUMENT_BYTES / 6 + 1)});
+    let oversized = json!({"action":"exec","command":"\u{1b}".repeat(machine_god_native::MAX_TERMINAL_ACTION_ARGUMENT_BYTES / 6 + 1)});
     let allocations = allocation_counter::measure(|| {
         assert!(decode_terminal_action(&oversized, "/trusted").is_err());
     });

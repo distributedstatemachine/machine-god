@@ -1,4 +1,16 @@
-use super::*;
+use super::saved;
+use crate::*;
+use futures_executor::block_on;
+use machine_god_core::{
+    BoxFuture, CancellationToken, PermissionRequest, SessionId, SessionIncarnationId, Tool,
+    ToolCallId,
+};
+use serde_json::json;
+use std::{fs::File, path::PathBuf, sync::Arc};
+
+#[path = "../../../tests/support/permission_preparer_fixture.rs"]
+mod fixture;
+use fixture::{Directory, call};
 use machine_god_core::{
     PermissionInvocation, PermissionRequestId, PermissionRisk, TerminalActionRequest,
     TerminalActionResult, ToolContext, ToolError, TurnId,
@@ -115,7 +127,7 @@ fn key(
     targets: &NativePreparedPermissionTargets,
     sandbox: NativeSandboxMode,
 ) -> Option<NativePermissionRuleKey> {
-    identities::saved(
+    saved(
         targets,
         None,
         &NativePermissionPolicySnapshot::new(PermissionMode::Ask, Arc::default())

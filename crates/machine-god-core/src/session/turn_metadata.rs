@@ -12,9 +12,10 @@ use serde_json::Value;
 
 use super::{
     JsonOwnerGuard, SessionRecord, SessionRevision, SessionState, Turn, json_limit_failure,
-    redact_store_error, serialized_json_size_bounded, validate_json_roots, validate_record_limits,
+    redact_store_error, validate_record_limits,
 };
 use crate::engine::{EngineInner, HostLease};
+use crate::json_bounds::{JsonLimitViolation, serialized_json_size_bounded, validate_json_roots};
 use crate::{
     BoxFuture, CancellationToken, ContentBlock, EngineError, EngineLimits, SessionId,
     SessionIncarnationId, SessionStoreError, SessionStoreErrorKind, TurnId,
@@ -392,7 +393,7 @@ fn entry_conflict() -> EngineError {
     )
     .into()
 }
-fn limit_error(error: super::JsonLimitViolation) -> EngineError {
+fn limit_error(error: JsonLimitViolation) -> EngineError {
     EngineError::Protocol(json_limit_failure(error).message)
 }
 fn validate_bytes(value: &impl Serialize, limits: EngineLimits) -> Result<(), EngineError> {

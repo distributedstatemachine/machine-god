@@ -145,9 +145,22 @@ contracts; native conversation finalization owns history publication. Compositio
 does not collect observations or write session history itself. Constructors
 without this option retain their existing unwrapped tools.
 
+For non-workspace file mutations, the history wrapper captures the trusted
+backend's existing read-only approval ticket when the outer execution future
+is constructed. It retains both success and denial outcomes; a later grant
+cannot revive an older future. Construction opens no file, claims no approval,
+reserves no history, and does not construct the inner execution future.
+After polling successfully reserves the exact history observation, the backend
+consumes that captured ticket and retains the ordinary preimage, revocation,
+cancellation and final-effect checks. Dropped unpolled futures and failed
+history admission leave the grant and filesystem untouched. This binding is
+native-only and limited to the five concrete mutation backends; arbitrary
+wrapped tools remain fully deferred until polling.
+
 `with_workspace(NativeWorkspaceAuthority, Arc<NativeWorkspaceContexts>)` selects
-captured workspace routing for reads, metadata, folder creation, enumeration, grep and
-the five file mutations. This option is independent of permission mode. During
+captured workspace routing for reads, metadata, folder creation, enumeration,
+grep, vision and the five file mutations. This option is independent of permission
+mode. During
 prepared-root composition, the primary identity and both retained directory
 descriptors must match the selected authority. State selections may use different
 path aliases; the actual state-directory identity, not its spelling, must match.
@@ -155,7 +168,9 @@ An authority prepared while state was absent must be prepared again with the
 explicit existing state descriptor before constructing this host.
 
 Call `host.configure_conversation_workspace(conversation)` before admitting each
-created or resumed conversation. The exact registry is shared by the actual
+created or resumed conversation. The native interactive owner performs this
+attachment during initial startup and subsequent session transitions. The exact
+registry is shared by the actual
 registered tools and, when selected, native permission preparation. Missing or
 expired registrations cannot fall back to primary-root execution. Permission
 and execution use the same logical mutation projection and retain each endpoint
@@ -169,8 +184,12 @@ later approval. The original history adapter remains inert before polling.
 complete-terminal host's actual worker scope, without loading settings or
 starting an operation. It returns `None` when either selection is absent.
 Interactive callers use the service's runtime-bound operations so queued or
-active turns cannot be bypassed. Scoped vision, search, terminal launch
-roots and top-level/interactive launch selection require their separate tool
+active turns cannot be bypassed. Selected native terminal permission policy also
+uses the same exact scope: `Os` captures all active retained roots, while `None`
+and effective Yolo require a live scope without acquiring OS roots. Final launch
+checks retain that scope; independently installed monitor grants retain their
+authorized roots after the original turn ends. Scoped semantic search, terminal
+cwd selection and top-level/interactive launch selection require their separate tool
 composition; selecting the workspace option alone does not complete that surface.
 
 `with_permissions(NativeReferenceHostPermissionOptions)` opts into native

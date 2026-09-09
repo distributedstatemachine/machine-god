@@ -1,3 +1,4 @@
+use crate::bounded_output::BoundedOutput;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::io;
@@ -49,42 +50,12 @@ enum StatusParseOutcome {
     Invalid { json: bool },
 }
 
-#[derive(Debug)]
-struct BoundedStatusOutput {
-    value: String,
-}
-
-impl BoundedStatusOutput {
-    fn new() -> Self {
-        Self {
-            value: String::with_capacity(1024),
-        }
-    }
-
-    fn finish(self) -> String {
-        self.value
-    }
-}
-
-impl std::fmt::Write for BoundedStatusOutput {
-    fn write_str(&mut self, value: &str) -> std::fmt::Result {
-        let Some(new_len) = self.value.len().checked_add(value.len()) else {
-            return Err(std::fmt::Error);
-        };
-        if new_len > MAX_STATUS_OUTPUT_BYTES {
-            return Err(std::fmt::Error);
-        }
-        self.value.push_str(value);
-        Ok(())
-    }
-}
-
 pub(crate) fn is_status_command(argument: &OsStr) -> bool {
     argument == "status"
 }
 
 pub(crate) fn run_status(
-    host: &impl StatusCommandHost,
+    host: &(impl StatusCommandHost + ?Sized),
     arguments: &[OsString],
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
@@ -153,7 +124,7 @@ fn render_status(status: &NativeRuntimeStatus, json: bool) -> Result<String, std
 }
 
 fn human_status(status: &NativeRuntimeStatus) -> Result<String, std::fmt::Error> {
-    let mut output = BoundedStatusOutput::new();
+    let mut output = BoundedOutput::with_capacity(MAX_STATUS_OUTPUT_BYTES, 1024);
     output.write_str("[status] model=")?;
     write_json_string_content(&mut output, status.model())?;
     output.write_char('\n')?;
@@ -206,7 +177,7 @@ fn human_status(status: &NativeRuntimeStatus) -> Result<String, std::fmt::Error>
 }
 
 fn json_status(status: &NativeRuntimeStatus) -> Result<String, std::fmt::Error> {
-    let mut output = BoundedStatusOutput::new();
+    let mut output = BoundedOutput::with_capacity(MAX_STATUS_OUTPUT_BYTES, 1024);
     output.write_str("{\"kind\":\"status\",\"model\":")?;
     write_json_string(&mut output, status.model())?;
     output.write_str(",\"update_channel\":")?;
@@ -278,7 +249,7 @@ mod tests {
     };
 
     use super::{
-        BoundedStatusOutput, MAX_STATUS_OUTPUT_BYTES, STATUS_HELP, STATUS_INSPECTION_FAILURE,
+        BoundedOutput, MAX_STATUS_OUTPUT_BYTES, STATUS_HELP, STATUS_INSPECTION_FAILURE,
         STATUS_INVALID_JSON, STATUS_USAGE, StatusCommandHost, StatusParseOutcome, parse_arguments,
         run_status, write_json_string,
     };
@@ -469,16 +440,16 @@ mod tests {
 
     #[test]
     fn bounded_writer_accepts_the_cap_rejects_one_over_and_counts_escaping() {
-        let mut exact = BoundedStatusOutput::new();
+        let mut exact = BoundedOutput::with_capacity(MAX_STATUS_OUTPUT_BYTES, 1024);
         exact
             .write_str(&"x".repeat(MAX_STATUS_OUTPUT_BYTES))
             .unwrap();
-        assert_eq!(exact.value.len(), MAX_STATUS_OUTPUT_BYTES);
         assert!(exact.write_char('x').is_err());
+        assert_eq!(exact.finish().len(), MAX_STATUS_OUTPUT_BYTES);
 
-        let mut escaped = BoundedStatusOutput::new();
+        let mut escaped = BoundedOutput::with_capacity(MAX_STATUS_OUTPUT_BYTES, 1024);
         write_json_string(&mut escaped, "\u{1b}\u{202e}\n\\\"").unwrap();
-        assert_eq!(escaped.value, "\"\\u001b\\u202e\\n\\\\\\\"\"");
+        assert_eq!(escaped.finish(), "\"\\u001b\\u202e\\n\\\\\\\"\"");
     }
 
     #[test]

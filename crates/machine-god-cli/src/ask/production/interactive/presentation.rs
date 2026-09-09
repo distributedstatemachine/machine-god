@@ -37,7 +37,7 @@ impl Modal {
         }
     }
     pub fn render(&self) -> Result<Vec<u8>, ()> {
-        let mut text = crate::BoundedModelsOutput::new();
+        let mut text = crate::ask::production::interactive::bounded_output();
         if let Some(request) = self.view.permission() {
             text.write_str("\n[permission] ").map_err(|_| ())?;
             escaped(&mut text, &request.reason)?;
@@ -128,12 +128,18 @@ impl Modal {
     }
 }
 
-pub(super) fn escaped(text: &mut crate::BoundedModelsOutput, value: &str) -> Result<(), ()> {
+pub(super) fn escaped(
+    text: &mut crate::bounded_output::BoundedOutput,
+    value: &str,
+) -> Result<(), ()> {
     crate::write_json_string_content(text, value).map_err(|_| ())
 }
 
-fn json(text: &mut crate::BoundedModelsOutput, value: &serde_json::Value) -> Result<(), ()> {
-    struct BoundedJson<'a>(&'a mut crate::BoundedModelsOutput);
+fn json(
+    text: &mut crate::bounded_output::BoundedOutput,
+    value: &serde_json::Value,
+) -> Result<(), ()> {
+    struct BoundedJson<'a>(&'a mut crate::bounded_output::BoundedOutput);
     impl std::io::Write for BoundedJson<'_> {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             let value = std::str::from_utf8(bytes).map_err(std::io::Error::other)?;
@@ -146,13 +152,13 @@ fn json(text: &mut crate::BoundedModelsOutput, value: &serde_json::Value) -> Res
     }
     // The bridge has already bounded depth/nodes. A second escaping pass keeps
     // Unicode formatting controls inert, including those inside JSON strings.
-    let mut raw = crate::BoundedModelsOutput::new();
+    let mut raw = crate::ask::production::interactive::bounded_output();
     serde_json::to_writer(BoundedJson(&mut raw), value).map_err(|_| ())?;
     escaped(text, &raw.finish())
 }
 
 fn render_capability(
-    text: &mut crate::BoundedModelsOutput,
+    text: &mut crate::bounded_output::BoundedOutput,
     capability: &Capability,
 ) -> Result<(), ()> {
     match capability {
