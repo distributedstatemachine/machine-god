@@ -894,3 +894,31 @@ Later targets ran under `--no-fail-fast`; this is a rejected complete run, not
 partial acceptance. macOS runtime, Python release-probe and portability gates
 were not started for this candidate, and there was no review restart, push or
 main advancement.
+
+The retained unchanged terminal executable subsequently passed the exact case
+once in 0.31 seconds. Code inspection found no prerequisite proving native
+overflow was observed before timeout closure; final byte counts alone cannot
+establish that ordering. A controlled private-entrypoint diagnostic retained
+the same 225 ms request limit and overflow command, but supplied an explicitly
+expired admission timestamp. Production returned `timed_out`, duration 225 ms,
+zero stdout/stderr bytes, null exit/signal and no occupied slot. Those checks
+passed; the old unconditional `output_limit` assertion then failed. This proves
+the fixture's universal expectation invalid, not the exact scheduling cause of
+the earlier full-run failure. The diagnostic is not part of the final patch.
+
+Paired test-only correction `6c686453` retains the public 225 ms budget, original
+command, two-second cleanup bound and strict status/count consistency for either
+legitimate timeout-first or overflow-first outcome. Its separate mandatory
+real-executor case uses a private FIFO to gate a builtin-only producer until the
+TERM-ignoring shell, PID/group and activity slot are proven ready. Native pipe
+readers must establish actual overflow before the test closes timeout; the real
+result must preserve that cause, bounded overflow counts, process/group absence
+and activity-slot release. No test code fabricates an overflow claim. Existing
+deadline-arbitration fixtures remain unchanged; the new case proves cause-close
+ordering, not literal wall-clock expiry during TERM grace.
+
+The final source passed the real-overflow case normally and under an isolated
+subreaper, all 51 selected terminal unit tests and all 98 terminal integration
+tests, at default Linux concurrency. Exact formatting, full warnings-denied
+Clippy and a fresh locked release build passed. Production code and binary
+SHA-256 were unchanged. Complete replacement acceptance remains pending.

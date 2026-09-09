@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI local gate rejected; output-limit ordering fixture investigation`
-- Next gate: `resolve the remaining Linux ordering failure, then replacement local, review and remote gates`
+- Active phase: `combined CLI paired ordering tests integrated; replacement full verification`
+- Next gate: `parallel build preparation, separate platform runtime gates, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -222,52 +222,16 @@ policy. Latest/exact startup-resume scenarios pass under PTY. Native Linux also
 passes configured permission discovery from an actual non-Unicode working path.
 These integrated component checks leave the complete feature gates pending;
 they do not constitute a delivery or fresh-release acceptance.
-The full macOS run passed CLI/core/native unit checks, then exposed a stale
-composed-host test that still expected macOS semantic search to be unsupported.
-Both supported platforms now exercise retained-root success and a real empty
-match result through the composed host; both focused macOS scenarios pass.
-The replacement full local gate passed on Linux and macOS, with repository
-policy, dependency, documentation and unsupported-target checks green. Three
-independent reviews found no actionable runtime defects and one resume-contract
-documentation mismatch: interactive recording was incorrectly described as
-unsupported. The correction scopes the one-prompt restrictions and documents
-the accepted trailing interactive modifier. Replacement candidate verification
-and the exact remote feature gates remain open.
-The following candidate also aligns the security overview with the implemented
-permission and explicit macOS sandbox contracts. Its policy, compilation and
-documentation checks pass, but full runtime verification exposed a raw-file
-lock fixture that relies on descriptor drop and timing-sensitive failures under
-heavy host load. Isolated timing-case reruns pass unchanged. Four catalog/resume
-fixtures now explicitly unlock their raw files while retaining duplicate
-descriptors through the successful-operation assertions. The deterministic
-drop-only reproduction fails with `Busy`; all fifteen corrected focused tests
-pass. Complete replacement acceptance remains pending; no deadline or
-test-concurrency requirement has been relaxed.
-The subsequent separate-platform run still rejected the candidate: Linux's
-100 ms timeout fixture assumed a shell readiness file must exist even when
-admission consumed the deadline; macOS reported a failing native unit target.
-The Linux test-only correction separates public admission-inclusive budgeting
-from mandatory-ready real-executor cleanup evidence; both scenarios and the
-complete terminal unit/integration suites pass. The unchanged macOS native
-executable passed all 2,163 tests in a serial diagnostic; the earlier failure
-did not reproduce, and its truncated output does not establish a cause.
-Neither isolated success nor the already accepted maintenance-parent merge
-closes the combined feature's remaining gates.
-The replacement passed the complete local gate and three fresh independent
-reviews, then failed the same ready-shell cleanup test in all three hosted
-Linux jobs. Other unit fixtures enable process-wide child-subreaper mode; the
-new fixture's transient sleep descendant can outlive its shell as an adopted
-zombie. Controlled reproduction confirmed this; the FIFO-only correction passes
-the same focused case both normally and under an isolated subreaper.
-The correction is integrated; terminal suites and pinned Clippy pass.
-Benchmark evidence passed, but the rejected candidate is not a delivery.
-The next Linux full run exposed a missing container account and an HTTP timeout
-fixture's pre-header assumption. Account setup is corrected; the bounded HTTP
-fixture correction passes all twenty catalog HTTP tests. Two process cases
-passed unchanged in isolated diagnostics; their full-run failures remain
-unexplained, not accepted.
-The following full Linux run passed those cases and all catalog HTTP tests but
-rejected one terminal output-limit/deadline ordering assertion. Acceptance is open.
+The combined feature has reached complete local and independent-review checks,
+but subsequent candidate gates exposed fixture and prerequisite defects.
+Integrated corrections cover composed macOS semantic expectations, recording
+documentation, explicit lock release, admission-inclusive timeout evidence,
+subreaper-safe shell cleanup, bounded HTTP timeout fixtures and container account
+setup. Their exact accepted/rejected checks remain in the combined CLI history.
+The latest full Linux run rejected one terminal output-limit/deadline ordering
+assertion. Paired public-budget and mandatory real-overflow tests now pass their
+component checks; earlier successes do not accept the replacement candidate.
+Production deadlines, cleanup requirements and Linux concurrency are unchanged.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
