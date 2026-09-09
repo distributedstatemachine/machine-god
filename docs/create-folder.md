@@ -72,6 +72,24 @@ root, operating-system text, or raw error number.
 
 ## Preparation and authority
 
+Hosts may attach `with_workspace_contexts(Arc<NativeWorkspaceContexts>)` on
+Linux/macOS. Contextual preparation is pure: primary-relative paths and absolute
+paths inside active roots project through the exact live turn's immutable scope.
+Capability, canonical arguments and successful result retain the same logical
+path; original argument/result, component and path-byte bounds remain enforced.
+Execution takes only the chosen retained descriptor after polling and reuses the
+existing creation protocol. Missing, foreign or expired contexts fail with
+`workspace_context_unavailable`, without constructor-root fallback or inferred
+permission approval. Old turns retain their descriptor across scope replacement
+and root renames; new turns observe the new scope.
+
+The scope is checked again immediately before the first mkdir effect. Expiration
+there guarantees no creation. Once creation has committed, the existing bounded
+non-cancellable completion and uncertainty rules still apply: scope expiration
+does not abandon already-created directories or fabricate rollback. Successful
+logical output is bounded before the first effect. This does not add file-undo
+behavior. Unbound tools keep the ordinary single-root contract below.
+
 Preparation is deterministic, synchronous, bounded, nonblocking, and effect-
 free. It performs no lookup, open, metadata read, creation, mutation, root
 inspection, or permission change. Successful preparation retains exactly the

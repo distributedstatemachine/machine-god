@@ -85,15 +85,33 @@ impl Error for FileInfoToolOpenError {}
 /// descriptor; later calls never reopen the workspace root by its injected path.
 pub struct FileInfoTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
 
 impl FileInfoTool {
+    /// Uses the exact live native turn's immutable workspace scope. Missing or
+    /// expired registrations have no primary-root fallback.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self {
+            root,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            workspace_contexts: None,
+        }
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -158,6 +176,13 @@ struct FileInfoArguments {
 
 impl Tool for FileInfoTool {
     fn spec(&self) -> ToolSpec {
+        let path_description = "Workspace-relative path to inspect";
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let path_description = if self.workspace_contexts.is_some() {
+            "Primary-relative path or absolute path within an active workspace root"
+        } else {
+            path_description
+        };
         ToolSpec {
             name: file_info_name(),
             description: "Inspect metadata for one path within the configured workspace".to_owned(),
@@ -166,7 +191,7 @@ impl Tool for FileInfoTool {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Workspace-relative path to inspect"
+                        "description": path_description
                     }
                 },
                 "required": ["path"],
@@ -195,13 +220,31 @@ impl Tool for FileInfoTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(contexts) = &self.workspace_contexts {
+                return workspace::execute(contexts, &context, arguments, &cancellation);
+            }
+            let _ = context;
             let arguments = decode_arguments(arguments)?;
             let normalized = normalize_relative_path(&arguments.path)?;
             if normalized != arguments.path {
@@ -684,3 +727,7 @@ mod tests {
         assert!(!error.retryable);
     }
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "file_info/workspace.rs"]
+mod workspace;

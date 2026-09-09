@@ -11,6 +11,10 @@ use machine_god_core::{
 use serde_json::{Value, json};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "open_file/workspace.rs"]
+mod workspace;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fd::OwnedFd;
 #[cfg(target_os = "linux")]
 use rustix::fd::{AsFd, AsRawFd, BorrowedFd};
@@ -136,11 +140,13 @@ pub struct OpenFileLaunchRequest {
     path: String,
     proc_path: PathBuf,
     target: OwnedFd,
+    workspace_scope: Option<crate::NativeWorkspaceTurnScope>,
 }
 
 #[cfg(target_os = "linux")]
 impl OpenFileLaunchRequest {
-    /// Returns the exact canonical workspace-relative path approved by policy.
+    /// Returns the exact logical path approved by policy: primary-relative, or
+    /// absolute when an exact-turn workspace scope selected an additional root.
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
@@ -156,6 +162,15 @@ impl OpenFileLaunchRequest {
     #[must_use]
     pub fn target_fd(&self) -> BorrowedFd<'_> {
         self.target.as_fd()
+    }
+
+    /// Whether the captured native turn still exists. Trusted custom launchers
+    /// must check this alongside cancellation immediately before their effect.
+    #[must_use]
+    pub fn workspace_is_live(&self) -> bool {
+        self.workspace_scope
+            .as_ref()
+            .is_none_or(crate::NativeWorkspaceTurnScope::is_live)
     }
 }
 
@@ -177,6 +192,8 @@ pub type OpenFileLaunch = BoxFuture<'static, OpenFileLaunchOutcome>;
 /// Calling [`OpenFileLauncher::launch`] must be effect-free. Implementations
 /// start work only when the returned future is polled, retain the complete
 /// request until their direct helper is reaped, and observe `cancellation`.
+/// Scoped requests additionally require `workspace_is_live()` immediately before
+/// launching; this is a lifetime check, not a replacement for policy approval.
 /// Dropping the future must synchronously stop and reap every owned helper.
 /// Implementations may let an already-complete worker return from the tail of
 /// an inline wake callback when joining that worker would be a self-join.
@@ -192,6 +209,8 @@ pub trait OpenFileLauncher: Send + Sync + 'static {
 
 /// Native `open_file` tool confined to one retained workspace root.
 pub struct OpenFileTool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
     #[cfg(target_os = "linux")]
     root: OwnedFd,
     #[cfg(target_os = "linux")]
@@ -203,6 +222,17 @@ pub struct OpenFileTool {
 }
 
 impl OpenFileTool {
+    /// Selects the exact native turn's immutable workspace scope without a
+    /// fallback for missing or expired registrations. Platform support is unchanged.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
+    }
     #[cfg(any(
         target_os = "linux",
         all(target_os = "macos", feature = "ai-gateway-http")
@@ -213,11 +243,15 @@ impl OpenFileTool {
             Self {
                 root,
                 launcher: Arc::new(SystemOpenFileLauncher::default()),
+                workspace_contexts: None,
             }
         }
         #[cfg(target_os = "macos")]
         {
-            Self { _root: root }
+            Self {
+                _root: root,
+                workspace_contexts: None,
+            }
         }
     }
 
@@ -257,6 +291,7 @@ impl OpenFileTool {
         Ok(Self {
             root: open_workspace_root(root)?,
             launcher: Arc::new(launcher),
+            workspace_contexts: None,
         })
     }
 }
@@ -275,6 +310,13 @@ struct ValidatedArguments {
 
 impl Tool for OpenFileTool {
     fn spec(&self) -> ToolSpec {
+        let path_description = PATH_DESCRIPTION;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let path_description = if self.workspace_contexts.is_some() {
+            "Canonical primary-relative file path or absolute file path within an active workspace root"
+        } else {
+            path_description
+        };
         ToolSpec {
             name: open_file_name(),
             description: OPEN_FILE_DESCRIPTION.to_owned(),
@@ -283,7 +325,7 @@ impl Tool for OpenFileTool {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": PATH_DESCRIPTION
+                        "description": path_description
                     }
                 },
                 "required": ["path"],
@@ -312,13 +354,31 @@ impl Tool for OpenFileTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, &call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(contexts) = &self.workspace_contexts {
+                return workspace::execute(self, contexts, &context, arguments, cancellation).await;
+            }
+            let _ = context;
             let arguments = validate_arguments(&arguments)?;
 
             #[cfg(not(target_os = "linux"))]
@@ -578,6 +638,7 @@ impl OpenFileTool {
             path,
             proc_path,
             target,
+            workspace_scope: None,
         })
     }
 }
@@ -1035,7 +1096,10 @@ fn launch_worker_outcome(
     config: &SystemLaunchConfig,
     shared: &Mutex<WorkerState>,
 ) -> OpenFileLaunchOutcome {
-    if cancellation.is_cancelled() || lock_worker_state(shared).abort {
+    if cancellation.is_cancelled()
+        || !request.workspace_is_live()
+        || lock_worker_state(shared).abort
+    {
         return OpenFileLaunchOutcome::Cancelled;
     }
 
@@ -1054,7 +1118,7 @@ fn launch_worker_outcome(
 
     let spawn_result = {
         let state = lock_worker_state(shared);
-        if cancellation.is_cancelled() || state.abort {
+        if cancellation.is_cancelled() || !request.workspace_is_live() || state.abort {
             None
         } else {
             // The abort transition uses this same lock, so cancellation/drop

@@ -96,6 +96,26 @@ system text, or raw error number.
 
 ## Preparation and authority
 
+`with_workspace_contexts(Arc<NativeWorkspaceContexts>)` optionally selects the
+exact native turn's immutable scope. Pure contextual preparation permits canonical
+primary-relative paths and canonical absolute paths inside active roots; it
+does not open or duplicate descriptors. Capability, prepared arguments, launch
+request `path()`, and success retain the same logical path. Existing byte,
+component, forbidden-character and serialization bounds remain in force.
+Missing, foreign or expired contexts fail without constructor-root fallback;
+scope lookup does not itself approve a launch. Unbound tools keep the ordinary
+single-root grammar below. Actual desktop execution remains Linux-only.
+
+After polling, scoped execution duplicates only the selected retained root and
+reuses the existing regular-file/no-follow target validation. It preserves the
+same injected launcher allocation. The request retains its scope and exposes
+`workspace_is_live()`; trusted custom launchers must check that alongside
+cancellation immediately before starting an effect. The system worker performs
+the same check at its final spawn gate. Expiration observed at that gate prevents
+the helper launch; already-committed launch outcomes retain existing cleanup and
+uncertainty semantics. Root renames or later scope replacement do not retarget
+an already-taken turn's descriptor.
+
 Preparation is deterministic, synchronous, bounded, nonblocking, and effect-
 free. It performs no filesystem lookup, metadata read, descriptor open,
 `/proc` access, environment read, worker creation, or process launch.

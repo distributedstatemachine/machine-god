@@ -124,6 +124,7 @@ fn request(directory: &Path) -> OpenFileLaunchRequest {
         path: "target.txt".to_owned(),
         proc_path,
         target,
+        workspace_scope: None,
     }
 }
 
@@ -477,6 +478,99 @@ fn cancellation_before_the_serialized_spawn_gate_never_starts_the_helper() {
     assert!(cancellation.cancel());
     hook.release.wait();
 
+    assert_eq!(
+        drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
+        OpenFileLaunchOutcome::Cancelled
+    );
+    assert!(!marker.exists());
+}
+
+#[test]
+fn expired_workspace_before_the_serialized_spawn_gate_never_starts_the_helper() {
+    use crate::{NativeConversation, NativeWorkspaceAuthority, NativeWorkspaceContexts};
+    use machine_god_core::{
+        Engine, ModelEvent, SessionId, SessionIncarnationId, SessionRecord, SessionRevision,
+        StopReason, ToolCallId, ToolContext,
+    };
+    use machine_god_testkit::{
+        InMemorySessionStore, ModelProviderStep, ScriptedModelProvider, ScriptedPermissionHandler,
+    };
+    use std::collections::BTreeMap;
+    let _lock = process_test_lock();
+    let temporary = TemporaryDirectory::new();
+    let base = fs::canonicalize(temporary.path()).unwrap();
+    let primary = base.join("primary");
+    fs::create_dir(&primary).unwrap();
+    let root =
+        rustix::fs::open(&primary, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty()).unwrap();
+    let authority = NativeWorkspaceAuthority::open_blocking(
+        root,
+        primary.clone(),
+        None,
+        base.join("absent-state"),
+        vec![],
+        false,
+    )
+    .unwrap();
+    let contexts = Arc::new(NativeWorkspaceContexts::new());
+    let mut record = SessionRecord::empty(
+        SessionId::new("scope").unwrap(),
+        SessionIncarnationId::new("inc").unwrap(),
+    );
+    record.revision = SessionRevision(1);
+    record.metadata.insert(
+        crate::NATIVE_SESSION_METADATA_KEY.into(),
+        crate::NativeSessionMetadata::default().to_value(),
+    );
+    let engine = Engine::builder()
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            record.id.clone(),
+            record,
+        )])))
+        .provider(ScriptedModelProvider::new(
+            "fixture",
+            vec![ModelProviderStep::events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }])],
+        ))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let session = futures_executor::block_on(engine.load_session(SessionId::new("scope").unwrap()))
+        .unwrap()
+        .unwrap();
+    let conversation = NativeConversation::from_session(session)
+        .unwrap()
+        .with_workspace_contexts(authority, &contexts)
+        .unwrap();
+    let turn = futures_executor::block_on(conversation.prompt("hold".into(), 1)).unwrap();
+    let key = ToolContext {
+        session_id: conversation.id(),
+        session_incarnation_id: conversation.incarnation_id(),
+        turn_id: turn.handle().id().clone(),
+        call_id: ToolCallId::new("open").unwrap(),
+    };
+    let mut request = request(&primary);
+    request.workspace_scope = Some(contexts.snapshot_for_tool(&key).unwrap());
+    let marker = temporary.path().join("started");
+    let script = write_script(
+        temporary.path(),
+        &format!("printf started > '{}'", marker.display()),
+    );
+    let hook = Arc::new(BeforeSpawnHook::new());
+    let launcher = launcher_with_test_controls(
+        script,
+        Duration::from_secs(2),
+        LauncherTestControls {
+            before_spawn: Some(hook.clone()),
+            ..LauncherTestControls::default()
+        },
+    );
+    let mut future = launcher.launch(request, CancellationToken::new());
+    assert!(poll_once(&mut future, &waker()).is_pending());
+    hook.reached.wait();
+    drop(turn);
+    hook.release.wait();
     assert_eq!(
         drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
         OpenFileLaunchOutcome::Cancelled

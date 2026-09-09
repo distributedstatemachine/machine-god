@@ -115,15 +115,33 @@ impl Error for CreateFolderToolOpenError {}
 /// interrupted creation becomes uncertain, no created prefix is rolled back.
 pub struct CreateFolderTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
 
 impl CreateFolderTool {
+    /// Uses the exact live native turn's immutable workspace scope. Missing or
+    /// expired registrations have no primary-root fallback.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self {
+            root,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            workspace_contexts: None,
+        }
     }
 
     /// Opens and retains an absolute workspace directory without following its
@@ -180,13 +198,20 @@ struct ValidatedArguments<'a> {
 
 impl Tool for CreateFolderTool {
     fn spec(&self) -> ToolSpec {
+        let path_description = PATH_DESCRIPTION;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let path_description = if self.workspace_contexts.is_some() {
+            "Primary-relative directory path or absolute directory path within an active workspace root"
+        } else {
+            path_description
+        };
         ToolSpec {
             name: create_folder_name(),
             description: CREATE_FOLDER_DESCRIPTION.to_owned(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": PATH_DESCRIPTION }
+                    "path": { "type": "string", "description": path_description }
                 },
                 "required": ["path"],
                 "additionalProperties": false
@@ -219,13 +244,31 @@ impl Tool for CreateFolderTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, &call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(contexts) = &self.workspace_contexts {
+                return workspace::execute(contexts, &context, &arguments, &cancellation);
+            }
+            let _ = context;
             let arguments = validate_arguments(&arguments)?;
             if arguments.path != arguments.requested_path {
                 return Err(invalid_arguments());
@@ -408,6 +451,9 @@ pub(super) enum CreateFolderCheckpoint {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) trait CreateFolderEvidence {
+    fn check_authority(&self) -> Result<(), ToolError> {
+        Ok(())
+    }
     fn checkpoint(
         &mut self,
         _checkpoint: CreateFolderCheckpoint,
@@ -470,10 +516,18 @@ pub(super) trait CreateFolderEvidence {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct NativeCreateFolderEvidence;
+struct NativeCreateFolderEvidence {
+    scope: Option<crate::NativeWorkspaceTurnScope>,
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-impl CreateFolderEvidence for NativeCreateFolderEvidence {}
+impl CreateFolderEvidence for NativeCreateFolderEvidence {
+    fn check_authority(&self) -> Result<(), ToolError> {
+        self.scope
+            .as_ref()
+            .map_or(Ok(()), crate::workspace_path_tools::ensure_live)
+    }
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Default)]
@@ -567,7 +621,7 @@ impl CreateFolderTool {
         normalized: &str,
         cancellation: &CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
-        let mut evidence = NativeCreateFolderEvidence;
+        let mut evidence = NativeCreateFolderEvidence { scope: None };
         self.execute_supported_with_evidence(normalized, cancellation, &mut evidence)
     }
 
@@ -1110,6 +1164,7 @@ fn evidence_mkdir<Evidence: CreateFolderEvidence>(
     );
     if matches!(cancellation_mode, CancellationMode::Observe) {
         check_cancellation(cancellation)?;
+        evidence.check_authority()?;
     }
     let outcome = evidence.mkdir(
         ordinal,
@@ -1293,7 +1348,8 @@ fn precommit_checkpoint<Evidence: CreateFolderEvidence>(
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
     evidence.checkpoint(checkpoint, cancellation);
-    check_cancellation(cancellation)
+    check_cancellation(cancellation)?;
+    evidence.check_authority()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1512,3 +1568,7 @@ fn cancelled() -> ToolError {
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "create_folder/workspace.rs"]
+mod workspace;

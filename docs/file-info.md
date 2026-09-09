@@ -7,6 +7,24 @@ output byte.
 
 ## Workspace authority and platform scope
 
+### Exact-turn workspace scopes
+
+Linux/macOS hosts may attach `with_workspace_contexts(Arc<NativeWorkspaceContexts>)`.
+Contextual preparation then uses the exact live native turn's immutable scope:
+relative paths select the primary descriptor, while absolute paths select an
+active additional root (primary first when roots overlap). Preparation performs
+no filesystem lookup or descriptor duplication. Approved capability, prepared
+arguments, and the result's `path` preserve the same canonical logical identity.
+An absolute root itself is valid metadata input.
+
+Execution duplicates only the selected retained descriptor after polling, then
+uses the existing no-follow metadata walker. Final symlink metadata is still
+reported without following the link. Old turns retain their root after a root
+rename or scope replacement; later turns see the replacement scope. Missing,
+foreign, or expired contexts return `workspace_context_unavailable` without
+falling back to the constructor root. This lifetime lookup is not permission
+authorization. Unbound tools retain the single-root contract below.
+
 The host roots each tool in one explicitly selected absolute workspace path. On
 the supported Linux and macOS targets, construction opens that path without
 following its final component and retains the resulting directory descriptor as
