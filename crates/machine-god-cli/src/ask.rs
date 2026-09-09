@@ -85,7 +85,15 @@ pub(crate) trait AskCommandHost {
     /// support them instead of silently dropping requested authority selection.
     fn with_workspace(
         &self,
+        options: crate::workspace::launch::LaunchWorkspaceOptions,
+    ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+        self.with_launch(options, false)
+    }
+
+    fn with_launch(
+        &self,
         _options: crate::workspace::launch::LaunchWorkspaceOptions,
+        _record_requested: bool,
     ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
         Err(())
     }
@@ -978,10 +986,14 @@ mod production {
     }
 
     impl AskCommandHost for ProductionAskCommandHost {
-        fn with_workspace(
+        fn with_launch(
             &self,
             workspace: crate::workspace::launch::LaunchWorkspaceOptions,
+            record_requested: bool,
         ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+            if record_requested {
+                return Err(());
+            }
             Ok(Box::new(Self { workspace }))
         }
 
@@ -4187,10 +4199,14 @@ mod production {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl AskCommandHost for ProductionAskCommandHost {
-    fn with_workspace(
+    fn with_launch(
         &self,
         workspace: crate::workspace::launch::LaunchWorkspaceOptions,
+        record_requested: bool,
     ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+        if record_requested {
+            return Err(());
+        }
         Ok(Box::new(Self { workspace }))
     }
 
