@@ -235,7 +235,11 @@ at `c3314b2`. Its checks pass 15 allowlist, nine permission-controller and 50
 owner/control tests plus warnings-denied Clippy. CLI routing and bounded rendering
 pass ten focused allowlist tests, 295 unit tests with five private-helper ignores,
 all 96 command tests and scoped warnings-denied Clippy. Both completed component
-worktrees are removed. Fresh allowlist release evidence remains outstanding.
+worktrees are removed. The fresh locked `d55a45a` release passes all 96 command
+tests, seven production-input tests and all 295 CLI unit tests with five
+private-helper ignores. Workspace configuration, retained multi-root authority
+and context-aware tool preparation are now being implemented in isolated trees;
+actual tool/approval/sandbox/search integration and CLI handlers remain required.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal

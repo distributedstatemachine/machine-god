@@ -351,3 +351,13 @@ contains the all-feature regression command; 17 classification tests and the
 focused native-manifest contract test pass. Documentation-only routing remains
 unchanged. This closes the reproduced compile mismatch, not the complete feature
 or remote acceptance gates.
+
+### Allowlist integration release evidence
+
+The locked Rust 1.94.1 release build at `d55a45a` completes in 9m27s. Its exact
+binary passes all 96 command tests and seven production-input tests. All 295 CLI
+unit tests also pass with that binary as the production terminal helper, with
+five private-helper ignores. Workspace all-target/all-feature warnings-denied
+Clippy passes. The scoped WASI-fix review reports zero actionable findings and
+its clean isolated checkout is removed. These close the allowlist checkpoint's
+release evidence, not the combined CLI feature or its final review/remote gates.
