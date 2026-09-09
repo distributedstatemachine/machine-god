@@ -62,7 +62,37 @@ pub(super) fn execute(
     record_requested: bool,
     selection: InteractiveSessionSelection,
     output: &mut dyn std::io::Write,
+    controller: AskSignalController,
+) -> (AskCommandOutcome, AskSignalController) {
+    execute_with_preparation(
+        record_requested,
+        selection,
+        output,
+        controller,
+        |bridge, control| {
+            prepare_conversation_host_with_activation(launch, bridge.clone(), bridge, || {
+                control.activate_turn()
+            })
+        },
+        capture_input,
+    )
+}
+
+type CapturedInput = (NativeInteractiveInputSource, NativeInteractiveTerminal);
+
+/// Private effect-boundary injection for owned subprocess fixtures. Production
+/// passes the same captured-input and prepared-host factories used ordinarily.
+fn execute_with_preparation(
+    record_requested: bool,
+    selection: InteractiveSessionSelection,
+    output: &mut dyn std::io::Write,
     mut controller: AskSignalController,
+    prepare: impl FnOnce(
+        Arc<NativeInteractivePromptBridge>,
+        &AskSignalControlSender,
+    ) -> Result<PreparedConversationHost, ()>
+    + Send,
+    capture: impl FnOnce() -> Result<CapturedInput, ()> + Send,
 ) -> (AskCommandOutcome, AskSignalController) {
     let control = controller.control();
     let Ok(signals) = controller.take_signals() else {
@@ -76,7 +106,6 @@ pub(super) fn execute(
                 .name("machine-god-interactive".into())
                 .spawn_scoped(scope, move || {
                     run_interactive(
-                        launch,
                         record_requested,
                         selection,
                         OutputBridge {
@@ -86,6 +115,8 @@ pub(super) fn execute(
                         },
                         signals,
                         &control,
+                        prepare,
+                        capture,
                     )
                 }),
         )?;
@@ -100,17 +131,21 @@ pub(super) fn execute(
 }
 
 fn run_interactive(
-    launch: &crate::workspace::launch::LaunchWorkspaceOptions,
     record_requested: bool,
     selection: InteractiveSessionSelection,
     mut output: OutputBridge,
     signals: AskSignals,
     control: &AskSignalControlSender,
+    prepare: impl FnOnce(
+        Arc<NativeInteractivePromptBridge>,
+        &AskSignalControlSender,
+    ) -> Result<PreparedConversationHost, ()>,
+    capture: impl FnOnce() -> Result<CapturedInput, ()>,
 ) -> Result<AskCommandOutcome, ()> {
     let (bridge, inbox) =
         NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default())
             .map_err(|_| ())?;
-    let (source, terminal) = capture_input()?;
+    let (source, terminal) = capture()?;
     let size_reader = capture_output_size()?;
     let input = NativeInteractiveInput::new(source, machine_god_core::CancellationToken::new());
     let input_completion = input.completion();
@@ -124,9 +159,7 @@ fn run_interactive(
         observations: _observations,
         catalog_cache: _catalog_cache,
         user_config,
-    }) = prepare_conversation_host_with_activation(launch, bridge.clone(), bridge, || {
-        control.activate_turn()
-    })
+    }) = prepare(bridge, control)
     else {
         return super::finish_setup_failure(signals, control);
     };
