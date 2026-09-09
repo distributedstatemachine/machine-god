@@ -203,3 +203,21 @@ These reconciliation observations never establish directory durability.
 Receipts distinguish known saved/runtime changes from unknown outcomes and
 identify removed launch roots that command-line flags can restore on restart.
 Previously taken immutable scopes retain their exact original descriptors.
+
+## Owned workspace startup
+
+`prepare_native_workspace` receives explicit root selection, native settings
+store, launch paths, saved suppression, and a worker scope. Its future is inert
+until polled. The owned worker validates bounded inputs, observes saved settings,
+merges sources and retains primary/additional descriptors plus state-exclusion
+authority. It does not discover environment or credentials, start a provider,
+create state/configuration directories, or publish settings. The caller must
+close and settle the actual worker scope even when a response is abandoned.
+
+At most 64 launch arguments are examined; the merged additional-root limit is
+still 16. Launch paths resolve relative to the primary root and must name
+existing directories. Canonical aliases merge with saved provenance before the
+limit is checked. Missing saved entries remain visible and unavailable; saved
+suppression does not suppress a merged launch source. Final primary and existing
+state entries are opened without following symlinks; an absent state path uses
+the authority's retained-prefix proof without creating it.

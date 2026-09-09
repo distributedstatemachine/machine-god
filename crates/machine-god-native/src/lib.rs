@@ -81,6 +81,32 @@ mod conversation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace_authority;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use workspace_authority::{
+    NativeWorkspaceAuthority, NativeWorkspaceAuthorityError, NativeWorkspaceEntry,
+    NativeWorkspaceEntrySpec, NativeWorkspacePreparedInstall, NativeWorkspaceRoute,
+    NativeWorkspaceScopeSnapshot, NativeWorkspaceSource,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace_context;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use workspace_context::{
+    MAX_NATIVE_WORKSPACE_CONTEXT_SESSIONS, NativeWorkspaceContextError, NativeWorkspaceContexts,
+    NativeWorkspaceTurnScope,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace_service;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use workspace_service::{
+    NativeWorkspaceAction, NativeWorkspaceReceipt, NativeWorkspaceReconciliation,
+    NativeWorkspaceService, NativeWorkspaceServiceError,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace_startup;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use workspace_startup::{MAX_WORKSPACE_LAUNCH_ARGUMENTS, prepare_native_workspace};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_history;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation_history::{
