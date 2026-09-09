@@ -109,7 +109,10 @@ pub use workspace_service::{
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace_startup;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use workspace_startup::{MAX_WORKSPACE_LAUNCH_ARGUMENTS, prepare_native_workspace};
+pub use workspace_startup::{
+    MAX_WORKSPACE_LAUNCH_ARGUMENTS, prepare_native_workspace,
+    prepare_native_workspace_without_settings,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_history;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

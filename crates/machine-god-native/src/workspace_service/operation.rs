@@ -38,6 +38,7 @@ pub(super) fn run(
             Reconciliation::Refreshed,
         ));
     }
+    let store = service.settings()?;
     let aliases =
         contain(|| observed_aliases(service, &previous)).map_err(|()| Error::Unavailable)??;
     let (mutation, launch, _staged) =
@@ -48,7 +49,7 @@ pub(super) fn run(
             hook(super::Stage::BeforeCommit);
         }
         futures_executor::block_on(
-            service.store.apply_workspace_directory_mutation_observed(
+            store.apply_workspace_directory_mutation_observed(
                 previous.primary_identity().as_os_str().as_bytes(),
                 &mutation,
                 &launch
@@ -88,10 +89,10 @@ pub(super) fn reconcile(
         if let Some(hook) = hook {
             hook(super::Stage::AfterCommit);
         }
-        service.store.load()
+        service.settings()?.load().map_err(Error::Config)
     })
     .map_err(|()| Error::Unavailable)
-    .and_then(|result| result.map_err(Error::Config));
+    .and_then(std::convert::identity);
     let result = loaded.and_then(|loaded| {
         let saved = loaded
             .loaded()
@@ -177,7 +178,7 @@ fn observed_aliases(
     service: &Service,
     previous: &Snapshot,
 ) -> Result<Vec<WorkspaceDirectoryAlias>, Error> {
-    let loaded = service.store.load().map_err(Error::Config)?;
+    let loaded = service.settings()?.load().map_err(Error::Config)?;
     let saved = loaded
         .loaded()
         .config()
@@ -341,7 +342,7 @@ fn saved_source(
     previous: &Snapshot,
     source: &Path,
 ) -> Result<Option<Saved>, Error> {
-    let loaded = service.store.load().map_err(Error::Config)?;
+    let loaded = service.settings()?.load().map_err(Error::Config)?;
     let saved = loaded
         .loaded()
         .config()

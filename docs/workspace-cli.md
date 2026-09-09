@@ -171,6 +171,10 @@ turn-activation handoff.
 The existing native settings-store private-directory checks apply during this
 startup too; launch neither changes directory permissions nor falls back to
 ignoring an unreadable or unsafe saved configuration.
+When environment selection provides no user-settings authority, launch uses
+the explicit settings-free preparation path: no saved roots, no settings-path
+discovery, and the same validated launch roots. `/workspace list` still works;
+add/remove/clear are unavailable because there is no persistence capability.
 Fresh, resumed and reset interactive sessions keep this host selection; saved
 session paths do not grant additional authority.
 
@@ -260,6 +264,10 @@ merges sources and retains primary/additional descriptors plus state-exclusion
 authority. It does not discover environment or credentials, start a provider,
 create state/configuration directories, or publish settings. The caller must
 close and settle the actual worker scope even when a response is abandoned.
+`prepare_native_workspace_without_settings` preserves that same ownership and
+validation contract without a settings capability or saved-directory reads.
+`NativeWorkspaceService::without_settings` permits refreshed or cached listing
+and rejects persistence mutations before worker admission.
 
 At most 64 launch arguments are examined; the merged additional-root limit is
 still 16. Launch paths resolve relative to the primary root and must name

@@ -42,7 +42,7 @@ fn public_workspace_control_keeps_additional_authority_across_resume() {
             .request_control(
                 native::NativeInteractiveControl::Workspace {
                     action: native::NativeWorkspaceAction::Add(shared.clone()),
-                    store,
+                    store: Some(store),
                 },
                 150,
             )

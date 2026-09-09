@@ -1242,12 +1242,8 @@ mod production {
         // From the first owned workspace worker onward, signals latch until
         // native cleanup. Setup's immediate-exit phase cannot abandon that work.
         before_host()?;
-        let authority = prepare_launch_workspace(
-            &runtime,
-            root_selection,
-            user_config.clone().ok_or(())?,
-            launch,
-        )?;
+        let authority =
+            prepare_launch_workspace(&runtime, root_selection, user_config.clone(), launch)?;
         let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
             .with_workspace(
                 authority,
@@ -1285,19 +1281,28 @@ mod production {
     fn prepare_launch_workspace(
         runtime: &machine_god_native::TokioWebSearchRuntime,
         roots: NativeRootSelection,
-        store: Arc<machine_god_native::NativeUserConfigStore>,
+        store: Option<Arc<machine_god_native::NativeUserConfigStore>>,
         launch: &crate::workspace::launch::LaunchWorkspaceOptions,
     ) -> Result<machine_god_native::NativeWorkspaceAuthority, ()> {
         let workers = machine_god_native::NativeOwnedWorkerScope::new();
         let completion = workers.completion();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime.block_on(machine_god_native::prepare_native_workspace(
-                roots,
-                store,
-                launch.directories.clone(),
-                launch.suppress_saved,
-                workers.clone(),
-            ))
+            let future = match store {
+                Some(store) => machine_god_native::prepare_native_workspace(
+                    roots,
+                    store,
+                    launch.directories.clone(),
+                    launch.suppress_saved,
+                    workers.clone(),
+                ),
+                None => machine_god_native::prepare_native_workspace_without_settings(
+                    roots,
+                    launch.directories.clone(),
+                    launch.suppress_saved,
+                    workers.clone(),
+                ),
+            };
+            runtime.block_on(future)
         }));
         workers.close();
         completion.wait_on_worker().map_err(|_| ())?;
@@ -1707,10 +1712,25 @@ mod production {
                 )
                 .unwrap();
             let before = fs::read(base.join("user/config.json")).unwrap();
+            let settings_free = super::prepare_launch_workspace(
+                &runtime,
+                roots.clone(),
+                None,
+                &LaunchWorkspaceOptions {
+                    directories: vec![added.clone()],
+                    suppress_saved: false,
+                },
+            )
+            .unwrap()
+            .snapshot()
+            .unwrap();
+            assert_eq!(settings_free.entries().len(), 1);
+            assert!(settings_free.route(&added.join("file")).is_ok());
+            assert!(settings_free.route(&saved.join("file")).is_err());
             let authority = super::prepare_launch_workspace(
                 &runtime,
                 roots.clone(),
-                store.clone(),
+                Some(store.clone()),
                 &LaunchWorkspaceOptions {
                     directories: vec![added.clone()],
                     suppress_saved: true,
@@ -1725,7 +1745,7 @@ mod production {
             let merged = super::prepare_launch_workspace(
                 &runtime,
                 roots.clone(),
-                store.clone(),
+                Some(store.clone()),
                 &LaunchWorkspaceOptions {
                     directories: vec![saved.clone(), saved.clone()],
                     suppress_saved: true,
@@ -1744,7 +1764,7 @@ mod production {
                 super::prepare_launch_workspace(
                     &runtime,
                     roots,
-                    store,
+                    Some(store),
                     &LaunchWorkspaceOptions {
                         directories: vec![base.join("missing")],
                         suppress_saved: false

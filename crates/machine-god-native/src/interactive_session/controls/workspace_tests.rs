@@ -21,7 +21,7 @@ async fn apply(
         .request_control(
             Control::Workspace {
                 action,
-                store: store.clone(),
+                store: Some(store.clone()),
             },
             200,
         )
@@ -32,6 +32,64 @@ async fn apply(
         panic!("workspace receipt")
     };
     receipt
+}
+
+#[test]
+fn workspace_without_settings_lists_and_rejects_mutations_without_persistence() {
+    executor().block_on(async {
+        let fixture = Fixture::new_with_workspace();
+        let mut session = owner(&fixture).await;
+        for queued in [false, true] {
+            let ticket = queued.then(|| session.runtime().enqueue("held".into()).unwrap());
+            session
+                .request_control(
+                    Control::Workspace {
+                        action: Action::List,
+                        store: None,
+                    },
+                    200,
+                )
+                .unwrap();
+            let Receipt::Workspace(receipt) = control_outcome(&mut session).await.result.unwrap()
+            else {
+                panic!("workspace receipt")
+            };
+            assert_eq!(
+                receipt.reconciliation,
+                if queued {
+                    Reconciliation::CachedBusy
+                } else {
+                    Reconciliation::Refreshed
+                }
+            );
+            if let Some(ticket) = ticket {
+                assert!(session.runtime().cancel_queued(ticket));
+            }
+        }
+        for action in [
+            Action::Add(fixture.workspace.clone()),
+            Action::Remove(fixture.workspace.clone()),
+            Action::Clear,
+        ] {
+            session
+                .request_control(
+                    Control::Workspace {
+                        action,
+                        store: None,
+                    },
+                    200,
+                )
+                .unwrap();
+            assert!(matches!(
+                control_outcome(&mut session).await.result,
+                Err(ControlError::Workspace(
+                    crate::NativeWorkspaceServiceError::Unavailable
+                ))
+            ));
+        }
+        assert!(!store_path(&fixture).exists());
+        close(session, fixture).await;
+    });
 }
 
 #[test]
@@ -49,7 +107,7 @@ fn workspace_control_is_inert_owned_and_shared_by_actual_tools_across_new_sessio
             .request_control(
                 Control::Workspace {
                     action: Action::Add(shared.clone()),
-                    store: store.clone(),
+                    store: Some(store.clone()),
                 },
                 200,
             )
@@ -115,7 +173,7 @@ fn workspace_busy_list_is_cached_and_mutation_does_not_consume_queued_prompt() {
             .request_control(
                 Control::Workspace {
                     action: Action::Clear,
-                    store: store.clone(),
+                    store: Some(store.clone()),
                 },
                 200,
             )
@@ -144,7 +202,7 @@ fn workspace_failed_control_prevents_pending_transition_and_legacy_host_rejects(
                 session.request_control(
                     Control::Workspace {
                         action: Action::Add(path.into()),
-                        store: store.clone()
+                        store: Some(store.clone())
                     },
                     200
                 ),
@@ -156,7 +214,7 @@ fn workspace_failed_control_prevents_pending_transition_and_legacy_host_rejects(
             .request_control(
                 Control::Workspace {
                     action: Action::Add("missing-root".into()),
-                    store: store.clone(),
+                    store: Some(store.clone()),
                 },
                 200,
             )
@@ -183,7 +241,7 @@ fn workspace_failed_control_prevents_pending_transition_and_legacy_host_rejects(
             session.request_control(
                 Control::Workspace {
                     action: Action::List,
-                    store: config_store(&fixture)
+                    store: Some(config_store(&fixture))
                 },
                 200
             ),

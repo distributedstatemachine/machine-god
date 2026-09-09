@@ -19,6 +19,29 @@ fn executor() -> tokio::runtime::Runtime {
 }
 
 #[test]
+fn workspace_without_settings_lists_but_cannot_save() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new_with_workspace();
+        let mut driver = driver(&fixture).await;
+        assert!(driver.user_config.is_none());
+        driver.command("/workspace list", 200);
+        let receipt = control(&mut driver).await;
+        assert!(!receipt.failed());
+        assert!(matches!(
+            receipt.result,
+            Ok(NativeInteractiveControlReceipt::Workspace(_))
+        ));
+        driver.command("/workspace clear", 210);
+        assert!(
+            String::from_utf8(driver.notice.take().unwrap())
+                .unwrap()
+                .contains("unavailable")
+        );
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
+
+#[test]
 fn workspace_slash_uses_actual_native_authority_and_reports_independent_receipts() {
     executor().block_on(async {
         let fixture = support::Fixture::new_with_workspace();
@@ -464,7 +487,7 @@ fn missing_explicit_resources_and_fast_capabilities_fail_without_false_success()
                 .unwrap()
                 .contains("does not advertise")
         );
-        for command in ["/allowlist", "/workspace list"] {
+        for command in ["/allowlist", "/workspace clear"] {
             driver.command(command, 200);
             assert!(
                 String::from_utf8(driver.notice.take().unwrap())
@@ -472,6 +495,12 @@ fn missing_explicit_resources_and_fast_capabilities_fail_without_false_success()
                     .contains("unavailable")
             );
         }
+        driver.command("/workspace list", 200);
+        assert!(
+            String::from_utf8(driver.notice.take().unwrap())
+                .unwrap()
+                .contains("rejected")
+        );
         assert_eq!(driver.owner.runtime().record(), before);
         Box::pin(finish(driver, fixture)).await;
     });

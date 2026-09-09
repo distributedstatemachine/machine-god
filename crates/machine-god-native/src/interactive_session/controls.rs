@@ -42,9 +42,10 @@ pub enum NativeInteractiveControl {
         store: Arc<NativeUserConfigStore>,
     },
     /// Uses this owner's retained host authority and exact accepted runtime.
+    /// Absent settings permit listing only; no persistence path is discovered.
     Workspace {
         action: crate::NativeWorkspaceAction,
-        store: Arc<NativeUserConfigStore>,
+        store: Option<Arc<NativeUserConfigStore>>,
     },
 }
 
@@ -214,10 +215,11 @@ impl NativeInteractiveSession {
                         return Err(NativeInteractiveError::Configuration);
                     }
                 }
-                let service = self
-                    .host
-                    .workspace_service(store)
-                    .ok_or(NativeInteractiveError::Configuration)?;
+                let service = match store {
+                    Some(store) => self.host.workspace_service(store),
+                    None => self.host.workspace_service_without_settings(),
+                }
+                .ok_or(NativeInteractiveError::Configuration)?;
                 let future = service.execute_for_runtime(runtime, action);
                 Box::pin(async move {
                     future

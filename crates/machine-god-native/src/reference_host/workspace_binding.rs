@@ -41,4 +41,14 @@ impl super::NativeReferenceHost {
             self.control_workers.clone()?,
         )))
     }
+
+    /// Constructs a listing-only service without selecting or discovering settings.
+    /// Legacy hosts without workspace or complete-terminal workers return `None`.
+    #[must_use]
+    pub fn workspace_service_without_settings(&self) -> Option<Arc<crate::NativeWorkspaceService>> {
+        Some(Arc::new(crate::NativeWorkspaceService::without_settings(
+            self.workspace_binding.as_ref()?.authority.clone(),
+            self.control_workers.clone()?,
+        )))
+    }
 }

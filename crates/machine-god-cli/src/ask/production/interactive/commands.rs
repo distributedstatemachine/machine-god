@@ -168,12 +168,15 @@ impl Driver {
             self.note(b"\n[usage: /workspace [list|add PATH|remove PATH|clear]]\n> ");
             return;
         };
-        let Some(store) = self.user_config.clone() else {
+        if self.user_config.is_none() && action != machine_god_native::NativeWorkspaceAction::List {
             self.note(UNAVAILABLE);
             return;
-        };
+        }
         self.control_command(
-            NativeInteractiveControl::Workspace { action, store },
+            NativeInteractiveControl::Workspace {
+                action,
+                store: self.user_config.clone(),
+            },
             now_ms,
         );
     }
