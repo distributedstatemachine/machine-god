@@ -257,7 +257,7 @@ impl Driver {
             self.note(UNAVAILABLE);
             return;
         };
-        let mut output = crate::BoundedModelsOutput::new();
+        let mut output = crate::ask::production::interactive::bounded_output();
         let result = (|| {
             writeln!(
                 output,
@@ -382,7 +382,7 @@ impl Driver {
     fn show_status(&mut self) {
         let preferences = self.owner.runtime().model_preferences();
         let status = self.owner.runtime().status();
-        let mut output = crate::BoundedModelsOutput::new();
+        let mut output = crate::ask::production::interactive::bounded_output();
         let result = (|| {
             output.write_str("\n[session] ").map_err(|_| ())?;
             presentation::escaped(&mut output, self.owner.runtime().id().as_str())?;
@@ -410,7 +410,7 @@ impl Driver {
             self.note(UNAVAILABLE);
             return;
         };
-        let mut output = crate::BoundedModelsOutput::new();
+        let mut output = crate::ask::production::interactive::bounded_output();
         let result = (|| {
             writeln!(
                 output,
@@ -421,8 +421,8 @@ impl Driver {
             let mut shown = 0;
             for entry in catalog.entries() {
                 // Reserve a worst-case escaped model ID plus the omission notice.
-                if output.value.len() + entry.model().id().len() * 6 + 256
-                    > crate::MAX_MODELS_OUTPUT_BYTES
+                if output.len() + entry.model().id().len() * 6 + 256
+                    > crate::ask::production::interactive::MAX_PRESENTATION_OUTPUT_BYTES
                 {
                     break;
                 }
@@ -445,7 +445,7 @@ impl Driver {
         self.display(output, result);
     }
 
-    fn display(&mut self, output: crate::BoundedModelsOutput, result: Result<(), ()>) {
+    fn display(&mut self, output: crate::bounded_output::BoundedOutput, result: Result<(), ()>) {
         if result.is_err() {
             self.note(b"\n[command output exceeds display bound]\n> ");
         } else if self.notice.is_none() {

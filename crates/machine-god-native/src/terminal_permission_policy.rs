@@ -18,6 +18,7 @@ pub struct NativeTerminalPermissionPolicy {
     roots: Vec<NativeSandboxRoot>,
     executable: Option<File>,
     controller: OnceLock<Weak<NativePermissionController>>,
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
 }
 
 impl std::fmt::Debug for NativeTerminalPermissionPolicy {
@@ -43,7 +44,19 @@ impl NativeTerminalPermissionPolicy {
             roots,
             executable,
             controller: OnceLock::new(),
+            workspace_contexts: None,
         })
+    }
+
+    /// Binds launch root selection to the exact live turn's captured scope.
+    /// This builder performs no I/O and does not capture or duplicate roots.
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
     }
 
     /// Binds once, without extending the controller's lifetime or doing I/O.
@@ -83,6 +96,25 @@ impl NativeTerminalPermissionPolicy {
         let policy = controller
             .policy_for_execution(context)
             .map_err(|_| NativeSandboxError::Unavailable)?;
+        let scope = self
+            .workspace_contexts
+            .as_ref()
+            .map(|contexts| {
+                contexts
+                    .snapshot_for_tool(context)
+                    .map_err(|_| NativeSandboxError::Unavailable)
+            })
+            .transpose()?;
+        let roots = match &scope {
+            Some(scope)
+                if policy.effective_sandbox_mode() == NativeSandboxMode::Os
+                    && cfg!(target_os = "macos") =>
+            {
+                workspace::roots(scope, deadline, cancellation)?
+            }
+            Some(_) => Vec::new(),
+            None => self.roots.clone(),
+        };
         let executable = if policy.effective_sandbox_mode() == NativeSandboxMode::Os {
             self.executable
                 .as_ref()
@@ -92,18 +124,24 @@ impl NativeTerminalPermissionPolicy {
         } else {
             None
         };
-        NativeSandboxLaunch::capture(
+        let launch = NativeSandboxLaunch::capture(
             policy.sandbox_mode(),
             policy.mode(),
-            self.roots.clone(),
+            roots,
             executable,
             false,
             deadline,
             cancellation,
-        )
-        .map(Arc::new)
+        )?;
+        let launch = match scope {
+            Some(scope) => launch.with_workspace_scope(scope, deadline, cancellation)?,
+            None => launch,
+        };
+        Ok(Arc::new(launch))
     }
 }
+
+mod workspace;
 
 #[cfg(test)]
 pub(crate) mod tests;

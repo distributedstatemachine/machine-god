@@ -926,22 +926,19 @@ fn ensure_root_is_linked(root: BorrowedFd<'_>, phase: WalkPhase) -> Result<(), T
 fn ensure_macos_root_is_linked(root: BorrowedFd<'_>, phase: WalkPhase) -> Result<(), ToolError> {
     let root_metadata = rustix::fs::fstat(root).map_err(|_| map_walk_failure(phase))?;
     let root_path = rustix::fs::getpath(root).map_err(|_| map_walk_failure(phase))?;
-    let root_path = root_path.as_bytes();
-    if root_path == b"/" {
+    let Some(observation) =
+        crate::retained_root::RetainedRootObservation::new(root, &root_metadata, &root_path)
+            .map_err(|()| map_walk_failure(phase))?
+    else {
         return Ok(());
-    }
-    let name = root_path
-        .rsplit(|byte| *byte == b'/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| map_walk_failure(phase))?;
-    let name = std::ffi::CString::new(name).map_err(|_| map_walk_failure(phase))?;
-    let parent = rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
+    };
+    let parent = observation
+        .open_parent()
         .map_err(|_| map_walk_failure(phase))?;
-    let linked = rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
+    let linked = observation
+        .stat_link(&parent)
         .map_err(|_| map_walk_failure(phase))?;
-    if !same_identity(&root_metadata, &linked) || !FileType::from_raw_mode(linked.st_mode).is_dir()
-    {
+    if !observation.matches(&linked) {
         return Err(map_walk_failure(phase));
     }
     Ok(())
@@ -2027,7 +2024,7 @@ impl EditFileTool {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn approval_ticket(
+    pub(crate) fn approval_ticket(
         &self,
         context: &ToolContext,
     ) -> Option<Result<crate::file_approval::NativeFileApprovalClaim, crate::NativeFileApprovalError>>
@@ -2038,7 +2035,7 @@ impl EditFileTool {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn approval_bound(
+    pub(crate) fn approval_bound(
         &self,
         context: &ToolContext,
         arguments: &Value,
@@ -2585,5 +2582,15 @@ impl EditFileTool {
                 .checked_add(1)
                 .ok_or_else(|| map_walk_failure(phase))?;
         }
+    }
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn retained_root_characterization_preserves_states_and_error_mapping() {
+    for phase in [WalkPhase::Initial, WalkPhase::Revalidate] {
+        crate::retained_root::tests::assert_root_states(
+            |root| ensure_macos_root_is_linked(root, phase),
+            &map_walk_failure(phase),
+        );
     }
 }

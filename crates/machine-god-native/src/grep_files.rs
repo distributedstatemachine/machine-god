@@ -2297,27 +2297,18 @@ fn ensure_macos_root_is_linked(
     check_cancellation(cancellation)?;
     let root_path = rustix::fs::getpath(root).map_err(|_| unavailable())?;
     check_cancellation(cancellation)?;
-    let root_path = root_path.as_bytes();
-    if root_path == b"/" {
+    let Some(observation) =
+        crate::retained_root::RetainedRootObservation::new(root, &root_metadata, &root_path)
+            .map_err(|()| unavailable())?
+    else {
         return Ok(());
-    }
-    let name = root_path
-        .rsplit(|byte| *byte == b'/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(unavailable)?;
-    let name = std::ffi::CString::new(name).map_err(|_| unavailable())?;
+    };
     check_cancellation(cancellation)?;
-    let parent = rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
-        .map_err(|_| unavailable())?;
+    let parent = observation.open_parent().map_err(|_| unavailable())?;
     check_cancellation(cancellation)?;
-    let linked =
-        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| unavailable())?;
+    let linked = observation.stat_link(&parent).map_err(|_| unavailable())?;
     check_cancellation(cancellation)?;
-    if linked.st_dev != root_metadata.st_dev
-        || linked.st_ino != root_metadata.st_ino
-        || !FileType::from_raw_mode(linked.st_mode).is_dir()
-    {
+    if !observation.matches(&linked) {
         return Err(unavailable());
     }
     Ok(())
@@ -3225,5 +3216,97 @@ mod tests {
         assert_eq!(GrepMode::Matches.as_str(), "matches");
         assert_eq!(GrepMode::FilesWithMatches.as_str(), "files_with_matches");
         assert_eq!(GrepMode::Count.as_str(), "count");
+    }
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn retained_root_characterization_preserves_states_and_error_mapping() {
+    crate::retained_root::tests::assert_root_states(
+        |root| ensure_macos_root_is_linked(root, &CancellationToken::new()),
+        &unavailable(),
+    );
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod retained_root_checkpoint_tests {
+    use super::*;
+    use crate::retained_root::tests::Fixture;
+    use std::cell::Cell;
+    use std::fs::{self, File};
+
+    struct Check<F> {
+        calls: Cell<usize>,
+        action: F,
+    }
+    impl<F: Fn(usize) -> Result<(), ToolError>> ScanCheck for Check<F> {
+        fn check(&self) -> Result<(), ToolError> {
+            let count = self.calls.get() + 1;
+            self.calls.set(count);
+            (self.action)(count)
+        }
+    }
+    fn check<F: Fn(usize) -> Result<(), ToolError>>(action: F) -> Check<F> {
+        Check {
+            calls: Cell::new(0),
+            action,
+        }
+    }
+
+    #[test]
+    fn retained_root_success_root_and_cancellation_checkpoints_are_exact() {
+        let fixture = Fixture::new();
+        let root = fixture.open_root();
+        let checks = check(|_| Ok(()));
+        ensure_macos_root_is_linked(root.as_fd(), &checks).unwrap();
+        assert_eq!(checks.calls.get(), 6);
+        let checks = check(|_| Ok(()));
+        ensure_macos_root_is_linked(File::open("/").unwrap().as_fd(), &checks).unwrap();
+        assert_eq!(checks.calls.get(), 3);
+        for stop in 1..=6 {
+            let cancellation = CancellationToken::new();
+            let checks = check(|count| {
+                if count == stop {
+                    cancellation.cancel();
+                }
+                check_cancellation(&cancellation)
+            });
+            let error = ensure_macos_root_is_linked(root.as_fd(), &checks).unwrap_err();
+            assert_eq!(error.kind, ToolErrorKind::Cancelled);
+            assert_eq!(checks.calls.get(), stop);
+        }
+    }
+
+    #[test]
+    fn retained_root_failed_syscall_has_no_trailing_check_and_replacement_is_rejected() {
+        let fixture = Fixture::new();
+        let root = fixture.open_root();
+        let checks = check(|count| {
+            if count == 2 {
+                fs::remove_dir(fixture.root()).unwrap();
+            }
+            Ok(())
+        });
+        assert_eq!(
+            ensure_macos_root_is_linked(root.as_fd(), &checks).unwrap_err(),
+            unavailable()
+        );
+        // Darwin retains the old path and parent observation after unlink;
+        // statat fails, so its sixth (success-only) checkpoint must not run.
+        assert_eq!(checks.calls.get(), 5);
+
+        let fixture = Fixture::new();
+        let root = fixture.open_root();
+        let checks = check(|count| {
+            if count == 3 {
+                fs::rename(fixture.root(), fixture.0.join("retained")).unwrap();
+                fs::create_dir(fixture.root()).unwrap();
+            }
+            Ok(())
+        });
+        assert_eq!(
+            ensure_macos_root_is_linked(root.as_fd(), &checks).unwrap_err(),
+            unavailable()
+        );
+        assert_eq!(checks.calls.get(), 6);
     }
 }

@@ -11,6 +11,17 @@ Current delivery state and gate evidence are maintained only in the
 
 ## Global behavior
 
+Command implementations live in command-specific CLI modules. The entrypoint
+retains global grammar and private helper dispatch, and routes through named,
+borrowed host dependencies so tests can replace one host without rebuilding
+unrelated command wiring. Constructing that dependency set performs no effects.
+
+Doctor, models, session inspection, sessions, status, workspace and background
+share byte-bounded output staging. Each command keeps its own byte ceiling,
+initial capacity, escaping and error mapping; rendering completes before success
+output is written. A rejected append leaves its existing prefix unchanged.
+Model signal ownership remains alive through output and cleanup.
+
 - With no arguments, `machine-god` opens a fresh interactive session on Linux/macOS.
 - A first argument of `help`, `--help`, or `-h` prints the same help text and
   preempts every following argument and effect.

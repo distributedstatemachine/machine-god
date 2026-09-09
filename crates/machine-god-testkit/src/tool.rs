@@ -46,6 +46,14 @@ pub struct RecordedToolPreparation {
     pub call: ToolCall,
 }
 
+/// A preparation attempt with the exact context supplied to its entry point.
+#[derive(Clone, Debug)]
+pub struct RecordedToolPreparationWithContext {
+    pub call: ToolCall,
+    /// `None` for direct [`Tool::prepare`], `Some` for [`Tool::prepare_for_turn`].
+    pub context: Option<ToolContext>,
+}
+
 #[derive(Debug)]
 struct ToolState {
     steps: VecDeque<ToolStep>,
@@ -69,7 +77,7 @@ pub struct ScriptedTool {
 struct PreparedToolState {
     spec: ToolSpec,
     preparation_steps: VecDeque<ToolPrepareStep>,
-    preparations: Vec<RecordedToolPreparation>,
+    preparations: Vec<RecordedToolPreparationWithContext>,
     execution_steps: VecDeque<ToolStep>,
     invocations: Vec<RecordedToolInvocation>,
 }
@@ -203,6 +211,22 @@ impl ScriptedPreparedTool {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .preparations
+            .iter()
+            .map(|preparation| RecordedToolPreparation {
+                call: preparation.call.clone(),
+            })
+            .collect()
+    }
+
+    /// Returns all preparation attempts in call order, including direct calls
+    /// with no context. This shares the bound and records of [`Self::preparations`].
+    #[must_use]
+    pub fn preparations_with_context(&self) -> Vec<RecordedToolPreparationWithContext> {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .preparations
             .clone()
     }
 
@@ -230,7 +254,7 @@ impl ScriptedPreparedTool {
 
     fn record_and_prepare(
         &self,
-        preparation: RecordedToolPreparation,
+        preparation: RecordedToolPreparationWithContext,
     ) -> Result<ToolPrepareStep, ToolError> {
         let mut state = self
             .inner
@@ -251,6 +275,23 @@ impl ScriptedPreparedTool {
             ));
         };
         Ok(step)
+    }
+
+    fn prepare_with_context(
+        &self,
+        context: Option<ToolContext>,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        match self.record_and_prepare(RecordedToolPreparationWithContext { call, context })? {
+            ToolPrepareStep::Prepared {
+                capability,
+                arguments,
+            } => Ok(PreparedToolCall::new(capability, arguments)),
+            ToolPrepareStep::NoAuthority { arguments } => {
+                Ok(PreparedToolCall::without_authority(arguments))
+            }
+            ToolPrepareStep::Error(error) => Err(error),
+        }
     }
 
     fn record_and_select(&self, invocation: RecordedToolInvocation) -> Result<ToolStep, ToolError> {
@@ -321,16 +362,15 @@ impl Tool for ScriptedPreparedTool {
     }
 
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
-        match self.record_and_prepare(RecordedToolPreparation { call })? {
-            ToolPrepareStep::Prepared {
-                capability,
-                arguments,
-            } => Ok(PreparedToolCall::new(capability, arguments)),
-            ToolPrepareStep::NoAuthority { arguments } => {
-                Ok(PreparedToolCall::without_authority(arguments))
-            }
-            ToolPrepareStep::Error(error) => Err(error),
-        }
+        self.prepare_with_context(None, call)
+    }
+
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        self.prepare_with_context(Some(context.clone()), call)
     }
 
     fn execute(

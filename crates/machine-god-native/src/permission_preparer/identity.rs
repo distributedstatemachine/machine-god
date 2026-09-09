@@ -115,6 +115,9 @@ impl Fields {
 }
 
 #[cfg(test)]
+mod terminal_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]

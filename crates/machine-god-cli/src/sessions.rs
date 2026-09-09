@@ -1,5 +1,6 @@
 //! Thin, bounded presentation of native catalog observations.
 
+use crate::bounded_output::BoundedOutput;
 use machine_god_core::{BoxFuture, SessionId};
 use machine_god_native::NativeSessionCatalogCursor;
 use std::{
@@ -223,7 +224,7 @@ fn classify_error(kind: NativeSessionCatalogErrorKind) -> SessionsOperationalFai
 }
 
 pub(super) fn run_sessions(
-    host: &impl SessionsCommandHost,
+    host: &(impl SessionsCommandHost + ?Sized),
     options: &SessionsOptions,
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
@@ -274,34 +275,19 @@ fn write_failure(
     1
 }
 
-struct BoundedOutput(String);
-impl fmt::Write for BoundedOutput {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        if self
-            .0
-            .len()
-            .checked_add(text.len())
-            .is_none_or(|len| len > MAX_OUTPUT_BYTES)
-        {
-            return Err(fmt::Error);
-        }
-        self.0.push_str(text);
-        Ok(())
-    }
-}
 fn render_sessions(
     snapshot: &SessionsSnapshot,
     options: &SessionsOptions,
 ) -> Result<String, SessionsOperationalFailure> {
     validate(snapshot, options).map_err(|()| SessionsOperationalFailure::ResourceLimit)?;
-    let mut output = BoundedOutput(String::with_capacity(1024));
+    let mut output = BoundedOutput::with_capacity(MAX_OUTPUT_BYTES, 1024);
     if options.json {
         write_json(&mut output, snapshot)
     } else {
         write_human(&mut output, snapshot, options)
     }
     .map_err(|_| SessionsOperationalFailure::ResourceLimit)?;
-    Ok(output.0)
+    Ok(output.finish())
 }
 fn validate(snapshot: &SessionsSnapshot, options: &SessionsOptions) -> Result<(), ()> {
     if snapshot.entries.len() > options.limit

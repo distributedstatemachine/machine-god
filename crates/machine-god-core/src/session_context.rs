@@ -5,7 +5,8 @@ use serde::Serialize;
 use serde::ser::{SerializeSeq, Serializer};
 use serde_json::Value;
 
-use crate::session::{DrainJsonValues, serialized_json_size_bounded};
+use crate::json_bounds::serialized_json_size_bounded;
+use crate::session::DrainJsonValues;
 use crate::{ContentBlock, EngineError, EngineLimits, Message, Role, SessionRevision};
 
 /// Maximum UTF-8 payload size of a caller-supplied advisory context summary.

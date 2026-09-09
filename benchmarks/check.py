@@ -220,8 +220,8 @@ def main() -> int:
     for field in ("system", "release", "machine", "python"):
         require_text(host.get(field), f"host.{field}")
     command = data.get("command")
-    if not isinstance(command, list) or len(command) != 1:
-        raise SystemExit("command must contain exactly one executable")
+    if not isinstance(command, list) or len(command) != 2 or command[1] != "--help":
+        raise SystemExit("command must contain exactly one executable followed by --help")
     for index, argument in enumerate(command):
         require_text(argument, f"command[{index}]")
     warmup = data.get("warmup")

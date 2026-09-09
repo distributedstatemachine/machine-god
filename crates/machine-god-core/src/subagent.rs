@@ -1,6 +1,6 @@
 //! Bounded foreground subagent execution over explicitly injected authority.
 
-use crate::session::{
+use crate::json_bounds::{
     JsonLimitViolation, drop_json_value_iterative, serialized_json_size_bounded,
     validate_json_roots,
 };

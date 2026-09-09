@@ -5,6 +5,9 @@
     reason = "lower-level process lifecycle primitives remain directly integration-tested"
 )]
 
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod integration_tests;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "terminal_tmux_process.rs"]
 pub(crate) mod terminal_tmux_process;
@@ -15,7 +18,7 @@ mod tmux_child;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[allow(
     unused_imports,
-    reason = "source-included process tests omit tmux callers"
+    reason = "tmux callers are available only in terminal host compositions"
 )]
 pub(crate) use tmux_child::TmuxChild;
 

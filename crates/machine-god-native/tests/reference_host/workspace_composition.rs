@@ -342,6 +342,195 @@ fn workspace_host_routes_metadata_enumeration_and_grep_with_policy_and_history()
 }
 
 #[test]
+fn workspace_host_vision_reads_additional_root_through_actual_permission_and_transport() {
+    let temporary = TemporaryDirectory::new("workspace-vision-host");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let primary = prepared.workspace_root().to_owned();
+    let additional = temporary.path().join("additional");
+    fs::create_dir(&additional).unwrap();
+    let additional = additional.canonicalize().unwrap();
+    let bytes = b"\x89PNG\r\n\x1a\nadditional image";
+    let selected = additional.join("selected.png");
+    fs::write(&selected, bytes).unwrap();
+    let [_, evidence, finish] = vision_round_responses();
+    let transport = ScriptedTransport::new(
+        "workspace-vision",
+        vec![
+            call(
+                "vision",
+                &json!({"paths":[selected], "focus":"Read the status indicator."}),
+            ),
+            evidence,
+            finish,
+        ],
+    );
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            configured(temporary.path(), "yolo", &json!([])),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(AllowingPrompter::default()),
+            inert_question_prompter(),
+            never_deadline(),
+            NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+                .with_workspace(
+                    authority(&primary, &state, &additional),
+                    Arc::new(NativeWorkspaceContexts::new()),
+                )
+                .with_terminal(complete_terminal_options())
+                .with_permissions(NativeReferenceHostPermissionOptions::new(
+                    Arc::new(NativePermissionContexts::new()),
+                    Arc::new(TokioPermissionReviewClock),
+                )),
+        )
+        .unwrap();
+    let completion = host.terminal_shutdown_completion().unwrap();
+    let events = collect(&host, true);
+    let output = events
+        .iter()
+        .find_map(|event| match event {
+            TurnEvent::ToolFinished { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("vision tool result");
+    assert!(!output.is_error, "{output:?}");
+    assert!(output.content.to_string().contains("READY"), "{output:?}");
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 3);
+    let nested = body(&requests[1]);
+    assert_eq!(
+        nested["prompt"][1]["content"][1]["data"],
+        BASE64_STANDARD.encode(bytes)
+    );
+    assert!(!nested.to_string().contains("selected.png"));
+    drop(host);
+    completion.wait_on_worker().unwrap();
+}
+
+#[test]
+fn interactive_owner_attaches_host_workspace_without_manual_registration() {
+    use machine_god_native::{
+        NativeInteractiveInitialSession, NativeInteractiveSession, NativeInteractiveSessionOptions,
+    };
+    let temporary = TemporaryDirectory::new("workspace-interactive-host");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let primary = prepared.workspace_root().to_owned();
+    let additional = temporary.path().join("additional");
+    fs::create_dir(&additional).unwrap();
+    fs::write(
+        additional.join("selected.txt"),
+        "interactive additional root",
+    )
+    .unwrap();
+    let selected = additional.canonicalize().unwrap().join("selected.txt");
+    let host = Arc::new(compose(
+        prepared,
+        configured(temporary.path(), "yolo", &json!([])),
+        NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+            .with_workspace(
+                authority(&primary, &state, &additional),
+                Arc::new(NativeWorkspaceContexts::new()),
+            )
+            .with_terminal(complete_terminal_options())
+            .with_model_routes(Arc::new(
+                machine_god_native::NativeConversationModelRoutes::new(),
+            ))
+            .with_observations(Arc::new(
+                machine_god_native::NativeConversationObservations::new(),
+            ))
+            .with_permissions(NativeReferenceHostPermissionOptions::new(
+                Arc::new(NativePermissionContexts::new()),
+                Arc::new(TokioPermissionReviewClock),
+            )),
+        vec![call("read_file", &json!({"path":selected})), answer()],
+    ));
+    let completion = host.terminal_shutdown_completion().unwrap();
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        let owner = NativeInteractiveSession::open(
+            host.clone(),
+            NativeInteractiveSessionOptions::new(host.workspace_root().to_owned(), host.loaded_config().config().model_preferences()).unwrap(),
+            NativeInteractiveInitialSession::Fresh, 100,
+        ).await.unwrap();
+        let events = run_conversation(owner.runtime(), 101).await;
+        assert!(events.iter().any(|event| matches!(event, TurnEvent::ToolFinished { output, .. } if !output.is_error && output.content.to_string().contains("interactive additional root"))), "{events:?}");
+        drop(owner);
+    });
+    drop(host);
+    completion.wait_on_worker().unwrap();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn workspace_host_os_sandbox_includes_additional_root_and_rejects_missing_scope() {
+    for bind in [false, true] {
+        let temporary = TemporaryDirectory::new("workspace-sandbox-host");
+        let (prepared, state) = complete_terminal_roots(temporary.path());
+        let primary = prepared.workspace_root().to_owned();
+        let additional = temporary.path().join("additional");
+        fs::create_dir(&additional).unwrap();
+        let additional = additional.canonicalize().unwrap();
+        let outside = temporary.path().canonicalize().unwrap().join("outside");
+        assert!(!outside.starts_with("/private/tmp") && !outside.starts_with("/tmp"));
+        let quote = |path: &Path| path.to_str().unwrap().replace('\'', "'\\''");
+        let command = format!(
+            "printf extra > '{}/written'; (printf outside > '{}') 2>/dev/null; printf done",
+            quote(&additional),
+            quote(&outside)
+        );
+        let helper = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY").map_or_else(
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/machine-god"),
+            PathBuf::from,
+        );
+        let host = compose(
+            prepared,
+            permission_composition::configured_sandbox(temporary.path(), "ask", &json!([]), "os"),
+            NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+                .with_workspace(
+                    authority(&primary, &state, &additional),
+                    Arc::new(NativeWorkspaceContexts::new()),
+                )
+                .with_terminal(
+                    NativeReferenceHostTerminalOptions::new(
+                        helper,
+                        Some("/bin/bash".into()),
+                        vec![],
+                    )
+                    .unwrap(),
+                )
+                .with_permissions(
+                    NativeReferenceHostPermissionOptions::new(
+                        Arc::new(NativePermissionContexts::new()),
+                        Arc::new(TokioPermissionReviewClock),
+                    )
+                    .with_sandbox_executable(
+                        fs::File::open(machine_god_native::NATIVE_SANDBOX_EXECUTABLE).unwrap(),
+                    ),
+                ),
+            vec![
+                call(
+                    "terminal",
+                    &json!({"action":"exec", "profile":"clean", "command":command}),
+                ),
+                answer(),
+            ],
+        );
+        let completion = host.terminal_shutdown_completion().unwrap();
+        let events = collect(&host, bind);
+        assert_eq!(additional.join("written").exists(), bind, "{events:?}");
+        assert!(!outside.exists());
+        if bind {
+            assert_eq!(
+                fs::read_to_string(additional.join("written")).unwrap(),
+                "extra"
+            );
+        }
+        drop(host);
+        completion.wait_on_worker().unwrap();
+    }
+}
+
+#[test]
 fn workspace_host_rejects_foreign_primary_or_state_before_transport() {
     for wrong_primary in [false, true] {
         let temporary = TemporaryDirectory::new("workspace-binding-mismatch");

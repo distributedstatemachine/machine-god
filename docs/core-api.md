@@ -242,6 +242,11 @@ provider arguments and tool outputs each receive their own complete budget.
 Traversal stops after visiting the configured limit plus one and never queues
 unvisited siblings.
 
+Engine construction, session admission, tool values and subagent envelopes share
+private core JSON validation, serialized-size counting and iterative cleanup
+mechanics. Each consumer retains its own limits, ownership checkpoints and
+error mapping; these helpers add no public API or ambient authority.
+
 [`MAX_SAFE_JSON_DEPTH`](crate::MAX_SAFE_JSON_DEPTH) is an independent hard
 ceiling of 64 containers. Hosts may lower `max_json_depth`, but
 [`EngineBuilder::build`](crate::EngineBuilder::build) rejects a higher value

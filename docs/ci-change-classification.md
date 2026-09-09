@@ -42,22 +42,25 @@ All workspace manifests select the native-manifest agreement tests, which
 verify the isolated binding exception and product lint inheritance.
 Changes confined to a crate's tests, examples, or benchmarks select that crate
 only.
-Selected native quality tests explicitly install bash and zsh on Linux; the
-native platform jobs install those shells alongside tmux and verify the fixed
+Selected native or CLI quality tests explicitly install bash, zsh and tmux on
+Linux; the native platform jobs install those dependencies and verify the fixed
 shell executable paths before testing. Shell-profile coverage therefore does
 not depend on incidental runner packages. Linux provisioning also removes
 group/other write permissions only from `/usr/share/zsh` and requires a
 noninteractive `compaudit` pass. This repairs hosted Ubuntu completion-tree
 permissions without suppressing global or user profiles or completion checks.
 Documentation-only jobs do not provision these dependencies or repair paths.
-When an Apple matrix job selects native tests (or the whole workspace), it
-first builds the locked release CLI for that exact matrix target, verifies the
-absolute executable path, and selects it through the existing terminal-helper
-fixture capability. The serial tests therefore exercise shipped private helper
-dispatch instead of using the large libtest executable as the default helper.
-Explicitly constructed protocol/failure fixtures remain unchanged. Apple jobs
-that select only core, testkit or terminal-sys do not build this helper; Linux
-test commands, package selection and documentation-only routing are unchanged.
+Before runtime tests, both the quality job and every Linux/Apple matrix job
+selecting native or CLI tests (or the whole workspace) build the locked release
+CLI and export its verified absolute path as `MACHINE_GOD_TERMINAL_RELEASE_BINARY`.
+The quality helper is under `target/release`; matrix helpers are under
+`target/<exact-matrix-target>/release`. Interactive fixtures require this shipped
+helper on Linux as well as macOS, independent of existing checkout artifacts.
+CLI-only selections provision the helper, shells and tmux without selecting
+native package tests. Jobs selecting only core, testkit or terminal-sys do not
+provision these prerequisites. Explicit protocol/failure fixtures, default Linux
+test concurrency, serial Apple scheduling, package selection and documentation-only
+routing remain unchanged.
 Root Cargo, lockfile, or toolchain inputs select the actual workspace;
 formatting configuration selects workspace and standalone-fixture formatting
 without package tests. The standalone

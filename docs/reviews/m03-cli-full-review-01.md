@@ -1,9 +1,8 @@
 # Combined CLI feature history
 
-This historical ledger preserves component evidence through
-`9273ac426e813a3c78e0516efd07eccbef3eef60`, compacted from the implementation
-plan. These internal checkpoints are not deliveries or final adversarial review
-acceptance. Current phase, delivery state and gates belong only to the
+This historical ledger preserves component evidence compacted from the
+implementation plan. These internal checkpoints are not deliveries or final
+adversarial review acceptance. Current phase, delivery state and gates belong only to the
 [implementation plan](../implementation-plan.md).
 
 ## Pre-review component evidence
@@ -411,3 +410,231 @@ the new ordinary-target regression checks the exact contextual preparation tuple
 Replacement native all-target/all-feature Clippy and all-feature WASI lint pass
 after fixing wildcard imports, two unnecessary fixture clones and a portable
 unused-self warning. These remain component checks, not final feature gates.
+
+## Integration snapshot retained from the agent-readiness base
+
+The following narrative was retained from `3a0df99098f62e88aa6d2f29c826797a7320abab`
+during ledger compaction. Statements about remaining work describe successive
+historical checkpoints, not current assignments. Consult the implementation
+plan for the consolidated boundary; these records do not close feature gates.
+
+### Recorded component inventory and checks
+
+Terminal delivery and its exact lightweight documentation-seal gates are complete.
+Complete the combined M03 CLI/slash-command boundary below as one feature.
+The initial parallel inspection maps all six top-level command families, every
+command in the five pinned slash categories, and reusable Rust ownership seams.
+Existing partial forms do not define the target; resolve any cross-milestone
+dependency explicitly before freezing shared contracts. Keep core effect-free, native
+effects explicitly owned, and CLI presentation thin. Freeze shared contracts
+before parallel implementation in isolated worktrees with non-overlapping
+ownership. Do not resume documentation-tool development during product work.
+
+The combined feature pulls the following M04 prerequisites forward. They are
+part of the same feature and gates, not separately counted deliveries:
+
+- Native-owned `ask`/`auto`/`yolo`/`reset`, persistent allow/deny rules,
+  confirmation and identity-bound grants, revocation, safe restoration, queued
+  policy snapshots and actual enforcement. Late prompts cannot resurrect grants.
+- Real macOS `os` sandbox enforcement for foreground, background and PTY
+  execution with the active workspace roots; configured preferences remain
+  distinct from effective yolo behavior. Unsupported platforms remain explicit.
+- Authoritative session metadata, context selection without deleting history,
+  and produced/consumed continuation checkpoints that preserve confirmed tool
+  evidence and never automatically repeat uncertain effects. `/undo` tracks
+  committed file mutations, not conversation deletion; clear/new/reset create
+  fresh persisted session IDs with their distinct background-lifecycle behavior.
+- Native machine-god schema migration, including supported historical versions,
+  already-current and oversized-input outcomes, original-authoritative failure
+  semantics and recoverable interruption. Foreign `.fx` import remains later.
+- Corrupt-session recovery to a separate resumable copy without modifying the
+  source, and bounded doctor cleanup distinguishing active writers, untrusted
+  artifacts, report-only candidates, completed cleanup and indeterminate results.
+- Real interactive latest/exact/picker resume and command aliases, applicable
+  recording, durable title/workspace/origin/time/context preferences, and actual
+  additional-root tool authority. Absent historical metadata stays unknown;
+  neither current CWD, file mtime nor IDs fabricate historical associations.
+
+The safety of these operations includes their admission, revocation, persistence,
+cleanup and reset races now. Broader concurrency hardening, legacy import,
+encryption, record authentication, key management, secure erasure and non-Unix
+hardening remain M04 work. Required scenarios cannot close with unsupported
+stubs. Three independent scope inspections accepted this sequencing; they are
+not substitutes for the final exact-candidate product reviews.
+
+Internal component commits are not deliveries. Their implementation inventory is:
+
+- Core/native conversation ownership: exclusive metadata transactions,
+  incarnation/revision-guarded load and CAS, atomic initial metadata and title,
+  transcript-preserving reconciliation, paused continuation reservation and
+  native finalization. Context selection projects provider-only views without
+  deleting canonical history or repeating uncertain effects.
+- Runtime/model ownership: bounded queued jobs, taken-job snapshots, deferred
+  session preferences and independent session/user-default save receipts.
+  Model identifiers retain the pinned 1,024-byte UTF-8 limit; rich catalogs
+  preserve advertised capabilities, exact-first fuzzy resolution and bounded
+  shared fetch/retry behavior. Initial resume restores saved controls with an
+  explicit process-model override. Fresh sessions use workspace defaults.
+- Secondary model routes: fixed Gemini vision and incarnation-bound search
+  snapshots preserve their distinct pinned behavior, without inheriting
+  reasoning/fast controls. The one-shot CLI shares one acquired credential
+  across catalog and inference before terminal-host acquisition.
+- History and undo: all five mutations share bounded file undo. Nine file
+  tools record exact per-call typed observations; pending facts survive dropped
+  streams and failed saves, merge before continuation/context projection and
+  retire only after confirmed publication. Historical read staleness,
+  destinations, background facts and missing metadata remain explicit.
+- Permissions: bounded strict saved-rule values, ordered configured patterns,
+  exact-turn policy snapshots, revocable execution proofs and reset-cleared
+  grants. Confirmed edits use core CAS with per-rule generations and preserve
+  uncertainty. Schema-v5 config retains mode, sandbox and ordered rules across
+  legacy reads and descriptor-bound, conflict-checked user-default publication.
+- Actual enforcement: prepared-root host composition shares registered tool
+  allocations, live invocation contexts, descriptor/preimage file approvals and
+  the fixed-model Gateway reviewer. Recoverable preparation denial permits
+  replanning. Ask/resume enforce configured Ask/Auto/Yolo and deny unresolved
+  noninteractive human requirements without fabricating confirmation.
+- macOS sandboxing: actual foreground/background/PTY/tmux launches retain
+  executable/root checks and taken policy. The CLI supplies the system
+  executable explicitly; missing Os authority never falls back. None and
+  effective Yolo remain distinct. Legacy background attachments are not
+  inferred from terminal records or late notices.
+- Sessions: bounded rich catalogs rank all reached records, preserve unknown
+  facts, paginate with honest incomplete-scan outcomes and require complete
+  eligibility for latest. Exact lookup is scan-independent. The CLI presents
+  canonical current-workspace scope, all/limit/cursor selection and lossless
+  non-UTF-8 path bytes without manufacturing authority.
+- Resume: original workspace is distinct from current association; exact
+  revision rebinding preserves origin and bounded history. Validated preparation
+  checks the full native record (including saved rules), incarnation and
+  revision before load; consuming adoption rechecks durable/live state. A
+  prepared association publication is not rolled back by dropping adoption.
+
+Remaining work includes workspace handlers and actual multi-root tools,
+migration/recovery/doctor cleanup, recording, and remaining
+policy/workspace scenarios. Bare/latest/exact/picker startup, in-session picker
+selection, shared cache/human prompts and owned raw input are composed.
+Clear/new/reset allocate fresh IDs;
+clear/new carry terminals forward, while reset and live resume stop/forget.
+Started transitions and uncertain outcomes stay owned through settlement.
+The complete combined feature and all final gates remain open.
+
+Detailed component checks, including the first-run PTY failures and replacement
+results, are retained in the [combined CLI history](m03-cli-full-review-01.md).
+They are historical evidence, not separate deliveries or final product reviews.
+
+Interactive composition includes owned raw terminal editing, atomic paste,
+Unicode row rendering, native resize observation, contextual human prompts and
+native-free final output. Canonical resumed text is streamed without inference
+or repeated effects. Headless `ask` accepts whole pipes and retained regular files
+through EOF with bounded validation and first-signal-preserving settlement.
+Checkpoint `9273ac4` passes 42 native input tests, 254 CLI unit tests, 96 command
+tests and ten replay tests, with three native/five CLI private-helper ignores.
+Workspace and WASI CLI Clippy, formatting and bounded docs checks pass. Its fresh
+locked release passes all 96 command tests and all seven production-input tests;
+the 254 CLI unit tests also pass using that exact release helper.
+Checkpoint `65886bf` composes `/undo` with the host's real file tracker and
+owned worker scope, preserving typed receipts through active turns, blocked
+output, transitions and shutdown. A tracked destination reconstruction no
+longer makes a valid inverse rename report uncertainty; external replacements
+remain rejected. Combined checks pass 48 undo and 34 owner/control tests,
+257 CLI unit tests with five private-helper ignores, 96 command tests and ten
+replay tests, plus workspace warnings-denied Clippy. Its fresh locked release
+passes all 96 command tests and all seven production-input tests; all 257 CLI
+unit tests also pass using that exact release helper.
+The next integration composes `/copy` from an acceptance-time canonical snapshot
+through independent native selection/process ownership and acknowledged CLI
+receipts. Clipboard work neither blocks generation nor retargets after a session
+change; shutdown settles it before native-free final output. Three component
+trees are integrated and removed with their commits retained. Their focused
+checks pass. Combined checks pass 34 clipboard tests with one private-helper
+ignore, all 44 owner/control tests, 261 CLI unit tests with five private-helper
+ignores, 96 command tests and ten replay tests. Replacement workspace Clippy,
+WASI CLI Clippy, formatting and bounded docs checks pass. The fresh checkpoint
+release passes all 96 command tests, all 261 CLI unit tests with five private-helper
+ignores and all seven production-input tests. These are checkpoint checks, not
+final feature acceptance.
+Picker composition now includes startup without a provisional writer, pinned
+resume aliases and raw keys, cached/paged loaded-summary search, exact observed
+selection and output-acknowledged input identities. Combined CLI checks pass
+284 unit tests with five private-helper ignores, all 96 command tests, scoped
+warnings-denied Clippy, formatting and bounded documentation checks. Owned
+nonblocking preparation/adoption and candidate preference publication are
+integrated at `99544ee`. That checkpoint's concurrent fresh-startup contention is
+fixed by scoped advisory unlock at `bd270e5`; the independent loading-frame fixture
+and retryable picker receipts are also corrected. Replacement CLI checks pass
+285 tests with five private-helper ignores across three default-concurrency runs,
+plus workspace warnings-denied Clippy, formatting and bounded docs checks. The
+fresh locked `bd270e5` release passes all 96 command tests, seven production-input
+tests and all 285 CLI unit tests with five private-helper ignores. These checks
+include blocked and acknowledged stale-row rejection receipts and explicit
+refreshed-selection success; they are not full-feature acceptance.
+Allowlist configuration/storage is integrated at `136c808`: strict schema v6,
+workspace-local shadowing, bounded settings CAS, and scoped config-lock release.
+Component checks pass 35 config-unit, 32 config-integration, 17 store-integration
+and five store-unit tests, native warnings-denied Clippy and supported WASI lint.
+Native grammar/runtime service is integrated at `61de79c` with lint corrections
+at `c3314b2`. Its checks pass 15 allowlist, nine permission-controller and 50
+owner/control tests plus warnings-denied Clippy. CLI routing and bounded rendering
+pass ten focused allowlist tests, 295 unit tests with five private-helper ignores,
+all 96 command tests and scoped warnings-denied Clippy. Both completed component
+worktrees are removed. The fresh locked `d55a45a` release passes all 96 command
+tests, seven production-input tests and all 295 CLI unit tests with five
+private-helper ignores. Workspace configuration, retained multi-root authority
+and context-aware tool preparation are integrated; actual
+tool/approval/sandbox/search integration and CLI handlers remain required.
+Contextual tool preparation is integrated at `a2a14ca`: core and wrapper tests,
+61 tool-loop tests, 295 CLI unit tests with five private-helper ignores, all 96
+command tests, workspace warnings-denied Clippy and core WASI lint pass. The clean
+preparation worktree is removed. Descriptor scope component `a18661b` passes 17
+focused tests; its public wiring and real install caller remain integration work.
+Schema-v7 workspace persistence is integrated at `df7bdb5`, with 113 scoped tests,
+native warnings-denied Clippy and both WASI feature checks passing. The clean
+configuration and authority worktrees are removed. Exact-turn scope ownership is
+integrated at `d0d3524`, with nine new and 83 existing tests passing; its clean
+worktree is removed. Operation service `ac5536a` passes 78 combined workspace
+tests and native all-target/all-feature Clippy against that actual turn owner.
+Provisional directory sources now resolve once and remain pinned after retargeting.
+Owned startup `b65c1ae` and explicit scoped `read_file` composition pass 84
+workspace-related tests, four real scoped-read tests, 19 public read tests and 14
+permission-target tests. Native all-target/all-feature Clippy and all-feature
+WASI lint pass after the portable metadata-description fix. Top-level workspace
+management is integrated at `fdb51de`; latest-state alias provenance at `0dd1767`
+and first-use missing-config-parent handling at `68bd09c` correct real native
+incompatibilities. Missing-parent component checks pass 101 focused/regression
+tests and native all-target/all-feature Clippy. The combined CLI's twelve
+workspace-related command tests now pass, including real listing, first add,
+no-op clear and persistence. Scoped read/permission evidence passes six unit and
+fourteen public target tests. Checkpoint `7026b88` passes all 99 command tests
+through its fresh locked release binary, plus the exact CI release-smoke script
+and 18 CI classification tests. That smoke now exercises real workspace
+persistence and the implemented session JSON contract. The integrated CLI and
+configuration worktrees are cleanly removed. Production host routing for the
+complete tool set is still required. Mutation adapter `797bf6f` integrates 381
+component regression tests; its shared projection also passes eight combined
+root tests after permission-preparer wiring. Its clean worktree is removed.
+Path-tool, enumeration and grep adapters are integrated at `49df27d`, `7586d38`
+and `03a6bcf`; their clean worktrees are removed. Actual prepared-root host
+composition now shares the exact workspace context with these tools, reads,
+all five mutations, permission preparation, undo and history. State-directory
+aliases compare retained object identities rather than spelling. Qualified
+history paths and outer mutation approval stamps survive the real wrapper chain.
+Vision (`5189a97`), scoped sandbox roots (`0697c59`) and Linux semantic routing
+(`e9209e0`) are integrated and their clean component worktrees removed. The host
+also connects actual vision and sandbox scopes, and native interactive startup/
+transitions attach the selected workspace automatically. All 54 composed-host
+tests, eight interactive-owner regressions, nine mutation tests, eight history-wrapper
+regressions, native all-target/
+all-feature Clippy and bounded docs checks pass. The sandbox component's first
+broad PTY run had ten inventory-startup timeouts; both its serial diagnostic and
+same-binary default-concurrency retry without competing builds pass 685 tests
+with two existing helper ignores. No deadline or concurrency gate was weakened.
+The macOS semantic reader/scan, terminal cwd routing and actual launch/slash
+selection remain in integration. These checks are not full-feature acceptance.
+The all-feature WASI build failure is corrected by matching the Tokio reviewer
+clock's implementation, export and test guards to the non-WebAssembly dependency.
+The portable reviewer remains compiled. Both all-feature reviewer and minimal
+unsupported-tool WASI lint pass, as do 21 native reviewer tests and 18 focused
+CI/manifest checks. The existing selected CI job now guards both WASI builds.
+Typed historical cards and the remaining command/session scenarios still need
+implementation; complete local, review and exact remote feature gates stay open.

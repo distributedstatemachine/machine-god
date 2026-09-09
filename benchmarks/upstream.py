@@ -49,8 +49,8 @@ BOOTSTRAP_DESCRIPTION = (
     "Launch each release binary through its current no-network bootstrap path"
 )
 BOOTSTRAP_REASON = (
-    "fx uses its FX_BENCH no-argument fast path while machine-god prints its "
-    "bootstrap identity; these samples validate the harness and are not product-equivalent"
+    "fx uses its FX_BENCH no-argument fast path while machine-god prints --help; "
+    "these samples validate the harness and are not product-equivalent"
 )
 STATUS_HELP_DESCRIPTION = (
     "Equivalent command-specific status help after executable-brand normalization"
@@ -1624,7 +1624,7 @@ def validate_upstream_evidence(
     validate_measurement(
         machine_measurement,
         "workloads[0].implementations[1]",
-        expected_command=[machine_binary["path"]],
+        expected_command=[machine_binary["path"], "--help"],
         expected_binary=machine_binary,
         expected_environment_keys=BASE_ENVIRONMENT_KEYS,
         expected_timeout=timeouts["sample"],
@@ -4339,7 +4339,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             ),
             run_measurement(
                 "machine-god",
-                [str(machine_binary)],
+                [str(machine_binary), "--help"],
                 machine_source_dir,
                 base_env,
                 args.warmup,

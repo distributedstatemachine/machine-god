@@ -29,15 +29,10 @@ detailed review history under `docs/reviews/`.
 
 ## Required checks
 
-```sh
-cargo +1.94.1 fmt --all -- --check
-cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings
-cargo +1.94.1 test --workspace
-cargo +1.94.1 test --doc --workspace
-```
-
-Run focused tests first, then the whole workspace. Exercise user-visible work
-through the freshly built `target/release/machine-god` binary.
+Use the canonical [local feature gate](docs/implementation-plan.md#local-feature-gate),
+including shell prerequisites, the fresh release CLI and macOS helper selection
+before runtime tests. Run focused tests first, then the complete gate. Do not
+copy a partial command list into another document.
 
 CI and local checks use the exact Rust 1.94.1 toolchain. A damaged local
 installation must be repaired with `rustup`; substituting `+stable` does not

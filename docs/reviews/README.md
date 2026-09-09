@@ -38,6 +38,11 @@ product behavior; they are not penetration tests.
   helping implementation, while retaining decisive candidates and finding
   dispositions in Git history.
 
+## Advisory reviews
+
+- [Agent readiness and Rust structure](agent-readiness-rust-structure-review.md)
+  — historical maintainability findings, not a feature-acceptance gate.
+
 ## Milestone 01
 
 - [Bootstrap](m01-bootstrap-review-01.md)
