@@ -254,7 +254,7 @@ fn unpolled_invalid_and_precancelled_start_have_no_destination_effects() {
 #[test]
 fn explicit_file_spelling_rejects_empty_or_dot_final_components_before_admission() {
     let fixture = Fixture::new();
-    for suffix in ["tape/", "tape/.", "../tape"] {
+    for suffix in ["tape/", "tape/.", "tape/.."] {
         let scope = NativeOwnedWorkerScope::new();
         scope.close();
         let mut request = fixture.request();
@@ -301,6 +301,60 @@ fn explicit_paths_refuse_overwrites_final_symlinks_and_symlink_ancestors() {
     }
     assert_eq!(fs::read(existing).unwrap(), b"retained");
     assert!(!fixture.0.join("real/new").exists());
+}
+
+#[test]
+fn explicit_parent_components_walk_real_directories_without_lexical_cancellation() {
+    let fixture = Fixture::new();
+    let nested = fixture.0.join("nested");
+    fs::create_dir(&nested).unwrap();
+    symlink(&nested, fixture.0.join("alias")).unwrap();
+    let target = fixture.0.join("parent.fxtape");
+    let requested = nested.join("../parent.fxtape");
+    let scope = NativeOwnedWorkerScope::new();
+    let mut request = fixture.request();
+    request.destination = TerminalTapeRecordingDestination::Explicit(requested.clone());
+    let mut recorder = block_on(TerminalTapeRecorder::start(
+        request,
+        scope.clone(),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(recorder.path(), requested);
+    block_on(recorder.finish()).unwrap();
+    drop(recorder);
+    settle(&scope);
+    let before = fs::read(&target).unwrap();
+    for path in [
+        requested,
+        fixture.0.join("missing/../missing-prefix.fxtape"),
+        fixture.0.join("alias/../symlink-prefix.fxtape"),
+    ] {
+        let scope = NativeOwnedWorkerScope::new();
+        let mut request = fixture.request();
+        request.destination = TerminalTapeRecordingDestination::Explicit(path);
+        assert!(
+            block_on(TerminalTapeRecorder::start(
+                request,
+                scope.clone(),
+                CancellationToken::new()
+            ))
+            .is_err()
+        );
+        settle(&scope);
+    }
+    assert_eq!(fs::read(target).unwrap(), before);
+    assert!(!fixture.0.join("missing-prefix.fxtape").exists());
+    assert!(!fixture.0.join("symlink-prefix.fxtape").exists());
+    let mut request = fixture.request();
+    request.destination = TerminalTapeRecordingDestination::Automatic {
+        store: Arc::new(FileSessionStore::open(&nested).unwrap()),
+        state_path: nested.join(".."),
+    };
+    assert_eq!(
+        request.validate(),
+        Err(TerminalTapeRecordingError::InvalidRequest)
+    );
 }
 
 #[test]
