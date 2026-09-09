@@ -21,12 +21,13 @@ const UNAVAILABLE: &[u8] = b"\n[command unavailable in this interactive host]\n>
 const HELP: &[u8] = b"\nCommands implemented in this host:\n\
 /help /status /version /quit (/exit) /cancel\n\
 /clear /new /reset /resume (picker) /continue /rename <title> /compact /undo /copy\n\
-/permissions [ask|auto|yolo|reset] /sandbox [os|none]\n\
+/permissions [ask|auto|yolo|reset] /sandbox [os|none] /allowlist\n\
 /models /model [id-or-query|effort <name>|save|save-default] /fast\n\
 Model selection and /fast request native session and available user-default saves;\n\
 their independent results are reported separately. /resume has no arguments.\n\
 Cmd/Super+R opens the all-workspace session picker.\n\
-Allowlist editing and workspace editing are not yet wired.\n> ";
+/allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]\n\
+Workspace editing is not yet wired.\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -118,7 +119,8 @@ impl Driver {
             Command::Model => self.model_command(payload, now_ms),
             Command::Models => self.show_models(),
             Command::Fast => self.fast_command(now_ms),
-            Command::Allowlist | Command::Workspace => {
+            Command::Allowlist => self.allowlist_command(payload, now_ms),
+            Command::Workspace => {
                 self.note(UNAVAILABLE);
             }
         }
@@ -142,6 +144,25 @@ impl Driver {
         if self.copy_outcome.is_some() || self.owner.request_copy().is_err() {
             self.note(b"\n[copy unavailable or previous copy receipt still pending]\n> ");
         }
+    }
+
+    fn allowlist_command(&mut self, payload: &str, now_ms: i64) {
+        if self.control_outcome.is_some() {
+            self.note(BUSY);
+            return;
+        }
+        let Ok(request) = self.owner.parse_allowlist(payload) else {
+            self.note(b"\n[usage: /allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]]\n> ");
+            return;
+        };
+        let Some(store) = self.user_config.clone() else {
+            self.note(UNAVAILABLE);
+            return;
+        };
+        self.control_command(
+            NativeInteractiveControl::Allowlist { request, store },
+            now_ms,
+        );
     }
 
     fn control_command(&mut self, control: NativeInteractiveControl, now_ms: i64) {

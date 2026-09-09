@@ -3303,7 +3303,7 @@ fn invalid_permission_configs_are_fixed_redacted_failures_without_writes() {
         ),
         (
             "unsupported",
-            br#"{"schema_version":6,"future_secret":"CLI_UNSUPPORTED_SECRET"}"#.to_vec(),
+            br#"{"schema_version":7,"future_secret":"CLI_UNSUPPORTED_SECRET"}"#.to_vec(),
         ),
         ("oversized", oversized),
     ];

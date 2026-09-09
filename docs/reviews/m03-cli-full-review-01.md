@@ -301,3 +301,35 @@ release build completes in 9m16s. That exact binary passes all 96 command tests,
 all seven production-input tests and all 285 CLI unit tests with five private-helper
 ignores. The complete combined CLI feature still requires its remaining command
 scenarios and final exact local, fresh-review and remote gates.
+
+## Configured allowlist composition
+
+Config component `c9c484a`, integrated as `136c808`, adds strict schema v6 with
+lossless workspace identities, explicit-empty local shadowing and exact-byte-CAS
+mutations. It preserves legacy input labels, duplicate rule order, model fields,
+remove-last versus reset-empty behavior, and uncertain publication receipts.
+The common config publication path also explicitly unlocks surviving duplicated
+file descriptions; Busy remains nonblocking and only EINTR is retried.
+
+Scoped checks pass 35 config-unit, 32 public config, 17 public store and five
+store-unit tests, including duplicated-descriptor release and post-rename
+ambiguity. Native all-target/all-feature warnings-denied Clippy, supported WASI
+no-default-feature lint, formatting, bounded documentation and diff checks pass.
+Initial old-current-schema assertions and test-only lint findings are corrected
+without removing legacy coverage or relaxing the 64 KiB file limit. An additional
+WASI all-feature probe fails in the existing target-gated Tokio reviewer path;
+the supported no-default-feature surface passes and no reviewer code is changed.
+Temporary exports were restored before the component commit; integration supplies
+the parent-owned public exports. The clean component worktree is removed.
+
+Native service component `03b512d`, integrated as `61de79c`, and lint follow-up
+`9baa1c6`, integrated as `c3314b2`, pass 15 allowlist, nine permission-controller
+and 50 owner/control tests plus all-feature native warnings-denied Clippy.
+The temporary exports were restored and the clean service worktree removed.
+CLI composition passes ten focused allowlist cases, including real saved/local
+shadowing, malformed-rule presentation, pending receipts and blocked final output.
+Combined execution passes 295 CLI unit tests with five private-helper ignores
+and all 96 command tests; scoped CLI Clippy, formatting and diff checks pass.
+These are component checks, not fresh allowlist release proof or full-feature
+acceptance. The existing exact `bd270e5` release helper was used only by the
+private terminal fixtures; Cargo built the updated command-test executable.

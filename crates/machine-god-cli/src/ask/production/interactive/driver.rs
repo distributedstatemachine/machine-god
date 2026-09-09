@@ -924,6 +924,12 @@ fn control_failed(outcome: &NativeInteractiveControlOutcome) -> bool {
         Ok(NativeInteractiveControlReceipt::ModelDefaults(commit)) => {
             commit.session.is_err() || commit.user_defaults.is_err()
         }
+        Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) => match receipt {
+            machine_god_native::NativeAllowlistReceipt::View { reload, .. } => reload.is_err(),
+            machine_god_native::NativeAllowlistReceipt::Mutation { reload, .. } => {
+                reload.as_ref().is_some_and(Result::is_err)
+            }
+        },
         Ok(_) => false,
     }
 }
@@ -1057,6 +1063,10 @@ fn session_save_name(value: &NativeModelPreferencePersistence) -> &'static str {
 fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
     use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
 
+    if let Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) = &outcome.result {
+        return super::allowlist_view::render(outcome.id.get(), receipt);
+    }
+
     let mut text = crate::BoundedModelsOutput::new();
     write!(text, "\n[control {}: ", outcome.id.get()).map_err(|_| ())?;
     match &outcome.result {
@@ -1064,6 +1074,15 @@ fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, 
             "undo outcome uncertain; effects may be partial; recovery artifacts retained; manual inspection required; no automatic retry",
         ),
         Err(NativeInteractiveControlError::Undo(error)) => write!(text, "undo failed: {error}"),
+        Err(NativeInteractiveControlError::Allowlist(
+            machine_god_native::NativeAllowlistError::Ambiguous
+            | machine_god_native::NativeAllowlistError::Config(
+                machine_god_native::NativeUserConfigError::CommitAmbiguous,
+            ),
+        )) => text.write_str("allowlist outcome uncertain; settings may have been saved; authoritative reload required; no automatic retry"),
+        Err(NativeInteractiveControlError::Allowlist(_)) => {
+            text.write_str("allowlist failed; settings and runtime must be rechecked")
+        }
         Err(_) => text.write_str("failed; publication may require authoritative reload"),
         Ok(NativeInteractiveControlReceipt::Undone(FileUndoOutcome::Empty)) => {
             text.write_str("Nothing to undo.")
@@ -1102,6 +1121,9 @@ fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, 
         }
         Ok(NativeInteractiveControlReceipt::PermissionRuleConfirmed(_)) => {
             text.write_str("permission rule saved")
+        }
+        Ok(NativeInteractiveControlReceipt::Allowlist(_)) => {
+            unreachable!("allowlist uses its separately bounded renderer")
         }
     }
     .map_err(|_| ())?;

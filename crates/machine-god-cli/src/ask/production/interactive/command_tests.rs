@@ -452,13 +452,201 @@ fn status_escapes_dynamic_content_and_help_does_not_claim_unwired_features() {
         assert!(help.contains("/compact /undo /copy"));
         assert!(help.contains("/resume (picker)"));
         assert!(help.contains("Cmd/Super+R opens the all-workspace session picker."));
-        assert!(help.contains("Allowlist editing and workspace editing are not yet wired."));
+        assert!(help.contains(
+            "/allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]"
+        ));
+        assert!(help.contains("Workspace editing is not yet wired."));
         driver.command("/version", 200);
         assert!(
             String::from_utf8(driver.notice.take().unwrap())
                 .unwrap()
                 .contains(env!("CARGO_PKG_VERSION"))
         );
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
+
+async fn allowlist(driver: &mut Driver, command: &str) -> native::NativeAllowlistReceipt {
+    driver.command(command, 220);
+    match control(driver).await.result.unwrap() {
+        NativeInteractiveControlReceipt::Allowlist(receipt) => receipt,
+        _ => panic!("native allowlist receipt"),
+    }
+}
+
+#[test]
+fn allowlist_commands_persist_scoped_rules_and_preserve_remove_reset_distinctions() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new();
+        let store = Arc::new(NativeUserConfigStore::new(
+            fixture.workspace.join("allowlist-user"),
+        ));
+        let mut driver = driver(&fixture)
+            .await
+            .with_resources(None, Some(store.clone()));
+        let before = driver.owner.runtime().record();
+        assert!(matches!(
+            allowlist(&mut driver, "/allowlist user add tool read_file").await,
+            native::NativeAllowlistReceipt::Mutation {
+                outcome: native::NativeConfiguredPermissionMutationOutcome::Changed { .. },
+                reload: Some(Ok(())),
+                ..
+            }
+        ));
+        allowlist(&mut driver, "/allowlist add command \"git status\"").await;
+        let native::NativeAllowlistReceipt::View {
+            sources, reload, ..
+        } = allowlist(&mut driver, "/allowlist").await
+        else {
+            panic!("view receipt")
+        };
+        assert!(reload.is_ok());
+        assert!(sources.user_shadowed_by_local());
+        assert_eq!(sources.user().rules()[0].permission(), "read");
+        assert_eq!(sources.effective().rules()[0].permission(), "bash");
+        assert_eq!(sources.effective().rules()[0].pattern(), "git status");
+        allowlist(&mut driver, "/allowlist remove command \"git status\"").await;
+        let native::NativeAllowlistReceipt::Mutation {
+            outcome,
+            sources,
+            reload,
+            ..
+        } = allowlist(&mut driver, "/allowlist reset all").await
+        else {
+            panic!("reset receipt")
+        };
+        assert_eq!(
+            outcome,
+            native::NativeConfiguredPermissionMutationOutcome::Unchanged
+        );
+        assert_eq!(reload, Some(Ok(())));
+        assert!(sources.unwrap().local().unwrap().rules().is_empty());
+        allowlist(&mut driver, "/allowlist add tool read_file").await;
+        let native::NativeAllowlistReceipt::Mutation {
+            outcome, sources, ..
+        } = allowlist(&mut driver, "/allowlist reset tools").await
+        else {
+            panic!("reset receipt")
+        };
+        assert_eq!(
+            outcome,
+            native::NativeConfiguredPermissionMutationOutcome::Changed { removed_rules: 1 }
+        );
+        let sources = sources.unwrap();
+        assert!(sources.local().is_none());
+        assert_eq!(sources.effective().rules()[0].permission(), "read");
+        let snapshot = store.load().unwrap();
+        assert!(
+            snapshot
+                .loaded()
+                .config()
+                .permission_sources(&fixture.workspace)
+                .unwrap()
+                .local()
+                .is_none()
+        );
+        assert_eq!(driver.owner.runtime().record(), before);
+        assert!(fixture.transport.requests().is_empty());
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
+
+#[test]
+fn allowlist_invalid_input_and_pending_receipts_do_not_change_settings() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new();
+        let root = fixture.workspace.join("allowlist-user");
+        let store = Arc::new(NativeUserConfigStore::new(root.clone()));
+        let mut driver = driver(&fixture)
+            .await
+            .with_resources(None, Some(store.clone()));
+        for command in [
+            "/allowlist user",
+            "/allowlist add tool web_fetch",
+            "/allowlist add tool READ_FILE",
+            "/allowlist add web-fetch-domain https://example.test",
+        ] {
+            driver.command(command, 200);
+            assert!(
+                String::from_utf8(driver.notice.take().unwrap())
+                    .unwrap()
+                    .contains("usage:")
+            );
+            assert!(!root.exists());
+        }
+        driver.command("/allowlist add tool read_file", 220);
+        driver.control_outcome = Some(control(&mut driver).await);
+        driver.command("/allowlist reset all", 230);
+        assert!(
+            String::from_utf8(driver.notice.take().unwrap())
+                .unwrap()
+                .contains("pending")
+        );
+        let snapshot = store.load().unwrap();
+        assert_eq!(
+            snapshot
+                .loaded()
+                .config()
+                .permission_sources(&fixture.workspace)
+                .unwrap()
+                .effective()
+                .rules()
+                .len(),
+            1
+        );
+        assert!(driver.control_outcome.is_some());
+        assert!(fixture.transport.requests().is_empty());
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
+
+#[test]
+fn allowlist_view_reports_shadow_and_inert_malformed_rules_without_displaying_them() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new();
+        let store = Arc::new(NativeUserConfigStore::new(
+            fixture.workspace.join("allowlist-user"),
+        ));
+        let mut driver = driver(&fixture)
+            .await
+            .with_resources(None, Some(store.clone()));
+        allowlist(&mut driver, "/allowlist user add tool read_file").await;
+        let snapshot = store.load().unwrap();
+        store
+            .apply_permission_mutation(
+                &snapshot,
+                &fixture.workspace,
+                native::NativeConfiguredPermissionScope::Local,
+                &native::NativeConfiguredPermissionMutation::Add {
+                    permission: "web_fetch".into(),
+                    pattern: "bad\u{1b}[2J".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let receipt = allowlist(&mut driver, "/allowlist view effective").await;
+        let rendered =
+            String::from_utf8(super::super::allowlist_view::render(1, &receipt).unwrap()).unwrap();
+        assert!(rendered.contains("effective persistent allow rules: (none)"));
+        assert!(rendered.contains("user rules are shadowed by local workspace rules"));
+        assert!(rendered.contains("ignored 1 malformed web_fetch rule;"));
+        assert!(!rendered.contains("bad"));
+        assert!(!rendered.contains('\u{1b}'));
+        let native::NativeAllowlistReceipt::View { sources, .. } = receipt else {
+            panic!("view receipt")
+        };
+        assert_eq!(
+            sources.local().unwrap().rules().len(),
+            1,
+            "presentation does not delete malformed settings"
+        );
+        let receipt = allowlist(&mut driver, "/allowlist view user").await;
+        let rendered =
+            String::from_utf8(super::super::allowlist_view::render(2, &receipt).unwrap()).unwrap();
+        assert!(rendered.contains("read: workspace"));
+        assert!(rendered.contains("user rules are shadowed"));
+        assert!(!rendered.contains("malformed"));
+        assert!(fixture.transport.requests().is_empty());
         Box::pin(finish(driver, fixture)).await;
     });
 }

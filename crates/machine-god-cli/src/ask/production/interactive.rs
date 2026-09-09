@@ -1,5 +1,6 @@
 //! Interactive presentation host. Native owns sessions, policy and persistence.
 
+mod allowlist_view;
 mod clipboard;
 mod commands;
 mod composer;

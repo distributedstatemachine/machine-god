@@ -163,6 +163,9 @@ The wired handlers include `/help`, `/status`, `/version`, `/quit` (`/exit`),
 `/rename <title>`, `/compact` and argumentless `/undo` and `/copy`. Policy selection uses
 `/permissions [ask|auto|yolo|reset]` and `/sandbox [os|none]`. Model controls are
 `/models`, `/model [id-or-query|effort <name>|save|save-default]` and `/fast`.
+Configured persistent rule editing uses `/allowlist`, with native parsing,
+explicit user-settings authority, and typed save/reload receipts as described
+below. It is separate from exact-action session grants.
 Model/effort/fast changes request native session and explicitly injected
 user-default saves; their independent receipts distinguish accepted, deferred,
 saved and failed targets. Without injected defaults authority only the session
@@ -214,6 +217,41 @@ acknowledgement; another copy waits for that receipt, but ordinary prompts do
 not. Started clipboard work settles before conversion to the native-free output
 tail, and full host completion still joins its real worker and child cleanup
 before the tail is presented.
+
+### Persistent allowlist
+
+`/allowlist` and `/allowlist view [effective|local|user]` display persistent Allow
+rules in grouped, terminal-safe form. Native also reloads the effective runtime
+policy for every view. An explicit empty local list shadows user rules. Malformed
+web-fetch rules remain inert and contribute to the displayed warning count.
+
+Mutations accept `[local|user] add|remove command|tool|url|web-fetch-domain <pattern>`
+or `[local|user] reset commands|tools|urls|web-fetch-domains|all`; the default scope
+is local. The native parser validates actual registered tool names and the pinned
+historical categories, quoting and domain conventions. The CLI does not perform
+configuration discovery, rule parsing, filesystem publication or policy matching.
+The settings store is the same explicitly injected authority used by model-default
+saves. Missing authority fails without changing settings or runtime policy.
+
+An explicit human slash command needs no second confirmation prompt. Native
+accepts edits during generation, but already taken jobs keep their earlier policy
+snapshot. Future taken jobs use a successfully reloaded effective selection.
+Mode, sandbox preference and exact-action grants are not reset by allowlist edits.
+Removing a missing rule is an unchanged result and does not reload runtime policy;
+other successful mutations, including no-op add and reset, reload effective rules.
+
+The renderer distinguishes settings saved, unchanged, publication uncertain and
+runtime reload failed. A saved-settings receipt remains visible if reloading fails;
+there is no rollback claim or automatic retry. Rule groups preserve first-appearance
+and pattern order, including duplicate entries. Display uses an independent bounded
+buffer sized for terminal-safe expansion of the complete 64 KiB configuration,
+then the normal 4 KiB output chunks; valid rule lists are not silently truncated.
+The native control lane pins the accepted session and workspace through settlement.
+Typed results remain retained through blocked output and native-free shutdown, and
+new controls wait for earlier receipt acknowledgement.
+
+The native storage and mutation contract is maintained in
+[configuration](configuration.md) and [permissions](permissions-cli.md).
 
 ### Session picker
 

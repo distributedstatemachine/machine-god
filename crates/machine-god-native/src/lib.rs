@@ -54,12 +54,27 @@ pub use owned_worker::{
     NativeOwnedWorkerCleanup, NativeOwnedWorkerCompletion, NativeOwnedWorkerScope,
     NativeOwnedWorkerSpawnError, NativeOwnedWorkerSpawner,
 };
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+mod allowlist;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+pub use allowlist::{
+    MAX_NATIVE_ALLOWLIST_REQUEST_BYTES, NativeAllowlistCommand, NativeAllowlistError,
+    NativeAllowlistParseError, NativeAllowlistReceipt, NativeAllowlistReloadError,
+    NativeAllowlistRequest, NativeAllowlistSources, NativeAllowlistView,
+};
 mod config;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod user_config_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use user_config_store::{
     NativeUserConfigError, NativeUserConfigSnapshot, NativeUserConfigStore,
+    NativeUserPermissionCommit,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation;
@@ -568,8 +583,10 @@ pub use vision_portable::{
 
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
-    NativeConfigError, NativeConfigErrorKind, NativeCredentialSourceKind, NativeProviderKind,
-    NativeTransportKind, load_native_config, load_process_config,
+    NativeConfigError, NativeConfigErrorKind, NativeConfiguredPermissionMutation,
+    NativeConfiguredPermissionMutationOutcome, NativeConfiguredPermissionReset,
+    NativeConfiguredPermissionScope, NativeConfiguredPermissionSources, NativeCredentialSourceKind,
+    NativeProviderKind, NativeTransportKind, load_native_config, load_process_config,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation::{

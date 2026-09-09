@@ -315,6 +315,102 @@ fn blocked_stdout_does_not_block_save_receipt_or_native_shutdown() {
 }
 
 #[test]
+fn allowlist_save_receipt_survives_blocked_output_and_native_free_shutdown() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let store = Arc::new(native::NativeUserConfigStore::new(
+        fixture.workspace.join("allowlist-user"),
+    ));
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver = harness.driver.with_resources(None, Some(store.clone()));
+    let result = runtime.block_on(async {
+        until(&mut harness, |driver| driver.in_flight.is_some()).await;
+        harness.driver.command("/allowlist add tool read_file", 101);
+        until(&mut harness, |driver| driver.control_outcome.is_some()).await;
+        assert!(matches!(
+            &harness.driver.control_outcome.as_ref().unwrap().result,
+            Ok(native::NativeInteractiveControlReceipt::Allowlist(
+                native::NativeAllowlistReceipt::Mutation {
+                    outcome: native::NativeConfiguredPermissionMutationOutcome::Changed { .. },
+                    reload: Some(Ok(())),
+                    ..
+                }
+            ))
+        ));
+        let snapshot = store.load().unwrap();
+        assert_eq!(
+            snapshot
+                .loaded()
+                .config()
+                .permission_sources(&fixture.workspace)
+                .unwrap()
+                .effective()
+                .rules()[0]
+                .permission(),
+            "read"
+        );
+        assert!(fixture.transport.requests().is_empty());
+        harness.driver.shutdown();
+        until(&mut harness, |driver| driver.owner.is_closed()).await;
+        assert!(harness.driver.control_outcome.is_some());
+        poll_fn(|cx| harness.driver.poll(cx, &mut harness.signals)).await
+    });
+    assert_eq!(result.outcome, AskCommandOutcome::Completed);
+    let mut tail = dispose(harness, fixture, result);
+    assert_eq!(tail.presentation.controls.len(), 1);
+    let (result, output) = runtime.block_on(finish_raw_tail(&mut tail));
+    assert_eq!(result.outcome, AskCommandOutcome::Completed);
+    assert!(String::from_utf8_lossy(&output).contains("settings saved"));
+    assert!(tail.presentation.controls.is_empty());
+}
+
+#[test]
+fn allowlist_renderer_keeps_publication_uncertainty_and_runtime_reload_failure_distinct() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let store = Arc::new(native::NativeUserConfigStore::new(
+        fixture.workspace.join("allowlist-user"),
+    ));
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver = harness.driver.with_resources(None, Some(store));
+    let result = runtime.block_on(async {
+        harness.driver.command("/allowlist add tool read_file", 101);
+        until(&mut harness, |driver| driver.control_outcome.is_some()).await;
+        let mut outcome = harness.driver.control_outcome.take().unwrap();
+        let Ok(native::NativeInteractiveControlReceipt::Allowlist(
+            native::NativeAllowlistReceipt::Mutation {
+                reload, sources, ..
+            },
+        )) = &mut outcome.result
+        else {
+            panic!("saved allowlist mutation");
+        };
+        // Exercise presentation of the native failure variant with a real
+        // accepted control identity; native fault-injection tests own causality.
+        *reload = Some(Err(native::NativeAllowlistReloadError::Unavailable));
+        *sources = None;
+        let text = String::from_utf8(super::render_control(&outcome).unwrap()).unwrap();
+        assert!(text.contains("settings saved; effective source unknown; runtime reload failed"));
+        assert!(!text.contains("outcome uncertain"));
+        assert!(super::control_failed(&outcome));
+        for error in [
+            native::NativeAllowlistError::Ambiguous,
+            native::NativeAllowlistError::Config(native::NativeUserConfigError::CommitAmbiguous),
+        ] {
+            outcome.result = Err(native::NativeInteractiveControlError::Allowlist(error));
+            let text = String::from_utf8(super::render_control(&outcome).unwrap()).unwrap();
+            assert!(text.contains("outcome uncertain"));
+            assert!(text.contains("no automatic retry"));
+            assert!(!text.contains("settings saved"));
+            assert!(super::control_failed(&outcome));
+        }
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    let _ = runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
 fn undo_renderer_keeps_outcomes_reasons_paths_and_bounds_distinct() {
     use native::{
         FileUndoError as Error, FileUndoOutcome as Outcome, FileUndoUnavailableReason as Reason,

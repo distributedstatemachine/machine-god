@@ -226,8 +226,16 @@ fresh locked `bd270e5` release passes all 96 command tests, seven production-inp
 tests and all 285 CLI unit tests with five private-helper ignores. These checks
 include blocked and acknowledged stale-row rejection receipts and explicit
 refreshed-selection success; they are not full-feature acceptance.
-Allowlist implementation now proceeds in isolated configuration/storage and
-native grammar/runtime-service worktrees, with CLI integration owned centrally.
+Allowlist configuration/storage is integrated at `136c808`: strict schema v6,
+workspace-local shadowing, bounded settings CAS, and scoped config-lock release.
+Component checks pass 35 config-unit, 32 config-integration, 17 store-integration
+and five store-unit tests, native warnings-denied Clippy and supported WASI lint.
+Native grammar/runtime service is integrated at `61de79c` with lint corrections
+at `c3314b2`. Its checks pass 15 allowlist, nine permission-controller and 50
+owner/control tests plus warnings-denied Clippy. CLI routing and bounded rendering
+pass ten focused allowlist tests, 295 unit tests with five private-helper ignores,
+all 96 command tests and scoped warnings-denied Clippy. Both completed component
+worktrees are removed. Fresh allowlist release evidence remains outstanding.
 Typed historical cards and the remaining command/session scenarios still need
 implementation; complete local, review and exact remote feature gates stay open.
 
