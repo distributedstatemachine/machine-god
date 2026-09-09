@@ -12,14 +12,15 @@ use super::{
 };
 
 pub(super) struct Snapshot {
-    root: OwnedFd,
     source: Option<Location>,
     target: Location,
     after: After,
 }
 
 struct Location {
+    root: OwnedFd,
     path: String,
+    logical_path: String,
     parent: OwnedFd,
     name: String,
     before: Preimage,
@@ -273,7 +274,9 @@ fn capture(
         }
     };
     Ok(Location {
+        root: call(cancellation, || rustix::io::fcntl_dupfd_cloexec(root, 3))?,
         path: path.to_owned(),
+        logical_path: path.to_owned(),
         parent,
         name,
         before,
@@ -345,7 +348,41 @@ impl Snapshot {
         arguments: &Value,
         cancellation: &CancellationToken,
     ) -> Result<Self, Error> {
-        let root = call(cancellation, || rustix::io::fcntl_dupfd_cloexec(root, 3))?;
+        Self::prepare_roots(root, root, kind, arguments, cancellation)
+    }
+
+    pub(super) fn prepare_endpoints(
+        source: Option<&super::NativeFileEndpoint>,
+        target: &super::NativeFileEndpoint,
+        kind: Kind,
+        arguments: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Self, Error> {
+        let mut snapshot = Self::prepare_roots(
+            source.unwrap_or(target).root().as_fd(),
+            target.root().as_fd(),
+            kind,
+            arguments,
+            cancellation,
+        )?;
+        target
+            .logical_path()
+            .clone_into(&mut snapshot.target.logical_path);
+        if let (Some(location), Some(endpoint)) = (&mut snapshot.source, source) {
+            endpoint
+                .logical_path()
+                .clone_into(&mut location.logical_path);
+        }
+        Ok(snapshot)
+    }
+
+    fn prepare_roots(
+        source_root: BorrowedFd<'_>,
+        target_root: BorrowedFd<'_>,
+        kind: Kind,
+        arguments: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Self, Error> {
         let get = |key: &str| arguments[key].as_str().ok_or(Error::Invalid);
         let (source_path, target_path) = match kind {
             Kind::Copy => (Some(get("source")?), get("destination")?),
@@ -355,7 +392,7 @@ impl Snapshot {
         let source = source_path
             .map(|path| {
                 capture(
-                    root.as_fd(),
+                    source_root,
                     path,
                     false,
                     MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES,
@@ -375,7 +412,7 @@ impl Snapshot {
             _ => MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES,
         };
         let target = capture(
-            root.as_fd(),
+            target_root,
             target_path,
             kind == Kind::Delete,
             maximum,
@@ -423,7 +460,6 @@ impl Snapshot {
             Kind::Copy | Kind::Rename => After::Source,
         };
         let snapshot = Self {
-            root,
             source,
             target,
             after,
@@ -433,10 +469,12 @@ impl Snapshot {
     }
 
     pub(super) fn target_path(&self) -> &str {
-        &self.target.path
+        &self.target.logical_path
     }
     pub(super) fn source_path(&self) -> Option<&str> {
-        self.source.as_ref().map(|location| location.path.as_str())
+        self.source
+            .as_ref()
+            .map(|location| location.logical_path.as_str())
     }
     pub(super) fn preimage(&self) -> NativeFileApprovalPreimage<'_> {
         match &self.target.before {
@@ -460,16 +498,44 @@ impl Snapshot {
     }
     pub(super) fn root_matches(&self, root: BorrowedFd<'_>) -> Result<(), Error> {
         let a = rustix::fs::fstat(root).map_err(|_| Error::Unavailable)?;
-        let b = rustix::fs::fstat(&self.root).map_err(|_| Error::Unavailable)?;
-        if same_identity(&a, &b) {
-            Ok(())
-        } else {
-            Err(Error::Changed)
+        for location in self.source.iter().chain(std::iter::once(&self.target)) {
+            let b = rustix::fs::fstat(&location.root).map_err(|_| Error::Unavailable)?;
+            if !same_identity(&a, &b) {
+                return Err(Error::Changed);
+            }
         }
+        Ok(())
+    }
+    pub(super) fn endpoints_match(
+        &self,
+        source: Option<&super::NativeFileEndpoint>,
+        target: &super::NativeFileEndpoint,
+    ) -> Result<(), Error> {
+        if source.is_some() != self.source.is_some() {
+            return Err(Error::Changed);
+        }
+        for (location, endpoint) in self
+            .source
+            .iter()
+            .zip(source)
+            .chain(std::iter::once((&self.target, target)))
+        {
+            if location.path != endpoint.relative_path()
+                || location.logical_path != endpoint.logical_path()
+            {
+                return Err(Error::Changed);
+            }
+            let held = rustix::fs::fstat(&location.root).map_err(|_| Error::Unavailable)?;
+            let supplied = rustix::fs::fstat(endpoint.root()).map_err(|_| Error::Unavailable)?;
+            if !same_identity(&held, &supplied) {
+                return Err(Error::Changed);
+            }
+        }
+        Ok(())
     }
     pub(super) fn revalidate(&self, cancellation: &CancellationToken) -> Result<(), Error> {
         for location in self.source.iter().chain(std::iter::once(&self.target)) {
-            let (current, _) = parent(self.root.as_fd(), &location.path, cancellation)?;
+            let (current, _) = parent(location.root.as_fd(), &location.path, cancellation)?;
             let current_stat = call(cancellation, || rustix::fs::fstat(&current))?;
             let original = call(cancellation, || rustix::fs::fstat(&location.parent))?;
             if !same_identity(&current_stat, &original) {

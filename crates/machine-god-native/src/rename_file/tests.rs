@@ -8,6 +8,55 @@ use std::process::Command;
 
 use super::*;
 
+#[test]
+fn cross_root_exdev_is_one_failure_without_copy_delete_fallback_or_undo_entry() {
+    struct CrossDevice(usize);
+    impl RenameFileEvidence for CrossDevice {
+        fn rename(
+            &mut self,
+            _: BorrowedFd<'_>,
+            _: &str,
+            _: BorrowedFd<'_>,
+            _: &str,
+        ) -> Result<(), rustix::io::Errno> {
+            self.0 += 1;
+            Err(rustix::io::Errno::XDEV)
+        }
+    }
+    let source = TempDirectory::new("cross-device-source");
+    let destination = TempDirectory::new("cross-device-destination");
+    fs::write(source.path().join("same"), b"source bytes").unwrap();
+    let endpoint = |path: &Path, label: &str| {
+        crate::file_approval::NativeFileEndpoint::new(
+            std::sync::Arc::new(fs::File::open(path).unwrap()),
+            "same".into(),
+            label.into(),
+        )
+        .unwrap()
+    };
+    let tracker = std::sync::Arc::new(crate::FileUndoTracker::new());
+    let tool = RenameFileTool::from_endpoints(
+        endpoint(source.path(), "/source/same"),
+        endpoint(destination.path(), "/destination/same"),
+    )
+    .with_undo_tracker(tracker.clone());
+    let mut evidence = CrossDevice(0);
+    let error = tool
+        .execute_supported_with_evidence("same", "same", &CancellationToken::new(), &mut evidence)
+        .unwrap_err();
+    assert_eq!(error.code, "rename_file_unsupported_filesystem");
+    assert_eq!(evidence.0, 1);
+    assert_eq!(
+        fs::read(source.path().join("same")).unwrap(),
+        b"source bytes"
+    );
+    assert_eq!(fs::read_dir(destination.path()).unwrap().count(), 0);
+    assert_eq!(
+        tracker.undo_last(&CancellationToken::new()).unwrap(),
+        crate::FileUndoOutcome::Empty
+    );
+}
+
 struct TempDirectory {
     path: PathBuf,
 }

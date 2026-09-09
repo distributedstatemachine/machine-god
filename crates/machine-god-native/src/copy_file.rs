@@ -122,20 +122,54 @@ pub struct CopyFileTool {
     active_approval: Option<crate::file_approval::NativeFileApprovalExecution>,
     undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    root: OwnedFd,
+    root: std::sync::Arc<std::fs::File>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    endpoints: Option<(
+        crate::file_approval::NativeFileEndpoint,
+        crate::file_approval::NativeFileEndpoint,
+    )>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
 
 impl CopyFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
+    pub(crate) fn from_root_descriptor(root: OwnedFd) -> Self {
         Self {
-            root,
+            root: std::sync::Arc::new(root.into()),
+            endpoints: None,
             undo: None,
             approvals: None,
             active_approval: None,
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn from_endpoints(
+        source: crate::file_approval::NativeFileEndpoint,
+        destination: crate::file_approval::NativeFileEndpoint,
+    ) -> Self {
+        Self {
+            root: source.root().clone(),
+            endpoints: Some((source, destination)),
+            undo: None,
+            approvals: None,
+            active_approval: None,
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn endpoint_root(&self, source: bool) -> BorrowedFd<'_> {
+        self.endpoints.as_ref().map_or_else(
+            || self.root.as_fd(),
+            |(from, to)| {
+                if source {
+                    from.root().as_fd()
+                } else {
+                    to.root().as_fd()
+                }
+            },
+        )
     }
 
     /// Injects shared process-local destination undo authority; defaults stay no-replace.
@@ -1276,6 +1310,23 @@ impl Tool for CopyFileTool {
         if call.name != copy_file_name() {
             return Err(invalid_arguments());
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some((source, destination)) = &self.endpoints {
+            crate::file_approval::project_endpoint_arguments(
+                crate::NativeFileApprovalKind::Copy,
+                &call.arguments,
+                Some(source),
+                destination,
+            )
+            .map_err(crate::NativeFileApprovalError::tool)?;
+            return Ok(PreparedToolCall::new(
+                Capability::FilesystemCopy {
+                    source: source.logical_path().to_owned(),
+                    destination: destination.logical_path().to_owned(),
+                },
+                call.arguments,
+            ));
+        }
         let arguments = validate_arguments(&call.arguments)?;
         let prepared_arguments = json!({
             "source": arguments.source,
@@ -1313,6 +1364,21 @@ impl Tool for CopyFileTool {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let approved =
                 self.approval_bound(&context, &arguments, &cancellation, approval_ticket)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some((source, destination)) = &self.endpoints {
+                crate::file_approval::project_endpoint_arguments(
+                    crate::NativeFileApprovalKind::Copy,
+                    &arguments,
+                    Some(source),
+                    destination,
+                )
+                .map_err(crate::NativeFileApprovalError::tool)?;
+                return approved.as_ref().unwrap_or(self).execute_supported(
+                    source.relative_path(),
+                    destination.relative_path(),
+                    &cancellation,
+                );
+            }
             let arguments = validate_arguments(&arguments)?;
             if arguments.source != arguments.requested_source
                 || arguments.destination != arguments.requested_destination
@@ -1356,6 +1422,26 @@ pub(crate) fn validate_approval_arguments(
 }
 
 fn validate_arguments_inner(arguments: &Value) -> Result<ValidatedArguments<'_>, ToolError> {
+    validate_arguments_paths(arguments, false)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn validate_endpoint_arguments(
+    arguments: &Value,
+) -> Result<(), crate::NativeFileApprovalError> {
+    let value = validate_arguments_paths(arguments, true)
+        .map_err(|_| crate::NativeFileApprovalError::Invalid)?;
+    if value.source == value.requested_source && value.destination == value.requested_destination {
+        Ok(())
+    } else {
+        Err(crate::NativeFileApprovalError::Invalid)
+    }
+}
+
+fn validate_arguments_paths(
+    arguments: &Value,
+    endpoints: bool,
+) -> Result<ValidatedArguments<'_>, ToolError> {
     let Value::Object(object) = arguments else {
         return Err(invalid_arguments());
     };
@@ -1370,7 +1456,7 @@ fn validate_arguments_inner(arguments: &Value) -> Result<ValidatedArguments<'_>,
     };
     let normalized_source = normalize_relative_path(source)?;
     let normalized_destination = normalize_relative_path(destination)?;
-    if normalized_source == normalized_destination {
+    if !endpoints && normalized_source == normalized_destination {
         return Err(invalid_arguments());
     }
     if !serialized_value_fits(arguments, MAX_COPY_FILE_SERIALIZED_ARGUMENT_BYTES) {
@@ -1694,24 +1780,45 @@ impl CopyFileTool {
         let Some(registry) = &self.approvals else {
             return Ok(None);
         };
-        validate_approval_arguments(arguments).map_err(crate::NativeFileApprovalError::tool)?;
-        let approval = registry
-            .claim(
-                ticket
-                    .ok_or(crate::NativeFileApprovalError::Denied)
-                    .and_then(|ticket| ticket)
-                    .map_err(crate::NativeFileApprovalError::tool)?,
+        if let Some((source, destination)) = &self.endpoints {
+            crate::file_approval::project_endpoint_arguments(
+                crate::NativeFileApprovalKind::Copy,
+                arguments,
+                Some(source),
+                destination,
+            )
+            .map_err(crate::NativeFileApprovalError::tool)?;
+        } else {
+            validate_approval_arguments(arguments).map_err(crate::NativeFileApprovalError::tool)?;
+        }
+        let ticket = ticket
+            .ok_or(crate::NativeFileApprovalError::Denied)
+            .and_then(|ticket| ticket)
+            .map_err(crate::NativeFileApprovalError::tool)?;
+        let approval = if let Some((source, destination)) = &self.endpoints {
+            registry.claim_endpoints(
+                ticket,
+                context,
+                COPY_FILE_TOOL_NAME,
+                arguments,
+                Some(source),
+                destination,
+                cancellation,
+            )
+        } else {
+            registry.claim(
+                ticket,
                 context,
                 COPY_FILE_TOOL_NAME,
                 arguments,
                 self.root.as_fd(),
                 cancellation,
             )
-            .map_err(crate::NativeFileApprovalError::tool)?;
-        let root = rustix::io::fcntl_dupfd_cloexec(&self.root, 3)
-            .map_err(|_| crate::NativeFileApprovalError::Unavailable.tool())?;
+        }
+        .map_err(crate::NativeFileApprovalError::tool)?;
         Ok(Some(Self {
-            root,
+            root: self.root.clone(),
+            endpoints: self.endpoints.clone(),
             undo: self.undo.clone(),
             approvals: None,
             active_approval: Some(approval),
@@ -1754,6 +1861,9 @@ impl CopyFileTool {
             .undo
             .as_ref()
             .map(|tracker| {
+                if let Some((_, destination)) = &self.endpoints {
+                    return tracker.begin_copy(destination, cancellation);
+                }
                 tracker.begin(
                     self.root.as_fd(),
                     crate::file_undo::Operation::Replace(destination_path),
@@ -1764,7 +1874,7 @@ impl CopyFileTool {
             .map_err(crate::file_undo::FileUndoError::tool)?;
 
         let initial_source_parent =
-            self.walk_parent(source_path, WalkPhase::Initial, cancellation)?;
+            self.walk_parent(source_path, true, WalkPhase::Initial, cancellation)?;
         precommit_checkpoint(
             evidence,
             CopyCheckpoint::AfterInitialSourceParent,
@@ -1776,9 +1886,16 @@ impl CopyFileTool {
             cancellation,
         )?;
         precommit_checkpoint(evidence, CopyCheckpoint::AfterSourceRetained, cancellation)?;
-        let success = build_success_output(source_path, destination_path, source.fingerprint.size)?;
+        let (source_label, destination_label) = self
+            .endpoints
+            .as_ref()
+            .map_or((source_path, destination_path), |(source, destination)| {
+                (source.logical_path(), destination.logical_path())
+            });
+        let success =
+            build_success_output(source_label, destination_label, source.fingerprint.size)?;
         let initial_destination_parent =
-            self.walk_parent(destination_path, WalkPhase::Initial, cancellation)?;
+            self.walk_parent(destination_path, false, WalkPhase::Initial, cancellation)?;
         precommit_checkpoint(
             evidence,
             CopyCheckpoint::AfterInitialDestinationParent,
@@ -1864,7 +1981,7 @@ impl CopyFileTool {
         )?;
 
         let final_source_parent =
-            self.walk_parent(source_path, WalkPhase::Revalidate, cancellation)?;
+            self.walk_parent(source_path, true, WalkPhase::Revalidate, cancellation)?;
         precommit_checkpoint(
             evidence,
             CopyCheckpoint::AfterFinalSourceParent,
@@ -1885,7 +2002,7 @@ impl CopyFileTool {
             cancellation,
         )?;
         let final_destination_parent =
-            self.walk_parent(destination_path, WalkPhase::Revalidate, cancellation)?;
+            self.walk_parent(destination_path, false, WalkPhase::Revalidate, cancellation)?;
         precommit_checkpoint(
             evidence,
             CopyCheckpoint::AfterFinalDestinationParent,
@@ -1966,7 +2083,12 @@ impl CopyFileTool {
                 );
                 let postcommit_cancellation = CancellationToken::new();
                 let source_stable = self
-                    .walk_parent(source_path, WalkPhase::Revalidate, &postcommit_cancellation)
+                    .walk_parent(
+                        source_path,
+                        true,
+                        WalkPhase::Revalidate,
+                        &postcommit_cancellation,
+                    )
                     .and_then(|postcommit_source_parent| {
                         if postcommit_source_parent.identity != initial_source_parent.identity {
                             return Err(target_changed());
@@ -1999,12 +2121,13 @@ impl CopyFileTool {
     fn walk_parent<'path>(
         &self,
         path: &'path str,
+        source: bool,
         phase: WalkPhase,
         cancellation: &CancellationToken,
     ) -> Result<ParentWalk<'path>, ToolError> {
         let mut parent = precommit_call(cancellation, || {
             rustix::fs::openat(
-                self.root.as_fd(),
+                self.endpoint_root(source),
                 ".",
                 directory_open_flags(),
                 Mode::empty(),

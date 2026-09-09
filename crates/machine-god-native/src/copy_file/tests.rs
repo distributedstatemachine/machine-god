@@ -8,6 +8,72 @@ use rustix::fd::AsFd;
 
 use super::*;
 
+#[test]
+fn cross_root_copy_keeps_cancellation_and_ambiguous_publication_undo_boundaries() {
+    for cancel in [true, false] {
+        let source = TempDirectory::new("cross-source");
+        let destination = TempDirectory::new("cross-destination");
+        fs::write(source.path().join("source"), b"source bytes").unwrap();
+        let endpoint = |root: &Path, private: &str, logical: &str| {
+            crate::file_approval::NativeFileEndpoint::new(
+                std::sync::Arc::new(fs::File::open(root).unwrap()),
+                private.into(),
+                logical.into(),
+            )
+            .unwrap()
+        };
+        let tracker = std::sync::Arc::new(crate::FileUndoTracker::new());
+        let tool = CopyFileTool::from_endpoints(
+            endpoint(source.path(), "source", "/source/source"),
+            endpoint(
+                destination.path(),
+                "destination",
+                "/destination/destination",
+            ),
+        )
+        .with_undo_tracker(tracker.clone());
+        let cancellation = CancellationToken::new();
+        let mut evidence = ScriptedEvidence::new(destination.path());
+        if cancel {
+            evidence.cancel_at = Some(CopyCheckpoint::FinalPrePublish);
+            evidence.cancellation = Some(cancellation.clone());
+        } else {
+            evidence.parent_sync_script = vec![Err(rustix::io::Errno::IO)];
+        }
+        let error = tool
+            .execute_supported_with_evidence(
+                "source",
+                "destination",
+                &cancellation,
+                &mut evidence,
+                &NativeCopyFileCleanupEvidence,
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code,
+            if cancel {
+                "copy_file_cancelled"
+            } else {
+                "copy_file_commit_ambiguous"
+            }
+        );
+        assert_eq!(evidence.publish_calls, usize::from(!cancel));
+        assert_eq!(
+            fs::read(source.path().join("source")).unwrap(),
+            b"source bytes"
+        );
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()).unwrap(),
+            if cancel {
+                crate::FileUndoOutcome::Empty
+            } else {
+                crate::FileUndoOutcome::Removed("/destination/destination".into())
+            }
+        );
+        assert_eq!(fs::read_dir(destination.path()).unwrap().count(), 0);
+    }
+}
+
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TempDirectory {

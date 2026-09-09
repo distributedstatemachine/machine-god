@@ -1,5 +1,26 @@
 # Native `copy_file` contract
 
+## Retained workspace endpoints
+
+Workspace-routed native instances can bind source and destination to different
+already-retained directory descriptors. Each endpoint carries a canonical private
+relative path and its exact logical, root-qualified argument. Constructing the
+binding and preparing the tool perform no filesystem operations. Execution rejects
+arguments that differ from that binding; results and approval previews retain the
+logical paths. Equal relative basenames in distinct roots are valid, while an
+existing destination (including the source itself or a hard link) is still rejected.
+
+Both parent walks and approval evidence independently retain and revalidate their
+endpoint roots. Approval claims bind the original arguments, both roots, and both
+private paths; there is no unchecked post-approval path rewrite. Copy still stages
+only in the destination parent, so copying across filesystems does not require a
+cross-filesystem rename. The existing size, cancellation, no-replace, cleanup, and
+ambiguous-publication rules apply unchanged. Undo retains the destination's own
+root proof and reports its original logical path. Standalone single-root constructors
+and their relative-path schemas remain unchanged.
+
+## Standalone contract
+
 `copy_file` copies the bounded bytes of one existing confined regular file to
 one absent confined destination without modifying the source. It does not
 overwrite a destination, create a parent, copy a directory, follow a symlink,

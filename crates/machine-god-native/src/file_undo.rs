@@ -954,7 +954,8 @@ impl FileUndoError {
     }
 }
 
-/// Successful process-local undo observation. Paths are workspace-relative.
+/// Successful process-local undo observation. Routed endpoints retain their
+/// original logical labels; standalone operations use workspace-relative paths.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FileUndoOutcome {
     /// No retained operations exist.
@@ -1223,7 +1224,6 @@ mod native {
     }
 
     struct Entry {
-        root: OwnedFd,
         paths: Vec<Location>,
         before: Vec<Snapshot>,
         after: Vec<Snapshot>,
@@ -1231,7 +1231,9 @@ mod native {
         blocked: bool,
     }
     struct Location {
+        root: OwnedFd,
         path: String,
+        logical_path: String,
         parent: OwnedFd,
         name: String,
     }
@@ -1282,6 +1284,50 @@ mod native {
             cancellation: &CancellationToken,
         ) -> Result<Transaction<'_>, FileUndoError> {
             check(cancellation)?;
+            if matches!(operation, Operation::Rename(old, new) if old == new) {
+                return Err(FileUndoError::Rejected);
+            }
+            self.begin_roots(root, root, operation, None, cancellation)
+        }
+
+        pub(crate) fn begin_copy(
+            &self,
+            target: &crate::file_approval::NativeFileEndpoint,
+            cancellation: &CancellationToken,
+        ) -> Result<Transaction<'_>, FileUndoError> {
+            self.begin_roots(
+                target.root().as_fd(),
+                target.root().as_fd(),
+                Operation::Replace(target.relative_path()),
+                Some((target.logical_path(), target.logical_path())),
+                cancellation,
+            )
+        }
+
+        pub(crate) fn begin_rename(
+            &self,
+            source: &crate::file_approval::NativeFileEndpoint,
+            target: &crate::file_approval::NativeFileEndpoint,
+            cancellation: &CancellationToken,
+        ) -> Result<Transaction<'_>, FileUndoError> {
+            self.begin_roots(
+                source.root().as_fd(),
+                target.root().as_fd(),
+                Operation::Rename(source.relative_path(), target.relative_path()),
+                Some((source.logical_path(), target.logical_path())),
+                cancellation,
+            )
+        }
+
+        fn begin_roots(
+            &self,
+            root: BorrowedFd<'_>,
+            destination_root: BorrowedFd<'_>,
+            operation: Operation<'_>,
+            labels: Option<(&str, &str)>,
+            cancellation: &CancellationToken,
+        ) -> Result<Transaction<'_>, FileUndoError> {
+            check(cancellation)?;
             let mut state = self.state.try_lock().map_err(|_| FileUndoError::Busy)?;
             self.check_clear_reservation()?;
             if state.ambiguous {
@@ -1291,17 +1337,30 @@ mod native {
                 .entries
                 .try_reserve(1)
                 .map_err(|_| FileUndoError::ResourceLimit)?;
-            let root = rustix::io::dup(root).map_err(unavailable)?;
-            let (paths, rename) = match operation {
+            let (mut paths, rename) = match operation {
                 Operation::Replace(path) | Operation::Delete(path) => {
-                    (vec![locate(root.as_fd(), path)?], false)
+                    (vec![locate(root, path)?], false)
                 }
-                Operation::Rename(old, new) if old != new => (
-                    vec![locate(root.as_fd(), old)?, locate(root.as_fd(), new)?],
+                Operation::Rename(old, new) => (
+                    vec![locate(root, old)?, locate(destination_root, new)?],
                     true,
                 ),
-                Operation::Rename(_, _) => return Err(FileUndoError::Rejected),
             };
+            if rename
+                && paths[0].name == paths[1].name
+                && identity(
+                    &rustix::fs::fstat(&paths[0].parent).map_err(unavailable)?,
+                    &rustix::fs::fstat(&paths[1].parent).map_err(unavailable)?,
+                )
+            {
+                return Err(FileUndoError::Rejected);
+            }
+            if let Some((source, target)) = labels {
+                source.clone_into(&mut paths[0].logical_path);
+                if rename {
+                    target.clone_into(&mut paths[1].logical_path);
+                }
+            }
             let mut before = Vec::with_capacity(paths.len());
             for (index, path) in paths.iter().enumerate() {
                 let snapshot = match capture(path, !rename || index == 1, cancellation) {
@@ -1343,7 +1402,6 @@ mod native {
             Ok(Transaction {
                 state,
                 entry: Some(Entry {
-                    root,
                     paths,
                     before,
                     after: Vec::new(),
@@ -1491,7 +1549,9 @@ mod native {
         while let Some(component) = components.next() {
             if components.peek().is_none() {
                 return Ok(Location {
+                    root: rustix::io::fcntl_dupfd_cloexec(root, 3).map_err(unavailable)?,
                     path: path.to_owned(),
+                    logical_path: path.to_owned(),
                     parent,
                     name: component.to_owned(),
                 });
@@ -1504,7 +1564,7 @@ mod native {
 
     fn validate_locations(entry: &Entry) -> Result<(), FileUndoError> {
         for path in &entry.paths {
-            let current = locate(entry.root.as_fd(), &path.path)?;
+            let current = locate(path.root.as_fd(), &path.path)?;
             if !identity(
                 &rustix::fs::fstat(&current.parent).map_err(unavailable)?,
                 &rustix::fs::fstat(&path.parent).map_err(unavailable)?,
@@ -1717,6 +1777,9 @@ mod native {
             ) {
                 Ok(()) => {
                     let moved = Location {
+                        root: rustix::io::fcntl_dupfd_cloexec(&path.root, 3)
+                            .map_err(|_| FileUndoError::Ambiguous)?,
+                        logical_path: path.logical_path.clone(),
                         path: path.path.clone(),
                         parent: rustix::io::dup(&path.parent)
                             .map_err(|_| FileUndoError::Ambiguous)?,
@@ -2084,6 +2147,9 @@ mod native {
                     let name = quarantine(path, &entry.after[0])?;
                     restore(path, &entry.before[0])?;
                     let quarantined = Location {
+                        root: rustix::io::fcntl_dupfd_cloexec(&path.root, 3)
+                            .map_err(|_| FileUndoError::Ambiguous)?,
+                        logical_path: path.logical_path.clone(),
                         path: path.path.clone(),
                         parent: rustix::io::dup(&path.parent)
                             .map_err(|_| FileUndoError::Ambiguous)?,
@@ -2166,9 +2232,9 @@ mod native {
             return Err(FileUndoError::Ambiguous);
         }
         let outcome = if !entry.rename && matches!(entry.before[0], Snapshot::Missing) {
-            FileUndoOutcome::Removed(entry.paths[0].path.clone())
+            FileUndoOutcome::Removed(entry.paths[0].logical_path.clone())
         } else {
-            FileUndoOutcome::Restored(entry.paths[0].path.clone())
+            FileUndoOutcome::Restored(entry.paths[0].logical_path.clone())
         };
         let removed = state.entries.pop_back().ok_or(FileUndoError::Ambiguous)?;
         state.bytes -= removed.bytes();

@@ -16,14 +16,23 @@ use serde_json::Value;
 
 mod snapshot;
 use snapshot::Snapshot;
+mod endpoints;
+pub(crate) use endpoints::NativeFileEndpoint;
+pub(crate) use endpoints::project as project_endpoint_arguments;
+
+enum PreparationRoots {
+    Single(NativeFileApprovalAuthority),
+    Endpoints(Option<NativeFileEndpoint>, NativeFileEndpoint),
+}
 
 /// Complete selected-file approval observations, including the copy source limit.
 pub const MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES: usize = 16 * 1024 * 1024;
 /// Bound on simultaneously retained preparations/admissions/executions.
 pub const MAX_NATIVE_FILE_APPROVALS: usize = 4;
-/// Each slot reserves a full preimage plus bounded arguments and write/edit result.
+/// Each slot reserves a full preimage plus bounded logical/private arguments,
+/// endpoint metadata, core identities, and the write/edit result.
 pub const MAX_NATIVE_FILE_APPROVAL_RETAINED_BYTES: usize =
-    MAX_NATIVE_FILE_APPROVALS * (MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES + 128 * 1024);
+    MAX_NATIVE_FILE_APPROVALS * (MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES + 256 * 1024);
 
 /// The actual concrete operation; never inferred from a displayed string.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -217,8 +226,46 @@ impl NativeFileApprovalRegistry {
         invocation: PermissionInvocation<'_>,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<PreparedFileApproval, Error>> {
-        let kind = match validate_invocation(request, invocation) {
-            Ok(kind) => kind,
+        self.prepare_roots(
+            PreparationRoots::Single(authority.clone()),
+            request,
+            invocation,
+            cancellation,
+        )
+    }
+
+    pub(crate) fn prepare_endpoints(
+        self: &Arc<Self>,
+        source: Option<NativeFileEndpoint>,
+        target: NativeFileEndpoint,
+        request: &PermissionRequest,
+        invocation: PermissionInvocation<'_>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<PreparedFileApproval, Error>> {
+        self.prepare_roots(
+            PreparationRoots::Endpoints(source, target),
+            request,
+            invocation,
+            cancellation,
+        )
+    }
+
+    fn prepare_roots(
+        self: &Arc<Self>,
+        roots: PreparationRoots,
+        request: &PermissionRequest,
+        invocation: PermissionInvocation<'_>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<PreparedFileApproval, Error>> {
+        let validated = match &roots {
+            PreparationRoots::Single(_) => validate_invocation(request, invocation)
+                .map(|kind| (kind, invocation.arguments.clone())),
+            PreparationRoots::Endpoints(source, target) => {
+                validate_endpoint_invocation(request, invocation, source.as_ref(), target)
+            }
+        };
+        let (kind, private_arguments) = match validated {
+            Ok(validated) => validated,
             Err(error) => return Box::pin(async move { Err(error) }),
         };
         let close_generation = self
@@ -236,12 +283,26 @@ impl NativeFileApprovalRegistry {
             name: invocation.tool_name.clone(),
         };
         let registry = Arc::clone(self);
-        let authority = authority.clone();
+        let execution_arguments =
+            matches!(&roots, PreparationRoots::Endpoints(..)).then(|| private_arguments.clone());
         Box::pin(async move {
             snapshot::check(&cancellation)?;
             let ticket = registry.reserve(identity, close_generation)?;
-            let snapshot =
-                Snapshot::prepare(authority.root.as_fd(), kind, &arguments, &cancellation)?;
+            let snapshot = match &roots {
+                PreparationRoots::Single(authority) => Snapshot::prepare(
+                    authority.root.as_fd(),
+                    kind,
+                    &private_arguments,
+                    &cancellation,
+                )?,
+                PreparationRoots::Endpoints(source, target) => Snapshot::prepare_endpoints(
+                    source.as_ref(),
+                    target,
+                    kind,
+                    &private_arguments,
+                    &cancellation,
+                )?,
+            };
             ticket.ensure_reserved()?;
             Ok(PreparedFileApproval {
                 proof: Proof {
@@ -249,6 +310,7 @@ impl NativeFileApprovalRegistry {
                     snapshot,
                     kind,
                     arguments,
+                    execution_arguments,
                     policy: None,
                 },
             })
@@ -356,6 +418,49 @@ impl NativeFileApprovalRegistry {
         root: BorrowedFd<'_>,
         cancellation: &CancellationToken,
     ) -> Result<NativeFileApprovalExecution, Error> {
+        self.claim_checked(ticket, context, name, cancellation, |proof| {
+            if proof
+                .execution_arguments
+                .as_ref()
+                .unwrap_or(&proof.arguments)
+                != arguments
+            {
+                return Err(Error::Denied);
+            }
+            proof.snapshot.root_matches(root)
+        })
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "binds the exact core invocation and both retained native endpoints"
+    )]
+    pub(crate) fn claim_endpoints(
+        &self,
+        ticket: NativeFileApprovalClaim,
+        context: &ToolContext,
+        name: &str,
+        arguments: &Value,
+        source: Option<&NativeFileEndpoint>,
+        target: &NativeFileEndpoint,
+        cancellation: &CancellationToken,
+    ) -> Result<NativeFileApprovalExecution, Error> {
+        self.claim_checked(ticket, context, name, cancellation, |proof| {
+            if proof.arguments != *arguments {
+                return Err(Error::Denied);
+            }
+            proof.snapshot.endpoints_match(source, target)
+        })
+    }
+
+    fn claim_checked(
+        &self,
+        ticket: NativeFileApprovalClaim,
+        context: &ToolContext,
+        name: &str,
+        cancellation: &CancellationToken,
+        check_roots: impl FnOnce(&Proof) -> Result<(), Error>,
+    ) -> Result<NativeFileApprovalExecution, Error> {
         snapshot::check(cancellation)?;
         let removed = {
             let mut state = self.state.lock().map_err(|_| Error::Unavailable)?;
@@ -370,10 +475,7 @@ impl NativeFileApprovalRegistry {
         let Slot::Ready(proof) = removed else {
             return Err(Error::Denied);
         };
-        if proof.arguments != *arguments {
-            return Err(Error::Denied);
-        }
-        proof.snapshot.root_matches(root)?;
+        check_roots(&proof)?;
         proof.snapshot.revalidate(cancellation)?;
         proof
             .policy
@@ -441,6 +543,8 @@ struct Proof {
     snapshot: Snapshot,
     kind: NativeFileApprovalKind,
     arguments: Value,
+    // Only endpoint preparations carry this exact, validated execution alias.
+    execution_arguments: Option<Value>,
     policy: Option<Arc<dyn NativeFileApprovalPolicy>>,
 }
 
@@ -607,6 +711,36 @@ fn validate_invocation(
         }
         _ => return Err(Error::Invalid),
     };
+    validate_capability(request, kind, args)?;
+    Ok(kind)
+}
+
+fn validate_endpoint_invocation(
+    request: &PermissionRequest,
+    invocation: PermissionInvocation<'_>,
+    source: Option<&NativeFileEndpoint>,
+    target: &NativeFileEndpoint,
+) -> Result<(NativeFileApprovalKind, Value), Error> {
+    use NativeFileApprovalKind as Kind;
+    let kind = match invocation.tool_name.as_str() {
+        crate::WRITE_FILE_TOOL_NAME => Kind::Write,
+        crate::EDIT_FILE_TOOL_NAME => Kind::Edit,
+        crate::DELETE_FILE_TOOL_NAME => Kind::Delete,
+        crate::COPY_FILE_TOOL_NAME => Kind::Copy,
+        crate::RENAME_FILE_TOOL_NAME => Kind::Rename,
+        _ => return Err(Error::Invalid),
+    };
+    let private = project_endpoint_arguments(kind, invocation.arguments, source, target)?;
+    validate_capability(request, kind, invocation.arguments)?;
+    Ok((kind, private))
+}
+
+fn validate_capability(
+    request: &PermissionRequest,
+    kind: NativeFileApprovalKind,
+    args: &Value,
+) -> Result<(), Error> {
+    use NativeFileApprovalKind as Kind;
     let text = |key: &str| {
         args[key]
             .as_str()
@@ -634,8 +768,10 @@ fn validate_invocation(
     if request.capability != expected {
         return Err(Error::Invalid);
     }
-    Ok(kind)
+    Ok(())
 }
 
+#[cfg(test)]
+mod endpoint_tests;
 #[cfg(test)]
 pub(crate) mod tests;

@@ -1,5 +1,25 @@
 # Native `rename_file` contract
 
+## Retained workspace endpoints
+
+Workspace-routed native instances bind source and destination independently to
+already-retained roots, private relative paths, and exact logical arguments.
+Binding and tool preparation are effect-free. Execution and approval admission
+check the exact logical arguments; the owned approval also binds both root
+identities and private paths. Results preserve the logical paths. Equal basenames
+in different roots are allowed, but a destination that is the same actual endpoint
+or an existing hard link is not.
+
+The existing descriptor-relative no-replace rename runs directly between the two
+retained parents. An `EXDEV` result remains a fixed unsupported-filesystem failure:
+there is exactly one rename attempt and no copy-and-delete fallback or successful
+undo entry. Cancellation and ambiguous-commit behavior remain unchanged. Undo
+retains and revalidates both endpoint roots before reversing a committed rename,
+and reports the original logical source path. Existing standalone constructors
+retain their single-root relative-path contract.
+
+## Standalone contract
+
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
 at the destination. It does not accept a directory, symlink, or special-file

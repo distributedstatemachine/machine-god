@@ -1,5 +1,21 @@
 # Native process-local file undo
 
+## Workspace endpoint ownership
+
+Each retained undo location owns its own root descriptor, canonical private
+relative path, parent descriptor, and logical result label. A workspace-routed
+rename can therefore be reversed across two retained roots on the same filesystem;
+a routed copy retains only its destination inverse. Both rename roots and both
+parent identities are revalidated before undo effects. Replacement by an object
+with identical bytes does not satisfy a retained identity proof.
+
+Logical root-qualified labels are used in routed undo outcomes, while existing
+single-root callers continue receiving relative paths. Labels are never used as
+execution paths. Existing preimage limits, quarantine handling, history ownership,
+nonblocking reservations, and ambiguous-effect barriers are unchanged.
+
+## Tracker contract
+
 `FileUndoTracker` is explicitly injected, shared native authority for inverse
 file mutations. Its inert `new()` constructor performs no filesystem work.
 The host may share an `Arc<FileUndoTracker>` through the five tools'
