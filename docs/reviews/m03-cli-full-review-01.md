@@ -874,3 +874,23 @@ final source at default Linux concurrency, alongside pinned formatting,
 workspace all-target/all-feature warnings-denied Clippy and a fresh locked
 release build. The clean test-only component was fast-forward integrated;
 complete replacement acceptance remains pending.
+
+## Replacement Linux ordering failure: `145124f2`
+
+The exact full default-concurrency Linux workspace run passed 4,538 tests and
+failed one, with seventeen existing helper ignores. Native unit tests passed
+2,161 cases, including both earlier process failures, the account-shell case
+and the FIFO correction. All twenty catalog HTTP cases passed. Explicit doc
+tests passed all three cases; pinned formatting, full Clippy and a fresh locked
+release build passed. Static repository policy checks also passed. No test or
+helper processes or zombies remained.
+
+The sole failure was
+`linux_output_limit_wins_when_deadline_expires_during_term_ignoring_cleanup`
+at `tests/terminal.rs:6302`: its 225 ms request returned `timed_out` instead of
+the asserted `output_limit`. The complete terminal integration target passed
+97 other cases. No isolated retry or cause is asserted for this failure.
+Later targets ran under `--no-fail-fast`; this is a rejected complete run, not
+partial acceptance. macOS runtime, Python release-probe and portability gates
+were not started for this candidate, and there was no review restart, push or
+main advancement.

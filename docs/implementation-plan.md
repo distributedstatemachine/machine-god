@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI fixture corrections integrated; replacement verification pending`
-- Next gate: `complete replacement local verification, three fresh reviews and exact remote gates`
+- Active phase: `combined CLI local gate rejected; output-limit ordering fixture investigation`
+- Next gate: `resolve the remaining Linux ordering failure, then replacement local, review and remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -266,6 +266,8 @@ fixture's pre-header assumption. Account setup is corrected; the bounded HTTP
 fixture correction passes all twenty catalog HTTP tests. Two process cases
 passed unchanged in isolated diagnostics; their full-run failures remain
 unexplained, not accepted.
+The following full Linux run passed those cases and all catalog HTTP tests but
+rejected one terminal output-limit/deadline ordering assertion. Acceptance is open.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
@@ -478,6 +480,7 @@ toolchain with `rustup`; no floating-channel substitution satisfies the gate.
 Run affected tests first, with the same prerequisites. From the repository root,
 use this canonical full-gate recipe in one shell. Both Linux and macOS runtime
 tests require `/bin/bash`, `/bin/zsh` and tmux; install them before starting.
+Containerized runs also need a passwd entry and valid login shell for the test UID.
 Keep their normal profile behavior. Concurrent builds can contend with
 process-lifecycle fixtures, so finish worker builds before the full runtime gate.
 When Linux and macOS share one physical host, also separate their process-heavy
