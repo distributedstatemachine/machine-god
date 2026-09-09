@@ -394,7 +394,15 @@ fn capture_sandbox(
         return Err(crate::NativeSandboxError::Unavailable);
     }
     let captured = permission
-        .map(|permission| permission.capture_on_worker(context, deadline, cancellation))
+        .map(|permission| match scope {
+            Some(scope) => permission.capture_with_shared_workspace_scope(
+                context,
+                Some(Arc::clone(scope)),
+                deadline,
+                cancellation,
+            ),
+            None => permission.capture_on_worker(context, deadline, cancellation),
+        })
         .transpose()?;
     let Some(scope) = scope else {
         return Ok(captured);
@@ -918,6 +926,9 @@ impl NativeTerminalActionExecutor {
                     TerminalMonitorActivation::default,
                     PreparedTerminalMonitor::activation,
                 );
+                if let Some(prepared) = &preparation {
+                    prepared.validate_workspace()?;
+                }
                 let mutation = context
                     .registry
                     .mutate_with_profile(

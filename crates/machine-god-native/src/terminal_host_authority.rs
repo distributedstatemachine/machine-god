@@ -426,6 +426,14 @@ impl CapturedTerminalHostAuthority {
         check(deadline, cancellation)?;
         same_directory(&original_fd, &retained)?;
         exact_directory(workspace, workspace_path)?;
+        if let Some(snapshot) = snapshot {
+            snapshot
+                .validate_directory_outside_state(&retained, || {
+                    check(deadline, cancellation)
+                        .map_err(|_| crate::NativeWorkspaceAuthorityError::Unavailable)
+                })
+                .map_err(|_| invalid())?;
+        }
         if scope.is_some_and(|scope| !scope.is_live()) {
             return Err(unavailable());
         }

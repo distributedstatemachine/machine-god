@@ -50,6 +50,10 @@ pub(crate) struct PreparedTerminalMonitor {
     workspace_scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
 }
 impl PreparedTerminalMonitor {
+    pub(crate) fn validate_workspace(&self) -> Result<()> {
+        check_workspace(self.workspace_scope.as_deref())
+    }
+
     pub(crate) const fn activation(&self) -> TerminalMonitorActivation {
         self.activation
     }
@@ -83,7 +87,14 @@ impl TerminalHostProbePreparer {
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<PreparedTerminalMonitor> {
-        self.prepare_on_worker_with_scope(definition, session_cwd, sandbox, None, deadline, cancellation)
+        self.prepare_on_worker_with_scope(
+            definition,
+            session_cwd,
+            sandbox,
+            None,
+            deadline,
+            cancellation,
+        )
     }
 
     pub(crate) fn prepare_on_worker_with_scope(
@@ -369,7 +380,7 @@ impl TerminalHostProbes {
         mutation: &TerminalMonitorMutation,
         prepared: PreparedTerminalMonitor,
     ) -> Result<()> {
-        check_workspace(prepared.workspace_scope.as_deref())?;
+        prepared.validate_workspace()?;
         if self.closed || self.stop.is_cancelled() || mutation.removed || mutation.generation == 0 {
             return Err(invalid());
         }

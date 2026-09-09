@@ -172,6 +172,8 @@ The worker routes the native canonical result through that captured snapshot's
 primary and active additional roots, excluding state and without consulting the
 current manager or falling back to primary. Relative paths retain the captured
 default-cwd base; native symlink/parent ordering is not lexically rewritten.
+The worker also compares resolved-directory ancestry against the retained state
+object, so moving state under an allowed root does not authorize it as a cwd.
 An original-path descriptor must match a no-follow descriptor-relative walk from
 the selected root by device/inode, and that root descriptor must still match its
 captured canonical spelling. The resulting exact cwd descriptor stays on the owned
