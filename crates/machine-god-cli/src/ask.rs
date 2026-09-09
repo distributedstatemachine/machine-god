@@ -85,6 +85,13 @@ pub(crate) trait AskCommandHost {
     /// support them instead of silently dropping requested authority selection.
     fn with_launch(
         &self,
+        options: crate::workspace::launch::LaunchWorkspaceOptions,
+    ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+        self.with_launch(options, false)
+    }
+
+    fn with_launch(
+        &self,
         _options: crate::workspace::launch::LaunchWorkspaceOptions,
         _record_requested: bool,
     ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
