@@ -3,13 +3,16 @@
 use std::fmt;
 use std::fs::File;
 use std::io::Write;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags};
 
-use crate::config::{parse_config_bytes, read_bounded};
+use crate::config::{
+    NativeConfiguredPermissionMutation, NativeConfiguredPermissionMutationOutcome,
+    NativeConfiguredPermissionScope, parse_config_bytes, read_bounded,
+};
 use crate::{LoadedNativeConfig, NativeConfigError, NativeModelPreferences};
 
 const DATA: &str = "config.json";
@@ -75,6 +78,13 @@ pub struct NativeUserConfigSnapshot {
     parent: OwnedFd,
     root: Option<OwnedFd>,
     identity: Arc<()>,
+}
+
+/// Confirmed persistent result, independent of any later runtime reload.
+#[derive(Debug)]
+pub struct NativeUserPermissionCommit {
+    pub outcome: NativeConfiguredPermissionMutationOutcome,
+    pub loaded: LoadedNativeConfig,
 }
 
 impl NativeUserConfigSnapshot {
@@ -166,9 +176,91 @@ impl NativeUserConfigStore {
         preferences: &NativeModelPreferences,
         sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
     ) -> Result<LoadedNativeConfig, NativeUserConfigError> {
+        let config = snapshot.loaded.config().with_model_preferences(preferences);
+        self.publish_config(snapshot, config, sync_directory)
+    }
+
+    /// Edits the global or exact workspace-local configured permission list.
+    /// This is not tool-registry validation, human confirmation or a live grant.
+    /// The borrowed future is inert before polling and never detaches a writer.
+    /// No-op edits make no writes and retain the observed source schema. Their
+    /// result is an observation, not a reservation against subsequent changes.
+    /// # Errors
+    /// Rejects malformed/oversized candidates before creating publication files,
+    /// stale or foreign snapshots, contention, unsafe entries and failed writes.
+    /// An error after replacement remains `CommitAmbiguous`, not a safe retry.
+    #[allow(clippy::unused_async)] // One synchronous owned transaction, inert before poll.
+    pub async fn apply_permission_mutation(
+        &self,
+        snapshot: &NativeUserConfigSnapshot,
+        workspace: &Path,
+        scope: NativeConfiguredPermissionScope,
+        mutation: &NativeConfiguredPermissionMutation,
+    ) -> Result<NativeUserPermissionCommit, NativeUserConfigError> {
+        self.publish_permission_mutation(snapshot, workspace, scope, mutation, |root| {
+            rustix::fs::fsync(root)
+        })
+    }
+
+    fn publish_permission_mutation(
+        &self,
+        snapshot: &NativeUserConfigSnapshot,
+        workspace: &Path,
+        scope: NativeConfiguredPermissionScope,
+        mutation: &NativeConfiguredPermissionMutation,
+        sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
+    ) -> Result<NativeUserPermissionCommit, NativeUserConfigError> {
         if !Arc::ptr_eq(&self.identity, &snapshot.identity) {
             return Err(NativeUserConfigError::Conflict);
         }
+        let (config, outcome) = snapshot
+            .loaded
+            .config()
+            .with_permission_mutation(workspace, scope, mutation)
+            .map_err(NativeUserConfigError::InvalidConfig)?;
+        let loaded = if outcome == NativeConfiguredPermissionMutationOutcome::Unchanged {
+            self.validate_unchanged(snapshot)?;
+            snapshot.loaded.clone()
+        } else {
+            self.publish_config(snapshot, config, sync_directory)?
+        };
+        Ok(NativeUserPermissionCommit { outcome, loaded })
+    }
+
+    fn validate_unchanged(
+        &self,
+        snapshot: &NativeUserConfigSnapshot,
+    ) -> Result<(), NativeUserConfigError> {
+        let name = self.component()?;
+        let observed = open_root(&snapshot.parent, name)?;
+        let bytes = match (&snapshot.root, observed) {
+            (Some(expected), Some(actual)) if same_file(expected, &actual)? => {
+                let bytes = read_current(&actual)?;
+                validate_link(&snapshot.parent, name, &actual)?;
+                bytes
+            }
+            (None, None) => None,
+            _ => return Err(NativeUserConfigError::Conflict),
+        };
+        if bytes != snapshot.bytes {
+            return Err(NativeUserConfigError::Conflict);
+        }
+        Ok(())
+    }
+
+    fn publish_config(
+        &self,
+        snapshot: &NativeUserConfigSnapshot,
+        config: crate::NativeConfig,
+        sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
+    ) -> Result<LoadedNativeConfig, NativeUserConfigError> {
+        if !Arc::ptr_eq(&self.identity, &snapshot.identity) {
+            return Err(NativeUserConfigError::Conflict);
+        }
+        // Bound the complete candidate before any directory, lock or temp creation.
+        let encoded = config
+            .serialize_current()
+            .map_err(NativeUserConfigError::InvalidConfig)?;
         let name = self.component()?;
         let observed = open_root(&snapshot.parent, name)?;
         let root = match (&snapshot.root, observed) {
@@ -185,23 +277,13 @@ impl NativeUserConfigStore {
             _ => return Err(NativeUserConfigError::Conflict),
         };
         let lock = open_lock(&root)?;
-        rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive).map_err(|e| {
-            if e == rustix::io::Errno::WOULDBLOCK {
-                NativeUserConfigError::Busy
-            } else {
-                NativeUserConfigError::Persistence
-            }
-        })?;
+        let _lock_guard = lock_config(&lock)?;
         validate_link(&root, LOCK, &lock)?;
         let bytes = read_current(&root)?;
-        let current = decode(bytes.as_deref())?;
+        decode(bytes.as_deref())?;
         if bytes != snapshot.bytes {
             return Err(NativeUserConfigError::Conflict);
         }
-        let config = current.config().with_model_preferences(preferences);
-        let encoded = config
-            .serialize_current()
-            .map_err(NativeUserConfigError::InvalidConfig)?;
         let temp = rustix::fs::openat(
             &root,
             TEMP,
@@ -243,6 +325,41 @@ impl NativeUserConfigStore {
         validate_link(&snapshot.parent, name, &root)
             .map_err(|_| NativeUserConfigError::CommitAmbiguous)?;
         Ok(LoadedNativeConfig::from_file(config))
+    }
+}
+
+#[must_use = "retain the guard until the configuration transaction completes"]
+struct ConfigLockGuard<'a>(&'a OwnedFd);
+
+impl Drop for ConfigLockGuard<'_> {
+    fn drop(&mut self) {
+        // An inherited or duplicated open-file description may outlive the local
+        // descriptor. Explicit nonblocking unlock releases its shared lock now;
+        // local close remains the fallback on a non-interruption OS failure.
+        let _ = retry_lock_interrupted(|| rustix::fs::flock(self.0, FlockOperation::Unlock));
+    }
+}
+
+fn lock_config(lock: &OwnedFd) -> Result<ConfigLockGuard<'_>, NativeUserConfigError> {
+    retry_lock_interrupted(|| rustix::fs::flock(lock, FlockOperation::NonBlockingLockExclusive))
+        .map_err(|error| {
+            if error == rustix::io::Errno::WOULDBLOCK {
+                NativeUserConfigError::Busy
+            } else {
+                NativeUserConfigError::Persistence
+            }
+        })?;
+    Ok(ConfigLockGuard(lock))
+}
+
+fn retry_lock_interrupted<T>(
+    mut operation: impl FnMut() -> rustix::io::Result<T>,
+) -> rustix::io::Result<T> {
+    loop {
+        match operation() {
+            Err(rustix::io::Errno::INTR) => {}
+            result => return result,
+        }
     }
 }
 
@@ -402,6 +519,57 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    fn config_lock_scope_releases_a_surviving_open_description_duplicate() {
+        let directory =
+            std::env::temp_dir().join(format!("mg-user-config-lock-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root = rustix::fs::open(&directory, READ | OFlags::DIRECTORY, Mode::empty()).unwrap();
+        let survivor = {
+            let original = open_lock(&root).unwrap();
+            let _guard = lock_config(&original).unwrap();
+            let survivor = rustix::io::dup(&original).unwrap();
+            let contender = open_lock(&root).unwrap();
+            assert!(matches!(
+                lock_config(&contender),
+                Err(NativeUserConfigError::Busy)
+            ));
+            survivor
+        };
+        let contender = open_lock(&root).unwrap();
+        let acquired = lock_config(&contender).unwrap();
+        drop(acquired);
+        drop(survivor);
+        drop(contender);
+        drop(root);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn config_lock_retries_interruption_but_not_busy_or_other_errors() {
+        let mut calls = 0;
+        let result = retry_lock_interrupted(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(rustix::io::Errno::INTR)
+            } else {
+                Ok(7)
+            }
+        });
+        assert_eq!(result, Ok(7));
+        assert_eq!(calls, 3);
+        for error in [rustix::io::Errno::WOULDBLOCK, rustix::io::Errno::IO] {
+            let mut calls = 0;
+            let result: rustix::io::Result<()> = retry_lock_interrupted(|| {
+                calls += 1;
+                Err(error)
+            });
+            assert_eq!(result, Err(error));
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[test]
     fn write_interruptions_are_bounded_even_with_partial_progress() {
         struct InterruptedWriter(usize);
         impl Write for InterruptedWriter {
@@ -448,6 +616,49 @@ mod tests {
         assert_eq!(
             store.load().unwrap().loaded().config().model_preferences(),
             preferences
+        );
+        assert!(!directory.join(TEMP).exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn permission_directory_sync_failure_retains_committed_overlay_as_ambiguous() {
+        let directory = std::env::temp_dir().join(format!(
+            "mg-user-permission-ambiguous-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let store = NativeUserConfigStore::new(directory.clone());
+        let snapshot = store.load().unwrap();
+        let mutation = NativeConfiguredPermissionMutation::Add {
+            permission: "bash".into(),
+            pattern: "saved *".into(),
+        };
+        assert_eq!(
+            store
+                .publish_permission_mutation(
+                    &snapshot,
+                    Path::new("/work"),
+                    NativeConfiguredPermissionScope::Local,
+                    &mutation,
+                    |_| Err(rustix::io::Errno::IO)
+                )
+                .unwrap_err(),
+            NativeUserConfigError::CommitAmbiguous
+        );
+        let current = store.load().unwrap();
+        assert_eq!(current.loaded().config().schema_version(), 6);
+        assert_eq!(
+            current
+                .loaded()
+                .config()
+                .permission_sources(Path::new("/work"))
+                .unwrap()
+                .effective()
+                .rules()[0]
+                .pattern(),
+            "saved *"
         );
         assert!(!directory.join(TEMP).exists());
         std::fs::remove_dir_all(directory).unwrap();

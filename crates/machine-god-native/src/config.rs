@@ -11,6 +11,14 @@ use std::os::unix::fs::OpenOptionsExt;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
+#[path = "config_permissions.rs"]
+mod permissions;
+pub use permissions::{
+    NativeConfiguredPermissionMutation, NativeConfiguredPermissionMutationOutcome,
+    NativeConfiguredPermissionReset, NativeConfiguredPermissionScope,
+    NativeConfiguredPermissionSources,
+};
+
 use super::ai_gateway::{AI_GATEWAY_DEFAULT_MODEL, valid_model};
 use super::{
     NativeConfiguredPermissionDecision, NativeConfiguredPermissionRule,
@@ -20,7 +28,7 @@ use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file
 use super::{NativeModelPreferences, NativeReasoningEffort};
 
 /// Current configuration schema version used by this native host.
-pub const CONFIG_SCHEMA_VERSION: u32 = 5;
+pub const CONFIG_SCHEMA_VERSION: u32 = 6;
 
 /// Maximum number of bytes retained while loading a native configuration.
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -85,6 +93,7 @@ pub struct NativeConfig {
     permission_mode: PermissionMode,
     sandbox_mode: NativeSandboxMode,
     permission_rules: NativeConfiguredPermissionRules,
+    workspace_permission_rules: Vec<permissions::WorkspaceRules>,
     provider: NativeProviderKind,
     transport: NativeTransportKind,
     model: String,
@@ -134,6 +143,7 @@ impl NativeConfig {
             permission_mode: &'a str,
             sandbox_mode: &'a str,
             permission_rules: &'a NativeConfiguredPermissionRules,
+            workspace_permission_rules: &'a [permissions::WorkspaceRules],
             provider: &'a str,
             transport: &'a str,
             model: &'a str,
@@ -162,6 +172,7 @@ impl NativeConfig {
                 permission_mode: self.permission_mode.as_str(),
                 sandbox_mode: self.sandbox_mode.as_str(),
                 permission_rules: &self.permission_rules,
+                workspace_permission_rules: &self.workspace_permission_rules,
                 provider: self.provider.as_str(),
                 transport: self.transport.as_str(),
                 model: &self.model,
@@ -229,6 +240,7 @@ impl Default for NativeConfig {
             permission_mode: PermissionMode::Ask,
             sandbox_mode: NativeSandboxMode::None,
             permission_rules: NativeConfiguredPermissionRules::default(),
+            workspace_permission_rules: Vec::new(),
             provider: NativeProviderKind::VercelAiGateway,
             transport: NativeTransportKind::AiGatewayHttp,
             model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
@@ -247,6 +259,7 @@ impl fmt::Debug for NativeConfig {
             .field("permission_mode", &self.permission_mode)
             .field("sandbox_mode", &self.sandbox_mode)
             .field("permission_rules", &"<redacted>")
+            .field("workspace_permission_rules", &"<redacted>")
             .field("provider", &self.provider)
             .field("transport", &self.transport)
             .field("model", &"<redacted>")
@@ -459,6 +472,7 @@ pub(crate) fn parse_config_bytes(bytes: &[u8]) -> Result<NativeConfig, NativeCon
         3 => parse_v3_config(bytes)?,
         4 => parse_v4_config(bytes)?,
         5 => parse_v5_config(bytes)?,
+        6 => parse_v6_config(bytes)?,
         _ => unreachable!("validated schema version is supported"),
     };
     Ok(config)
@@ -476,6 +490,7 @@ fn validate_schema_version(bytes: &[u8]) -> Result<u32, NativeConfigError> {
                 3 => return Ok(3),
                 4 => return Ok(4),
                 5 => return Ok(5),
+                6 => return Ok(6),
                 _ => {}
             }
         }
@@ -498,6 +513,7 @@ fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         permission_mode: PermissionMode::Ask,
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
+        workspace_permission_rules: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
@@ -523,6 +539,7 @@ fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         permission_mode: PermissionMode::Ask,
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
+        workspace_permission_rules: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
@@ -549,6 +566,7 @@ fn parse_v3_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         permission_mode: PermissionMode::Ask,
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
+        workspace_permission_rules: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
@@ -577,6 +595,7 @@ fn parse_v4_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         permission_mode: PermissionMode::Ask,
         sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
+        workspace_permission_rules: Vec::new(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         credential_source: NativeCredentialSourceKind::Environment,
@@ -588,6 +607,31 @@ fn parse_v4_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
 fn parse_v5_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     let invalid = || NativeConfigError::new(NativeConfigErrorKind::InvalidFormat);
     let wire: WireNativeConfigV5 = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    config_from_v5(wire)
+}
+
+fn parse_v6_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    let invalid = || NativeConfigError::new(NativeConfigErrorKind::InvalidFormat);
+    let wire: WireNativeConfigV6 = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let workspaces = permissions::decode_workspaces(wire.workspace_permission_rules)?;
+    let mut config = config_from_v5(WireNativeConfigV5 {
+        schema_version: wire.schema_version,
+        permission_mode: wire.permission_mode,
+        sandbox_mode: wire.sandbox_mode,
+        permission_rules: wire.permission_rules,
+        provider: wire.provider,
+        transport: wire.transport,
+        model: wire.model,
+        credential_source: wire.credential_source,
+        effort: wire.effort,
+        fast_mode: wire.fast_mode,
+    })?;
+    config.workspace_permission_rules = workspaces;
+    Ok(config)
+}
+
+fn config_from_v5(wire: WireNativeConfigV5) -> Result<NativeConfig, NativeConfigError> {
+    let invalid = || NativeConfigError::new(NativeConfigErrorKind::InvalidFormat);
     let permission_mode = match wire.permission_mode.as_str() {
         "ask" => PermissionMode::Ask,
         "auto" => PermissionMode::Auto,
@@ -607,8 +651,27 @@ fn parse_v5_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         return Err(invalid());
     }
     let effort = NativeReasoningEffort::parse(&wire.effort).map_err(|_| invalid())?;
+    let permission_rules = decode_permission_rules(wire.permission_rules)?;
+    Ok(NativeConfig {
+        schema_version: wire.schema_version,
+        permission_mode,
+        sandbox_mode,
+        permission_rules,
+        workspace_permission_rules: Vec::new(),
+        provider: NativeProviderKind::VercelAiGateway,
+        transport: NativeTransportKind::AiGatewayHttp,
+        model: wire.model,
+        credential_source: NativeCredentialSourceKind::Environment,
+        effort,
+        fast_mode: wire.fast_mode,
+    })
+}
+
+fn decode_permission_rules(
+    wire: Vec<WirePermissionRule>,
+) -> Result<NativeConfiguredPermissionRules, NativeConfigError> {
+    let invalid = || NativeConfigError::new(NativeConfigErrorKind::InvalidFormat);
     let rules = wire
-        .permission_rules
         .into_iter()
         .map(|rule| {
             let action = match rule.action.as_str() {
@@ -621,19 +684,7 @@ fn parse_v5_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
                 .map_err(|_| invalid())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let permission_rules = NativeConfiguredPermissionRules::new(rules).map_err(|_| invalid())?;
-    Ok(NativeConfig {
-        schema_version: wire.schema_version,
-        permission_mode,
-        sandbox_mode,
-        permission_rules,
-        provider: NativeProviderKind::VercelAiGateway,
-        transport: NativeTransportKind::AiGatewayHttp,
-        model: wire.model,
-        credential_source: NativeCredentialSourceKind::Environment,
-        effort,
-        fast_mode: wire.fast_mode,
-    })
+    NativeConfiguredPermissionRules::new(rules).map_err(|_| invalid())
 }
 
 fn is_json_integer(value: &str) -> bool {
@@ -749,6 +800,22 @@ struct WireNativeConfigV5 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WireNativeConfigV6 {
+    schema_version: u32,
+    permission_mode: String,
+    sandbox_mode: String,
+    permission_rules: Vec<WirePermissionRule>,
+    workspace_permission_rules: Vec<permissions::WireWorkspaceRules>,
+    provider: String,
+    transport: String,
+    model: String,
+    credential_source: String,
+    effort: String,
+    fast_mode: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WirePermissionRule {
     permission: String,
     pattern: String,
@@ -812,10 +879,14 @@ mod tests {
                 assert_eq!(rules[2].decision(), NativeConfiguredPermissionDecision::Ask);
                 assert!(!format!("{parsed:?}").contains("private-path"));
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
-                assert_eq!(
-                    parse_config_bytes(&parsed.serialize_current().unwrap()).unwrap(),
-                    parsed
-                );
+                {
+                    let mut upgraded = parsed.clone();
+                    upgraded.schema_version = CONFIG_SCHEMA_VERSION;
+                    assert_eq!(
+                        parse_config_bytes(&parsed.serialize_current().unwrap()).unwrap(),
+                        upgraded
+                    );
+                }
             }
         }
         assert_eq!(NativeSandboxMode::default(), NativeSandboxMode::None);
@@ -1347,7 +1418,7 @@ mod tests {
         );
 
         let loaded = load_native_config(&temporary.environment()).unwrap();
-        assert_eq!(CONFIG_SCHEMA_VERSION, 5);
+        assert_eq!(CONFIG_SCHEMA_VERSION, 6);
         assert_eq!(loaded.origin(), ConfigOrigin::File);
         assert_config(loaded.config(), 3, "custom/model");
     }
@@ -1434,7 +1505,7 @@ mod tests {
     #[test]
     fn unsupported_schema_version_has_its_own_kind() {
         let temporary = TestDirectory::new("unsupported-version");
-        temporary.write_config(br#"{"schema_version":6,"permission_mode":"ask"}"#);
+        temporary.write_config(br#"{"schema_version":7,"permission_mode":"ask"}"#);
 
         let error = load_native_config(&temporary.environment()).unwrap_err();
         assert_eq!(
@@ -1446,7 +1517,7 @@ mod tests {
     #[test]
     fn future_and_arbitrary_size_integer_versions_are_classified_before_v1_fields() {
         for (index, document) in [
-            br#"{"schema_version":6,"permission_mode":"future","new_field":true}"#.as_slice(),
+            br#"{"schema_version":7,"permission_mode":"future","new_field":true}"#.as_slice(),
             br#"{"schema_version":18446744073709551616}"#.as_slice(),
             br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
         ]

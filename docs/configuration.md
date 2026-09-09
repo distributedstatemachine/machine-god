@@ -13,14 +13,14 @@ once after complete argument validation. It validates the closed provider,
 transport, and credential-source selections before native credential or
 network access, never reloads configuration for public fallback, never changes
 the configured generation model, and never writes or migrates the file. That
-catalog path accepts the built-in or missing-file safe schema-v5 defaults and
-strict v1/v2/v3/v4/v5 files, but rejects any config-load failure before credential
+catalog path accepts the built-in or missing-file safe schema-v6 defaults and
+strict v1/v2/v3/v4/v5/v6 files, but rejects any config-load failure before credential
 discovery. It does not add an endpoint, team, token, cache, or catalog field to
-schema v5.
+the configuration schema.
 
 The configuration contract advances the built-in and current file
-schema to v5 while retaining strict read compatibility for the exact legacy v1,
-v2, v3 and v4 objects. Loading is still read-only; explicit user-default publication
+schema to v6 while retaining strict read compatibility for the exact legacy v1,
+v2, v3, v4 and v5 objects. Loading is still read-only; explicit user-default publication
 is a separately granted native effect described below.
 
 ## Location and defaults
@@ -45,11 +45,11 @@ whether it is valid, relative, or non-Unicode, so that path neither reads nor
 falls back to `HOME`.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
-the explicit built-in schema-v5 configuration. A resolved file that is missing
+the explicit built-in schema-v6 configuration. A resolved file that is missing
 also produces this configuration:
 
 ```json
-{"schema_version":5,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
+{"schema_version":6,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"workspace_permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
 ```
 
 Invalid selected environment input is not treated as absence and fails closed.
@@ -119,13 +119,13 @@ projection. Their observable `schema_version()` values remain `1` and `2`
 respectively; neither is relabelled as v3. Loading never rewrites, expands, or
 migrates either file.
 
-Every integer schema version other than `1`, `2`, `3`, `4`, or `5` is unsupported. A
+Every integer schema version other than `1`, `2`, `3`, `4`, `5`, or `6` is unsupported. A
 missing, duplicate, non-integer, or otherwise malformed schema-version field is
 invalid format. Full-buffer UTF-8 validation still precedes schema dispatch.
 
 ## Public data boundary
 
-`CONFIG_SCHEMA_VERSION` is `5`. `AI_GATEWAY_DEFAULT_MODEL` is
+`CONFIG_SCHEMA_VERSION` is `6`. `AI_GATEWAY_DEFAULT_MODEL` is
 `"zai/glm-5.2"`, and `AI_GATEWAY_MAX_MODEL_BYTES` aliases core's
 `MAX_MODEL_ID_BYTES` (`1024`). The shared `validate_model_id` contract matches
 the pinned settings and durable-session model validators.
@@ -165,7 +165,7 @@ owns its non-cloneable secret snapshot and does not put secret values into
 
 The raw file limit remains 64 KiB (65,536 bytes). A file of exactly that length
 can be considered for parsing; any additional byte makes it oversized. Bytes
-must be valid UTF-8 and then valid strict v1, v2, v3, v4, or v5 JSON. The loader retains
+must be valid UTF-8 and then valid strict v1, v2, v3, v4, v5, or v6 JSON. The loader retains
 at most 64 KiB plus one byte while deciding whether input fits, so neither a
 stale size observation nor concurrent file growth turns loading into an
 unbounded retained buffer. The read loop retries the first 15 cumulative
@@ -314,11 +314,15 @@ the retained parent. It takes a private, no-follow `.config.lock` via
 nonblocking exclusive flock; contention returns `Busy`. The lock persists and
 is never unlinked. Under this lock it rereads and validates the exact current
 bytes; stale or foreign snapshots return `Conflict` without overwriting them.
+An acquired scoped guard explicitly unlocks on every exit, retrying interrupted
+lock operations. Closing the local descriptor alone is insufficient when a
+concurrent spawn or descriptor duplicate retains its open-file description.
+Genuine contention still returns `Busy`; locks are not externally reset or unlinked.
 
 Only the requested model/effort/fast fields change. Existing validated provider,
-transport, permission mode, sandbox preference, ordered permission rules and
+transport, permission mode, sandbox preference, global and workspace permission rules and
 credential-source selections are retained, and the
-explicit publication upgrades supported legacy formats to schema v5 in the
+explicit publication upgrades supported legacy formats to schema v6 in the
 same `config.json`. Malformed or future configurations are never overwritten.
 Publication exclusively creates `.config.tmp` with mode 0600, writes and fsyncs
 it, rechecks entry identities and current bytes, renames it atomically, and
@@ -336,3 +340,71 @@ Callers must report the two outcomes separately, matching pinned
 `src/core/session/session_commands.zig` settings-result reporting. A user-file
 failure does not imply runtime selection or session persistence failed, and a
 session failure must not suppress an explicitly requested user-default attempt.
+
+## Schema v6 workspace permission sources
+
+Schema v6 retains all v5 fields and requires `workspace_permission_rules`, an
+array of objects with exactly `workspace_hex` and `permission_rules`. The first
+is canonical lowercase hexadecimal encoding of normalized absolute Unix path
+bytes; the second uses the same ordered rule-array contract as the global
+`permission_rules`. The decoded path is at most 4096 bytes, contains no NUL,
+empty components, `.` or `..`, and has no trailing separator except `/` itself.
+Non-UTF-8 workspace bytes are preserved losslessly. Duplicate workspace keys,
+unknown/duplicate object fields, invalid hex and malformed rules are rejected.
+Configuration parsing remains available independently of native runtime support;
+it does not open or canonicalize any workspace path.
+
+The entire configuration, including every workspace, rule and JSON overhead,
+shares the existing 64 KiB bound. Limits are not multiplied per workspace.
+Legacy v1–v5 files have no local entries in memory and retain their original
+schema labels. Their new-field rejection remains strict. A successful explicit
+write upgrades to v6; reads and unchanged permission edits never upgrade bytes.
+
+`NativeConfig::permission_sources(workspace)` takes an already-normalized host
+workspace label and returns borrowed `user`, optional `local`, and `effective`
+rule lists plus `user_shadowed_by_local`. An absent local entry inherits the
+global list. A present local entry replaces the whole global list, including
+when local is explicitly empty; sources are never merged. The existing
+`permission_rules()` getter remains the global/user list. These observations
+do not grant tool or filesystem authority and do not install runtime policy.
+`has_workspace_permission_rules()` reports presence of any local source,
+including an explicit empty entry, without exposing its contents or path.
+
+## Durable configured-permission edits
+
+`NativeUserConfigStore::apply_permission_mutation` receives its exact snapshot,
+the selected workspace, `User` or `Local` scope, and an explicit `Add`, `Remove`
+or `Reset` storage operation. Categories and patterns must already be canonical;
+the store validates bounds and surrounding whitespace but does not parse slash
+commands, validate registered tool names or establish human consent. Both scopes
+are stored in the same granted user configuration file, not repository files
+or session metadata.
+
+Add updates the last exact category/pattern to Allow, or appends a new rule;
+an already-Allow last match is unchanged. Earlier native duplicate rules keep
+their order. Remove deletes all exact matching rows, including Ask/Deny, and
+retains an empty local entry when deleting its final row. Reset deletes only
+Allow rows: commands select `bash`, URLs select `url`, `open_url` and
+`browser_navigate`, fetch domains select `web_fetch`, and tools exclude those
+categories and `*`. All selects every category. Ask/Deny rules survive reset.
+If reset actually removes rows and empties a local list, the local entry is
+removed and user rules become effective again. Reset on an already-empty local
+list is unchanged and preserves its explicit empty shadow.
+
+The future is inert before polling and creates no detached writer. The complete
+candidate is validated and serialized before directory, lock or temp creation.
+Changed edits reuse the model-default store's exact-byte CAS, nonblocking lock,
+private temp, rename and directory durability checks, preserving other
+workspaces and unrelated model/policy fields. Model-default edits likewise
+preserve all local permission entries. Unchanged edits validate observed
+store/root/bytes without creating a lock or writing anything; this is an
+observation, not a reservation against future concurrent changes.
+
+`NativeUserPermissionCommit` contains `Changed { removed_rules }` or `Unchanged`
+and the resulting `LoadedNativeConfig`. Removed counts refer to actual native
+rows; Add reports zero. A Changed success means durable publication was
+confirmed, not that a later runtime reload succeeded. Prepublication failures
+leave original bytes authoritative; failures after rename remain
+`CommitAmbiguous` and require fresh observation rather than automatic retry.
+Callers must preserve the durable result independently from reload/application
+failures. Receipt and source Debug output do not expose workspace or rule text.
