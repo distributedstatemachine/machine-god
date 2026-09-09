@@ -156,19 +156,23 @@ impl NativeUserConfigStore {
         }
         before_lock();
         let name = self.component()?;
-        let observed = open_root(&snapshot.parent, name)?;
+        let parent = snapshot
+            .parent
+            .resolve(true)?
+            .ok_or(NativeUserConfigError::Persistence)?;
+        let observed = open_root(parent.descriptor(), name)?;
         let root = match (&snapshot.root, observed) {
             (Some(expected), Some(actual)) if same_file(expected, &actual)? => actual,
             (None, Some(actual)) => actual,
             (None, None) => {
-                match rustix::fs::mkdirat(&snapshot.parent, name, Mode::from_raw_mode(0o700)) {
+                match rustix::fs::mkdirat(parent.descriptor(), name, Mode::from_raw_mode(0o700)) {
                     Ok(()) => {}
                     Err(error) if error == rustix::io::Errno::EXIST => {}
                     Err(_) => return Err(NativeUserConfigError::Persistence),
                 }
-                let root =
-                    open_root(&snapshot.parent, name)?.ok_or(NativeUserConfigError::Persistence)?;
-                rustix::fs::fsync(&snapshot.parent)
+                let root = open_root(parent.descriptor(), name)?
+                    .ok_or(NativeUserConfigError::Persistence)?;
+                rustix::fs::fsync(parent.descriptor())
                     .map_err(|_| NativeUserConfigError::Persistence)?;
                 root
             }
@@ -176,7 +180,8 @@ impl NativeUserConfigStore {
         };
         let lock = open_lock(&root)?;
         let _guard = lock_config(&lock)?;
-        validate_link(&snapshot.parent, name, &root)?;
+        parent.validate()?;
+        validate_link(parent.descriptor(), name, &root)?;
         validate_link(&root, LOCK, &lock)?;
         let bytes = read_current(&root)?;
         let latest = decode(bytes.as_deref())?;
@@ -201,7 +206,7 @@ impl NativeUserConfigStore {
             .serialize_current()
             .map_err(NativeUserConfigError::InvalidConfig)?;
         let publication = WorkspacePublication {
-            parent: &snapshot.parent,
+            parent: &parent,
             name,
             root: &root,
             lock: &lock,
@@ -287,7 +292,7 @@ fn unchanged(
 }
 
 struct WorkspacePublication<'a> {
-    parent: &'a OwnedFd,
+    parent: &'a super::parents::ResolvedParent<'a>,
     name: &'a std::ffi::OsStr,
     root: &'a OwnedFd,
     lock: &'a OwnedFd,
@@ -317,7 +322,8 @@ impl WorkspacePublication<'_> {
             return Err(NativeUserConfigError::Persistence);
         }
         let checked = (|| {
-            validate_link(self.parent, self.name, self.root)?;
+            self.parent.validate()?;
+            validate_link(self.parent.descriptor(), self.name, self.root)?;
             validate_link(self.root, LOCK, self.lock)?;
             validate_link(self.root, TEMP, &temp)?;
             if read_current(self.root)?.as_deref() != self.previous {
@@ -335,7 +341,8 @@ impl WorkspacePublication<'_> {
         }
         Ok(
             if sync_directory(self.root).is_err()
-                || validate_link(self.parent, self.name, self.root).is_err()
+                || self.parent.validate().is_err()
+                || validate_link(self.parent.descriptor(), self.name, self.root).is_err()
             {
                 NativeWorkspaceCommitDurability::Ambiguous
             } else {

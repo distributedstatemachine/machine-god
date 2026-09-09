@@ -196,6 +196,57 @@ fn observed_noop_does_not_upgrade_or_rewrite_provisional_record() {
 }
 
 #[test]
+fn missing_parent_first_use_reconciles_concurrent_latest_writer_under_lock() {
+    let fixture = Fixture::new();
+    let root = fixture.0.join("missing/nested/config");
+    let store = NativeUserConfigStore::new(root.clone());
+    let other = NativeUserConfigStore::new(root);
+    let receipt = store
+        .publish_workspace_mutation(
+            b"/work",
+            &add(b"/second"),
+            || {
+                edit(&other, b"/first");
+            },
+            |root| rustix::fs::fsync(root),
+            &[],
+        )
+        .unwrap();
+    assert_eq!(receipt.before, vec![record(b"/first")]);
+    assert_eq!(receipt.after, vec![record(b"/first"), record(b"/second")]);
+    assert_eq!(store.load().unwrap().loaded(), &receipt.loaded);
+}
+
+#[test]
+fn moved_new_parent_after_workspace_publication_retains_ambiguous_candidate() {
+    let fixture = Fixture::new();
+    let missing = fixture.0.join("missing");
+    let moved = fixture.0.join("moved");
+    let store = NativeUserConfigStore::new(missing.join("nested/config"));
+    let receipt = store
+        .publish_workspace_mutation(
+            b"/work",
+            &add(b"/first"),
+            || {},
+            |root| {
+                fs::rename(&missing, &moved).unwrap();
+                fs::create_dir(&missing).unwrap();
+                rustix::fs::fsync(root)
+            },
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        receipt.durability,
+        NativeWorkspaceCommitDurability::Ambiguous
+    );
+    assert!(receipt.before.is_empty());
+    assert_eq!(receipt.after, vec![record(b"/first")]);
+    assert!(moved.join("nested/config/config.json").is_file());
+    assert!(!missing.join("nested").exists());
+}
+
+#[test]
 fn inert_future_and_missing_observational_noops_create_nothing() {
     let fixture = Fixture::new();
     let store = fixture.store();

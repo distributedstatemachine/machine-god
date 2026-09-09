@@ -3,6 +3,7 @@
 use std::fmt;
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ use crate::config::{
 };
 use crate::{LoadedNativeConfig, NativeConfigError, NativeModelPreferences};
 
+mod parents;
 mod workspaces;
 pub(crate) use workspaces::WorkspaceDirectoryAlias;
 pub use workspaces::{NativeUserWorkspaceCommit, NativeWorkspaceCommitDurability};
@@ -74,12 +76,12 @@ impl fmt::Debug for NativeUserConfigStore {
 
 /// Read-only observation and exact-byte compare-and-swap token.
 ///
-/// Retains the parent and any existing root descriptor, and is bound to the
-/// originating store instance. It cannot authorize a different store.
+/// Retains the nearest existing ancestor, unresolved parent components and any
+/// existing root descriptor. Bound to its originating store instance.
 pub struct NativeUserConfigSnapshot {
     loaded: LoadedNativeConfig,
     bytes: Option<Vec<u8>>,
-    parent: OwnedFd,
+    parent: parents::ParentObservation,
     root: Option<OwnedFd>,
     identity: Arc<()>,
 }
@@ -106,7 +108,7 @@ impl fmt::Debug for NativeUserConfigSnapshot {
 }
 
 impl NativeUserConfigStore {
-    /// Grants the final configuration directory beneath an existing parent.
+    /// Grants one bounded configuration namespace, including missing ancestors.
     /// No environment is read and no filesystem effects occur here.
     #[must_use]
     pub fn new(directory: PathBuf) -> Self {
@@ -118,6 +120,9 @@ impl NativeUserConfigStore {
 
     fn component(&self) -> Result<&std::ffi::OsStr, NativeUserConfigError> {
         if !self.directory.is_absolute()
+            || self.directory.as_os_str().as_bytes().len() > 4096
+            || self.directory.as_os_str().as_bytes().contains(&0)
+            || self.directory.components().count() > 64
             || self
                 .directory
                 .components()
@@ -136,17 +141,23 @@ impl NativeUserConfigStore {
     /// Rejects unsafe roots, invalid configurations and unavailable parent authority.
     pub fn load(&self) -> Result<NativeUserConfigSnapshot, NativeUserConfigError> {
         let component = self.component()?;
-        let parent = rustix::fs::open(
+        let parent = parents::ParentObservation::observe(
             self.directory
                 .parent()
                 .ok_or(NativeUserConfigError::UnsafePath)?,
-            READ | OFlags::DIRECTORY,
-            Mode::empty(),
-        )
-        .map_err(|_| NativeUserConfigError::UnsafePath)?;
-        let root = open_root(&parent, component)?;
+        )?;
+        let resolved = parent.resolve(false)?;
+        let root = resolved
+            .as_ref()
+            .map(|parent| open_root(parent.descriptor(), component))
+            .transpose()?
+            .flatten();
         let bytes = root.as_ref().map(read_current).transpose()?.flatten();
         let loaded = decode(bytes.as_deref())?;
+        if let Some(resolved) = &resolved {
+            resolved.validate()?;
+        }
+        drop(resolved);
         Ok(NativeUserConfigSnapshot {
             loaded,
             bytes,
@@ -236,11 +247,18 @@ impl NativeUserConfigStore {
         snapshot: &NativeUserConfigSnapshot,
     ) -> Result<(), NativeUserConfigError> {
         let name = self.component()?;
-        let observed = open_root(&snapshot.parent, name)?;
+        let Some(parent) = snapshot.parent.resolve(false)? else {
+            return if snapshot.root.is_none() && snapshot.bytes.is_none() {
+                Ok(())
+            } else {
+                Err(NativeUserConfigError::Conflict)
+            };
+        };
+        let observed = open_root(parent.descriptor(), name)?;
         let bytes = match (&snapshot.root, observed) {
             (Some(expected), Some(actual)) if same_file(expected, &actual)? => {
                 let bytes = read_current(&actual)?;
-                validate_link(&snapshot.parent, name, &actual)?;
+                validate_link(parent.descriptor(), name, &actual)?;
                 bytes
             }
             (None, None) => None,
@@ -249,6 +267,7 @@ impl NativeUserConfigStore {
         if bytes != snapshot.bytes {
             return Err(NativeUserConfigError::Conflict);
         }
+        parent.validate()?;
         Ok(())
     }
 
@@ -266,20 +285,25 @@ impl NativeUserConfigStore {
             .serialize_current()
             .map_err(NativeUserConfigError::InvalidConfig)?;
         let name = self.component()?;
-        let observed = open_root(&snapshot.parent, name)?;
+        let parent = snapshot
+            .parent
+            .resolve(true)?
+            .ok_or(NativeUserConfigError::Persistence)?;
+        let observed = open_root(parent.descriptor(), name)?;
         let root = match (&snapshot.root, observed) {
             (Some(expected), Some(actual)) if same_file(expected, &actual)? => actual,
             (None, None) => {
-                rustix::fs::mkdirat(&snapshot.parent, name, Mode::from_raw_mode(0o700))
+                rustix::fs::mkdirat(parent.descriptor(), name, Mode::from_raw_mode(0o700))
                     .map_err(|_| NativeUserConfigError::Conflict)?;
-                let root =
-                    open_root(&snapshot.parent, name)?.ok_or(NativeUserConfigError::Persistence)?;
-                rustix::fs::fsync(&snapshot.parent)
+                let root = open_root(parent.descriptor(), name)?
+                    .ok_or(NativeUserConfigError::Persistence)?;
+                rustix::fs::fsync(parent.descriptor())
                     .map_err(|_| NativeUserConfigError::Persistence)?;
                 root
             }
             _ => return Err(NativeUserConfigError::Conflict),
         };
+        parent.validate()?;
         let lock = open_lock(&root)?;
         let _lock_guard = lock_config(&lock)?;
         validate_link(&root, LOCK, &lock)?;
@@ -309,7 +333,8 @@ impl NativeUserConfigStore {
         }
         // Recheck both links and bytes while holding the cooperative writer lock.
         let checked = (|| {
-            validate_link(&snapshot.parent, name, &root)?;
+            parent.validate()?;
+            validate_link(parent.descriptor(), name, &root)?;
             validate_link(&root, LOCK, &lock)?;
             validate_link(&root, TEMP, &temp)?;
             if read_current(&root)? != snapshot.bytes {
@@ -326,7 +351,10 @@ impl NativeUserConfigStore {
             return Err(NativeUserConfigError::Persistence);
         }
         sync_directory(&root).map_err(|_| NativeUserConfigError::CommitAmbiguous)?;
-        validate_link(&snapshot.parent, name, &root)
+        parent
+            .validate()
+            .map_err(|_| NativeUserConfigError::CommitAmbiguous)?;
+        validate_link(parent.descriptor(), name, &root)
             .map_err(|_| NativeUserConfigError::CommitAmbiguous)?;
         Ok(LoadedNativeConfig::from_file(config))
     }

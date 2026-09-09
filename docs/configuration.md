@@ -292,25 +292,35 @@ the original file. Exactly 64 KiB remains accepted.
 ## Durable user model-default publication
 
 On Linux and macOS, `NativeUserConfigStore::new` receives an explicit absolute
-configuration-directory path and is inert. `load` is read-only: it retains an
-existing parent descriptor and any existing final-directory descriptor, reads
+configuration-directory path and is inert. The namespace is bounded to 4,096
+raw Unix path bytes and 64 components. `load` is read-only: it retains the
+nearest existing ancestor descriptor and identity, unresolved parent components,
+and any existing final-directory descriptor, reads
 at most 64 KiB plus one byte from a regular final no-follow `config.json`, and
 returns a redacted `NativeUserConfigSnapshot`. Missing final directories/files
-return explicit built-in defaults; unavailable parents and invalid files are
-errors. No environment inference or recursive parent creation occurs.
+return explicit built-in defaults, including when configuration parents do not
+exist. Unsafe or unavailable ancestors and invalid files remain errors. No
+environment inference, directory creation, or lock creation occurs on load or
+an observed no-op permission/workspace edit.
 
 The directory must be owned by the effective user and private (no group/other
 mode bits); macOS also rejects granting extended ACLs. Existing configuration
 files must be singly linked, owned regular files without group/other write
-permission. Ancestor components are not recursively frozen: operations retain
-the granted parent descriptor, so replacement of its pathname never redirects
-an already loaded snapshot to a different directory.
+permission. Existing ancestors retain their existing ownership/mode policy;
+ordinary 0755 user parents and explicitly selected temporary parents are not
+required to be private. The observed ancestor identity and subsequently opened
+no-follow descendant links are revalidated, so a replaced ancestor or injected
+symlink cannot redirect an already loaded snapshot.
 
 `set_model_preferences(snapshot, preferences)` is inert until polled and
 performs one bounded synchronous transaction without detached tasks. It binds
 the token to its originating store instance, checks the final-directory
-identity, and may create only the missing final directory with mode 0700 under
-the retained parent. It takes a private, no-follow `.config.lock` via
+identity, and only after candidate validation may create the required missing
+configuration parents and final directory with mode 0700 under the retained
+ancestor. Newly created parent directories and their directory entries are
+synced before publication continues. A failure may leave created empty
+directories; it does not claim they were rolled back. It takes a private,
+no-follow `.config.lock` via
 nonblocking exclusive flock; contention returns `Busy`. The lock persists and
 is never unlinked. Under this lock it rereads and validates the exact current
 bytes; stale or foreign snapshots return `Conflict` without overwriting them.
