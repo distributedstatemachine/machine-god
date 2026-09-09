@@ -949,7 +949,7 @@ fn output_chunk(bytes: &[u8], model_text: bool) -> Result<(Vec<u8>, usize), ()> 
         return Err(());
     }
     let text = std::str::from_utf8(&bytes[..end]).map_err(|_| ())?;
-    let mut output = crate::BoundedModelsOutput::new();
+    let mut output = crate::ask::production::interactive::bounded_output();
     for character in text.chars() {
         let formatting_control = matches!(character, '\u{061c}' | '\u{200e}'..='\u{200f}'
             | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
@@ -964,7 +964,7 @@ fn output_chunk(bytes: &[u8], model_text: bool) -> Result<(Vec<u8>, usize), ()> 
 }
 
 fn render_outcome(outcome: &NativeInteractiveOutcome) -> Result<Vec<u8>, ()> {
-    let mut text = crate::BoundedModelsOutput::new();
+    let mut text = crate::ask::production::interactive::bounded_output();
     match outcome {
         NativeInteractiveOutcome::Turn(result) => {
             text.write_str(
@@ -1067,7 +1067,7 @@ fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, 
         return super::allowlist_view::render(outcome.id.get(), receipt);
     }
 
-    let mut text = crate::BoundedModelsOutput::new();
+    let mut text = crate::ask::production::interactive::bounded_output();
     write!(text, "\n[control {}: ", outcome.id.get()).map_err(|_| ())?;
     match &outcome.result {
         Err(NativeInteractiveControlError::Undo(FileUndoError::Ambiguous)) => text.write_str(

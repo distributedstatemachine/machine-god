@@ -454,10 +454,10 @@ fn undo_renderer_keeps_outcomes_reasons_paths_and_bounds_distinct() {
         }
         receipt.result = Ok(Receipt::Undone(Outcome::Restored("\u{1b}".repeat(4096))));
         let bounded = super::render_control(&receipt).unwrap();
-        assert!(bounded.len() > 4096 && bounded.len() <= crate::MAX_MODELS_OUTPUT_BYTES);
-        receipt.result = Ok(Receipt::Undone(Outcome::Removed("\0".repeat(crate::MAX_MODELS_OUTPUT_BYTES))));
+        assert!(bounded.len() > 4096 && bounded.len() <= crate::ask::production::interactive::MAX_PRESENTATION_OUTPUT_BYTES);
+        receipt.result = Ok(Receipt::Undone(Outcome::Removed("\0".repeat(crate::ask::production::interactive::MAX_PRESENTATION_OUTPUT_BYTES))));
         assert!(super::render_control(&receipt).is_err(), "never report a truncated successful inverse");
-        assert!(matches!(&receipt.result, Ok(Receipt::Undone(Outcome::Removed(path))) if path.len() == crate::MAX_MODELS_OUTPUT_BYTES));
+        assert!(matches!(&receipt.result, Ok(Receipt::Undone(Outcome::Removed(path))) if path.len() == crate::ask::production::interactive::MAX_PRESENTATION_OUTPUT_BYTES));
         finish_signal(&mut harness).await
     });
     let mut tail = dispose(harness, fixture, result);

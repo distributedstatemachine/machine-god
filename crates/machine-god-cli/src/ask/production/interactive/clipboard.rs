@@ -77,7 +77,7 @@ fn resolve(
 }
 
 pub(super) fn render(outcome: &NativeInteractiveCopyOutcome) -> Result<Vec<u8>, ()> {
-    let mut text = crate::BoundedModelsOutput::new();
+    let mut text = crate::ask::production::interactive::bounded_output();
     let message = match outcome.result {
         Ok(NativeInteractiveCopyReceipt::Empty) => "No assistant reply to copy.",
         Ok(NativeInteractiveCopyReceipt::Copied) => "Copied to clipboard.",

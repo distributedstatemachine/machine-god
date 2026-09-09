@@ -59,8 +59,15 @@ impl SessionsCommandHost for Host {
 fn run(args: &[&str], host: &Host) -> (u8, String, String) {
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let code =
-        crate::run_with_sessions_host(args.iter().map(OsString::from), &mut out, &mut err, host);
+    let code = crate::run_with_hosts(
+        args.iter().map(OsString::from),
+        &mut out,
+        &mut err,
+        crate::CommandHosts {
+            sessions: host,
+            ..Default::default()
+        },
+    );
     (
         code,
         String::from_utf8(out).unwrap(),
@@ -187,7 +194,15 @@ fn non_unicode_flag_values_fail_before_effects() {
         args.push(OsString::from_vec(vec![0xff]));
         let host = Host::ready(Ok(SessionsSnapshot::default()));
         assert_eq!(
-            crate::run_with_sessions_host(args, &mut Vec::new(), &mut Vec::new(), &host),
+            crate::run_with_hosts(
+                args,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                crate::CommandHosts {
+                    sessions: &host,
+                    ..Default::default()
+                }
+            ),
             2
         );
         assert!(host.calls.borrow().is_empty());
@@ -352,10 +367,10 @@ fn maximum_escaped_rows_fit_and_cap_is_inclusive() {
         let out = render_sessions(&page, &options).unwrap();
         assert!(out.len() <= MAX_OUTPUT_BYTES);
     }
-    let mut out = BoundedOutput(String::new());
+    let mut out = BoundedOutput::with_capacity(MAX_OUTPUT_BYTES, 0);
     out.write_str(&"x".repeat(MAX_OUTPUT_BYTES)).unwrap();
     assert!(out.write_char('x').is_err());
-    assert_eq!(out.0.len(), MAX_OUTPUT_BYTES);
+    assert_eq!(out.finish().len(), MAX_OUTPUT_BYTES);
 }
 
 #[test]

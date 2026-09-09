@@ -1,5 +1,11 @@
 //! Interactive presentation host. Native owns sessions, policy and persistence.
 
+const MAX_PRESENTATION_OUTPUT_BYTES: usize = 64 * 1024;
+
+fn bounded_output() -> crate::bounded_output::BoundedOutput {
+    crate::bounded_output::BoundedOutput::with_capacity(MAX_PRESENTATION_OUTPUT_BYTES, 1024)
+}
+
 mod allowlist_view;
 mod clipboard;
 mod commands;

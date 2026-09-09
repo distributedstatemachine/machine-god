@@ -203,7 +203,7 @@ pub(crate) fn parse_ask_arguments(
 }
 
 pub(crate) fn run_piped_ask(
-    host: &impl AskCommandHost,
+    host: &(impl AskCommandHost + ?Sized),
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
     output_failure: &'static str,
@@ -217,7 +217,7 @@ pub(crate) fn run_piped_ask(
 }
 
 pub(crate) fn run_ask(
-    host: &impl AskCommandHost,
+    host: &(impl AskCommandHost + ?Sized),
     prompt: String,
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
@@ -235,7 +235,7 @@ pub(crate) fn run_ask(
 }
 
 pub(crate) fn run_resume(
-    host: &impl AskCommandHost,
+    host: &(impl AskCommandHost + ?Sized),
     id: SessionId,
     prompt: String,
     stdout: &mut impl io::Write,
@@ -254,7 +254,7 @@ pub(crate) fn run_resume(
 }
 
 fn run_prompt(
-    host: &impl AskCommandHost,
+    host: &(impl AskCommandHost + ?Sized),
     selection: SessionSelection,
     prompt: String,
     stdout: &mut impl io::Write,
@@ -291,7 +291,7 @@ fn finish_prompt_execution(
 }
 
 pub(crate) fn run_interactive(
-    host: &impl AskCommandHost,
+    host: &(impl AskCommandHost + ?Sized),
     selection: InteractiveSessionSelection,
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
