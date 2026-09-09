@@ -13,7 +13,7 @@ rustix.workspace = true
 
 # Do not relax the production crates' workspace-wide forbid. Only the fixed
 # PTY/identity/uptime bindings in ADR 0003 and read-only inventory binding in
-# ADR 0004 may override this deny.
+# ADR 0004 and fixed directory refill in ADR 0005 may override this deny.
 [lints.rust]
 unsafe_code = "deny"
 missing_debug_implementations = "warn"

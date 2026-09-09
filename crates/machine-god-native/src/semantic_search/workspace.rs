@@ -94,12 +94,10 @@ fn canonical_route(
     Ok((route, relative))
 }
 
-#[cfg(target_os = "linux")]
 struct ScopedCheck<'a> {
     scope: &'a NativeWorkspaceTurnScope,
     cancellation: &'a CancellationToken,
 }
-#[cfg(target_os = "linux")]
 impl super::ScanCheck for ScopedCheck<'_> {
     fn check(&self) -> Result<(), ToolError> {
         super::check_cancellation(self.cancellation)?;
@@ -112,35 +110,26 @@ pub(super) fn execute(
     value: Value,
     cancellation: &CancellationToken,
 ) -> Result<ToolOutput, ToolError> {
-    #[cfg(target_os = "linux")]
     super::check_cancellation(cancellation)?;
     let scope = scope.map_err(|_| unavailable())?;
     let arguments = decode_execution_arguments(value)?;
     let (route, relative) = canonical_route(&scope, &arguments)?;
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (route, relative, cancellation);
-        Err(super::unsupported_platform())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let check = ScopedCheck {
-            scope: &scope,
-            cancellation,
-        };
-        // The shared scanner extracts keywords before invoking this closure.
-        // Thus even descriptor duplication is absent for a stopword-only query.
-        super::SemanticSearchTool::execute_scan(&arguments, &check, || {
-            super::check_cancellation(&check)?;
-            let root = route
-                .root_descriptor()
-                .try_clone()
-                .map_err(|_| unavailable())?;
-            super::check_cancellation(&check)?;
-            let tool = super::SemanticSearchTool::from_root_descriptor(root);
-            tool.open_search_root(&relative, &check)
-        })
-    }
+    let check = ScopedCheck {
+        scope: &scope,
+        cancellation,
+    };
+    // The shared scanner extracts keywords before invoking this closure.
+    // Thus even descriptor duplication is absent for a stopword-only query.
+    super::SemanticSearchTool::execute_scan(&arguments, &check, || {
+        super::check_cancellation(&check)?;
+        let root = route
+            .root_descriptor()
+            .try_clone()
+            .map_err(|_| unavailable())?;
+        super::check_cancellation(&check)?;
+        let tool = super::SemanticSearchTool::from_root_descriptor(root);
+        tool.open_search_root(&relative, &check)
+    })
 }
 
 #[cfg(test)]

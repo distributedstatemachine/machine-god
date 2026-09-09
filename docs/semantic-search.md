@@ -27,28 +27,29 @@ configuration changes.
 
 The execution future captures that exact scope when constructed. Its first
 poll validates canonical arguments and the captured scope, never substituting
-a later registration or falling back to the standalone root. Linux execution
+a later registration or falling back to the standalone root. Supported execution
 extracts keywords before invoking even the descriptor-acquisition closure:
 a stopword-only query still performs no filesystem operation after permission,
 while requiring a valid live scope. Nonempty searches duplicate only the
 selected root descriptor, then use its private relative path for confined
 access. A renamed root remains the retained identity rather than the replacement
-at its original pathname.
+at its original pathname. Each execution opens its own descriptor-relative
+directory cursor, so repeated and concurrent scans never share enumeration
+offsets through the captured root descriptor.
 
 One shared scanner owns the original keyword compilation, content buffer,
 global budgets, incomplete reasons and best-200 result heap. Logical qualified
 path bytes are charged before descendant allocation, scoring, ranking and
 rendering; no alias map or post-scan path rewriting is used. Every existing
-Linux syscall, directory, content, matcher and rendering cancellation checkpoint
+native syscall, directory, content, matcher and rendering cancellation checkpoint
 also checks scope liveness, including final publication. Expiration rejects the
 complete operation without publishing a partial result. The fixed additional
 context error is `PermissionDenied` / `workspace_context_unavailable`, message
 `workspace context is unavailable`, non-retryable.
 
 This adapter does not add model routing, network dispatch or worker receipts:
-the search remains local lexical scoring. It does not enable the macOS directory
-reader; that platform still has the unsupported execution behavior below. The
-standalone constructors and grammar remain unchanged.
+the search remains local lexical scoring. Linux and macOS share this routing
+and scan contract. The standalone grammar remains unchanged.
 
 ## Provider input and authority
 
@@ -90,14 +91,14 @@ file, or eligible regular files beneath it when it is a directory. It does not
 imply `Read`, `Metadata`, `Enumerate`, `EnumerateRecursive`, mutation,
 external-path access, or symlink-target access. Preparation opens no
 descriptor, reads no entry or content, and consults no process state. Execution
-on Linux extracts the bounded keyword list before it reacquires the retained
+on Linux and macOS extracts the bounded keyword list before it reacquires the retained
 workspace root, so a stopword-only query performs no filesystem operation
-after permission succeeds. Non-Linux execution instead returns the fixed
+after permission succeeds. Other platforms instead return the fixed
 unsupported result before keyword extraction or filesystem work.
 
 ## Keyword extraction
 
-On Linux, keyword extraction scans the preserved query from left to right.
+Keyword extraction scans the preserved query from left to right.
 Exactly these single ASCII bytes split tokens: space, tab, comma, period,
 semicolon, colon, question mark, and exclamation mark. New token boundaries
 are not inferred from other ASCII or Unicode punctuation or whitespace.
@@ -114,21 +115,17 @@ The first sixteen remaining tokens are retained in encounter order. Tokens are
 not deduplicated, stemmed, normalized, translated, or reordered; repeated
 tokens therefore remain repeated scoring inputs. Once sixteen have been
 retained, later query bytes do not add keywords. A syntactically valid query
-that contains only splitters, short tokens, or stop words succeeds on Linux
+that contains only splitters, short tokens, or stop words succeeds on supported platforms
 with empty `keywords` and `results`, all counters zero, `incomplete: false`, and
 no filesystem effect during execution.
 
 ## Workspace confinement and traversal
 
-The host supplies one explicit absolute workspace root. On Linux, public
+The host supplies one explicit absolute workspace root. On Linux and macOS, public
 construction opens its final component as a no-follow directory and retains
-that descriptor as the tool's only filesystem authority. Every non-Linux
-target, including macOS, exposes the fixed redacted unsupported-platform
-failure and public construction performs no workspace access. The private
-macOS reference-host placeholder retains an already-cloned workspace
-descriptor only to preserve the stable tool catalog; after strict preparation
-and permission it returns the same unsupported result without inspecting that
-descriptor.
+that descriptor as the standalone tool's only filesystem authority. Other
+targets expose the fixed redacted unsupported-platform failure and public
+construction performs no workspace access.
 
 After permission, execution reparses the canonical arguments and reacquires the
 retained root identity. It resolves every selected component descriptor-
@@ -137,6 +134,14 @@ regular file or directory. A selected symlink, intermediate symlink, special
 object, path escape, or mismatched revalidation fails closed. Replacing a
 previously opened ancestor cannot redirect later lookups outside the retained
 identity.
+
+Linux rejects an unlinked retained root using its descriptor link count.
+macOS checks the descriptor's current basename against its retained parent
+descriptor with no-follow metadata, requiring the same device, inode and
+directory type; filesystem `/` is the explicit root case. The observed path
+never becomes authority for reopening the root. The shared native retained-root
+observation helper preserves every pre/post cancellation and scoped-liveness
+check, with the scanner retaining its own fixed error mapping.
 
 Directory traversal is iterative and deterministic. A directory is admitted
 atomically: execution stages no more than the global remaining non-dot entry
@@ -157,6 +162,15 @@ the call, including exact EOF and an interrupted refill that will be retried.
 Buffered entries do not consume another refill charge. Attempt exhaustion is
 the nonretryable `semantic_search_scan_limit` hard failure and returns no
 partial result. No opaque libc directory stream is used.
+
+On macOS, the bounded native reader specified by
+[ADR 0005](decisions/0005-macos-directory-reader.md) uses an initialized 8 KiB buffer and exposes
+each directory syscall refill to the same budget. One reader call consumes at
+most one record and performs at most one refill. Deleted/inode-zero records
+take the dot-entry skip path without name, visit or metadata charges; they
+cannot hide another refill or bypass cancellation. Interrupted refills are
+charged again on retry; malformed native records fail closed without a partial
+result. Shared staging, admission, sorting and ranking are unchanged.
 
 Regular files are candidates. Symbolic-link entries are counted and skipped;
 they are never opened, resolved, scored, or descended through. FIFOs, sockets,
@@ -321,7 +335,7 @@ more than one applies:
 `incomplete` is exactly whether that array is nonempty. Ordinary skips for an
 oversized file, non-text file, ignored directory, symlink, or special object do
 not by themselves make the scan incomplete; their fixed eligibility rules and
-counters make those exclusions explicit. On Linux, a stopword-only query has
+counters make those exclusions explicit. On supported platforms, a stopword-only query has
 no filesystem observations and therefore reports zero statistics.
 
 Aggregate content or name bytes, directory-read attempts, content-read
@@ -359,14 +373,14 @@ operating-system text, or raw error number. Successful paths, keywords, lines,
 and counts are authorized model-visible content, not error diagnostics. Core's
 ordinary generic durable error mapping remains unchanged.
 
-Creating an execution future is inert. On Linux, the first poll begins bounded
+Creating an execution future is inert. On Linux and macOS, the first poll begins bounded
 synchronous native work. Cancellation is checked before root acquisition,
 around selected-component and descendant opens, between entry reads, before
 and after each bounded file read, at fixed intervals through keyword matching,
 before result reconstruction, and immediately before publication. One
 operating-system open, metadata, directory-read, or file-read call already in
 flight cannot be preempted; cancellation is cooperative when that call returns.
-On non-Linux targets the first poll revalidates canonical arguments and returns
+On other targets the first poll revalidates canonical arguments and returns
 the fixed unsupported result without filesystem work.
 
 If descriptor-relative reacquisition of the retained workspace root fails
@@ -398,5 +412,5 @@ divergence is intentional.
 This contract does not add embeddings, fuzzy or vector similarity, query
 expansion, language-aware tokenization, Unicode case folding, indexing,
 watchers, ignore-file interpretation, repository discovery, external paths,
-non-Linux hardened traversal, a CLI command, or a product-performance or
+other-platform hardened traversal, a CLI command, or a product-performance or
 fx-equivalence claim.
