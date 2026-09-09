@@ -1,6 +1,7 @@
 //! One bounded source merger for startup and post-publication reconciliation.
 
 use super::NativeWorkspaceServiceError as Error;
+use crate::user_config_store::WorkspaceDirectoryAlias;
 use crate::{
     NativeSavedWorkspaceDirectory as Saved, NativeWorkspaceAuthorityError as AuthorityError,
     NativeWorkspaceEntrySpec as Spec, NativeWorkspaceSource as Source,
@@ -18,6 +19,14 @@ pub(crate) fn merge_workspace_sources_blocking(
     saved: &[Saved],
     launch: &[Source],
 ) -> Result<Vec<Spec>, Error> {
+    merge_observed_sources_blocking(saved, launch, &[])
+}
+
+pub(super) fn merge_observed_sources_blocking(
+    saved: &[Saved],
+    launch: &[Source],
+    aliases: &[WorkspaceDirectoryAlias],
+) -> Result<Vec<Spec>, Error> {
     if saved.len() > 16 || launch.len() > 64 {
         return Err(Error::Authority(AuthorityError::TooManyDirectories));
     }
@@ -26,6 +35,10 @@ pub(crate) fn merge_workspace_sources_blocking(
         let source = PathBuf::from(OsString::from_vec(record.source_bytes().to_vec()));
         let mut identity = PathBuf::from(OsString::from_vec(record.identity_bytes().to_vec()));
         let mut canonical = record.identity_canonical();
+        if let Some(observed) = aliases.iter().find_map(|alias| alias.identity_for(record)) {
+            identity = PathBuf::from(OsString::from_vec(observed.to_vec()));
+            canonical = true;
+        }
         if !canonical {
             match std::fs::canonicalize(&source) {
                 Ok(resolved) => {
@@ -57,6 +70,8 @@ pub(crate) fn merge_workspace_sources_blocking(
                 true,
                 false,
             )
+            .map_err(Error::Authority)?
+            .with_saved_record(record.clone())
             .map_err(Error::Authority)?,
         );
     }
@@ -68,8 +83,7 @@ pub(crate) fn merge_workspace_sources_blocking(
             .iter_mut()
             .find(|entry| entry.source().identity() == source.identity())
         {
-            *entry =
-                Spec::new(entry.source().clone(), entry.saved(), true).map_err(Error::Authority)?;
+            entry.include_launch_source();
         } else {
             if specs.len() == 16 {
                 return Err(Error::Authority(AuthorityError::TooManyDirectories));

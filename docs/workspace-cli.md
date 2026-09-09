@@ -193,6 +193,13 @@ the requested add independently and let the latest locked config decide capacity
 The shared startup/reload merger accepts at most 64 raw launch observations,
 deduplicates canonical aliases, and resolves provisional saved sources only once.
 Later refreshes retain the acquired identity even if its old source is retargeted.
+Each scope retains the exact saved record that produced an observed source.
+Capacity checks may collapse its canonical launch alias only while that entire
+record still matches both preflight and locked latest configuration. Changed or
+new records count conservatively; proofless manually constructed scopes do not
+infer provenance from a matching path spelling. Matching observations also pin
+post-save reload to the accepted identity. This bounded alias evidence is never
+written to configuration or session metadata.
 
 Confirmed publication is followed by a fresh config read and authority rebuild,
 preserving other writers' latest saved roots and the operation's surviving launch

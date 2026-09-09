@@ -237,13 +237,27 @@ impl NativeConfig {
         primary: &[u8],
         launch_identities: &[Vec<u8>],
     ) -> Result<(), NativeConfigError> {
+        self.validate_workspace_directory_capacity_with_identity(
+            primary,
+            launch_identities,
+            NativeSavedWorkspaceDirectory::identity_bytes,
+        )
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn validate_workspace_directory_capacity_with_identity<'a>(
+        &'a self,
+        primary: &[u8],
+        launch_identities: &'a [Vec<u8>],
+        identity: impl Fn(&'a NativeSavedWorkspaceDirectory) -> &'a [u8],
+    ) -> Result<(), NativeConfigError> {
         validate_launch(primary, launch_identities)?;
         let mut identities = launch_identities
             .iter()
             .map(Vec::as_slice)
             .collect::<BTreeSet<_>>();
         for directory in self.saved_workspace_directories(primary)? {
-            identities.insert(directory.identity_bytes());
+            identities.insert(identity(directory));
         }
         if identities.len() > MAX_DIRECTORIES {
             return Err(NativeConfigError::new(NativeConfigErrorKind::TooLarge));

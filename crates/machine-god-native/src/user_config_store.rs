@@ -16,6 +16,7 @@ use crate::config::{
 use crate::{LoadedNativeConfig, NativeConfigError, NativeModelPreferences};
 
 mod workspaces;
+pub(crate) use workspaces::WorkspaceDirectoryAlias;
 pub use workspaces::{NativeUserWorkspaceCommit, NativeWorkspaceCommitDurability};
 
 const DATA: &str = "config.json";

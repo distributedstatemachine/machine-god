@@ -93,6 +93,7 @@ pub struct NativeWorkspaceEntrySpec {
     source: NativeWorkspaceSource,
     saved: bool,
     launch: bool,
+    saved_record: Option<crate::NativeSavedWorkspaceDirectory>,
 }
 
 impl NativeWorkspaceEntrySpec {
@@ -106,6 +107,7 @@ impl NativeWorkspaceEntrySpec {
             source,
             saved,
             launch,
+            saved_record: None,
         })
     }
     #[must_use]
@@ -119,6 +121,32 @@ impl NativeWorkspaceEntrySpec {
     #[must_use]
     pub const fn launch(&self) -> bool {
         self.launch
+    }
+
+    pub(crate) fn saved_record(&self) -> Option<&crate::NativeSavedWorkspaceDirectory> {
+        self.saved_record.as_ref()
+    }
+
+    pub(crate) fn with_saved_record(
+        mut self,
+        record: crate::NativeSavedWorkspaceDirectory,
+    ) -> Result<Self> {
+        if !self.saved
+            || self.source.source.as_os_str().as_bytes() != record.source_bytes()
+            || (record.identity_canonical()
+                && self.source.identity.as_os_str().as_bytes() != record.identity_bytes())
+        {
+            return Err(NativeWorkspaceAuthorityError::InvalidPath);
+        }
+        self.saved_record = Some(record);
+        Ok(self)
+    }
+
+    pub(crate) fn include_launch_source(&mut self) {
+        self.launch = true;
+    }
+    pub(crate) fn include_saved_source(&mut self) {
+        self.saved = true;
     }
 }
 

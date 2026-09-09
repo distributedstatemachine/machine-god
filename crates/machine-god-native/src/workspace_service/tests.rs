@@ -426,6 +426,7 @@ fn ambiguous_reconciliation_accepts_only_intended_or_before_and_never_claims_dur
         &previous,
         &[],
         &commit,
+        &[],
         None,
     );
     assert_eq!(
@@ -447,6 +448,7 @@ fn ambiguous_reconciliation_accepts_only_intended_or_before_and_never_claims_dur
         &previous,
         &[],
         &commit,
+        &[],
         None,
     );
     assert_eq!(
@@ -461,6 +463,7 @@ fn ambiguous_reconciliation_accepts_only_intended_or_before_and_never_claims_dur
         &previous,
         &[],
         &commit,
+        &[],
         None,
     );
     assert_eq!(
@@ -476,6 +479,7 @@ fn ambiguous_reconciliation_accepts_only_intended_or_before_and_never_claims_dur
         &previous,
         &[],
         &commit,
+        &[],
         None,
     );
     assert!(matches!(
@@ -652,4 +656,127 @@ fn shared_merger_counts_unique_roots_after_bounded_launch_alias_deduplication() 
             NativeWorkspaceAuthorityError::TooManyDirectories
         ))
     ));
+}
+
+fn provisional_launch_fixture(
+    fixture: &Fixture,
+    other_count: usize,
+) -> (Arc<NativeWorkspaceService>, PathBuf, PathBuf, Saved) {
+    let target = fixture.directory("alias-target");
+    let source = fixture.base.join("saved-alias");
+    std::os::unix::fs::symlink(&target, &source).unwrap();
+    let record = Saved::new(
+        source.as_os_str().as_bytes(),
+        source.as_os_str().as_bytes(),
+        false,
+    )
+    .unwrap();
+    block_on(fixture.store.apply_workspace_directory_mutation(
+        fixture.primary.as_os_str().as_bytes(),
+        &Mutation::Add(record.clone()),
+        &[],
+    ))
+    .unwrap();
+    for index in 0..other_count {
+        fixture.save(&fixture.directory(&format!("other-{index}")));
+    }
+    let launch = Source::new(target.clone(), target.clone(), true).unwrap();
+    let specs = merge_workspace_sources_blocking(&fixture.saved(), &[launch]).unwrap();
+    (fixture.service(specs, false), source, target, record)
+}
+
+#[test]
+fn canonical_alias_of_provisional_saved_root_does_not_consume_seventeenth_slot() {
+    let fixture = Fixture::new();
+    let (service, _, target, record) = provisional_launch_fixture(&fixture, 14);
+    let extra = fixture.directory("last");
+    let receipt = apply(&service, NativeWorkspaceAction::Add(extra));
+    assert_eq!(receipt.saved_changed, Some(true));
+    assert_eq!(
+        receipt.reconciliation,
+        NativeWorkspaceReconciliation::Confirmed
+    );
+    assert_eq!(receipt.snapshot.entries().len(), 16);
+    let alias = receipt
+        .snapshot
+        .entries()
+        .iter()
+        .find(|entry| entry.source().identity() == target)
+        .unwrap();
+    assert!(alias.saved() && alias.launch());
+    assert_eq!(alias.spec().saved_record(), Some(&record));
+    assert_eq!(fixture.saved()[0], record);
+}
+
+#[test]
+fn changed_record_before_admission_cannot_borrow_same_spelling_scope_provenance() {
+    let fixture = Fixture::new();
+    let (service, source, _, record) = provisional_launch_fixture(&fixture, 14);
+    block_on(fixture.store.apply_workspace_directory_mutation(
+        fixture.primary.as_os_str().as_bytes(),
+        &Mutation::Remove(record.identity_bytes().to_vec()),
+        &[],
+    ))
+    .unwrap();
+    let changed = Saved::new(
+        source.as_os_str().as_bytes(),
+        fixture
+            .base
+            .join("different-provisional")
+            .as_os_str()
+            .as_bytes(),
+        false,
+    )
+    .unwrap();
+    block_on(fixture.store.apply_workspace_directory_mutation(
+        fixture.primary.as_os_str().as_bytes(),
+        &Mutation::Add(changed.clone()),
+        &[],
+    ))
+    .unwrap();
+    let before = std::fs::read(fixture.base.join("config/config.json")).unwrap();
+    let extra = fixture.directory("last");
+    assert!(matches!(
+        block_on(service.execute(NativeWorkspaceAction::Add(extra))),
+        Err(NativeWorkspaceServiceError::Config(_))
+    ));
+    assert_eq!(
+        std::fs::read(fixture.base.join("config/config.json")).unwrap(),
+        before
+    );
+    assert!(fixture.saved().contains(&changed));
+    assert_eq!(service.authority.snapshot().unwrap().entries().len(), 15);
+}
+
+#[test]
+fn unchanged_provisional_source_uses_accepted_identity_after_source_retarget() {
+    let fixture = Fixture::new();
+    let (service, source, target, record) = provisional_launch_fixture(&fixture, 0);
+    let replacement = fixture.directory("replacement");
+    let replacement_for_hook = replacement.clone();
+    let hook: Hook = Arc::new(move |stage| {
+        if stage == Stage::BeforeCommit {
+            std::fs::remove_file(&source).unwrap();
+            std::os::unix::fs::symlink(&replacement_for_hook, &source).unwrap();
+        }
+    });
+    let receipt = block_on(service.execute_inner(
+        None,
+        NativeWorkspaceAction::Add(fixture.directory("other")),
+        Some(hook),
+    ))
+    .unwrap();
+    assert_eq!(
+        receipt.reconciliation,
+        NativeWorkspaceReconciliation::Confirmed
+    );
+    assert_eq!(receipt.snapshot.entries()[0].source().identity(), target);
+    assert!(receipt.snapshot.route(&replacement.join("file")).is_err());
+    assert_eq!(fixture.saved()[0], record);
+    let startup = merge_workspace_sources_blocking(&fixture.saved(), &[]).unwrap();
+    assert_eq!(
+        startup[0].source().identity(),
+        replacement,
+        "a new startup has no old authority observation"
+    );
 }

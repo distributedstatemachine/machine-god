@@ -3,6 +3,7 @@ use super::{
     NativeWorkspaceReconciliation as Reconciliation, NativeWorkspaceService as Service,
     NativeWorkspaceServiceError as Error, contain,
 };
+use crate::user_config_store::WorkspaceDirectoryAlias;
 use crate::{
     NativeSavedWorkspaceDirectory as Saved, NativeWorkspaceCommitDurability as Durability,
     NativeWorkspaceDirectoryMutation as Mutation, NativeWorkspaceEntrySpec as Spec,
@@ -37,6 +38,8 @@ pub(super) fn run(
             Reconciliation::Refreshed,
         ));
     }
+    let aliases =
+        contain(|| observed_aliases(service, &previous)).map_err(|()| Error::Unavailable)??;
     let (mutation, launch, _staged) =
         contain(|| stage(service, &previous, &action)).map_err(|()| Error::Unavailable)??;
     let commit = contain(|| {
@@ -45,13 +48,14 @@ pub(super) fn run(
             hook(super::Stage::BeforeCommit);
         }
         futures_executor::block_on(
-            service.store.apply_workspace_directory_mutation(
+            service.store.apply_workspace_directory_mutation_observed(
                 previous.primary_identity().as_os_str().as_bytes(),
                 &mutation,
                 &launch
                     .iter()
                     .map(|entry| entry.source().identity().as_os_str().as_bytes().to_vec())
                     .collect::<Vec<_>>(),
+                &aliases,
             ),
         )
     })
@@ -63,6 +67,7 @@ pub(super) fn run(
         &previous,
         &launch,
         &commit,
+        &aliases,
         #[cfg(test)]
         hook,
     ))
@@ -74,6 +79,7 @@ pub(super) fn reconcile(
     previous: &Snapshot,
     launch: &[Spec],
     commit: &crate::NativeUserWorkspaceCommit,
+    aliases: &[WorkspaceDirectoryAlias],
     #[cfg(test)] hook: Option<&super::Hook>,
 ) -> Receipt {
     let saved_changed = (commit.durability == Durability::Confirmed).then_some(commit.changed);
@@ -119,7 +125,14 @@ pub(super) fn reconcile(
                 Reconciliation::Indeterminate,
             ));
         };
-        let specs = merge(saved, launch)?;
+        let specs = super::sources::merge_observed_sources_blocking(
+            saved,
+            &launch
+                .iter()
+                .map(|entry| entry.source().clone())
+                .collect::<Vec<_>>(),
+            aliases,
+        )?;
         let prepared = contain(|| {
             service
                 .authority
@@ -158,6 +171,38 @@ pub(super) fn reconcile(
             Reconciliation::ReloadFailed(error),
         ),
     }
+}
+
+fn observed_aliases(
+    service: &Service,
+    previous: &Snapshot,
+) -> Result<Vec<WorkspaceDirectoryAlias>, Error> {
+    let loaded = service.store.load().map_err(Error::Config)?;
+    let saved = loaded
+        .loaded()
+        .config()
+        .saved_workspace_directories(previous.primary_identity().as_os_str().as_bytes())
+        .map_err(|error| Error::Config(crate::NativeUserConfigError::InvalidConfig(error)))?;
+    saved
+        .iter()
+        .filter(|record| !record.identity_canonical())
+        .filter_map(|record| {
+            previous
+                .entries()
+                .iter()
+                .find(|entry| {
+                    entry.spec().saved_record() == Some(record)
+                        && entry.source().identity_canonical()
+                })
+                .map(|entry| {
+                    WorkspaceDirectoryAlias::new(
+                        record.clone(),
+                        entry.source().identity().as_os_str().as_bytes(),
+                    )
+                    .map_err(Error::Config)
+                })
+        })
+        .collect()
 }
 
 fn stage(
@@ -241,8 +286,7 @@ fn stage_add(
         {
             saved = retained;
         }
-        *entry =
-            Spec::new(entry.source().clone(), true, entry.launch()).map_err(Error::Authority)?;
+        entry.include_saved_source();
     } else {
         specs.push(
             Spec::new(

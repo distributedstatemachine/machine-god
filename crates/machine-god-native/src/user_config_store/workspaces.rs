@@ -13,6 +13,35 @@ use super::{
 use crate::LoadedNativeConfig;
 use crate::config::{NativeSavedWorkspaceDirectory, NativeWorkspaceDirectoryMutation};
 
+/// Ephemeral identity evidence from the accepted retained workspace authority.
+/// It applies only while the entire saved record remains exactly unchanged.
+#[derive(Clone, Debug)]
+pub(crate) struct WorkspaceDirectoryAlias {
+    record: NativeSavedWorkspaceDirectory,
+    canonical_identity: Vec<u8>,
+}
+
+impl WorkspaceDirectoryAlias {
+    pub(crate) fn new(
+        record: NativeSavedWorkspaceDirectory,
+        canonical_identity: &[u8],
+    ) -> Result<Self, NativeUserConfigError> {
+        NativeSavedWorkspaceDirectory::new(canonical_identity, canonical_identity, true)
+            .map_err(NativeUserConfigError::InvalidConfig)?;
+        if record.identity_canonical() && record.identity_bytes() != canonical_identity {
+            return Err(NativeUserConfigError::Conflict);
+        }
+        Ok(Self {
+            record,
+            canonical_identity: canonical_identity.to_vec(),
+        })
+    }
+
+    pub(crate) fn identity_for(&self, record: &NativeSavedWorkspaceDirectory) -> Option<&[u8]> {
+        (&self.record == record).then_some(self.canonical_identity.as_slice())
+    }
+}
+
 /// Whether the published candidate's directory durability was confirmed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeWorkspaceCommitDurability {
@@ -71,20 +100,56 @@ impl NativeUserConfigStore {
         sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
         launch_identities: &[Vec<u8>],
     ) -> Result<NativeUserWorkspaceCommit, NativeUserConfigError> {
+        self.publish_workspace_mutation_observed(
+            primary,
+            mutation,
+            before_lock,
+            sync_directory,
+            launch_identities,
+            &[],
+        )
+    }
+
+    #[allow(clippy::unused_async)] // Inert caller-owned future, like the public route.
+    pub(crate) async fn apply_workspace_directory_mutation_observed(
+        &self,
+        primary: &[u8],
+        mutation: &NativeWorkspaceDirectoryMutation,
+        launch_identities: &[Vec<u8>],
+        aliases: &[WorkspaceDirectoryAlias],
+    ) -> Result<NativeUserWorkspaceCommit, NativeUserConfigError> {
+        self.publish_workspace_mutation_observed(
+            primary,
+            mutation,
+            || {},
+            |root| rustix::fs::fsync(root),
+            launch_identities,
+            aliases,
+        )
+    }
+
+    fn publish_workspace_mutation_observed(
+        &self,
+        primary: &[u8],
+        mutation: &NativeWorkspaceDirectoryMutation,
+        before_lock: impl FnOnce(),
+        sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
+        launch_identities: &[Vec<u8>],
+        aliases: &[WorkspaceDirectoryAlias],
+    ) -> Result<NativeUserWorkspaceCommit, NativeUserConfigError> {
         mutation
             .validate(primary)
             .map_err(NativeUserConfigError::InvalidConfig)?;
         crate::config::validate_workspace_directory_launch(primary, launch_identities)
             .map_err(NativeUserConfigError::InvalidConfig)?;
+        validate_aliases(primary, aliases)?;
         let snapshot = self.load()?;
         let (candidate, changed) = snapshot
             .loaded
             .config()
             .with_workspace_directory_mutation(primary, mutation)
             .map_err(NativeUserConfigError::InvalidConfig)?;
-        candidate
-            .validate_workspace_directory_capacity(primary, launch_identities)
-            .map_err(NativeUserConfigError::InvalidConfig)?;
+        validate_capacity(&candidate, primary, launch_identities, aliases)?;
         if !changed {
             self.validate_unchanged(&snapshot)?;
             return unchanged(snapshot.loaded, primary);
@@ -119,9 +184,7 @@ impl NativeUserConfigStore {
             .config()
             .with_workspace_directory_mutation(primary, mutation)
             .map_err(NativeUserConfigError::InvalidConfig)?;
-        candidate
-            .validate_workspace_directory_capacity(primary, launch_identities)
-            .map_err(NativeUserConfigError::InvalidConfig)?;
+        validate_capacity(&candidate, primary, launch_identities, aliases)?;
         if !changed {
             return unchanged(latest, primary);
         }
@@ -153,6 +216,56 @@ impl NativeUserConfigStore {
             durability,
         })
     }
+}
+
+fn validate_aliases(
+    primary: &[u8],
+    aliases: &[WorkspaceDirectoryAlias],
+) -> Result<(), NativeUserConfigError> {
+    if aliases.len() > 16 {
+        return Err(NativeUserConfigError::Conflict);
+    }
+    let mut identities = std::collections::BTreeSet::new();
+    let mut sources = std::collections::BTreeSet::new();
+    let mut canonical_identities = std::collections::BTreeSet::new();
+    for alias in aliases {
+        NativeWorkspaceDirectoryMutation::Add(alias.record.clone())
+            .validate(primary)
+            .map_err(NativeUserConfigError::InvalidConfig)?;
+        crate::config::validate_workspace_directory_launch(
+            primary,
+            std::slice::from_ref(&alias.canonical_identity),
+        )
+        .map_err(NativeUserConfigError::InvalidConfig)?;
+        if !identities.insert(alias.record.identity_bytes())
+            || !sources.insert(alias.record.source_bytes())
+            || !canonical_identities.insert(alias.canonical_identity.as_slice())
+            || (alias.record.identity_canonical()
+                && alias.record.identity_bytes() != alias.canonical_identity)
+        {
+            return Err(NativeUserConfigError::Conflict);
+        }
+    }
+    Ok(())
+}
+
+fn validate_capacity(
+    config: &crate::NativeConfig,
+    primary: &[u8],
+    launch: &[Vec<u8>],
+    aliases: &[WorkspaceDirectoryAlias],
+) -> Result<(), NativeUserConfigError> {
+    let result = if aliases.is_empty() {
+        config.validate_workspace_directory_capacity(primary, launch)
+    } else {
+        config.validate_workspace_directory_capacity_with_identity(primary, launch, |record| {
+            aliases
+                .iter()
+                .find_map(|alias| alias.identity_for(record))
+                .unwrap_or_else(|| record.identity_bytes())
+        })
+    };
+    result.map_err(NativeUserConfigError::InvalidConfig)
 }
 
 fn unchanged(

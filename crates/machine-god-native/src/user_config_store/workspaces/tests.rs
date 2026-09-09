@@ -50,6 +50,151 @@ fn edit(store: &NativeUserConfigStore, path: &[u8]) -> NativeUserWorkspaceCommit
     block_on(store.apply_workspace_directory_mutation(b"/work", &add(path), &[])).unwrap()
 }
 
+fn provisional_record() -> NativeSavedWorkspaceDirectory {
+    NativeSavedWorkspaceDirectory::new(b"/source", b"/pending", false).unwrap()
+}
+
+fn fifteen_saved_with_provisional(store: &NativeUserConfigStore) {
+    block_on(store.apply_workspace_directory_mutation(
+        b"/work",
+        &NativeWorkspaceDirectoryMutation::Add(provisional_record()),
+        &[],
+    ))
+    .unwrap();
+    for index in 0..14 {
+        edit(store, format!("/other-{index}").as_bytes());
+    }
+}
+
+#[test]
+fn observed_capacity_counts_exact_provisional_alias_once_without_persisting_proof() {
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    fifteen_saved_with_provisional(&store);
+    let aliases = [WorkspaceDirectoryAlias::new(provisional_record(), b"/actual").unwrap()];
+    let launch = [b"/actual".to_vec()];
+    assert!(matches!(
+        block_on(store.apply_workspace_directory_mutation(b"/work", &add(b"/last"), &launch)),
+        Err(NativeUserConfigError::InvalidConfig(_))
+    ));
+    let result = store
+        .publish_workspace_mutation_observed(
+            b"/work",
+            &add(b"/last"),
+            || {},
+            |root| rustix::fs::fsync(root),
+            &launch,
+            &aliases,
+        )
+        .unwrap();
+    assert!(result.changed);
+    assert_eq!(result.after.len(), 16);
+    assert_eq!(result.after[0], provisional_record());
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .loaded()
+            .config()
+            .saved_workspace_directories(b"/work")
+            .unwrap(),
+        result.after
+    );
+}
+
+#[test]
+fn locked_latest_replacement_cannot_borrow_removed_records_alias() {
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let other = fixture.store();
+    fifteen_saved_with_provisional(&store);
+    let aliases = [WorkspaceDirectoryAlias::new(provisional_record(), b"/actual").unwrap()];
+    let replacement =
+        NativeSavedWorkspaceDirectory::new(b"/new-source", b"/pending", false).unwrap();
+    let result = store.publish_workspace_mutation_observed(
+        b"/work",
+        &add(b"/last"),
+        || {
+            block_on(other.apply_workspace_directory_mutation(
+                b"/work",
+                &NativeWorkspaceDirectoryMutation::Remove(b"/pending".to_vec()),
+                &[],
+            ))
+            .unwrap();
+            block_on(other.apply_workspace_directory_mutation(
+                b"/work",
+                &NativeWorkspaceDirectoryMutation::Add(replacement.clone()),
+                &[],
+            ))
+            .unwrap();
+        },
+        |root| rustix::fs::fsync(root),
+        &[b"/actual".to_vec()],
+        &aliases,
+    );
+    assert!(matches!(
+        result,
+        Err(NativeUserConfigError::InvalidConfig(_))
+    ));
+    let observed = store.load().unwrap();
+    let saved = observed
+        .loaded()
+        .config()
+        .saved_workspace_directories(b"/work")
+        .unwrap();
+    assert_eq!(saved.len(), 15);
+    assert!(saved.contains(&replacement));
+    assert!(!saved.contains(&record(b"/last")));
+    assert!(!fixture.root().join(TEMP).exists());
+}
+
+#[test]
+fn invalid_aliases_reject_before_store_path_resolution() {
+    let store = NativeUserConfigStore::new(PathBuf::from("relative-invalid-root"));
+    let alias = WorkspaceDirectoryAlias::new(provisional_record(), b"/actual").unwrap();
+    for aliases in [vec![alias.clone(); 17], vec![alias; 2]] {
+        assert_eq!(
+            store
+                .publish_workspace_mutation_observed(
+                    b"/work",
+                    &add(b"/last"),
+                    || panic!("no lock"),
+                    |_| panic!("no sync"),
+                    &[],
+                    &aliases
+                )
+                .unwrap_err(),
+            NativeUserConfigError::Conflict
+        );
+    }
+    assert!(WorkspaceDirectoryAlias::new(provisional_record(), b"/../invalid").is_err());
+    assert_eq!(
+        WorkspaceDirectoryAlias::new(record(b"/fixed"), b"/different").unwrap_err(),
+        NativeUserConfigError::Conflict
+    );
+}
+
+#[test]
+fn observed_noop_does_not_upgrade_or_rewrite_provisional_record() {
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    fifteen_saved_with_provisional(&store);
+    let original = fs::read(fixture.root().join(DATA)).unwrap();
+    let aliases = [WorkspaceDirectoryAlias::new(provisional_record(), b"/actual").unwrap()];
+    let result = store
+        .publish_workspace_mutation_observed(
+            b"/work",
+            &NativeWorkspaceDirectoryMutation::Add(provisional_record()),
+            || panic!("no lock"),
+            |_| panic!("no sync"),
+            &[b"/actual".to_vec()],
+            &aliases,
+        )
+        .unwrap();
+    assert!(!result.changed);
+    assert_eq!(fs::read(fixture.root().join(DATA)).unwrap(), original);
+}
+
 #[test]
 fn inert_future_and_missing_observational_noops_create_nothing() {
     let fixture = Fixture::new();
