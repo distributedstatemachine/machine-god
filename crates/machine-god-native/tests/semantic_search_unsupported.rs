@@ -1,4 +1,4 @@
-#![cfg(not(target_os = "linux"))]
+#![cfg(not(any(target_os = "linux", target_os = "macos")))]
 
 use std::error::Error;
 use std::path::Path;
