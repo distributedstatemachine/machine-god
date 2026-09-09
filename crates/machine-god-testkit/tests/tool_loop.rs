@@ -947,6 +947,22 @@ fn prepared_capability_reaches_policy_and_only_allowed_arguments_reach_execution
     assert_eq!(tool.preparations().len(), 2);
     assert_eq!(tool.preparations()[0].call, first);
     assert_eq!(tool.preparations()[1].call, second);
+    let preparations = tool.preparations_with_context();
+    for (record, requested) in preparations.iter().zip([&first, &second]) {
+        assert_eq!(
+            record.context,
+            Some(ToolContext {
+                session_id: output[0].session_id.clone(),
+                session_incarnation_id: output[0].session_incarnation_id.clone(),
+                turn_id: output[0].turn_id.clone(),
+                call_id: requested.id.clone(),
+            })
+        );
+    }
+    assert_eq!(
+        preparations[1].context.as_ref(),
+        Some(&tool.invocations()[0].context)
+    );
     assert_eq!(
         permissions
             .requests()

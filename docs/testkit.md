@@ -102,15 +102,26 @@ assert!(matches!(
   permission calls and permission events are absent while ordinary tool events,
   cancellation, bounds, persistence, and recovery remain active.
   Each `RecordedToolPreparation` retains the complete provider-requested
-  `ToolCall`; execution recording retains the context, post-preflight
+  `ToolCall`. The additive `preparations_with_context()` accessor returns
+  `RecordedToolPreparationWithContext` records from the same bounded log:
+  `prepare_for_turn` records the exact supplied `ToolContext` (session,
+  incarnation, turn, and call identifiers), while direct `prepare` records
+  `None`. Both entry points consume the same strict preparation script and
+  capacity; exhaustion attempts are recorded, but a full recorder rejects an
+  attempt without consuming its step. Existing `RecordedToolPreparation { call }`
+  literals remain compatible. Execution recording retains the context, post-preflight
   arguments, and cancellation token. Preparation and execution have separate
   strict scripts and separate per-phase recording bounds, so a preparation
   error leaves the execution script untouched. Their scripts, ordered records,
   specification, and remaining-step counts share one mutex, giving inspection
   methods consistent snapshots without clocks or global state.
+  Execution invocation recording and script selection still happen when the
+  execution future is constructed, including if that future is dropped unpolled;
+  preparation alone never consumes an execution step.
 
 Focused `ScriptedPreparedTool` regressions cover independent preparation and
 execution script exhaustion, zero and finite per-phase recording capacities,
+exact contextual preparation and mixed direct/contextual calls,
 concurrent preparation/execution with snapshot inspection, and recovery after
 the shared mutex is deliberately poisoned. The concurrency assertions require
 complete, internally consistent records and step accounting; they do not assume
