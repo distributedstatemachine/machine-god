@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `resumed CLI workspace integration after accepted readiness maintenance`
-- Next gate: `integrate macOS semantic scanning, terminal cwd routing and CLI workspace selection; focused checks then complete feature gates`
+- Active phase: `resumed combined CLI implementation after accepted readiness maintenance`
+- Next gate: `complete remaining CLI boundaries, then full local gate, three fresh reviews and exact feature CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -147,8 +147,8 @@ including the aggregate CI gate. Both expected exact-candidate benchmark
 artifacts are retained and unexpired through 2026-12-08. No performance milestone
 claim follows from these gates.
 
-All integrated maintenance implementation and review worktrees are cleaned up;
-the three earlier unfinished product worktrees remain preserved. Documentation
+All integrated maintenance implementation and review worktrees were cleaned up;
+the three earlier unfinished product worktrees were preserved for resumption. Documentation
 seal `e14cab5d` passed exact lightweight CI `34365966890` and Benchmark
 `34365966876`, with heavy jobs skipped and no new artifacts. The parent CLI
 branch was then fast-forwarded to that accepted descendant without conflicts.
@@ -162,10 +162,14 @@ an amendment to the existing gates. Keep it separate from product-tool work.
 
 ### Retained combined CLI boundary
 
-The resumed iteration owns workspace integration: finish the preserved macOS
-semantic-search and terminal-cwd work, and wire actual launch/slash workspace
-selection. Workers use isolated worktrees with separate semantic/native-reader,
-terminal-routing, and CLI-host ownership. The coordinator owns the live plan,
+The resumed implementation finishes workspace integration and the remaining
+combined CLI boundary below. The macOS semantic scanner and its directory-reader
+prerequisite are integrated; both clean released worktrees have been removed.
+Their focused tests cover real macOS scanning, concurrent cursors, exact roots,
+both Apple ABI/link probes, Linux compilation and FreeBSD/WASI unsupported
+compilation. These component checks are not full-feature acceptance.
+Separate workers own terminal routing, CLI launch/slash workspace selection,
+and the native FXTP recording backend. The coordinator owns the live plan,
 shared-contract integration, cross-platform prerequisites and final gates.
 Preserve uncommitted paused work before updating a worker's base. Remove worker
 trees only after their changes are committed, integrated and released.
@@ -181,14 +185,14 @@ Workspace schema-v7 persistence, retained multi-root authority, exact-turn
 contexts and preparation are integrated. Actual prepared-root host composition
 shares those contexts with reads, metadata, folder creation, enumeration, grep,
 all five mutations, permissions, undo, history, vision and sandbox scopes.
-Linux semantic routing is integrated. State aliases compare retained object
+Linux and macOS semantic routing are integrated. State aliases compare retained object
 identities; native interactive transitions attach the selected workspace.
 
-The remaining product boundary is macOS semantic scanning, terminal cwd routing,
-actual launch/slash workspace selection, migration/recovery/doctor cleanup,
+The remaining product boundary is terminal cwd routing, actual launch/slash
+workspace selection, migration/recovery/doctor cleanup,
 recording, typed historical cards and remaining policy/session scenarios.
-The paused semantic and cwd component worktrees are not part of the reviewed
-maintenance base. Required scenarios cannot close with unsupported stubs.
+The resumed product changes are not covered by the earlier maintenance review.
+Required scenarios cannot close with unsupported stubs.
 
 The combined CLI feature pulls required permission modes/grants, native schema
 migration/recovery, guarded cleanup and actual workspace authority forward from
@@ -223,11 +227,12 @@ The classification contract remains in
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
 - Unsafe Rust is forbidden in the product crates. The isolated macOS
-  PTY, exact process-incarnation, fixed uptime-clock and read-only inventory
+  PTY, exact process-incarnation, fixed uptime-clock, read-only inventory and metered directory-refill
   bindings are the sole exception under
   [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md) and
-  [ADR 0004](decisions/0004-macos-process-inventory-helper.md); they remain subject
-  to the full terminal feature's adversarial and platform gates.
+  [ADR 0004](decisions/0004-macos-process-inventory-helper.md), with directory
+  refills under [ADR 0005](decisions/0005-macos-directory-reader.md). New bindings
+  remain subject to the complete feature's adversarial and platform gates.
 - Constructors and futures must preserve the documented inert-before-poll,
   cancellation, resource-bound, redaction, and authority invariants.
 

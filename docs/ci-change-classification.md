@@ -38,6 +38,12 @@ the macOS-only implementation and its unsafe-block lint are actually compiled.
 That same selected step checks the process-inventory C ABI fixture against both
 ARM64 and x86_64 SDK layouts using syntax-only compiler assertions. C is a test
 input, not a product build or runtime dependency.
+The metered macOS directory reader's C fixture is additionally compiled and
+linked for both architectures, then executed for the current runner's native
+architecture. It checks the fixed directory-layout ABI and exported refill
+symbol using an invalid descriptor, without reading a workspace. Unsupported
+runner architectures fail that step; Linux and unrelated concern selections
+do not run the Apple probes.
 All workspace manifests select the native-manifest agreement tests, which
 verify the isolated binding exception and product lint inheritance.
 Changes confined to a crate's tests, examples, or benchmarks select that crate

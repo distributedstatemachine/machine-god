@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::error::Error;
 use std::fs;
@@ -787,6 +787,36 @@ fn execution_future_is_inert_until_poll_and_precancelled_execution_is_exact() {
         "semantic_search execution was cancelled",
         false,
     );
+}
+
+#[test]
+fn concurrent_searches_use_independent_cursors_on_the_same_retained_root() {
+    let temporary = TemporaryDirectory::new();
+    for index in 0..100 {
+        fs::write(
+            temporary.path().join(format!("entry-{index:03}.txt")),
+            "needle\n",
+        )
+        .unwrap();
+    }
+    let search_tool = tool(temporary.path());
+    let expected = run(&search_tool, "needle", ".");
+    let barrier = std::sync::Barrier::new(4);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    run(&search_tool, "needle", ".")
+                })
+            })
+            .collect();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), expected);
+        }
+    });
+    assert_eq!(expected.content["visited_entries"], 100);
+    assert_eq!(expected.content["matching_files"], 100);
 }
 
 #[test]

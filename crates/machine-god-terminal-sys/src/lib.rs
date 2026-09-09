@@ -2,7 +2,13 @@
 //!
 //! See docs/decisions/0003-macos-terminal-foreground-signal.md in the repository.
 //! Read-only process enumeration is separately scoped by ADR 0004.
+//! Metered descriptor-backed directory refills are scoped by ADR 0005.
 //! All orchestration, process ownership and permission policy stay in native.
+
+#[cfg(target_os = "macos")]
+mod macos_directory;
+#[cfg(target_os = "macos")]
+pub use macos_directory::{DIRECTORY_READ_BUFFER_BYTES, read_directory_chunk};
 
 #[cfg(target_os = "macos")]
 mod process_identity;
