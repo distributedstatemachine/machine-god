@@ -458,6 +458,64 @@ fn old_unpolled_outer_future_cannot_take_later_approval_with_reused_call_id() {
 }
 
 #[test]
+fn turn_entry_point_with_history_cannot_take_a_later_approval() {
+    for has_old_grant in [false, true] {
+        let fixture = Fixture::new();
+        let observations = Arc::new(crate::NativeConversationObservations::new());
+        let conversation = fixture.conversation();
+        let turn = block_on(conversation.prompt("approved".into(), 1)).unwrap();
+        let context = context(&conversation, &turn);
+        let observation_session = observations
+            .register(
+                context.session_id.clone(),
+                context.session_incarnation_id.clone(),
+            )
+            .unwrap();
+        observation_session
+            .begin_attempt(context.turn_id.clone(), 0, 1)
+            .unwrap();
+        observation_session
+            .bind_call(
+                &context,
+                crate::NativeHistoryFileSource::new(
+                    1,
+                    0,
+                    context.call_id.clone(),
+                    ToolName::new("write_file").unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let registry = Arc::new(NativeFileApprovalRegistry::new());
+        let tool = fixture
+            .tool(Kind::Write, Some(registry.clone()))
+            .with_observations(Some(observations));
+        let args = fixture.args(Kind::Write);
+        if has_old_grant {
+            admit(&fixture, Kind::Write, &registry, &context, &args, None);
+        }
+        let old = tool.execute_for_turn(context.clone(), args.clone(), CancellationToken::new());
+        if has_old_grant {
+            block_on(tool.execute_for_turn(
+                context.clone(),
+                args.clone(),
+                CancellationToken::new(),
+            ))
+            .unwrap();
+        }
+        admit(&fixture, Kind::Write, &registry, &context, &args, None);
+        let error = block_on(old).unwrap_err();
+        assert_eq!(error.code, "file_approval_failed");
+        // A second observation for an already completed call ID is deliberately
+        // rejected. The no-old-grant case proves the new grant is still usable.
+        if !has_old_grant {
+            block_on(tool.execute_for_turn(context, args, CancellationToken::new())).unwrap();
+        }
+        assert_eq!(fs::read(fixture.additional.join("a")).unwrap(), b"after");
+    }
+}
+
+#[test]
 fn cancellation_during_final_approval_check_blocks_all_five_publications() {
     for kind in KINDS {
         let fixture = Fixture::new();

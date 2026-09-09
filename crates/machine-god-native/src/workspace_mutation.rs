@@ -6,7 +6,7 @@ use crate::{
 };
 use machine_god_core::{
     BoxFuture, CancellationToken, PreparedToolCall, Tool, ToolCall, ToolContext, ToolError,
-    ToolErrorKind, ToolOutput, ToolSpec,
+    ToolErrorKind, ToolExecution, ToolOutput, ToolSpec,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -20,6 +20,7 @@ pub(crate) struct WorkspaceMutationTool {
     contexts: Arc<NativeWorkspaceContexts>,
     registry: Option<Arc<NativeFileApprovalRegistry>>,
     undo: Option<Arc<FileUndoTracker>>,
+    observations: Option<Arc<crate::NativeConversationObservations>>,
 }
 
 impl WorkspaceMutationTool {
@@ -36,7 +37,15 @@ impl WorkspaceMutationTool {
             contexts,
             registry,
             undo,
+            observations: None,
         }
+    }
+    pub(crate) fn with_observations(
+        mut self,
+        observations: Option<Arc<crate::NativeConversationObservations>>,
+    ) -> Self {
+        self.observations = observations;
+        self
     }
 }
 
@@ -203,7 +212,24 @@ impl Tool for WorkspaceMutationTool {
                     if let Some(approval) = approval {
                         tool = tool.with_claimed_approval(approval);
                     }
-                    tool.execute(context, arguments, cancellation).await
+                    if let Some(observations) = &self.observations {
+                        use crate::file_history_tool::{
+                            NativeFileHistoryKind, NativeFileHistoryTool,
+                        };
+                        let kind = match self.kind {
+                            Kind::Write => NativeFileHistoryKind::Write,
+                            Kind::Edit => NativeFileHistoryKind::Edit,
+                            Kind::Delete => NativeFileHistoryKind::Delete,
+                            Kind::Copy => NativeFileHistoryKind::Copy,
+                            Kind::Rename => NativeFileHistoryKind::Rename,
+                        };
+                        NativeFileHistoryTool::shared(Arc::new(tool), kind, observations.clone())
+                            .with_workspace_contexts(self.contexts.clone())
+                            .execute(context, arguments, cancellation)
+                            .await
+                    } else {
+                        tool.execute(context, arguments, cancellation).await
+                    }
                 }};
             }
             match self.kind {
@@ -220,6 +246,18 @@ impl Tool for WorkspaceMutationTool {
                 )),
             }
         })
+    }
+
+    fn execute_for_turn(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        // Preserve the outer scope/approval stamp through the engine's actual
+        // entry point, including when history instrumentation is selected.
+        let execution = self.execute(context, arguments, cancellation);
+        Box::pin(async move { execution.await.map(ToolExecution::output) })
     }
 }
 

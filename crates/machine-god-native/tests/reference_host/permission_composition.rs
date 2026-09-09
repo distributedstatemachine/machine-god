@@ -5,7 +5,7 @@ use machine_god_native::{
     TokioPermissionReviewClock,
 };
 
-fn configured(base: &Path, mode: &str, rules: &Value) -> LoadedNativeConfig {
+pub(super) fn configured(base: &Path, mode: &str, rules: &Value) -> LoadedNativeConfig {
     configured_sandbox(base, mode, rules, "none")
 }
 
@@ -31,13 +31,13 @@ fn options() -> NativeReferenceHostConversationOptions {
         ))
 }
 
-fn call(name: &str, input: &Value) -> Vec<u8> {
+pub(super) fn call(name: &str, input: &Value) -> Vec<u8> {
     format!("data: {}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n",
         json!({"type":"tool-call","toolCallId":"actual-call","toolName":name,"input":input}))
         .into_bytes()
 }
 
-fn answer() -> Vec<u8> {
+pub(super) fn answer() -> Vec<u8> {
     b"data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"complete\"}\n\ndata: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n".to_vec()
 }
 
@@ -155,7 +155,10 @@ fn collect_with_policy(
     })
 }
 
-async fn run_conversation(runtime: &NativeConversationRuntime, now_ms: i64) -> Vec<TurnEvent> {
+pub(super) async fn run_conversation(
+    runtime: &NativeConversationRuntime,
+    now_ms: i64,
+) -> Vec<TurnEvent> {
     runtime
         .enqueue("perform the requested workspace operation".into())
         .unwrap();

@@ -77,7 +77,7 @@ impl NativePermissionTargetAuthority {
         self.project_file(file, invocation, cancellation, None)
     }
 
-    pub(crate) fn from_scoped_file(
+    pub(crate) fn scoped_file_target(
         &self,
         file: &crate::PreparedFileApproval,
         invocation: PermissionInvocation<'_>,

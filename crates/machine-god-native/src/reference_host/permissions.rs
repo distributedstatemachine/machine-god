@@ -54,6 +54,7 @@ pub(super) fn error() -> NativeReferenceHostBuildError {
 }
 
 pub(super) struct PermissionComposition {
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
     root: File,
     workspace: String,
     files: Arc<NativeFileApprovalAuthority>,
@@ -105,6 +106,10 @@ impl PermissionComposition {
             .map(|file| file.try_clone().map_err(|_| error()))
             .transpose()?;
         Ok(Self {
+            workspace_contexts: tools
+                .workspace_binding
+                .as_ref()
+                .map(|binding| Arc::clone(&binding.contexts)),
             root: clone_root()?,
             workspace,
             files: Arc::new(
@@ -126,10 +131,13 @@ impl PermissionComposition {
         transport: Arc<dyn AiGatewayTransport>,
         prompter: Arc<dyn PermissionPrompter>,
     ) -> Result<Arc<NativePermissionController>, NativeReferenceHostBuildError> {
-        let targets = Arc::new(
+        let targets =
             NativePermissionTargetAuthority::new(self.root, self.workspace, registrations)
-                .map_err(|_| error())?,
-        );
+                .map_err(|_| error())?;
+        let targets = Arc::new(match self.workspace_contexts {
+            Some(contexts) => targets.with_workspace_contexts(contexts),
+            None => targets,
+        });
         let reviewer = Arc::new(AiGatewayPermissionReviewer::new(transport, self.clock));
         let preparer = Arc::new(NativeToolPermissionPreparer::new(
             targets,
@@ -155,6 +163,7 @@ pub(super) struct ReferenceHostToolCatalog {
     observations: Option<Arc<crate::NativeConversationObservations>>,
     limits: EngineLimits,
     governed: bool,
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
 }
 
 pub(super) struct ReferenceHostWorkspaceAuthority {
@@ -179,11 +188,56 @@ impl ReferenceHostToolCatalog {
         self.add(super::SubagentTool::shared_authority(subagents), None);
     }
 
-    pub(super) fn workspace(&mut self, tools: WorkspaceTools) -> ReferenceHostWorkspaceAuthority {
-        self.add(tools.copy_file, Some(NativeFileHistoryKind::Copy));
+    pub(super) fn workspace(
+        &mut self,
+        tools: WorkspaceTools,
+        registry: Option<&Arc<NativeFileApprovalRegistry>>,
+    ) -> ReferenceHostWorkspaceAuthority {
+        let contexts = tools
+            .workspace_binding
+            .as_ref()
+            .map(|binding| Arc::clone(&binding.contexts));
+        let undo = tools.undo_tracker.clone();
+        self.workspace_contexts.clone_from(&contexts);
+        let observations = self.observations.clone();
+        let history = |kind| contexts.is_none().then_some(kind);
+        let mutation = |kind, primary: Arc<dyn Tool>| -> Arc<dyn Tool> {
+            match &contexts {
+                Some(contexts) => Arc::new(
+                    crate::workspace_mutation::WorkspaceMutationTool::new(
+                        kind,
+                        primary,
+                        Arc::clone(contexts),
+                        registry.cloned(),
+                        undo.clone(),
+                    )
+                    .with_observations(observations.clone()),
+                ),
+                None => primary,
+            }
+        };
+        self.add_shared(
+            mutation(
+                crate::NativeFileApprovalKind::Copy,
+                Arc::new(tools.copy_file),
+            ),
+            history(NativeFileHistoryKind::Copy),
+        );
         self.add(tools.create_folder, None);
-        self.add(tools.delete_file, Some(NativeFileHistoryKind::Delete));
-        self.add(tools.edit_file, Some(NativeFileHistoryKind::Edit));
+        self.add_shared(
+            mutation(
+                crate::NativeFileApprovalKind::Delete,
+                Arc::new(tools.delete_file),
+            ),
+            history(NativeFileHistoryKind::Delete),
+        );
+        self.add_shared(
+            mutation(
+                crate::NativeFileApprovalKind::Edit,
+                Arc::new(tools.edit_file),
+            ),
+            history(NativeFileHistoryKind::Edit),
+        );
         self.add(tools.file_info, None);
         self.add(tools.glob_files, Some(NativeFileHistoryKind::Glob));
         self.grep(tools.grep_files);
@@ -191,10 +245,22 @@ impl ReferenceHostToolCatalog {
         self.add(tools.list_files, Some(NativeFileHistoryKind::List));
         self.add(tools.open_file, None);
         self.add(tools.read_file, Some(NativeFileHistoryKind::Read));
-        self.add(tools.rename_file, Some(NativeFileHistoryKind::Rename));
+        self.add_shared(
+            mutation(
+                crate::NativeFileApprovalKind::Rename,
+                Arc::new(tools.rename_file),
+            ),
+            history(NativeFileHistoryKind::Rename),
+        );
         self.add(tools.semantic_search, None);
         self.add(tools.skill, None);
-        self.add(tools.write_file, Some(NativeFileHistoryKind::Write));
+        self.add_shared(
+            mutation(
+                crate::NativeFileApprovalKind::Write,
+                Arc::new(tools.write_file),
+            ),
+            history(NativeFileHistoryKind::Write),
+        );
         ReferenceHostWorkspaceAuthority {
             vision_root: tools.vision_root,
             terminal_root: tools.terminal_root,
@@ -213,11 +279,36 @@ impl ReferenceHostToolCatalog {
             observations,
             limits,
             governed,
+            workspace_contexts: None,
         }
+    }
+
+    pub(super) fn finish_permissions(
+        &mut self,
+        setup: Option<PermissionComposition>,
+        resource: Option<&crate::terminal_host::NativeTerminalHostResource>,
+        transport: Arc<dyn AiGatewayTransport>,
+        prompter: Arc<dyn PermissionPrompter>,
+    ) -> Result<Option<Arc<NativePermissionController>>, NativeReferenceHostBuildError> {
+        setup
+            .map(|setup| {
+                let workers = resource.ok_or_else(error)?.worker_scope();
+                setup.finish(
+                    std::mem::take(&mut self.registrations),
+                    workers,
+                    transport,
+                    prompter,
+                )
+            })
+            .transpose()
     }
 
     pub(super) fn add(&mut self, tool: impl Tool, history: Option<NativeFileHistoryKind>) {
         let tool: Arc<dyn Tool> = Arc::new(tool);
+        self.add_shared(tool, history);
+    }
+
+    fn add_shared(&mut self, tool: Arc<dyn Tool>, history: Option<NativeFileHistoryKind>) {
         if self.governed {
             self.registrations
                 .push(NativePermissionTargetTool::Ordinary(Arc::clone(&tool)));
@@ -260,11 +351,11 @@ impl ReferenceHostToolCatalog {
 
     fn push(&mut self, mut tool: Arc<dyn Tool>, history: Option<NativeFileHistoryKind>) {
         if let (Some(registry), Some(kind)) = (&self.observations, history) {
-            tool = Arc::new(NativeFileHistoryTool::shared(
-                tool,
-                kind,
-                Arc::clone(registry),
-            ));
+            let history = NativeFileHistoryTool::shared(tool, kind, Arc::clone(registry));
+            tool = Arc::new(match &self.workspace_contexts {
+                Some(contexts) => history.with_workspace_contexts(contexts.clone()),
+                None => history,
+            });
         }
         if self.governed {
             tool = Arc::new(NativePermissionGovernedTool::new(tool, self.limits));

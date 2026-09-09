@@ -7,8 +7,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod permissions;
+pub(crate) mod workspace_binding;
 pub use permissions::NativeReferenceHostPermissionOptions;
 use permissions::{PermissionComposition, ReferenceHostToolCatalog};
+use workspace_binding::WorkspaceBinding;
 
 use machine_god_core::{
     BoxFuture, CancellationToken, Engine, EngineLimits, NetworkTarget, SessionIncarnationId,
@@ -273,6 +275,7 @@ struct TerminalCompositionSelection {
 /// Construction is inert and does not capture files, open roots, or start work.
 #[derive(Clone)]
 pub struct NativeReferenceHostConversationOptions {
+    workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Arc<FileUndoTracker>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
@@ -285,6 +288,7 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
         Self {
+            workspace_binding: None,
             undo_tracker,
             terminal: None,
             model_routes: None,
@@ -298,6 +302,23 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn with_terminal(mut self, terminal: NativeReferenceHostTerminalOptions) -> Self {
         self.terminal = Some(terminal);
+        self
+    }
+
+    /// Selects explicit additional-root authority and exact-turn routing.
+    /// Composition validates primary/state descriptors against the prepared roots.
+    /// Attach each conversation through `configure_conversation_workspace` before
+    /// admission. Retaining these allocations performs no filesystem work.
+    #[must_use]
+    pub fn with_workspace(
+        mut self,
+        authority: crate::NativeWorkspaceAuthority,
+        contexts: Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_binding = Some(WorkspaceBinding {
+            authority,
+            contexts,
+        });
         self
     }
 
@@ -339,6 +360,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 
 #[derive(Default)]
 struct PreparedCompositionOptions {
+    workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
@@ -350,6 +372,7 @@ impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions
     fn from(options: NativeReferenceHostConversationOptions) -> Self {
         Self {
             undo_tracker: Some(options.undo_tracker),
+            workspace_binding: options.workspace_binding,
             terminal: options.terminal,
             model_routes: options.model_routes,
             observations: options.observations,
@@ -376,6 +399,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
+    workspace_binding: Option<WorkspaceBinding>,
     engine: Engine,
     workspace_root: PathBuf,
     session_store: Arc<FileSessionStore>,
@@ -1291,6 +1315,7 @@ impl NativeReferenceHost {
         let permission_contexts = permission_setup
             .as_ref()
             .map(|setup| Arc::clone(&setup.contexts));
+        let workspace_binding = workspace_tools.workspace_binding.clone();
         let workspace_tools = match &permission_setup {
             Some(setup) => setup.install_files(workspace_tools),
             None => workspace_tools,
@@ -1303,7 +1328,10 @@ impl NativeReferenceHost {
         };
         let mut catalog =
             ReferenceHostToolCatalog::new(observations, engine_limits, permission_setup.is_some());
-        let authority = catalog.workspace(workspace_tools);
+        let authority = catalog.workspace(
+            workspace_tools,
+            permission_setup.as_ref().map(|setup| &setup.registry),
+        );
         let workspace_root = authority.canonical_workspace.clone();
         let SharedNetworkTools {
             vision,
@@ -1349,20 +1377,12 @@ impl NativeReferenceHost {
         catalog.add(vision, None);
         catalog.add(web_fetch, None);
         catalog.add(web_search, None);
-        let permissions = permission_setup
-            .map(|setup| {
-                let workers = host_resource
-                    .as_ref()
-                    .ok_or_else(permissions::error)?
-                    .worker_scope();
-                setup.finish(
-                    catalog.registrations,
-                    workers,
-                    transport,
-                    Arc::clone(&permission_prompter),
-                )
-            })
-            .transpose()?;
+        let permissions = catalog.finish_permissions(
+            permission_setup,
+            host_resource.as_ref(),
+            transport,
+            Arc::clone(&permission_prompter),
+        )?;
         let mut builder = Engine::builder()
             .limits(engine_limits)
             .provider(provider)
@@ -1385,6 +1405,10 @@ impl NativeReferenceHost {
             permissions,
             permission_contexts,
         )
+        .map(|mut host| {
+            host.workspace_binding = workspace_binding;
+            host
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1421,6 +1445,7 @@ impl NativeReferenceHost {
 
         Ok(Self {
             engine,
+            workspace_binding: None,
             control_workers,
             workspace_root,
             session_store,
@@ -1988,7 +2013,44 @@ fn consume_prepared_composition(
             state_path: prepared_roots.state_root().to_owned(),
         });
     let (mut tools, store) = consume_prepared_roots(prepared_roots)?;
+    if let Some(binding) = options.workspace_binding {
+        let error =
+            || NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WorkspaceRoot);
+        binding
+            .authority
+            .snapshot()
+            .map_err(|_| error())?
+            .validate_host_binding(
+                &tools.terminal_root,
+                &tools.canonical_workspace,
+                &store.try_clone_root_descriptor().map_err(|_| error())?,
+            )
+            .map_err(|_| error())?;
+        tools.read_file = tools
+            .read_file
+            .with_workspace_contexts(Arc::clone(&binding.contexts));
+        tools.file_info = tools
+            .file_info
+            .with_workspace_contexts(Arc::clone(&binding.contexts));
+        tools.open_file = tools
+            .open_file
+            .with_workspace_contexts(Arc::clone(&binding.contexts));
+        tools.create_folder = tools
+            .create_folder
+            .with_workspace_contexts(Arc::clone(&binding.contexts));
+        tools.list_files = tools
+            .list_files
+            .with_workspace_contexts(Arc::clone(&binding.contexts));
+        tools.glob_files = tools
+            .glob_files
+            .with_workspace_contexts(Arc::clone(&binding.contexts));
+        tools.grep_files = tools
+            .grep_files
+            .with_workspace_contexts(Arc::clone(&binding.contexts));
+        tools.workspace_binding = Some(binding);
+    }
     if let Some(tracker) = options.undo_tracker {
+        tools.undo_tracker = Some(Arc::clone(&tracker));
         tools.write_file = tools.write_file.with_undo_tracker(Arc::clone(&tracker));
         tools.edit_file = tools.edit_file.with_undo_tracker(Arc::clone(&tracker));
         tools.delete_file = tools.delete_file.with_undo_tracker(Arc::clone(&tracker));

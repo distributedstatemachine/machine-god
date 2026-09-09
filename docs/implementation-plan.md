@@ -270,8 +270,16 @@ configuration worktrees are cleanly removed. Production host routing for the
 complete tool set is still required. Mutation adapter `797bf6f` integrates 381
 component regression tests; its shared projection also passes eight combined
 root tests after permission-preparer wiring. Its clean worktree is removed.
-Path-tool and enumeration adapters proceed in isolated trees. These checks are
-not full-feature acceptance.
+Path-tool, enumeration and grep adapters are integrated at `49df27d`, `7586d38`
+and `03a6bcf`; their clean worktrees are removed. Actual prepared-root host
+composition now shares the exact workspace context with these tools, reads,
+all five mutations, permission preparation, undo and history. State-directory
+aliases compare retained object identities rather than spelling. Qualified
+history paths and outer mutation approval stamps survive the real wrapper chain.
+All 51 composed-host tests, nine mutation tests, eight history-wrapper regressions,
+native all-target/all-feature Clippy and bounded docs checks pass. Vision,
+terminal roots, semantic search (including the macOS reader), and actual launch/
+slash selection remain in integration. These checks are not full-feature acceptance.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal

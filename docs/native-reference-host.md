@@ -145,6 +145,34 @@ contracts; native conversation finalization owns history publication. Compositio
 does not collect observations or write session history itself. Constructors
 without this option retain their existing unwrapped tools.
 
+`with_workspace(NativeWorkspaceAuthority, Arc<NativeWorkspaceContexts>)` selects
+captured workspace routing for reads, metadata, folder creation, enumeration, grep and
+the five file mutations. This option is independent of permission mode. During
+prepared-root composition, the primary identity and both retained directory
+descriptors must match the selected authority. State selections may use different
+path aliases; the actual state-directory identity, not its spelling, must match.
+An authority prepared while state was absent must be prepared again with the
+explicit existing state descriptor before constructing this host.
+
+Call `host.configure_conversation_workspace(conversation)` before admitting each
+created or resumed conversation. The exact registry is shared by the actual
+registered tools and, when selected, native permission preparation. Missing or
+expired registrations cannot fall back to primary-root execution. Permission
+and execution use the same logical mutation projection and retain each endpoint
+independently; the injected undo tracker keeps those endpoint identities.
+History retains the same qualified logical paths and cross-root destinations.
+For scoped mutations, observation reservation follows the outer execution-ticket
+stamp and endpoint claim; history cannot let an old unpolled call acquire a
+later approval. The original history adapter remains inert before polling.
+
+`host.workspace_service(store)` retains the same workspace authority and the
+complete-terminal host's actual worker scope, without loading settings or
+starting an operation. It returns `None` when either selection is absent.
+Interactive callers use the service's runtime-bound operations so queued or
+active turns cannot be bypassed. Scoped vision, search, terminal launch
+roots and top-level/interactive launch selection require their separate tool
+composition; selecting the workspace option alone does not complete that surface.
+
 `with_permissions(NativeReferenceHostPermissionOptions)` opts into native
 permission preparation, selected-file preimage reads and mode/rule enforcement.
 The options retain an explicitly supplied `NativePermissionContexts` registry

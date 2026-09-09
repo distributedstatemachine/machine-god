@@ -169,7 +169,7 @@ fn prepare_on_worker(
             ))
             .map_err(|_| invalid())?;
             let projection =
-                targets.from_scoped_file(&file, invocation, cancellation, endpoints.scope)?;
+                targets.scoped_file_target(&file, invocation, cancellation, endpoints.scope)?;
             return Ok((projection, Some(file)));
         }
         targets.validate_file_authority(files)?;

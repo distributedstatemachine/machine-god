@@ -54,6 +54,7 @@ pub(crate) struct NativeFileHistoryTool {
     tool: Arc<dyn Tool>,
     kind: NativeFileHistoryKind,
     registry: Arc<NativeConversationObservations>,
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
 }
 impl NativeFileHistoryTool {
     #[cfg(test)]
@@ -74,7 +75,15 @@ impl NativeFileHistoryTool {
             tool,
             kind,
             registry,
+            workspace_contexts: None,
         }
+    }
+    pub(crate) fn with_workspace_contexts(
+        mut self,
+        contexts: Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
     }
     fn reserve(
         &self,
@@ -89,6 +98,17 @@ impl NativeFileHistoryTool {
             NativeFileHistoryKind::Copy => ("source", Some("destination")),
             _ => ("path", None),
         };
+        let scope = self
+            .workspace_contexts
+            .as_ref()
+            .map(|contexts| contexts.snapshot_for_tool(context))
+            .transpose()
+            .map_err(|_| observation_error())?;
+        let snapshot = scope
+            .as_ref()
+            .map(crate::NativeWorkspaceTurnScope::snapshot)
+            .transpose()
+            .map_err(|_| observation_error())?;
         let path = canonical_path(
             args,
             path,
@@ -98,9 +118,10 @@ impl NativeFileHistoryTool {
                     | NativeFileHistoryKind::Glob
                     | NativeFileHistoryKind::Grep
             ),
+            snapshot.as_ref(),
         )?;
         let destination = destination
-            .map(|key| canonical_path(args, key, false))
+            .map(|key| canonical_path(args, key, false, snapshot.as_ref()))
             .transpose()?;
         self.registry
             .reserve(
@@ -236,7 +257,12 @@ fn observation_error() -> ToolError {
         false,
     )
 }
-fn canonical_path<'a>(args: &'a Value, key: &str, allow_root: bool) -> Result<&'a str, ToolError> {
+fn canonical_path<'a>(
+    args: &'a Value,
+    key: &str,
+    allow_root: bool,
+    scope: Option<&crate::NativeWorkspaceScopeSnapshot>,
+) -> Result<&'a str, ToolError> {
     let path = args
         .as_object()
         .and_then(|object| object.get(key))
@@ -244,12 +270,38 @@ fn canonical_path<'a>(args: &'a Value, key: &str, allow_root: bool) -> Result<&'
         .ok_or_else(observation_error)?;
     if path.is_empty()
         || path.len() > 4096
-        || path.starts_with('/')
+        || (path.starts_with('/') && scope.is_none())
         || path.as_bytes().contains(&0)
-        || (path != "." && path.split('/').any(|part| matches!(part, "" | "." | "..")))
+        || (path != "."
+            && path != "/"
+            && path
+                .strip_prefix('/')
+                .unwrap_or(path)
+                .split('/')
+                .any(|part| matches!(part, "" | "." | "..")))
         || (path == "." && !allow_root)
     {
         return Err(observation_error());
+    }
+    if let Some(scope) = scope {
+        let route = scope
+            .route(std::path::Path::new(path))
+            .map_err(|_| observation_error())?;
+        if route.relative_path() == std::path::Path::new(".") && !allow_root {
+            return Err(observation_error());
+        }
+        // Prepared logical paths stay primary-relative or retain the exact
+        // selected absolute root label; never reopen a pathname for history.
+        if path.starts_with('/') {
+            let logical = if route.relative_path() == std::path::Path::new(".") {
+                route.root_identity().to_path_buf()
+            } else {
+                route.root_identity().join(route.relative_path())
+            };
+            if logical.to_str() != Some(path) {
+                return Err(observation_error());
+            }
+        }
     }
     Ok(path)
 }
@@ -564,7 +616,7 @@ mod tests {
             );
         }
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert!(canonical_path(&json!({"path":"."}), "path", true).is_ok());
+        assert!(canonical_path(&json!({"path":"."}), "path", true, None).is_ok());
     }
     #[test]
     fn all_native_kinds_use_explicit_canonical_keys_and_actions() {

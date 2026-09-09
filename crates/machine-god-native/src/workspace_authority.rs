@@ -220,6 +220,37 @@ struct Scope {
 pub struct NativeWorkspaceScopeSnapshot(Arc<Scope>);
 
 impl NativeWorkspaceScopeSnapshot {
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn validate_host_binding(
+        &self,
+        primary: &OwnedFd,
+        primary_identity: &Path,
+        state: &OwnedFd,
+    ) -> Result<()> {
+        if self.primary_identity() != primary_identity || !self.0.state.exists {
+            return Err(NativeWorkspaceAuthorityError::WrongAuthority);
+        }
+        // Prepared state paths can contain aliases (for example /var on macOS).
+        // Compare the actually retained objects, not a second pathname lookup.
+        for (supplied, retained) in [
+            (primary, self.0.primary.as_ref()),
+            (state, &self.0.state.ancestor),
+        ] {
+            let metadata = rustix::fs::fstat(supplied)
+                .map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
+            let current = rustix::fs::fstat(&retained.descriptor)
+                .map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
+            if !FileType::from_raw_mode(metadata.st_mode).is_dir()
+                || metadata.st_nlink == 0
+                || !same_identity(&metadata, &current)
+                || !same_identity(&metadata, &retained.metadata)
+            {
+                return Err(NativeWorkspaceAuthorityError::WrongAuthority);
+            }
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.0.generation

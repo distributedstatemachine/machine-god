@@ -98,6 +98,8 @@ pub use workspace_context::{
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace_mutation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace_path_tools;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace_service;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use workspace_service::{
