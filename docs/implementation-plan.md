@@ -124,7 +124,9 @@ preserved the original 2,089 unique native test identities while removing 965
 duplicate executions. The broader run also identified a stale model-save error
 fixture; it now uses a deterministically obstructed parent, with its original
 receipt and transition assertions preserved. No production behavior was changed
-for that fixture correction.
+for that fixture correction. The complete run also exposed two stale credential
+configuration assertions; current/default and future-version fixtures now match
+the existing schema-v7 contract, while legacy schema-v3 coverage is preserved.
 
 Freeze a single candidate after the complete local gate, run three fresh independent review
 tracks, fix until all are green, and require exact feature-branch CI and
