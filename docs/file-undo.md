@@ -71,6 +71,10 @@ and hard-link topology are not reconstructed. Rename reversal moves the actual
 retained source object. Only exact predecessor observations are rebased after
 successful undo, allowing interleaved multi-operation history without granting
 permission to overwrite an externally replaced same-content file.
+When a later tracked inverse reconstructs a renamed destination, reversal moves
+the exact rebased postimage that passed current identity checks. It retains the
+original content/mode checks without requiring the historical source inode to
+survive reconstruction. External replacement still fails before inverse work.
 
 `rename_replace` and `copy_replace` are separate explicit native APIs taking an
 already-open workspace directory. They exercise actual replacement effects and
@@ -142,6 +146,16 @@ use fixed `file_undo_tracking_failed` without reflecting paths/content/OS errors
 
 ## Pinned input
 
+The native interactive owner's `UndoLast` control runs this same inverse through
+the actual reference host's shared owned-worker scope. It retains a runtime
+lifecycle permit through execution, accepts active model turns without cancelling
+them, and leaves canonical transcript/history unchanged. Its exact `Undone`
+receipt or `Undo` error is retained independently of output and later session
+transitions. Accepted inverse work settles before deferred cancellation or
+shutdown; worker destruction is joined by the full host completion observer,
+not inferred from response readiness. The control does not create a new tracker,
+broaden file authority, skip unavailable entries or retry ambiguous effects.
+
 Pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` owns its 100-entry
 change stack and bounded preimage capture in
 `src/core/workspace/change_tracker.zig`; `src/core/tooling/tracked_file_mutations.zig`
@@ -149,5 +163,5 @@ captures delete/rename/copy state and appends after successful dispatch.
 Its rename and copy trackers include overwritten-destination bytes. The slash
 handler is `src/core/app/app_commands.zig:998`. Machine-god deliberately does not
 adopt upstream's pathname-only restoration, swallowed restoration failures, or
-silent loss of failed entries. This native prerequisite does not by itself
+silent loss of failed entries. Native control integration does not by itself
 constitute interactive CLI integration or full feature acceptance.

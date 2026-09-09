@@ -4,9 +4,10 @@ use super::{
     NativeInteractiveError, NativeInteractiveOutcome, NativeInteractiveSession, transition,
 };
 use crate::{
-    NativeConversationRuntime, NativeConversationRuntimeError, NativeModelPreferenceCommit,
-    NativeModelPreferencePersistence, NativeModelPreferences, NativePermissionRuleProposal,
-    NativeQueuedJobId, NativeSessionMetadata, NativeSessionOrigin, NativeUserConfigStore,
+    FileUndoError, FileUndoOutcome, NativeConversationRuntime, NativeConversationRuntimeError,
+    NativeModelPreferenceCommit, NativeModelPreferencePersistence, NativeModelPreferences,
+    NativePermissionRuleProposal, NativeQueuedJobId, NativeSessionMetadata, NativeSessionOrigin,
+    NativeUserConfigStore,
 };
 use machine_god_core::{
     BackgroundOutputOwner, BoxFuture, InferenceOptions, PermissionError, SessionRevision,
@@ -20,6 +21,7 @@ use std::{
 /// Explicit native operations. A rule proposal must have been confirmed by the
 /// caller's human-confirmation boundary; merely proposing a rule is not consent.
 pub enum NativeInteractiveControl {
+    UndoLast,
     Rename {
         title: String,
     },
@@ -52,6 +54,7 @@ impl NativeInteractiveControlId {
 }
 
 pub enum NativeInteractiveControlError {
+    Undo(FileUndoError),
     Runtime(NativeConversationRuntimeError),
     Permission(PermissionError),
     Unavailable,
@@ -75,6 +78,7 @@ impl From<NativeConversationRuntimeError> for NativeInteractiveControlError {
 
 /// Exact receipts from existing native operations, not all-target success flags.
 pub enum NativeInteractiveControlReceipt {
+    Undone(FileUndoOutcome),
     Renamed(SessionRevision),
     Compacted(bool),
     Continued(NativeQueuedJobId),
@@ -113,7 +117,7 @@ impl NativeInteractiveControlOutcome {
 pub(super) struct OwnedControl {
     id: NativeInteractiveControlId,
     source: BackgroundOutputOwner,
-    future:
+    pub(super) future:
         BoxFuture<'static, Result<NativeInteractiveControlReceipt, NativeInteractiveControlError>>,
 }
 
@@ -166,13 +170,21 @@ impl NativeInteractiveSession {
             }
             other => other,
         };
-        self.next_control = next;
         let runtime = self.current.clone();
-        self.control = Some(OwnedControl {
-            id,
-            source,
-            future: Box::pin(execute(runtime, control, now_ms)),
-        });
+        let future = match control {
+            NativeInteractiveControl::UndoLast => undo::execute(
+                runtime,
+                self.host
+                    .undo_tracker()
+                    .ok_or(NativeInteractiveError::Configuration)?,
+                self.host
+                    .control_workers()
+                    .ok_or(NativeInteractiveError::Configuration)?,
+            ),
+            other => Box::pin(execute(runtime, other, now_ms)),
+        };
+        self.next_control = next;
+        self.control = Some(OwnedControl { id, source, future });
         self.notify();
         Ok(id)
     }
@@ -301,8 +313,10 @@ async fn execute(
                     .map_err(NativeInteractiveControlError::Permission)?,
             )
         }
-        NativeInteractiveControl::Continue { .. } => {
-            unreachable!("continuation checked before retention")
+        NativeInteractiveControl::Continue { .. } | NativeInteractiveControl::UndoLast => {
+            unreachable!("specialized control checked before retention")
         }
     })
 }
+
+pub(super) mod undo;

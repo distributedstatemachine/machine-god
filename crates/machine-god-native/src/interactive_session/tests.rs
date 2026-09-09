@@ -16,6 +16,9 @@ use support::Fixture;
 #[path = "controls/tests.rs"]
 mod controls;
 
+#[path = "controls/undo/tests.rs"]
+mod undo;
+
 #[derive(Default)]
 struct Gate {
     ready: AtomicBool,

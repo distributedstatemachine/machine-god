@@ -155,7 +155,7 @@ establish CLI support. `/help` describes the handlers actually wired in this hos
 
 The wired handlers include `/help`, `/status`, `/version`, `/quit` (`/exit`),
 `/cancel`, `/clear`, `/new`, `/reset`, argumentless `/resume` (latest), `/continue`,
-`/rename <title>` and `/compact`. Policy selection uses
+`/rename <title>`, `/compact` and argumentless `/undo`. Policy selection uses
 `/permissions [ask|auto|yolo|reset]` and `/sandbox [os|none]`. Model controls are
 `/models`, `/model [id-or-query|effort <name>|save|save-default]` and `/fast`.
 Model/effort/fast changes request native session and explicitly injected
@@ -165,6 +165,24 @@ target is available; `save-default` never discovers an ambient store.
 Ordinary prompts retain their 256 KiB bound independently of the 64 KiB slash
 envelope. `/cancel` requests owned turn cancellation without replacing its
 session or discarding untaken prompts; an accepted save settles first.
+
+`/undo` requests the latest cooperating file inverse from the complete host's
+shared native tracker, including during an active response. It does not cancel
+that response, delete messages, rewrite history or fabricate tool events. The
+CLI performs no inverse filesystem work itself. Native serializes the request
+with cooperating mutations and retains its ownership through shutdown.
+
+The typed receipt distinguishes an empty tracker, a restored workspace-relative
+path and removal of a newly created path. Paths use the bounded terminal-safe
+encoder; an unrenderable oversized receipt fails presentation, not a truncated
+success. Busy, rejected authority, changed tracked state, resource exhaustion,
+unavailable filesystem work, cancellation and both non-undoable preimage reasons
+remain distinct failures, never “Nothing to undo” or generic saved-publication
+reload advice. An ambiguous result warns that effects may be partial and recovery
+artifacts are retained; no automatic retry or rollback is promised. As with
+other controls, the exact native receipt stays owned until output acknowledgement,
+including blocked output and the native-free shutdown tail. New controls wait
+while an earlier receipt is pending.
 
 ## Identity
 

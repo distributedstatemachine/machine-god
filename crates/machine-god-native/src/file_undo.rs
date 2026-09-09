@@ -297,6 +297,77 @@ mod tests {
     }
 
     #[test]
+    fn file_undo_rename_survives_tracked_destination_reconstruction() {
+        for delete in [false, true] {
+            let temp = Temp::new();
+            let tracker = Arc::new(FileUndoTracker::new());
+            write(&temp, &tracker, "source", "original");
+            let rename = crate::RenameFileTool::open(&temp.0)
+                .unwrap()
+                .with_undo_tracker(tracker.clone());
+            ready(rename.execute(
+                context(),
+                json!({"old_path":"source","new_path":"destination"}),
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            if delete {
+                let tool = crate::DeleteFileTool::open(&temp.0)
+                    .unwrap()
+                    .with_undo_tracker(tracker.clone());
+                ready(tool.execute(
+                    context(),
+                    json!({"path":"destination"}),
+                    CancellationToken::new(),
+                ))
+                .unwrap();
+            } else {
+                write(&temp, &tracker, "destination", "replacement");
+            }
+            assert_eq!(
+                tracker.undo_last(&CancellationToken::new()),
+                Ok(FileUndoOutcome::Restored("destination".into()))
+            );
+            assert_eq!(
+                tracker.undo_last(&CancellationToken::new()),
+                Ok(FileUndoOutcome::Restored("source".into()))
+            );
+            assert_eq!(fs::read(temp.0.join("source")).unwrap(), b"original");
+            assert!(!temp.0.join("destination").exists());
+            assert_eq!(
+                tracker.undo_last(&CancellationToken::new()),
+                Ok(FileUndoOutcome::Removed("source".into()))
+            );
+        }
+    }
+
+    #[test]
+    fn file_undo_reconstructed_rename_rejects_external_same_content_replacement() {
+        let temp = Temp::new();
+        let tracker = Arc::new(FileUndoTracker::new());
+        write(&temp, &tracker, "source", "original");
+        let rename = crate::RenameFileTool::open(&temp.0)
+            .unwrap()
+            .with_undo_tracker(tracker.clone());
+        ready(rename.execute(
+            context(),
+            json!({"old_path":"source","new_path":"destination"}),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        write(&temp, &tracker, "destination", "replacement");
+        tracker.undo_last(&CancellationToken::new()).unwrap();
+        fs::write(temp.0.join("external"), b"original").unwrap();
+        fs::rename(temp.0.join("external"), temp.0.join("destination")).unwrap();
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()),
+            Err(FileUndoError::Changed)
+        );
+        assert!(!temp.0.join("source").exists());
+        assert_eq!(fs::read(temp.0.join("destination")).unwrap(), b"original");
+    }
+
+    #[test]
     fn file_undo_edit_delete_and_directory_restore() {
         let temp = Temp::new();
         let tracker = Arc::new(FileUndoTracker::new());
@@ -2069,10 +2140,14 @@ mod native {
                             && old_digest == &new_digest
                             && (!entry.rename
                                 || index != 0
-                                || (identity(old, &new)
-                                    && old.st_size == new.st_size
-                                    && old.st_mtime == new.st_mtime
-                                    && old.st_mtime_nsec == new.st_mtime_nsec))
+                                // A later tracked inverse may legitimately
+                                // reconstruct this file. Move the exact admitted
+                                // postimage, not its historical preimage inode.
+                                || matches!(&entry.after[1], Snapshot::File { stat: admitted, .. }
+                                    if identity(admitted, &new)
+                                        && admitted.st_size == new.st_size
+                                        && admitted.st_mtime == new.st_mtime
+                                        && admitted.st_mtime_nsec == new.st_mtime_nsec))
                     }
                     _ => false,
                 };

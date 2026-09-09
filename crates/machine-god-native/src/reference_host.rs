@@ -383,6 +383,7 @@ pub struct NativeReferenceHost {
     loaded_config: LoadedNativeConfig,
     credential_source: Option<AiGatewayCredentialSource>,
     terminal_shutdown: Option<crate::NativeOwnedWorkerCompletion>,
+    control_workers: Option<crate::NativeOwnedWorkerScope>,
     terminal_lifecycle: Option<crate::NativeTerminalLifecycleRequester>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
@@ -1150,6 +1151,11 @@ impl NativeReferenceHost {
         self.undo_tracker.clone()
     }
 
+    /// Shares the actual terminal/archive completion owner; never creates a scope.
+    pub(crate) fn control_workers(&self) -> Option<crate::NativeOwnedWorkerScope> {
+        self.control_workers.clone()
+    }
+
     /// Returns the exact optional current-model registry injected into search.
     /// No registry or conversation registration is created by this accessor.
     #[must_use]
@@ -1366,6 +1372,9 @@ impl NativeReferenceHost {
         let terminal_shutdown = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::completion);
+        let control_workers = host_resource
+            .as_ref()
+            .map(NativeTerminalHostResource::worker_scope);
         let terminal_lifecycle = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::lifecycle_requester);
@@ -1383,6 +1392,7 @@ impl NativeReferenceHost {
 
         Ok(Self {
             engine,
+            control_workers,
             workspace_root,
             session_store,
             session_lifecycle,

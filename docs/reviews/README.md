@@ -97,6 +97,7 @@ product behavior; they are not penetration tests.
 
 ## Milestone 03: CLI surfaces
 
+- [Combined CLI component and review history](m03-cli-full-review-01.md)
 - [permissions](m03-permissions-cli-review-01.md)
 - [models](m03-models-cli-review-01.md)
 - [doctor](m03-doctor-cli-review-01.md)

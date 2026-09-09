@@ -315,6 +315,132 @@ fn blocked_stdout_does_not_block_save_receipt_or_native_shutdown() {
 }
 
 #[test]
+fn undo_renderer_keeps_outcomes_reasons_paths_and_bounds_distinct() {
+    use native::{
+        FileUndoError as Error, FileUndoOutcome as Outcome, FileUndoUnavailableReason as Reason,
+        NativeInteractiveControlError as ControlError, NativeInteractiveControlReceipt as Receipt,
+    };
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    let result = runtime.block_on(async {
+        harness.driver.command("/undo", 101);
+        until(&mut harness, |driver| driver.control_outcome.is_some()).await;
+        let mut receipt = harness.driver.control_outcome.take().unwrap();
+        assert!(matches!(receipt.result, Ok(Receipt::Undone(Outcome::Empty))));
+        assert!(String::from_utf8(super::render_control(&receipt).unwrap()).unwrap().contains("Nothing to undo."));
+        for (outcome, verb) in [
+            (Outcome::Restored("世界/\u{1b}[31m\n\u{202e}.txt".into()), "Restored"),
+            (Outcome::Removed("世界/\u{1b}[31m\n\u{202e}.txt".into()), "Removed"),
+        ] {
+            receipt.result = Ok(Receipt::Undone(outcome));
+            let text = String::from_utf8(super::render_control(&receipt).unwrap()).unwrap();
+            assert!(text.contains(verb));
+            assert!(text.contains("世界/\\u001b[31m\\n\\u202e.txt"));
+            assert!(!text.contains('\u{1b}') && !text.contains('\u{202e}'));
+            assert_eq!(text.matches('\n').count(), 2);
+        }
+        let mut rendered = std::collections::BTreeSet::new();
+        for error in [Error::Busy, Error::Rejected, Error::Changed, Error::ResourceLimit,
+            Error::Unavailable, Error::Cancelled, Error::Ambiguous,
+            Error::NotUndoable(Reason::PreimageTooLarge), Error::NotUndoable(Reason::SnapshotUnavailable)] {
+            receipt.result = Err(ControlError::Undo(error));
+            let text = String::from_utf8(super::render_control(&receipt).unwrap()).unwrap();
+            assert!(!text.contains("Nothing to undo") && !text.contains("authoritative reload"));
+            if error == Error::Ambiguous {
+                assert!(text.contains("effects may be partial"));
+                assert!(text.contains("recovery artifacts retained"));
+                assert!(text.contains("no automatic retry"));
+            } else {
+                assert!(text.contains(&error.to_string()));
+            }
+            assert!(rendered.insert(text), "every native reason stays distinguishable");
+        }
+        receipt.result = Ok(Receipt::Undone(Outcome::Restored("\u{1b}".repeat(4096))));
+        let bounded = super::render_control(&receipt).unwrap();
+        assert!(bounded.len() > 4096 && bounded.len() <= crate::MAX_MODELS_OUTPUT_BYTES);
+        receipt.result = Ok(Receipt::Undone(Outcome::Removed("\0".repeat(crate::MAX_MODELS_OUTPUT_BYTES))));
+        assert!(super::render_control(&receipt).is_err(), "never report a truncated successful inverse");
+        assert!(matches!(&receipt.result, Ok(Receipt::Undone(Outcome::Removed(path))) if path.len() == crate::MAX_MODELS_OUTPUT_BYTES));
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    let _ = runtime.block_on(finish_tail(&mut tail));
+}
+
+#[test]
+fn undo_receipt_survives_blocked_output_shutdown_and_final_flush_acknowledgement() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    let (result, receipt_id) = runtime.block_on(async {
+        fixture.transport.push(support::call("write_file", &serde_json::json!({
+            "path": "undo-尾.txt", "content": "tracked output barrier"
+        })));
+        fixture.transport.push(support::answer());
+        harness.driver.owner.enqueue("write before undo".into()).unwrap();
+        let _ = pump_until(&mut harness, |driver| presentation_idle(driver)
+            && driver.owner.runtime().status().queued_jobs == 0).await;
+        assert!(fixture.workspace.join("undo-尾.txt").exists());
+        let record = harness.driver.owner.runtime().record();
+        harness.driver.note(b"\n[blocked output]\n");
+        until(&mut harness, |driver| driver.in_flight.is_some()).await;
+        std::io::Write::write_all(&mut harness.input_writer, b"/undo\n").unwrap();
+        until(&mut harness, |driver| driver.control_outcome.is_some()).await;
+        let receipt = harness.driver.control_outcome.as_ref().unwrap();
+        assert!(matches!(&receipt.result, Ok(native::NativeInteractiveControlReceipt::Undone(native::FileUndoOutcome::Removed(path))) if path == "undo-尾.txt"));
+        let receipt_id = receipt.id;
+        assert!(!fixture.workspace.join("undo-尾.txt").exists());
+        assert_eq!(harness.driver.owner.runtime().record(), record);
+        harness.driver.shutdown();
+        until(&mut harness, |driver| driver.owner.is_closed()).await;
+        assert_eq!(harness.driver.control_outcome.as_ref().unwrap().id, receipt_id);
+        let result = poll_fn(|cx| harness.driver.poll(cx, &mut harness.signals)).await;
+        assert_eq!(result.outcome, AskCommandOutcome::Completed);
+        (result, receipt_id)
+    });
+    let mut tail = dispose(harness, fixture, result);
+    assert_eq!(tail.presentation.controls.front().unwrap().id, receipt_id);
+    let mut saw_undo = false;
+    let mut saw_flush = false;
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                let result = tail.presentation.poll(cx, &mut tail.signals);
+                if let Ok(work) = tail.work.try_recv() {
+                    match work {
+                        OutputWork::Write(bytes) => {
+                            assert!(bytes.len() <= 4096);
+                            if String::from_utf8_lossy(&bytes).contains("Removed undo-尾.txt") {
+                                saw_undo = true;
+                                assert_eq!(
+                                    tail.presentation.controls.front().unwrap().id,
+                                    receipt_id
+                                );
+                            }
+                        }
+                        OutputWork::Flush if saw_undo && !saw_flush => {
+                            saw_flush = true;
+                            assert_eq!(tail.presentation.controls.front().unwrap().id, receipt_id);
+                        }
+                        OutputWork::Flush => {}
+                    }
+                    tail.ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
+                    cx.waker().wake_by_ref();
+                }
+                result
+            }),
+        )
+        .await
+        .unwrap()
+    });
+    assert_eq!(result.outcome, AskCommandOutcome::Completed);
+    assert!(saw_undo && saw_flush);
+    assert!(tail.presentation.controls.is_empty());
+}
+
+#[test]
 fn output_failure_still_settles_native_owner_before_return() {
     let runtime = executor();
     let fixture = support::Fixture::new();

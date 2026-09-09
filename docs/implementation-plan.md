@@ -168,147 +168,38 @@ Internal component commits are not deliveries. Their implementation inventory is
   prepared association publication is not rolled back by dropping adoption.
 
 Remaining work includes picker startup/in-session selection, allowlist editing,
-undo/copy/workspace handlers, migration/recovery/doctor cleanup, and remaining
+copy/workspace handlers, migration/recovery/doctor cleanup, and remaining
 policy/workspace scenarios. Bare/latest/exact startup, shared cache/human prompts
 and owned raw input are composed. Clear/new/reset allocate fresh IDs;
 clear/new carry terminals forward, while reset and live resume stop/forget.
 Started transitions and uncertain outcomes stay owned through settlement.
 The complete combined feature and all final gates remain open.
 
-The rich sessions checkpoint `734a11f` passes Rust 1.94.1 formatting,
-warnings-denied workspace Clippy, replacement workspace tests and doctests.
-Focused coverage includes 67 native catalog/cursor/listing/store tests, all 87
-CLI integration tests and 152 CLI unit tests with five existing helper ignores.
-The freshly built release CLI passes all 17 sessions integration tests and is
-the production terminal helper for the workspace run. All 1,590 native unit
-tests pass with seven existing helper ignores. Repository Python checks run
-263 tests successfully with 14 skips. Both integrated worker worktrees are
-removed; their commits remain recoverable.
+Detailed component checks, including the first-run PTY failures and replacement
+results, are retained in the [combined CLI history](reviews/m03-cli-full-review-01.md).
+They are historical evidence, not separate deliveries or final product reviews.
 
-The first workspace attempt failed 11 PTY child-reaping admission checks and
-two tmux checks. Admission waited for fixed `/bin/sh -c 'exit 0'`, before the
-selected release helper or inventory started. No matching cross-test signal or
-fault-injection mechanism was found. All 26 focused PTY tests, both exact tmux
-tests and the replacement full workspace pass without source, deadline or test
-concurrency changes. This preserves the failure evidence; it does not establish
-its cause or claim a timing fix. These internal checkpoints are not deliveries
-and do not promote compatibility or performance evidence. Final reviews and
-exact remote evidence remain gates for the complete combined feature.
-
-The validated-resume/origin integration passes 132 focused native session tests,
-153 CLI unit tests with five existing helper ignores, all 89 CLI integration
-tests and ten CLI frame tests. Its core checked-revision and guarded-load
-prerequisites pass the complete core suite and doctests. The integration's
-first workspace Clippy run rejected one CLI boolean expression; after the
-equivalent simplification, all 17 sessions renderer tests and warnings-denied
-workspace Clippy pass. Exact `0382b0f` then passes a fresh release build and all
-19 release sessions integration tests. Its replacement full workspace, doctests,
-formatting and documentation checks pass; Python checks pass 263 tests with 14
-skips. The first workspace run failed 24 child-reaping admission checks and one
-tmux check. The unchanged failed binary passes focused PTY/startup/staged checks,
-and the unchanged replacement passes all 1,621 native unit tests with seven
-existing ignores. No deadline or test-concurrency relaxation was made; the
-replacement is not a claim that the unexplained first-run cause was fixed.
-
-The current integration adds native runtime quiescence and exact route retirement,
-including retained-alias and attach-time control races. Resume validation also
-rejects malformed saved permission rules before canonical reconciliation. The
-host retains its actual injected undo tracker and exposes explicit terminal
-lifecycle authority and current-policy candidate attachment. Combined checks
-pass 14 resume, 37 runtime, 18 controller, 11 preparer and 47 reference-host tests,
-plus 24 internal lifecycle/route tests. These are prerequisites for the native
-interactive owner, not a delivered session-switch feature.
-Exact `f36444f` also passes 153 CLI unit, 89 command and ten frame tests,
-workspace Clippy, formatting and documentation checks. Its three released worker
-trees and integration worktree are removed; commits remain recoverable.
-The terminal component now supports bounded exact-principal handoff/reset,
-immutable journal ownership, generation/writer revocation, transferred history
-and retained-indeterminate cleanup. Its 74 focused worker tests and scoped Clippy
-pass; the integration passes 104 terminal host/start/catalog/wait tests with one
-existing helper ignore. Pinned clear/new carry terminals forward;
-reset and live resume use stop/forget. The native owner must preserve that
-distinction and retain started operations through their actual receipts.
-Owned undo-clear reservation and guard-owned settled selection snapshots pass
-focused native and WASI worker checks. Their integration passes 30 undo, 38
-runtime and 47 reference-host tests, workspace Clippy, formatting and docs checks.
-The host exposes exact workspace/model/observation allocations and cheap runtime
-identity. The integrated native interactive owner retains started preparation,
-terminal commits, fenced uncertainty, undo and shutdown receipts independently
-of presentation. Borrowed retirement keeps admission fenced on failure; empty
-output takes no longer self-wake idle polling. Combined checks pass 39 runtime,
-eight private and eight composed owner tests, plus 15 native byte-input tests.
-The bounded CLI framer passes 11 standalone tests and pinned Clippy. One-shot
-host acquisition now accepts explicit prompt adapters through a shared setup
-path. These are component checks, not final feature gates. Human-prompt bridging,
-the actual CLI driver and complete command surface were still open at that checkpoint.
-The shared setup integration passes 153 CLI unit tests with five helper ignores,
-89 command tests and ten replay/frame tests. Workspace Clippy passes after a
-test-only naming correction; no persistence or timing contract was weakened.
-
-The following integration adds the contextual human-prompt bridge, flag-preserving
-shared stdin and owned native controls. Combined native checks pass 17 bridge,
-32 input (three private helper ignores) and 22 owner/control tests. Cancellation
-waits for an accepted rule save before cancelling the real turn; queued input
-and session identity survive. A freshly built release CLI implements the private
-input helper and passes all four real-helper integration tests with all features
-and all four without default features, with no skips. The two original prompt/input
-trees, control tree and production-helper test tree are removed after integration;
-commits remain recoverable. Bare/latest/exact interactive CLI composition and its
-native-free final-output phase pass 33 focused assembled CLI tests. The driver
-and command trees are also integrated and removed; these component results do
-not close the full feature or its final local, review and remote gates.
-The assembled CLI passes all 186 unit tests with five private-helper ignores,
-90 command integration tests and ten replay tests. Workspace all-target,
-all-feature warnings-denied Clippy, formatting and bounded documentation checks
-pass. Exact `26b3151` then passes a fresh locked release build, all 90 release
-CLI integration tests, and all four real-input-helper tests with all features
-and all four without default features, with no skips.
-
-The raw frontend now composes explicit native termios ownership, pinned Unicode
-cursor editing, atomic paste, bounded row rendering and actual TTY column reads
-with resize observation. Ctrl-D exits only when empty/idle, deletes forward in
-a draft and does not exit during active work. Physical EOF is a separate abnormal
-closure and never submits a draft. Received input retains its original modal
-identity. Input readers join before restoration; native joins and the verified
-restoration receipt precede final signal exit and native-free output settlement.
-Focused integration passes 77 CLI tests, including three real-PTY cleanup tests,
-16 native raw/dimensions tests and four shared display-width tests. The first
-new exit regression incorrectly injected a signal through its tail helper;
-normal acknowledged-tail coverage now checks the intended distinct exit results.
-The assembled source passes all 231 CLI unit tests with five private-helper
-ignores, 90 command integration tests and ten replay tests. Replacement workspace
-all-target/all-feature warnings-denied Clippy, formatting and bounded docs checks
-pass. All six component trees are integrated and removed; commits remain
-recoverable. Exact `d218f47` then passes a fresh locked release build, all 90
-release CLI tests, all four production input-helper tests and all 77 assembled
-interactive tests using that helper. These are internal component checks, not
-final feature gates.
-
-The next integration streams canonical resumed text and recorded tool summaries
-without inference or repeated effects. Snapshot traversal and output are bounded;
-shutdown discards unsent history without delaying native cleanup. Headless `ask`
-now reads a whole pipe or retained regular file through EOF, validates one bounded
-prompt before setup, and preserves the first signal through exact input settlement.
-Shared descriptor flags remain unchanged; a distinct helper handshake admits
-regular files without widening interactive input. The sessions renderer's platform
-import is scoped to its actual consumers, fixing WASI warnings-denied checking.
-Combined checks pass 42 native input tests with three private-helper ignores,
-254 CLI unit tests with five private-helper ignores, 96 command tests and ten
-replay tests. Workspace warnings-denied Clippy, WASI CLI Clippy, formatting and
-bounded docs checks pass. The initial platform-import correction also required
-an explicit trait import in the sessions tests; the replacement CLI suite passes.
-All three worker trees are integrated and removed; commits remain recoverable.
-The combined fresh release build and production-helper checks are next.
-Typed historical cards and remaining CLI scenarios still need implementation;
-the complete feature, final reviews and exact remote evidence gates remain open.
-
-The integrated preparer passes all five real file mutations, actual reviewer
-Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,
-and separate execution/review-bound regressions. All reference-host tests pass,
-including configured denial, Ask/Auto/Yolo, real automatic review and actual
-sandboxed terminal execution. The CLI's real create/resume turn path also passes
-configured-mode regressions. These checks do not close the unfinished combined
-feature or replace its final reviews and remote evidence.
+Interactive composition includes owned raw terminal editing, atomic paste,
+Unicode row rendering, native resize observation, contextual human prompts and
+native-free final output. Canonical resumed text is streamed without inference
+or repeated effects. Headless `ask` accepts whole pipes and retained regular files
+through EOF with bounded validation and first-signal-preserving settlement.
+Checkpoint `9273ac4` passes 42 native input tests, 254 CLI unit tests, 96 command
+tests and ten replay tests, with three native/five CLI private-helper ignores.
+Workspace and WASI CLI Clippy, formatting and bounded docs checks pass. Its fresh
+locked release passes all 96 command tests and all seven production-input tests;
+the 254 CLI unit tests also pass using that exact release helper.
+The next integration composes `/undo` with the host's real file tracker and
+owned worker scope, preserving typed receipts through active turns, blocked
+output, transitions and shutdown. A tracked destination reconstruction no
+longer makes a valid inverse rename report uncertainty; external replacements
+remain rejected. Combined checks pass 48 undo and 34 owner/control tests,
+257 CLI unit tests with
+five private-helper ignores, 96 command tests and ten replay tests, plus
+workspace warnings-denied Clippy. These checks use the preceding release for
+private helper dispatch, not as executable acceptance of the new handler.
+Typed historical cards and the remaining command/session scenarios still need
+implementation; complete local, review and exact remote feature gates stay open.
 
 ### CI and documentation maintenance
 

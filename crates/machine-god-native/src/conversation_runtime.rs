@@ -198,6 +198,14 @@ impl fmt::Debug for NativeConversationRuntime {
 }
 
 impl NativeConversationRuntime {
+    /// File controls may run during a turn but cannot outlive lifecycle admission.
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn acquire_file_control(
+        &self,
+    ) -> Result<LifecyclePermit, NativeConversationRuntimeError> {
+        self.lifecycle.acquire().map_err(Into::into)
+    }
+
     /// Restores saved preferences when present, otherwise uses explicit startup
     /// defaults. A process override replaces only the model, not saved controls.
     /// Construction performs no persistence, catalog or provider work.

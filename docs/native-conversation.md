@@ -205,6 +205,20 @@ existing bounded synchronous empty-queue/checkpoint admission and immediately
 returns a queued-job receipt; it does not claim provider work or persistence.
 Control IDs are checked before queue mutation and never wrap.
 
+`UndoLast` uses the exact host-injected file tracker on the existing host-owned
+terminal/archive worker scope. It is admitted during active turns without
+cancelling them, and retains exact-runtime lifecycle admission inside the worker
+through inverse execution. No filesystem inverse runs on the polling thread.
+The owned control survives dropped outer polling wrappers, blocked presentation,
+transition requests, cancellation and shutdown. The typed `Undone` receipt keeps
+`Empty`, `Restored` and `Removed` distinct; `Undo` errors preserve changed targets,
+busy/unavailable admission, non-undoable preimages and ambiguous publication.
+Neither success nor failure rewrites canonical messages or invokes a model/tool.
+Response readiness confirms the inverse result, not worker-thread destruction;
+the host's existing completion observer separately joins all enrolled work.
+Dropping the owner itself abandons its receipt but cannot release an executing
+worker's lifecycle permit. Ambiguous results are never replayed automatically.
+
 Accepted controls settle before quiescence, cancellation or advancement of an
 actual turn. In particular, an active-turn permission editor remains live until
 its confirmed save settles; a later transition or shutdown cannot invalidate it

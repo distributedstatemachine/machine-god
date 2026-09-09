@@ -894,10 +894,29 @@ fn session_save_name(value: &NativeModelPreferencePersistence) -> &'static str {
 }
 
 fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
+    use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
+
     let mut text = crate::BoundedModelsOutput::new();
     write!(text, "\n[control {}: ", outcome.id.get()).map_err(|_| ())?;
     match &outcome.result {
+        Err(NativeInteractiveControlError::Undo(FileUndoError::Ambiguous)) => text.write_str(
+            "undo outcome uncertain; effects may be partial; recovery artifacts retained; manual inspection required; no automatic retry",
+        ),
+        Err(NativeInteractiveControlError::Undo(error)) => write!(text, "undo failed: {error}"),
         Err(_) => text.write_str("failed; publication may require authoritative reload"),
+        Ok(NativeInteractiveControlReceipt::Undone(FileUndoOutcome::Empty)) => {
+            text.write_str("Nothing to undo.")
+        }
+        Ok(NativeInteractiveControlReceipt::Undone(FileUndoOutcome::Restored(path))) => {
+            text.write_str("Restored ").map_err(|_| ())?;
+            super::presentation::escaped(&mut text, path)?;
+            Ok(())
+        }
+        Ok(NativeInteractiveControlReceipt::Undone(FileUndoOutcome::Removed(path))) => {
+            text.write_str("Removed ").map_err(|_| ())?;
+            super::presentation::escaped(&mut text, path)?;
+            text.write_str(" (was newly created)")
+        }
         Ok(NativeInteractiveControlReceipt::Renamed(_)) => text.write_str("title saved"),
         Ok(NativeInteractiveControlReceipt::Compacted(changed)) => text.write_str(if *changed {
             "context compacted"

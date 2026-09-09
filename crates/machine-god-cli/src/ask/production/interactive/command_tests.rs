@@ -70,6 +70,22 @@ async fn control(driver: &mut Driver) -> native::NativeInteractiveControlOutcome
     .await
     .unwrap()
 }
+
+async fn turn_outcome(driver: &mut Driver, now_ms: i64) -> native::NativeInteractiveOutcome {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        poll_fn(|cx| {
+            let _ = driver.owner.poll_progress(cx, now_ms);
+            let _ = driver.owner.take_presentation();
+            driver
+                .owner
+                .take_outcome()
+                .map_or(Poll::Pending, Poll::Ready)
+        }),
+    )
+    .await
+    .unwrap()
+}
 async fn finish(mut driver: Driver, fixture: support::Fixture) {
     driver.shutdown();
     tokio::time::timeout(
@@ -134,6 +150,9 @@ fn aliases_envelopes_and_unknown_prompt_routing_reuse_native_submission_semantic
         "/resume latest",
         "/resume private:id",
         "/new\r",
+        "/undo last",
+        "/undo --",
+        "/undo\r",
     ] {
         assert!(submission(invalid).is_err(), "{invalid}");
     }
@@ -143,6 +162,10 @@ fn aliases_envelopes_and_unknown_prompt_routing_reuse_native_submission_semantic
     ));
     assert!(matches!(submission(" /cancel \t"), Ok(Submission::Cancel)));
     assert!(matches!(submission(" \t"), Ok(Submission::Empty)));
+    assert!(matches!(
+        submission(" \t/undo \t"),
+        Ok(Submission::Slash(NativeSlashCommand::Undo, ""))
+    ));
 }
 
 #[test]
@@ -318,6 +341,54 @@ fn transition_acceptance_deactivates_prompts_but_rejected_acceptance_keeps_scope
 }
 
 #[test]
+fn undo_dispatches_the_actual_shared_tracker_without_transcript_mutation() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new();
+        let mut driver = driver(&fixture).await;
+        fixture.transport.push(support::call("write_file", &serde_json::json!({
+            "path": "undo-世界.txt", "content": "created by actual tool"
+        })));
+        fixture.transport.push(support::answer());
+        driver.owner.enqueue("perform one tracked write".into()).unwrap();
+        assert!(matches!(turn_outcome(&mut driver, 200).await, native::NativeInteractiveOutcome::Turn(Ok(_))));
+        assert_eq!(std::fs::read(fixture.workspace.join("undo-世界.txt")).unwrap(), b"created by actual tool");
+        fixture.transport.push(support::answer());
+        driver.owner.enqueue("remain active while undo is requested".into()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), poll_fn(|cx| {
+            let progress = driver.owner.poll_progress(cx, 205);
+            // Leave the first presentation event retained so provider progress
+            // cannot race assertions about the undo's separate effect lane.
+            assert!(driver.owner.take_outcome().is_none(), "second turn must be admitted before undo");
+            if driver.owner.runtime().status().active && progress.is_ready() { Poll::Ready(()) } else { Poll::Pending }
+        })).await.unwrap();
+        let record = driver.owner.runtime().record();
+        let requests = fixture.transport.requests().len();
+        driver.command("/undo extra", 210);
+        assert!(String::from_utf8(driver.notice.take().unwrap()).unwrap().contains("rejected"));
+        assert!(driver.owner.take_control_outcome().is_none());
+        driver.command("/undo", 211);
+        assert!(fixture.workspace.join("undo-世界.txt").exists(), "command acceptance is inert");
+        let receipt = control(&mut driver).await;
+        assert!(matches!(&receipt.result, Ok(NativeInteractiveControlReceipt::Undone(native::FileUndoOutcome::Removed(path))) if path == "undo-世界.txt"));
+        assert!(!fixture.workspace.join("undo-世界.txt").exists());
+        assert_eq!(driver.owner.runtime().record(), record);
+        assert!(driver.owner.runtime().status().active, "undo must not cancel the admitted response");
+        assert_eq!(fixture.transport.requests().len(), requests);
+        assert_eq!(fixture.undo.undo_last(&CancellationToken::new()).unwrap(), native::FileUndoOutcome::Empty);
+        driver.control_outcome = Some(receipt);
+        driver.command("/undo", 212);
+        assert!(String::from_utf8(driver.notice.take().unwrap()).unwrap().contains("previous control"));
+        assert!(driver.owner.take_control_outcome().is_none());
+        driver.control_outcome.take();
+        driver.command("/undo", 213);
+        assert!(matches!(control(&mut driver).await.result, Ok(NativeInteractiveControlReceipt::Undone(native::FileUndoOutcome::Empty))));
+        assert!(matches!(turn_outcome(&mut driver, 300).await, native::NativeInteractiveOutcome::Turn(Ok(event)) if matches!(event.payload, machine_god_core::TurnEvent::Completed { .. })));
+        assert_eq!(fixture.transport.requests().len(), requests + 1);
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
+
+#[test]
 fn missing_explicit_resources_and_fast_capabilities_fail_without_false_success() {
     executor().block_on(async {
         let fixture = support::Fixture::new();
@@ -336,7 +407,7 @@ fn missing_explicit_resources_and_fast_capabilities_fail_without_false_success()
                 .unwrap()
                 .contains("does not advertise")
         );
-        for command in ["/allowlist", "/undo", "/copy", "/workspace list"] {
+        for command in ["/allowlist", "/copy", "/workspace list"] {
             driver.command(command, 200);
             assert!(
                 String::from_utf8(driver.notice.take().unwrap())
@@ -370,10 +441,12 @@ fn status_escapes_dynamic_content_and_help_does_not_claim_unwired_features() {
         assert!(!output.contains('\u{202e}'));
         assert!(output.contains("\\u202e"));
         driver.command("/help", 200);
+        let help = String::from_utf8(driver.notice.take().unwrap()).unwrap();
+        assert!(help.contains("/compact /undo"));
         assert!(
-            String::from_utf8(driver.notice.take().unwrap())
-                .unwrap()
-                .contains("not yet wired")
+            help.contains(
+                "Picker, allowlist editing, /copy and workspace editing are not yet wired."
+            )
         );
         driver.command("/version", 200);
         assert!(
