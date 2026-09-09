@@ -205,3 +205,65 @@ formats in Rust. Zig remains only an upstream benchmark/evidence build input;
 the machine-god binary never invokes or embeds a Zig runtime. The separate
 native session lifecycle method named `replay` continues to return an owned
 provider-neutral record to Rust callers and is not used by this CLI command.
+
+## Native recording compatibility
+
+`TerminalTapeRecorder` writes FXTP v1 from explicitly supplied native authority.
+It is a native backend, not a process-global recorder: selecting CLI flags or
+environment values and wiring the actual terminal streams are host duties.
+The native API reads no environment variables, discovers no workspace, and
+creates no conversation or provider effects. The host must await successful
+requested startup before admitting a conversation, and report startup failure
+instead of silently continuing without the requested recording.
+
+An automatic destination takes the selected `Arc<FileSessionStore>` and its
+logical state-root label. Startup clones that retained root descriptor on its
+owned worker and creates `recordings/machine-god-record-<epoch>-<random>.fxtape`.
+The directory must be owner-private, the newly created file is owner-private,
+and creation is exclusive with eight bounded name-collision attempts. The
+logical path is reporting metadata, not authority to reopen a renamed root.
+An explicit absolute destination similarly uses exclusive private creation;
+it never truncates an existing tape. Explicit-path parent directories must
+already exist and are walked descriptor-relatively without following symlinks.
+Neither mode follows a final symlink. These stricter no-overwrite and explicit
+failure rules intentionally differ from pinned fx's explicit-path truncation
+and optional environment-request failure suppression. Confined recording is
+implemented on Linux and macOS; other platforms fail explicitly.
+
+The injected header supplies initial dimensions, epoch milliseconds and at most
+255 version bytes. Its one-byte length exactly matches emitted bytes; an
+overlong version is rejected rather than emitting a malformed header. Each
+frame receives an injected timestamp. Delta arithmetic saturates before
+clamping to `0..=i32::MAX`, including backward timestamps and signed extremes.
+Stdout frames contain only the accepted prefix supplied by the real terminal
+writer. Accepted stdin is excluded unless the request explicitly opts in;
+resize, SIGINT and marker frames use the same FXTP kinds as pinned fx. Empty
+stdout/stdin writes produce no frame. The recorder never writes to the terminal
+or records an attempted-but-unwritten suffix on the caller's behalf.
+
+One persistent file-owning worker is enrolled in `NativeOwnedWorkerScope`.
+Requests use a one-slot nonblocking channel and asynchronous receipts, with no
+thread or unbounded queue per frame. At most one 64 KiB payload is executing and
+one is queued; an admission attempt may transiently hold one additional bounded
+payload. `Busy` admits nothing, so the host retains the accepted bytes and
+retries while continuing its input, signal and native-owner loop. Request futures
+are inert until polled. Dropping an admitted receipt cannot cancel or detach
+its write. Dropping the recorder disconnects admission; queued writes and final
+flush/sync/close remain on the enrolled worker.
+
+The hard limits are 64 KiB per payload, 1,000,000 complete frames and 64 MiB minus
+one byte per tape, with smaller explicit file/frame bounds supported. Each
+header or payload write has a 4,096-attempt limit, including interrupted and
+short writes. Limits, zero-progress writes, I/O errors and observed cancellation
+are explicit failures, not silent truncation. Failed recording retains the first
+failure plus acknowledged byte and complete-frame counts; a torn final frame is
+not counted. Complete preceding frames remain available to replay, whose
+existing incomplete-tail rule handles a partially written final frame.
+
+`finish` acknowledges actual flush/sync attempts and file close. Its status is
+complete only when explicitly finalized without an earlier failure; abandonment
+remains incomplete even if cleanup succeeds. Observation-only completion handles
+survive recorder drop without keeping admission alive. A file-close receipt is
+not a thread-join receipt: the host closes its worker scope and observes its
+existing collector-completion fence before declaring shutdown complete. This
+also covers dropped startup/operation responses and thread-local cleanup.
