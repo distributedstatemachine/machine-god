@@ -251,53 +251,13 @@ impl NativePermissionTargetAuthority {
                 terminal: None,
             };
             if let Some(terminal) = terminal {
-                let resolution = match entry {
-                    NativePermissionTargetTool::TerminalWithResolver { resolver, .. } => {
-                        resolver
-                            .resolve_with_workspace_scope(
-                                terminal,
-                                prepared.workspace_scope.clone(),
-                                cancellation.clone(),
-                            )
-                            .await?
-                    }
-                    NativePermissionTargetTool::Terminal(tool) => {
-                        if let Some(resolver) = tool.permission_resolver() {
-                            resolver
-                                .resolve_with_workspace_scope(
-                                    terminal,
-                                    prepared.workspace_scope.clone(),
-                                    cancellation.clone(),
-                                )
-                                .await?
-                        } else {
-                            if terminal.has_workspace_filter() {
-                                return Err(invalid());
-                            }
-                            let action = terminal
-                                .resolve_cwd(|_| {
-                                    Err(machine_god_core::ToolError::new(
-                                        machine_god_core::ToolErrorKind::InvalidInput,
-                                        "permission_target_invalid",
-                                        "permission target preparation failed",
-                                        false,
-                                    ))
-                                })
-                                .map_err(|_| invalid())?;
-                            let identity = tool.permission_host_identity();
-                            NativePermissionTerminalResolution::new(
-                                action,
-                                None,
-                                None,
-                                identity.environment_sha256.clone(),
-                                identity.shell_selection_sha256.clone(),
-                            )?
-                        }
-                    }
-                    NativePermissionTargetTool::Ordinary(_)
-                    | NativePermissionTargetTool::Question(_)
-                    | NativePermissionTargetTool::Grep(_) => return Err(invalid()),
-                };
+                let resolution = terminal::resolve(
+                    entry,
+                    terminal,
+                    prepared.workspace_scope.clone(),
+                    cancellation.clone(),
+                )
+                .await?;
                 prepared.prepare_terminal(resolution);
             } else {
                 prepared.prepare_ordinary(request, invocation.arguments)?;

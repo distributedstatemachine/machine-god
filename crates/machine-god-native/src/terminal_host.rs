@@ -280,16 +280,8 @@ impl NativeTerminalHost {
             .with_worker_scope(workers.clone()),
         );
         let identity = host.identity().clone();
-        let permission_resolver = crate::permission_targets::HostPermissionResolver::new(
-            Arc::clone(&host),
-            workers.clone(),
-            stop.clone(),
-        );
-        let permission_resolver = Arc::new(if workspace_contexts.is_some() {
-            permission_resolver.with_workspace_scope_required()
-        } else {
-            permission_resolver
-        });
+        let permission_resolver =
+            host_permission_resolver(&host, &workers, &stop, workspace_contexts.is_some());
         let executor = NativeTerminalActionExecutor {
             principals,
             access: None,
@@ -316,6 +308,24 @@ impl NativeTerminalHost {
             },
         ))
     }
+}
+
+fn host_permission_resolver(
+    host: &Arc<CapturedTerminalHostAuthority>,
+    workers: &NativeOwnedWorkerScope,
+    stop: &CancellationToken,
+    workspace_required: bool,
+) -> Arc<crate::permission_targets::HostPermissionResolver> {
+    let resolver = crate::permission_targets::HostPermissionResolver::new(
+        Arc::clone(host),
+        workers.clone(),
+        stop.clone(),
+    );
+    Arc::new(if workspace_required {
+        resolver.with_workspace_scope_required()
+    } else {
+        resolver
+    })
 }
 
 #[derive(Clone)]

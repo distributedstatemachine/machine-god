@@ -10,7 +10,7 @@ use machine_god_core::Turn;
 
 struct Scoped {
     host: Fixture,
-    _policy: PolicyFixture,
+    policy: PolicyFixture,
     turn: Turn,
     _permission: crate::NativePermissionTurn,
     owner: Arc<WorkspaceContextSession>,
@@ -71,7 +71,7 @@ impl Scoped {
         host.context = context;
         Self {
             host,
-            _policy: policy,
+            policy,
             turn,
             _permission: permission,
             owner,
@@ -409,7 +409,7 @@ fn workspace_cwd_launch_capture_cannot_replace_a_retired_scope() {
     let policy = NativeTerminalPermissionPolicy::new(vec![], None)
         .unwrap()
         .with_workspace_contexts(fixture.contexts.clone());
-    policy.bind_controller(&fixture._policy.controller).unwrap();
+    policy.bind_controller(&fixture.policy.controller).unwrap();
     let scope = Arc::new(
         fixture
             .contexts
