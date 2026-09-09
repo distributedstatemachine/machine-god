@@ -115,7 +115,8 @@ pub use interactive_terminal::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use interactive_terminal_size::{
-    NativeInteractiveTerminalSizeError, NativeInteractiveTerminalSizeReader,
+    NativeInteractiveTerminalDimensions, NativeInteractiveTerminalSizeError,
+    NativeInteractiveTerminalSizeReader,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod clipboard;
@@ -243,6 +244,12 @@ mod runtime_status;
 mod semantic_search;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_catalog;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod session_catalog_reader;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use session_catalog_reader::{
+    NativeSessionCatalogReadError, NativeSessionCatalogReader, NativeSessionCatalogScope,
+};
 mod session_catalog_cursor;
 mod session_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -792,7 +799,7 @@ pub use session_metadata_commands::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use session_resume::{
-    NativePreparedResume, NativeResumeTarget, NativeSessionResumeError,
+    NativeObservedSession, NativePreparedResume, NativeResumeTarget, NativeSessionResumeError,
     NativeSessionResumeErrorKind, prepare_native_session_resume,
 };
 pub use session_store::{

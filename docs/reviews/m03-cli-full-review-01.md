@@ -218,3 +218,48 @@ ten replay tests, workspace all-target/all-feature warnings-denied Clippy and
 WASI CLI Clippy. Formatting, bounded documentation and diff checks pass. These
 checks use the preserved exact `9273ac4` release for private helper dispatch;
 fresh release acceptance of this clipboard checkpoint remains separate.
+
+Exact clipboard checkpoint `b2b0291` subsequently passes a fresh locked release
+build, all 96 command tests, all 261 CLI unit tests with five private-helper
+ignores, and all seven production-input tests using that exact release binary.
+
+## Observed session picker composition
+
+Components `8fa9349`, `7d02396`, `cab34f3`, `efd42d2` and `557660c` add observed-row
+resume fencing, actual terminal rows/columns, owned cancellable catalog reads,
+picker key/chunk identities and pinned resume aliases. Each clean worker tree
+was integrated and removed with its commit retained. Component checks pass
+21 resume tests, 12 terminal-size tests, seven reader tests, 19 catalog tests,
+five store-filter tests, 107 interactive tests and 13 resume grammar/host tests.
+Scoped warnings-denied Clippy, formatting and documentation checks pass with
+temporary parent-owned module/caller wiring restored before worker commits.
+The grammar checks also pass 96 actual command tests and 263 CLI unit tests
+with five private-helper ignores. An original missing grammar check handle
+was replaced with a focused run; no unobserved result was claimed.
+
+Picker composition uses native catalog effects and observed identities without
+allocating a startup writer until selection or Escape. Its first combined
+focused run passes 16 picker tests after correcting a test-module import path.
+Input tests additionally preserve a scope's query while rejecting stale chunk
+remainders. A composed regression proves input received before menu flush cannot
+gain selection authority after acknowledgement. Startup tests distinguish empty
+Enter, Escape creating one writer, and Ctrl-D creating none; in-session tests
+preserve drafts, queued work and current identity when opening is refused or
+the picker is dismissed. Search/paging tests use the actual owned reader and
+native store, retain cached rows on failed refresh, and preserve unfiltered
+cursor boundaries.
+
+The initial full CLI run passes 283 tests and fails one old help-text assertion
+that still described the picker as unwired. Updating that behavior assertion
+produces 284 passing unit tests with five private-helper ignores. All 96 command
+tests pass. Initial scoped Clippy findings were style and function-size issues;
+startup presentation ownership was extracted without lint suppression, and
+replacement all-target/all-feature CLI Clippy passes. Formatting, bounded docs
+and diff checks pass. Private helper dispatch uses exact `b2b0291`, not a claim
+of fresh-release acceptance for the picker.
+
+Read-only transition inspection found a remaining blocking-lock path through
+observed preparation/adoption and candidate preference publication. The native
+owned same-store-access integration addresses that complete path before picker
+acceptance; initial preflight alone is insufficient. These component records
+are not final full-feature review or remote gates.

@@ -27,6 +27,26 @@ pub(super) const fn clear_row() -> &'static [u8] {
     b"\r\x1b[2K"
 }
 
+/// Untrusted menu labels use the same pinned width/control projection as the
+/// composer, without its prompt or cursor movement. Byte and cell bounds are
+/// independent, including oversized zero-width continuation clusters.
+pub(super) fn label(text: &str, columns: u16, max_bytes: usize) -> Vec<u8> {
+    let capacity = usize::from(columns.saturating_sub(1));
+    let mut output = Vec::new();
+    let mut next = 0;
+    let mut cells = 0;
+    while next < text.len() && cells < capacity {
+        let atom = Atom::at(text, next, capacity);
+        if cells + atom.cells > capacity || output.len() + atom.bytes > max_bytes {
+            break;
+        }
+        atom.append(text, &mut output);
+        cells += atom.cells;
+        next = atom.end;
+    }
+    output
+}
+
 /// Render at most `columns - 1` cells, reserving the final column against wrap.
 /// The terminal cursor may occupy that reserved blank column. A scalar cursor
 /// inside a native indivisible emoji unit maps to its leading cell; a cursor

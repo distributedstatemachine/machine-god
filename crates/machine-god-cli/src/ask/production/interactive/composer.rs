@@ -146,6 +146,16 @@ impl Composer {
     pub fn reset(&mut self) {
         *self = Self::default();
     }
+
+    pub fn restore_picker_query(&mut self, text: &str) -> Result<(), ()> {
+        if text.len() > MAX_PICKER_QUERY_BYTES {
+            return Err(());
+        }
+        self.reset();
+        text.clone_into(&mut self.text);
+        self.cursor = text.len();
+        Ok(())
+    }
     pub fn has_pending_input(&self) -> bool {
         !matches!(self.decoder, Decoder::Ready)
     }

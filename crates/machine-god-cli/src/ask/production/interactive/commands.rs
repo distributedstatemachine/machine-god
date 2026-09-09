@@ -5,9 +5,9 @@ use machine_god_core::{InferenceOptions, ModelCatalog};
 use machine_god_native::{
     MAX_NATIVE_QUEUED_PROMPT_BYTES, MAX_NATIVE_SLASH_INPUT_BYTES, NativeFastModeChange,
     NativeInteractiveControl, NativeInteractiveTransition, NativeModelCapabilities,
-    NativeModelPreferences, NativeReasoningEffort, NativeResumeTarget, NativeSandboxMode,
-    NativeSlashCommand, NativeSlashSubmission, NativeSlashSubmissionContext, PermissionMode,
-    resolve_model_query, resolve_native_slash_submission,
+    NativeModelPreferences, NativeReasoningEffort, NativeSandboxMode, NativeSlashCommand,
+    NativeSlashSubmission, NativeSlashSubmissionContext, PermissionMode, resolve_model_query,
+    resolve_native_slash_submission,
 };
 use std::fmt::Write;
 
@@ -20,12 +20,13 @@ const BUSY: &[u8] = b"\n[previous control is still pending; wait for its receipt
 const UNAVAILABLE: &[u8] = b"\n[command unavailable in this interactive host]\n> ";
 const HELP: &[u8] = b"\nCommands implemented in this host:\n\
 /help /status /version /quit (/exit) /cancel\n\
-/clear /new /reset /resume (latest) /continue /rename <title> /compact /undo /copy\n\
+/clear /new /reset /resume (picker) /continue /rename <title> /compact /undo /copy\n\
 /permissions [ask|auto|yolo|reset] /sandbox [os|none]\n\
 /models /model [id-or-query|effort <name>|save|save-default] /fast\n\
 Model selection and /fast request native session and available user-default saves;\n\
 their independent results are reported separately. /resume has no arguments.\n\
-Picker, allowlist editing and workspace editing are not yet wired.\n> ";
+Cmd/Super+R opens the all-workspace session picker.\n\
+Allowlist editing and workspace editing are not yet wired.\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -94,10 +95,9 @@ impl Driver {
             Command::Clear => self.transition_command(NativeInteractiveTransition::Clear, now_ms),
             Command::New => self.transition_command(NativeInteractiveTransition::New, now_ms),
             Command::Reset => self.transition_command(NativeInteractiveTransition::Reset, now_ms),
-            Command::Resume => self.transition_command(
-                NativeInteractiveTransition::Resume(NativeResumeTarget::Latest),
-                now_ms,
-            ),
+            Command::Resume => {
+                self.open_picker(machine_god_native::NativeSessionCatalogScope::CurrentWorkspace);
+            }
             Command::Continue => self.control_command(
                 NativeInteractiveControl::Continue {
                     options: InferenceOptions::default(),

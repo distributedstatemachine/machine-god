@@ -450,9 +450,9 @@ fn status_escapes_dynamic_content_and_help_does_not_claim_unwired_features() {
         driver.command("/help", 200);
         let help = String::from_utf8(driver.notice.take().unwrap()).unwrap();
         assert!(help.contains("/compact /undo /copy"));
-        assert!(
-            help.contains("Picker, allowlist editing and workspace editing are not yet wired.")
-        );
+        assert!(help.contains("/resume (picker)"));
+        assert!(help.contains("Cmd/Super+R opens the all-workspace session picker."));
+        assert!(help.contains("Allowlist editing and workspace editing are not yet wired."));
         driver.command("/version", 200);
         assert!(
             String::from_utf8(driver.notice.take().unwrap())

@@ -49,6 +49,9 @@ impl Driver {
         }
         self.poll_modal(cx);
         self.poll_resize(cx);
+        if let Some(picker) = &mut self.picker {
+            picker.poll(cx);
+        }
         if !self.shutting_down && !self.input_ended {
             self.poll_input(cx, now_ms);
         }
@@ -106,10 +109,13 @@ impl Driver {
             signal: self.signal,
             grace: self.grace,
             final_flush_sent: self.final_flush_sent && self.frontend.is_none(),
-            terminal_cleanup: self
-                .frontend
-                .is_some()
-                .then_some(b"\r\x1b[2K\x1b[?2004l\n".as_slice()),
+            terminal_cleanup: self.frontend.is_some().then(|| {
+                terminal_cleanup(
+                    self.frontend
+                        .as_ref()
+                        .and_then(|frontend| frontend.menu_height),
+                )
+            }),
         }
         // The remaining owner, inbox and input fields drop here. FinalPresentation
         // has no lifetime vote in any native host or input worker scope.
@@ -138,6 +144,7 @@ impl Driver {
         if self.outcome.is_none()
             && let Some(outcome) = self.owner.take_outcome()
         {
+            self.picker_outcome(&outcome);
             self.native_failed |= outcome_failed(&outcome);
             if matches!(&outcome, NativeInteractiveOutcome::Transition(receipt) if !receipt.unchanged)
                 && !self.shutting_down
@@ -196,16 +203,18 @@ impl Driver {
     }
 
     fn poll_input(&mut self, cx: &mut Context<'_>, now_ms: i64) {
-        let binding = self.modal.as_ref().map_or_else(
-            || {
-                if self.scope_active {
-                    InputBinding::Command
-                } else {
-                    InputBinding::AwaitingPrompt
-                }
-            },
-            Modal::binding,
-        );
+        let binding = self.picker_binding().unwrap_or_else(|| {
+            self.modal.as_ref().map_or_else(
+                || {
+                    if self.scope_active {
+                        InputBinding::Command
+                    } else {
+                        InputBinding::AwaitingPrompt
+                    }
+                },
+                Modal::binding,
+            )
+        });
         if self.frontend.is_some() {
             self.poll_raw_input(cx, binding, now_ms);
             return;
@@ -255,9 +264,13 @@ impl Driver {
             return;
         };
         match resize.poll(cx) {
-            Poll::Ready(Ok(columns)) => {
-                frontend.columns = columns.get();
+            Poll::Ready(Ok(dimensions)) => {
+                frontend.columns = dimensions.columns().get();
+                frontend.rows = dimensions.rows().get();
                 frontend.dirty = true;
+                if let Some(picker) = &mut self.picker {
+                    picker.resize(frontend.rows);
+                }
             }
             Poll::Ready(Err(())) => {
                 self.native_failed = true;
@@ -272,6 +285,7 @@ impl Driver {
         let status = self.owner.runtime().status();
         let context = ComposerContext {
             active_response: status.active || status.queued_jobs != 0,
+            session_picker: self.picker_open(),
         };
         let polled = self.input.poll_event(cx, binding, context);
         if self.input.take_cancel_disarm() {
@@ -300,6 +314,10 @@ impl Driver {
         if !matches!(event.0, ComposerEvent::CancelRequested) {
             frontend.cancel_armed = None;
         }
+        if self.picker_event(&event.0, &event.1, now_ms) {
+            return;
+        }
+        let frontend = self.frontend.as_mut().expect("raw frontend");
         match event {
             (ComposerEvent::Submit(line), binding) => self.line(&line, &binding, now_ms),
             (ComposerEvent::ExitRequested, _) => self.shutdown(),
@@ -315,8 +333,11 @@ impl Driver {
                     self.note(b"\n[press Ctrl-C again within 3 seconds to exit]\n");
                 }
             }
-            (ComposerEvent::Changed, _) => {}
             (ComposerEvent::InputError(_), _) => self.note(b"\n[input rejected; draft retained]\n"),
+            (ComposerEvent::SessionPickerRequested, InputBinding::Command) => {
+                self.open_picker(machine_god_native::NativeSessionCatalogScope::All);
+            }
+            _ => {}
         }
     }
 
@@ -405,6 +426,9 @@ impl Driver {
 
     fn acknowledge(&mut self) {
         if let Some(InFlight::Flush { confirm, receipt }) = self.in_flight.take() {
+            if let Some(binding) = &confirm {
+                self.acknowledge_picker(binding);
+            }
             if let (Some(binding), Some(modal)) = (confirm, &mut self.modal)
                 && modal.presentation_binding() == binding
                 && self.scope_active
@@ -428,12 +452,50 @@ impl Driver {
     }
 
     fn prepare_render(&mut self, cx: &mut Context<'_>) {
+        let previous_menu = self
+            .frontend
+            .as_mut()
+            .and_then(|frontend| frontend.menu_height.take());
         self.prepare_content_render(cx);
+        if let Some(height) = previous_menu {
+            if let Some(render) = &mut self.render {
+                let prefix = if height == 0 {
+                    "\r\x1b[J".to_owned()
+                } else {
+                    format!("\r\x1b[{height}A\x1b[J")
+                };
+                render.bytes.splice(..0, prefix.bytes());
+                if !matches!(render.confirm, Some(InputBinding::Picker { .. }))
+                    && let Some(picker) = &mut self.picker
+                {
+                    picker.redraw();
+                }
+            } else if self.picker_open() {
+                self.frontend.as_mut().expect("menu frontend").menu_height = Some(height);
+                return;
+            } else {
+                let bytes = if height == 0 {
+                    "\r\x1b[J".to_owned()
+                } else {
+                    format!("\r\x1b[{height}A\x1b[J")
+                };
+                self.render = Some(Render {
+                    bytes: bytes.into_bytes(),
+                    offset: 0,
+                    history: false,
+                    clear_row: false,
+                    confirm: None,
+                    receipt: None,
+                    model_text: false,
+                });
+            }
+        }
+        let picker_open = self.picker_open();
         let Some(frontend) = &mut self.frontend else {
             return;
         };
         if let Some(render) = &mut self.render {
-            render.clear_row = std::mem::take(&mut frontend.visible);
+            render.clear_row |= std::mem::take(&mut frontend.visible);
             frontend.dirty = true;
             return;
         }
@@ -442,6 +504,7 @@ impl Driver {
         if !frontend.dirty
             || self.shutting_down
             || self.history.is_some()
+            || picker_open
             || (self.owner.runtime().status().active && self.modal.is_none())
         {
             return;
@@ -486,6 +549,9 @@ impl Driver {
             }
             (modal.render(), Some(modal.presentation_binding()), None)
         } else if !self.shutting_down {
+            if self.prepare_picker_render() {
+                return;
+            }
             if self.prepare_history_render(cx) {
                 return;
             }
@@ -596,10 +662,39 @@ pub(super) struct FinalPresentation {
     signal: Option<super::AskSignal>,
     grace: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
     final_flush_sent: bool,
-    terminal_cleanup: Option<&'static [u8]>,
+    terminal_cleanup: Option<Vec<u8>>,
 }
 
 impl FinalPresentation {
+    pub(super) fn startup(
+        output: super::OutputBridge,
+        render: Option<Render>,
+        in_flight: Option<InFlight>,
+        outcome: AskCommandOutcome,
+        signal: Option<super::AskSignal>,
+        grace: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+        menu_height: Option<u16>,
+    ) -> Self {
+        Self {
+            output,
+            render,
+            in_flight,
+            notice: None,
+            outcomes: std::collections::VecDeque::new(),
+            controls: std::collections::VecDeque::new(),
+            copies: std::collections::VecDeque::new(),
+            result: TurnDriveResult {
+                outcome,
+                stalled_output_after_signal: false,
+            },
+            native_failed: outcome == AskCommandOutcome::OperationalFailure,
+            output_failed: outcome == AskCommandOutcome::OutputFailure,
+            signal,
+            grace,
+            final_flush_sent: false,
+            terminal_cleanup: Some(terminal_cleanup(menu_height)),
+        }
+    }
     pub(super) fn poll(
         &mut self,
         cx: &mut Context<'_>,
@@ -680,7 +775,7 @@ impl FinalPresentation {
             } else {
                 self.terminal_cleanup
                     .take()
-                    .map(|cleanup| (Ok(cleanup.to_vec()), None))
+                    .map(|cleanup| (Ok(cleanup), None))
             };
             if let Some((bytes, receipt)) = next {
                 if let Ok(bytes) = bytes {
@@ -728,7 +823,15 @@ impl FinalPresentation {
     }
 }
 
-fn next_render_work(render: &mut Option<Render>) -> Result<Option<(OutputWork, InFlight)>, ()> {
+fn terminal_cleanup(menu_height: Option<u16>) -> Vec<u8> {
+    let mut bytes = menu_height.map_or_else(Vec::new, super::picker_startup::clear_menu);
+    bytes.extend_from_slice(b"\r\x1b[2K\x1b[?2004l\n");
+    bytes
+}
+
+pub(super) fn next_render_work(
+    render: &mut Option<Render>,
+) -> Result<Option<(OutputWork, InFlight)>, ()> {
     let Some(current) = render else {
         return Ok(None);
     };

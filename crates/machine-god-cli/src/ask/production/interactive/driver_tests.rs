@@ -922,6 +922,159 @@ async fn finish_raw_tail(harness: &mut TailHarness) -> (TurnDriveResult, Vec<u8>
     (result, output)
 }
 
+#[test]
+fn session_picker_refuses_drafts_and_queued_work_without_cancelling_them() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver = harness.driver.with_raw_input(80, None);
+    harness.driver.picker = Some(picker::Picker::new(
+        fixture.host.session_catalog_reader().unwrap(),
+        Some(harness.driver.owner.runtime().id()),
+        24,
+    ));
+    let result = runtime.block_on(async {
+        use std::io::Write;
+        harness.input_writer.write_all(b"unfinished draft").unwrap();
+        until(&mut harness, |driver| {
+            driver
+                .input
+                .raw_draft()
+                .is_some_and(|(text, _)| text == "unfinished draft")
+        })
+        .await;
+        harness
+            .driver
+            .open_picker(native::NativeSessionCatalogScope::All);
+        assert!(!harness.driver.picker_open());
+        assert_eq!(
+            harness.driver.input.raw_draft().unwrap().0,
+            "unfinished draft"
+        );
+        harness.driver.input.reset_raw_draft();
+        harness
+            .driver
+            .owner
+            .enqueue("queued prompt".into())
+            .unwrap();
+        harness
+            .driver
+            .open_picker(native::NativeSessionCatalogScope::All);
+        assert!(!harness.driver.picker_open());
+        assert_eq!(harness.driver.owner.runtime().status().queued_jobs, 1);
+        harness.driver.shutdown();
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    let _ = runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
+fn stale_command_chunk_cannot_select_picker_and_escape_preserves_identity() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver = harness.driver.with_raw_input(80, None);
+    let original = harness.driver.owner.runtime().id();
+    harness.driver.picker = Some(picker::Picker::new(
+        fixture.host.session_catalog_reader().unwrap(),
+        Some(original.clone()),
+        24,
+    ));
+    let result = runtime.block_on(async {
+        harness.driver.command("/resume", 100);
+        assert!(harness.driver.picker_open());
+        assert!(harness.driver.picker_event(
+            &composer::ComposerEvent::Submit(String::new()),
+            &InputBinding::Command,
+            101
+        ));
+        assert!(harness.driver.picker_request.is_none());
+        let binding = harness.driver.picker_binding().unwrap();
+        assert!(harness.driver.picker_event(
+            &composer::ComposerEvent::EscapeRequested,
+            &binding,
+            102
+        ));
+        assert!(!harness.driver.picker_open());
+        assert_eq!(harness.driver.owner.runtime().id(), original);
+        assert!(harness.driver.scope_active);
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    let _ = runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
+fn picker_enter_received_before_flush_cannot_select_after_acknowledgement() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver = harness.driver.with_raw_input(80, None);
+    let original = harness.driver.owner.runtime().id();
+    harness.driver.picker = Some(picker::Picker::new(
+        fixture.host.session_catalog_reader().unwrap(),
+        Some(original.clone()),
+        24,
+    ));
+    let result = runtime.block_on(async {
+        use machine_god_core::{
+            Message, Role, SessionId, SessionIncarnationId, SessionRecord, SessionStore,
+        };
+        let mut record = SessionRecord::empty(
+            SessionId::new("selectable").unwrap(),
+            SessionIncarnationId::new("selectable-life").unwrap(),
+        );
+        record
+            .messages
+            .push(Message::text(Role::User, "saved request"));
+        record.metadata.insert(
+            native::NATIVE_SESSION_METADATA_KEY.into(),
+            native::NativeSessionMetadata::new(
+                &fixture.workspace,
+                10,
+                native::NativeSessionOrigin::Cli,
+            )
+            .unwrap()
+            .to_value(),
+        );
+        fixture
+            .host
+            .session_lifecycle()
+            .session_store()
+            .save(record, None)
+            .await
+            .unwrap();
+        harness.driver.command("/resume", 100);
+        let old = harness.driver.picker_binding().unwrap();
+        assert!(matches!(old, InputBinding::AwaitingPicker { .. }));
+        let _ = pump_until(&mut harness, |driver| {
+            matches!(driver.picker_binding(), Some(InputBinding::Picker { .. }))
+        })
+        .await;
+        assert!(harness.driver.picker_event(
+            &composer::ComposerEvent::Submit(String::new()),
+            &old,
+            101
+        ));
+        assert!(harness.driver.picker_request.is_none());
+        assert_eq!(harness.driver.owner.runtime().id(), original);
+        let current = harness.driver.picker_binding().unwrap();
+        assert!(harness.driver.picker_event(
+            &composer::ComposerEvent::Submit(String::new()),
+            &current,
+            102
+        ));
+        assert!(
+            harness.driver.picker_request.is_some(),
+            "fresh acknowledged selection is admitted"
+        );
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    let _ = runtime.block_on(finish_raw_tail(&mut tail));
+}
+
 async fn pump_until(harness: &mut Harness, condition: impl Fn(&Driver) -> bool) -> Vec<u8> {
     let mut output = Vec::new();
     tokio::time::timeout(

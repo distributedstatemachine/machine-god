@@ -8,6 +8,9 @@ mod driver;
 mod framing;
 mod history_view;
 mod input_lines;
+mod picker;
+mod picker_driver;
+mod picker_startup;
 mod presentation;
 mod resize;
 #[cfg(test)]
@@ -106,31 +109,21 @@ pub(super) fn execute(
                                     options = options.with_catalog(catalog.clone());
                                 }
                                 let options = clipboard::configure(options, clipboard);
-                                let replay_history =
-                                    !matches!(selection, InteractiveSessionSelection::Fresh);
-                                let owner = NativeInteractiveSession::open(
-                                    host,
-                                    options,
-                                    initial_selection(selection),
-                                    wall_clock_ms()?,
-                                )
-                                .await
-                                .map_err(|_| ())?;
-                                terminal.activate().await.map_err(|_| ())?;
-                                let mut resize = resize::Resize::new(size_reader)?;
-                                let columns = resize.initial_columns().await?;
-                                let mut driver = Driver::new(
-                                    owner,
+                                let opening = InitialPresentation {
+                                    selection,
                                     input,
                                     inbox,
-                                    OutputBridge {
+                                    output: OutputBridge {
                                         work,
                                         acknowledgements,
                                     },
-                                )?
-                                .with_resources(catalog, user_config)
-                                .with_history(replay_history)
-                                .with_raw_input(columns.get(), Some(resize));
+                                    size_reader,
+                                };
+                                let mut driver =
+                                    match opening.open(host, options, terminal, signals).await? {
+                                        Ok(driver) => driver.with_resources(catalog, user_config),
+                                        Err(presentation) => return Ok(presentation),
+                                    };
                                 let result = poll_fn(|cx| driver.poll(cx, signals)).await;
                                 Ok(driver.into_presentation(result))
                             })
@@ -151,15 +144,69 @@ pub(super) fn execute(
     (outcome, controller)
 }
 
-fn initial_selection(selection: InteractiveSessionSelection) -> NativeInteractiveInitialSession {
+struct InitialPresentation {
+    selection: InteractiveSessionSelection,
+    input: NativeInteractiveInput,
+    inbox: NativeInteractivePromptInbox,
+    output: OutputBridge,
+    size_reader: machine_god_native::NativeInteractiveTerminalSizeReader,
+}
+
+impl InitialPresentation {
+    async fn open(
+        self,
+        host: Arc<machine_god_native::NativeReferenceHost>,
+        options: NativeInteractiveSessionOptions,
+        terminal: &mut NativeInteractiveTerminal,
+        signals: &mut AskSignals,
+    ) -> Result<Result<Driver, FinalPresentation>, ()> {
+        let picker_reader = host.session_catalog_reader().map_err(|_| ())?;
+        let replay_history = !matches!(self.selection, InteractiveSessionSelection::Fresh);
+        terminal.activate().await.map_err(|_| ())?;
+        let mut resize = resize::Resize::new(self.size_reader)?;
+        let dimensions = resize.initial_dimensions().await?;
+        if let Some(initial) = initial_selection(self.selection) {
+            let owner = NativeInteractiveSession::open(host, options, initial, wall_clock_ms()?)
+                .await
+                .map_err(|_| ())?;
+            let mut driver = Driver::new(owner, self.input, self.inbox, self.output)?
+                .with_history(replay_history)
+                .with_raw_input(dimensions.columns().get(), Some(resize));
+            driver.frontend.as_mut().expect("raw frontend").rows = dimensions.rows().get();
+            driver.picker = Some(picker::Picker::new(
+                picker_reader,
+                Some(driver.owner.runtime().id()),
+                dimensions.rows().get(),
+            ));
+            Ok(Ok(driver))
+        } else {
+            let mut startup = picker_startup::Startup::new(
+                host,
+                options,
+                self.input,
+                self.output,
+                picker_reader,
+                resize,
+                dimensions,
+            );
+            poll_fn(|cx| startup.poll(cx, signals)).await;
+            startup.into_result(self.inbox)
+        }
+    }
+}
+
+fn initial_selection(
+    selection: InteractiveSessionSelection,
+) -> Option<NativeInteractiveInitialSession> {
     match selection {
-        InteractiveSessionSelection::Fresh => NativeInteractiveInitialSession::Fresh,
-        InteractiveSessionSelection::Latest => {
-            NativeInteractiveInitialSession::Resume(NativeResumeTarget::Latest)
-        }
-        InteractiveSessionSelection::Exact(id) => {
-            NativeInteractiveInitialSession::Resume(NativeResumeTarget::Exact(id))
-        }
+        InteractiveSessionSelection::Picker => None,
+        InteractiveSessionSelection::Fresh => Some(NativeInteractiveInitialSession::Fresh),
+        InteractiveSessionSelection::Latest => Some(NativeInteractiveInitialSession::Resume(
+            NativeResumeTarget::Latest,
+        )),
+        InteractiveSessionSelection::Exact(id) => Some(NativeInteractiveInitialSession::Resume(
+            NativeResumeTarget::Exact(id),
+        )),
     }
 }
 
@@ -334,10 +381,14 @@ struct Driver {
     user_config: Option<Arc<machine_god_native::NativeUserConfigStore>>,
     frontend: Option<Frontend>,
     history: Option<history_view::HistoryView>,
+    picker: Option<picker::Picker>,
+    picker_request: Option<machine_god_native::NativeInteractiveRequestId>,
 }
 
 struct Frontend {
     columns: u16,
+    rows: u16,
+    menu_height: Option<u16>,
     dirty: bool,
     visible: bool,
     cancel_armed: Option<std::time::Instant>,
@@ -348,13 +399,22 @@ impl Driver {
     fn new(
         owner: NativeInteractiveSession,
         input: NativeInteractiveInput,
+        inbox: NativeInteractivePromptInbox,
+        output: OutputBridge,
+    ) -> Result<Self, ()> {
+        Self::from_lines(owner, InputLines::new(input), inbox, output)
+    }
+
+    fn from_lines(
+        owner: NativeInteractiveSession,
+        input: InputLines,
         mut inbox: NativeInteractivePromptInbox,
         output: OutputBridge,
     ) -> Result<Self, ()> {
         inbox.activate(principal(&owner)).map_err(|_| ())?;
         Ok(Self {
             owner,
-            input: InputLines::new(input),
+            input,
             inbox,
             output,
             modal: None,
@@ -381,6 +441,8 @@ impl Driver {
             user_config: None,
             frontend: None,
             history: None,
+            picker: None,
+            picker_request: None,
         })
     }
     fn with_resources(
@@ -399,6 +461,8 @@ impl Driver {
         }
         self.frontend = Some(Frontend {
             columns,
+            rows: 24,
+            menu_height: None,
             dirty: true,
             visible: false,
             cancel_armed: None,
@@ -435,6 +499,9 @@ impl Driver {
             return;
         }
         self.shutting_down = true;
+        if let Some(picker) = &mut self.picker {
+            picker.close();
+        }
         self.discard_history();
         self.input.reset_raw_draft();
         self.inbox.close();

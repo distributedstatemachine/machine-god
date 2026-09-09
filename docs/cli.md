@@ -159,7 +159,7 @@ by the implementation plan; command names in the native catalog alone do not
 establish CLI support. `/help` describes the handlers actually wired in this host.
 
 The wired handlers include `/help`, `/status`, `/version`, `/quit` (`/exit`),
-`/cancel`, `/clear`, `/new`, `/reset`, argumentless `/resume` (latest), `/continue`,
+`/cancel`, `/clear`, `/new`, `/reset`, argumentless `/resume` (picker), `/continue`,
 `/rename <title>`, `/compact` and argumentless `/undo` and `/copy`. Policy selection uses
 `/permissions [ask|auto|yolo|reset]` and `/sandbox [os|none]`. Model controls are
 `/models`, `/model [id-or-query|effort <name>|save|save-default]` and `/fast`.
@@ -214,6 +214,48 @@ acknowledgement; another copy waits for that receipt, but ordinary prompts do
 not. Started clipboard work settles before conversion to the native-free output
 tail, and full host completion still joins its real worker and child cleanup
 before the tail is presented.
+
+### Session picker
+
+`-r` opens the current-workspace picker before allocating any writable session.
+In an existing interactive session, argumentless `/resume` opens the same scope;
+Cmd/Super+R opens all workspaces. Ctrl-R is not an alias. Opening refuses a
+nonempty draft, active response or queued work without cancelling it. Current
+session rows and records without conversation history are excluded. Managed
+child-session persistence retains its M05 ownership; terminal/background jobs
+are not treated as persisted child-session relationships.
+
+The picker observes real terminal rows and requests `clamp(rows - 7, 10, 100)`
+summaries per page. Native performs cancellable catalog scanning on the complete
+host's owned worker scope; advisory lock contention is distinct from invalid
+records. Initial-page caches are separate for current/all scopes. Reopening
+shows cached rows immediately while refreshing; a failed refresh retains rows.
+Incomplete scans and skipped invalid records remain visible, not fabricated
+complete results. At most 1,024 compact rows are retained in the active view.
+
+Search is a trimmed, 256-byte ASCII-case-insensitive substring match over loaded
+titles, workspace paths and previews, not session IDs or unseen pages. Missing
+titles display `Untitled session`; saved origin workspace is a display fallback,
+not newly acquired authority. Absent activity times remain unknown. Pagination
+uses the last unfiltered native row, even when every displayed row is excluded
+or fails the search. Load-more selection and approaching the last matching row
+request another page; newly arriving matching rows become the selection.
+
+Up/Down and Ctrl-K/Ctrl-J move without wrapping; Tab/Shift-Tab switch scope while
+preserving the query. Shift-Enter does not insert a search newline. Escape has a
+50 ms standalone-key disambiguation window, distinct from split CSI and paste
+sequences. It closes an in-session picker without changing the active session;
+at startup it explicitly requests a fresh session. Ctrl-C retains its ordinary
+clear/exit-arm behavior, and empty Ctrl-D exits without creating a session.
+
+Only an exact acknowledged picker frame can select a row. Input already
+received keeps its original chunk identity across opening, query changes,
+scope changes and startup handoff. Selection carries the observed session ID,
+incarnation and revision; it cannot silently retarget a replaced or revised
+record. Missing/stale/open failures keep the picker available for retry. Successful
+selection uses the normal native resume transition and canonical history replay,
+not a provider prompt or repeated tool effects. Terminal-safe width/byte-bounded
+labels and owned output acknowledgements also apply to picker presentation.
 
 ## Identity
 

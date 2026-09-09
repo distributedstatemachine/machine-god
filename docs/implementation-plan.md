@@ -207,7 +207,16 @@ checks pass. Combined checks pass 34 clipboard tests with one private-helper
 ignore, all 44 owner/control tests, 261 CLI unit tests with five private-helper
 ignores, 96 command tests and ten replay tests. Replacement workspace Clippy,
 WASI CLI Clippy, formatting and bounded docs checks pass. The fresh checkpoint
-release and production-helper checks are next, not final feature acceptance.
+release passes all 96 command tests, all 261 CLI unit tests with five private-helper
+ignores and all seven production-input tests. These are checkpoint checks, not
+final feature acceptance.
+Picker composition now includes startup without a provisional writer, pinned
+resume aliases and raw keys, cached/paged loaded-summary search, exact observed
+selection and output-acknowledged input identities. Combined CLI checks pass
+284 unit tests with five private-helper ignores, all 96 command tests, scoped
+warnings-denied Clippy, formatting and bounded documentation checks. The remaining
+picker prerequisite is owned nonblocking preparation/adoption and candidate
+preference publication under lock contention, followed by integration checks.
 Typed historical cards and the remaining command/session scenarios still need
 implementation; complete local, review and exact remote feature gates stay open.
 

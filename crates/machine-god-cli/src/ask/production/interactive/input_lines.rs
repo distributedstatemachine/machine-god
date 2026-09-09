@@ -18,6 +18,9 @@ const ESCAPE_TIMEOUT: Duration = Duration::from_millis(50);
 pub(super) enum InputBinding {
     Command,
     AwaitingPrompt,
+    AwaitingPicker {
+        generation: u64,
+    },
     Picker {
         generation: u64,
         revision: u64,
@@ -26,6 +29,19 @@ pub(super) enum InputBinding {
         token: NativeInteractivePromptToken,
         question: usize,
     },
+}
+
+impl InputBinding {
+    pub fn picker_view(&self) -> Option<(u64, Option<u64>)> {
+        match self {
+            Self::Picker {
+                generation,
+                revision,
+            } => Some((*generation, Some(*revision))),
+            Self::AwaitingPicker { generation } => Some((*generation, None)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -79,6 +95,17 @@ impl InputLines {
         self.composer
             .as_ref()
             .map(|composer| (composer.text(), composer.cursor()))
+    }
+
+    /// Restore presentation-owned search after ignoring stale bytes. The
+    /// remainder of an already received chunk retains its original identity.
+    pub fn restore_picker_query(&mut self, query: &str) -> Result<(), ()> {
+        self.composer
+            .as_mut()
+            .ok_or(())?
+            .restore_picker_query(query)?;
+        self.line_binding = None;
+        Ok(())
     }
 
     /// Consumed ordinary raw input disarms a pending repeated-Ctrl-C gesture,
@@ -189,7 +216,7 @@ impl InputLines {
                     .as_ref()
                     .expect("escape has an input binding")
                     .clone();
-                if matches!(binding, InputBinding::Picker { .. }) {
+                if binding.picker_view().is_some() {
                     self.line_binding = None;
                 }
                 return Poll::Ready(Some(Ok((event, binding))));
@@ -218,7 +245,10 @@ impl InputLines {
         let chunk = self.chunk.as_ref().expect("a received chunk");
         let composer = self.composer.as_mut().expect("raw mode checked");
         let effective_context = ComposerContext {
-            session_picker: matches!(self.line_binding, Some(InputBinding::Picker { .. })),
+            session_picker: self
+                .line_binding
+                .as_ref()
+                .is_some_and(|binding| binding.picker_view().is_some()),
             ..context
         };
         let (consumed, event) = composer.feed(&chunk.as_bytes()[self.offset..], effective_context);
@@ -252,7 +282,7 @@ impl InputLines {
             event,
             ComposerEvent::Submit(_) | ComposerEvent::ExitRequested
         ) || matches!(event, ComposerEvent::CancelRequested) && !context.active_response
-            || matches!(binding, InputBinding::Picker { .. }) && !composer.has_pending_input()
+            || binding.picker_view().is_some() && !composer.has_pending_input()
             || matches!(event, ComposerEvent::SessionPickerRequested)
                 && matches!(binding, InputBinding::Command)
         {
@@ -299,6 +329,35 @@ mod tests {
     fn raw_source() -> (InputLines, std::io::PipeWriter) {
         let (canonical, write) = source();
         (InputLines::new_raw(canonical.input), write)
+    }
+
+    #[test]
+    fn restored_picker_query_never_relabels_remaining_old_scope_bytes() {
+        let (mut input, mut write) = raw_source();
+        runtime().block_on(async {
+            let old = InputBinding::Picker {
+                generation: 1,
+                revision: 1,
+            };
+            let new = InputBinding::Picker {
+                generation: 2,
+                revision: 0,
+            };
+            write.write_all(b"query\t\r").unwrap();
+            let _ = event(&mut input, old.clone(), false).await;
+            assert!(matches!(
+                event(&mut input, old.clone(), false).await.0,
+                ComposerEvent::PickerToggleScope
+            ));
+            input.restore_picker_query("query").unwrap();
+            let (event, binding) = event(&mut input, new, false).await;
+            assert!(matches!(event, ComposerEvent::Submit(text) if text == "query"));
+            assert!(binding == old);
+            assert_eq!(input.raw_draft().unwrap().0, "query");
+            assert!(input.restore_picker_query(&"x".repeat(257)).is_err());
+            assert_eq!(input.raw_draft().unwrap().0, "query");
+        });
+        finish(input);
     }
 
     fn prompt_binding() -> InputBinding {
