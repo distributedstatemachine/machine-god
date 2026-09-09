@@ -7530,6 +7530,37 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    fn wait_for_timeout_shell_readiness(
+        mut execution: Pin<&mut impl Future>,
+        temporary: &TimeoutReadyDirectory,
+    ) -> rustix::process::Pid {
+        let ready_started = Instant::now();
+        loop {
+            assert!(
+                execution
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending(),
+                "shell execution finished before the controlled timeout"
+            );
+            assert!(
+                ready_started.elapsed() < Duration::from_secs(2),
+                "shell did not report complete post-trap readiness"
+            );
+            match std::fs::read_to_string(temporary.0.join("timeout.pid")) {
+                Ok(record) if record.ends_with('\n') => {
+                    let raw = record.strip_suffix('\n').unwrap().parse::<i32>().unwrap();
+                    return rustix::process::Pid::from_raw(raw).unwrap();
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("could not read shell readiness: {error}"),
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_ready_term_ignoring_shell_is_reaped_before_timeout_publication() {
         let temporary = TimeoutReadyDirectory::new();
@@ -7578,30 +7609,7 @@ mod tests {
         // mandatory readiness so startup scheduling cannot erase TERM/KILL
         // coverage. No request deadline is reset or extended. On every panic,
         // the owned real executor future drops and aborts/joins its worker.
-        let ready_started = Instant::now();
-        let pid = loop {
-            assert!(
-                execution
-                    .as_mut()
-                    .poll(&mut Context::from_waker(Waker::noop()))
-                    .is_pending(),
-                "shell execution finished before the controlled timeout"
-            );
-            assert!(
-                ready_started.elapsed() < Duration::from_secs(2),
-                "shell did not report complete post-trap readiness"
-            );
-            match std::fs::read_to_string(temporary.0.join("timeout.pid")) {
-                Ok(record) if record.ends_with('\n') => {
-                    let raw = record.strip_suffix('\n').unwrap().parse::<i32>().unwrap();
-                    break rustix::process::Pid::from_raw(raw).unwrap();
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => panic!("could not read shell readiness: {error}"),
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        };
+        let pid = wait_for_timeout_shell_readiness(execution.as_mut(), &temporary);
         assert_eq!(activity.cause(), ExecutionCause::Open);
         assert!(rustix::process::test_kill_process(pid).is_ok());
         assert!(rustix::process::test_kill_process_group(pid).is_ok());
@@ -7629,6 +7637,101 @@ mod tests {
         drop(activity);
         // Publication can leave only a Waker notification tail holding the
         // slot. Require its actual release within the same cleanup bound.
+        while tool.active.load(Ordering::Acquire) != 0
+            && cleanup_started.elapsed() < Duration::from_secs(2)
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(tool.active.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_actual_output_limit_precedes_timeout_closure() {
+        let temporary = TimeoutReadyDirectory::new();
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            temporary.0.join("timeout.fifo"),
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
+        let tool = TerminalTool::open(&temporary.0).unwrap();
+        let activity = ExecutionActivity::acquire(&tool.active, 1).unwrap();
+        let cancellation = CancellationToken::new();
+        let started = Instant::now();
+        let deadline = started + TERMINAL_DEFAULT_TIMEOUT;
+        let mut arguments = deadline_test_arguments();
+        arguments.command = "trap '' TERM; exec 3<> timeout.fifo; \
+                             printf '%s\\n' \"$$\" > timeout.pid; read -r gate <&3; \
+                             printf '%1048577s' x; read -r ignored <&3"
+            .to_owned();
+        let request = tool
+            .execution_request(
+                arguments,
+                started,
+                deadline,
+                Arc::clone(&activity),
+                &cancellation,
+            )
+            .unwrap();
+        let timer = DeadlineTimer::new(deadline, Arc::clone(&activity)).unwrap();
+        let future = tool.executor.execute(request, cancellation.clone());
+        let mut execution = Box::pin(await_executor(
+            future,
+            &cancellation,
+            deadline,
+            started,
+            timer,
+            Arc::clone(&activity),
+        ));
+        // Gate real output until the sole TERM-ignoring shell is ready. The
+        // owned future performs abort/join cleanup on any assertion failure.
+        let pid = wait_for_timeout_shell_readiness(execution.as_mut(), &temporary);
+        assert_eq!(activity.cause(), ExecutionCause::Open);
+        assert!(rustix::process::test_kill_process(pid).is_ok());
+        assert!(rustix::process::test_kill_process_group(pid).is_ok());
+        assert_eq!(tool.active.load(Ordering::Acquire), 1);
+        let gate = rustix::fs::open(
+            temporary.0.join("timeout.fifo"),
+            rustix::fs::OFlags::WRONLY | rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .unwrap();
+        let overflow_started = Instant::now();
+        assert_eq!(rustix::io::write(&gate, b"go\n").unwrap(), 3);
+        drop(gate);
+        loop {
+            assert!(overflow_started.elapsed() < Duration::from_secs(2));
+            if activity.cause() == ExecutionCause::OutputLimit {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // Only the native pipe reader may establish this overflow claim. This
+        // proves its precedence over timeout closure, not wall-clock expiry
+        // during TERM grace; separate deadline-arbitration fixtures cover that.
+        let cleanup_started = Instant::now();
+        assert_eq!(activity.close_timeout(), ExecutionCause::OutputLimit);
+        let outcome = futures_executor::block_on(execution).unwrap();
+        let output = super::render_output(".", &outcome).unwrap();
+        assert!(cleanup_started.elapsed() < Duration::from_secs(2));
+        assert!(output.is_error);
+        assert_eq!(output.content["status"], "output_limit");
+        assert_eq!(output.content["exit_code"], serde_json::Value::Null);
+        assert_eq!(output.content["signal"], serde_json::Value::Null);
+        let produced = output.content["stdout_bytes"].as_u64().unwrap()
+            + output.content["stderr_bytes"].as_u64().unwrap();
+        assert!(produced > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES);
+        assert!(produced <= MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 2 * 16 * 1024);
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        );
+        assert_eq!(
+            rustix::process::test_kill_process_group(pid),
+            Err(rustix::io::Errno::SRCH)
+        );
+        drop(activity);
         while tool.active.load(Ordering::Acquire) != 0
             && cleanup_started.elapsed() < Duration::from_secs(2)
         {
