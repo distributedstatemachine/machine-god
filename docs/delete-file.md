@@ -1,5 +1,27 @@
 # Native `delete_file` contract
 
+## Workspace-routed execution
+
+Explicit workspace-aware composition accepts primary-relative paths and absolute
+paths inside an active retained workspace root. It requires the exact live session,
+incarnation, and turn scope; a missing or expired scope never falls back to the
+primary tool. Contextual preparation only normalizes bounded arguments and selects
+already-retained roots lexically. It performs no descriptor duplication or lookup.
+
+Execution binds the original canonical logical arguments to one retained root and
+private relative path. Descriptor duplication begins only after polling and
+cancellation checks. Approval tickets are stamped when the outer execution future
+is constructed, so an old unpolled future cannot consume a later grant. The exact
+consumed approval and the live workspace scope remain attached through the final
+prepublication checks. Once publication succeeds or becomes ambiguous, later
+scope retirement does not replace that receipt with clean cancellation.
+
+Results and tracked undo outcomes retain the original logical path; labels never
+become execution paths. Standalone constructors retain the relative-path schemas,
+bounds, mutation behavior, and disclosed filesystem race limits below.
+
+## Standalone contract
+
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
 read file content, enumerate a directory, create a path, or grant general

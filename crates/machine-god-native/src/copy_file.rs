@@ -120,6 +120,8 @@ pub struct CopyFileTool {
     approvals: Option<std::sync::Arc<crate::file_approval::NativeFileApprovalRegistry>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     active_approval: Option<crate::file_approval::NativeFileApprovalExecution>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_scope: Option<std::sync::Arc<crate::NativeWorkspaceTurnScope>>,
     undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: std::sync::Arc<std::fs::File>,
@@ -134,6 +136,24 @@ pub struct CopyFileTool {
 
 impl CopyFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn with_workspace_scope(
+        mut self,
+        scope: std::sync::Arc<crate::NativeWorkspaceTurnScope>,
+    ) -> Self {
+        self.workspace_scope = Some(scope);
+        self
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn with_claimed_approval(
+        mut self,
+        approval: crate::file_approval::NativeFileApprovalExecution,
+    ) -> Self {
+        self.approvals = None;
+        self.active_approval = Some(approval);
+        self
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn from_root_descriptor(root: OwnedFd) -> Self {
         Self {
             root: std::sync::Arc::new(root.into()),
@@ -141,6 +161,7 @@ impl CopyFileTool {
             undo: None,
             approvals: None,
             active_approval: None,
+            workspace_scope: None,
         }
     }
 
@@ -155,6 +176,7 @@ impl CopyFileTool {
             undo: None,
             approvals: None,
             active_approval: None,
+            workspace_scope: None,
         }
     }
 
@@ -1822,6 +1844,7 @@ impl CopyFileTool {
             undo: self.undo.clone(),
             approvals: None,
             active_approval: Some(approval),
+            workspace_scope: self.workspace_scope.clone(),
         }))
     }
 
@@ -2050,6 +2073,7 @@ impl CopyFileTool {
                 )
                 .map_err(crate::NativeFileApprovalError::tool)?;
         }
+        crate::workspace_mutation::check_scope(self.workspace_scope.as_deref())?;
         let publish = evidence.publish(
             initial_destination_parent.parent.as_fd(),
             &staged.name,

@@ -118,21 +118,57 @@ pub struct DeleteFileTool {
     approvals: Option<std::sync::Arc<crate::file_approval::NativeFileApprovalRegistry>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     active_approval: Option<crate::file_approval::NativeFileApprovalExecution>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_scope: Option<std::sync::Arc<crate::NativeWorkspaceTurnScope>>,
     undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    root: OwnedFd,
+    root: std::sync::Arc<std::fs::File>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    endpoint: Option<crate::file_approval::NativeFileEndpoint>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
 
 impl DeleteFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
+    pub(crate) fn with_workspace_scope(
+        mut self,
+        scope: std::sync::Arc<crate::NativeWorkspaceTurnScope>,
+    ) -> Self {
+        self.workspace_scope = Some(scope);
+        self
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn with_claimed_approval(
+        mut self,
+        approval: crate::file_approval::NativeFileApprovalExecution,
+    ) -> Self {
+        self.approvals = None;
+        self.active_approval = Some(approval);
+        self
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn from_root_descriptor(root: OwnedFd) -> Self {
         Self {
-            root,
+            root: std::sync::Arc::new(root.into()),
+            endpoint: None,
             undo: None,
             approvals: None,
             active_approval: None,
+            workspace_scope: None,
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn from_endpoint(endpoint: crate::file_approval::NativeFileEndpoint) -> Self {
+        Self {
+            root: endpoint.root().clone(),
+            endpoint: Some(endpoint),
+            undo: None,
+            approvals: None,
+            active_approval: None,
+            workspace_scope: None,
         }
     }
 
@@ -218,6 +254,23 @@ impl Tool for DeleteFileTool {
         if call.name != delete_file_name() {
             return Err(invalid_arguments());
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(endpoint) = &self.endpoint {
+            crate::file_approval::project_endpoint_arguments(
+                crate::NativeFileApprovalKind::Delete,
+                &call.arguments,
+                None,
+                endpoint,
+            )
+            .map_err(crate::NativeFileApprovalError::tool)?;
+            return Ok(PreparedToolCall::new(
+                Capability::Filesystem {
+                    access: FilesystemAccess::Delete,
+                    path: endpoint.logical_path().to_owned(),
+                },
+                call.arguments,
+            ));
+        }
         let arguments = validate_arguments(&call.arguments)?;
         let prepared_arguments = json!({ "path": arguments.path });
         if !serialized_value_fits(
@@ -251,6 +304,22 @@ impl Tool for DeleteFileTool {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let approved =
                 self.approval_bound(&context, &arguments, &cancellation, approval_ticket)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let private = self
+                .endpoint
+                .as_ref()
+                .map(|endpoint| {
+                    crate::file_approval::project_endpoint_arguments(
+                        crate::NativeFileApprovalKind::Delete,
+                        &arguments,
+                        None,
+                        endpoint,
+                    )
+                })
+                .transpose()
+                .map_err(crate::NativeFileApprovalError::tool)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let arguments = private.unwrap_or(arguments);
             let arguments = validate_arguments(&arguments)?;
             if arguments.path != arguments.requested_path {
                 return Err(invalid_arguments());
@@ -659,27 +728,49 @@ impl DeleteFileTool {
         let Some(registry) = &self.approvals else {
             return Ok(None);
         };
-        validate_approval_arguments(arguments).map_err(crate::NativeFileApprovalError::tool)?;
-        let approval = registry
-            .claim(
-                ticket
-                    .ok_or(crate::NativeFileApprovalError::Denied)
-                    .and_then(|ticket| ticket)
-                    .map_err(crate::NativeFileApprovalError::tool)?,
+        if let Some(endpoint) = &self.endpoint {
+            crate::file_approval::project_endpoint_arguments(
+                crate::NativeFileApprovalKind::Delete,
+                arguments,
+                None,
+                endpoint,
+            )
+            .map_err(crate::NativeFileApprovalError::tool)?;
+        } else {
+            validate_approval_arguments(arguments).map_err(crate::NativeFileApprovalError::tool)?;
+        }
+        let ticket = ticket
+            .ok_or(crate::NativeFileApprovalError::Denied)
+            .and_then(|ticket| ticket)
+            .map_err(crate::NativeFileApprovalError::tool)?;
+        let approval = if let Some(endpoint) = &self.endpoint {
+            registry.claim_endpoints(
+                ticket,
+                context,
+                DELETE_FILE_TOOL_NAME,
+                arguments,
+                None,
+                endpoint,
+                cancellation,
+            )
+        } else {
+            registry.claim(
+                ticket,
                 context,
                 DELETE_FILE_TOOL_NAME,
                 arguments,
                 self.root.as_fd(),
                 cancellation,
             )
-            .map_err(crate::NativeFileApprovalError::tool)?;
-        let root = rustix::io::fcntl_dupfd_cloexec(&self.root, 3)
-            .map_err(|_| crate::NativeFileApprovalError::Unavailable.tool())?;
+        }
+        .map_err(crate::NativeFileApprovalError::tool)?;
         Ok(Some(Self {
-            root,
+            root: self.root.clone(),
+            endpoint: self.endpoint.clone(),
             undo: self.undo.clone(),
             approvals: None,
             active_approval: Some(approval),
+            workspace_scope: self.workspace_scope.clone(),
         }))
     }
 
@@ -699,13 +790,21 @@ impl DeleteFileTool {
         cancellation: &CancellationToken,
         evidence: &mut Evidence,
     ) -> Result<ToolOutput, ToolError> {
-        let success_output =
-            build_success_output_with_limit(normalized, MAX_DELETE_FILE_SERIALIZED_RESULT_BYTES)?;
+        let success_output = build_success_output_with_limit(
+            self.endpoint.as_ref().map_or(
+                normalized,
+                crate::file_approval::NativeFileEndpoint::logical_path,
+            ),
+            MAX_DELETE_FILE_SERIALIZED_RESULT_BYTES,
+        )?;
         let mut ordinals = OperationOrdinals::default();
         let mut undo = self
             .undo
             .as_ref()
             .map(|tracker| {
+                if let Some(endpoint) = &self.endpoint {
+                    return tracker.begin_delete(endpoint, cancellation);
+                }
                 tracker.begin(
                     self.root.as_fd(),
                     crate::file_undo::Operation::Delete(normalized),
@@ -793,6 +892,7 @@ impl DeleteFileTool {
         }
         check_cancellation(cancellation)?;
 
+        crate::workspace_mutation::check_scope(self.workspace_scope.as_deref())?;
         let flags = match final_target.kind {
             TargetKind::RegularFile => AtFlags::empty(),
             TargetKind::Directory => AtFlags::REMOVEDIR,

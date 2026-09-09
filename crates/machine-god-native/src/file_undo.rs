@@ -1304,6 +1304,36 @@ mod native {
             )
         }
 
+        pub(crate) fn begin_write(
+            &self,
+            target: &crate::file_approval::NativeFileEndpoint,
+            cancellation: &CancellationToken,
+        ) -> Result<Transaction<'_>, FileUndoError> {
+            self.begin_copy(target, cancellation)
+        }
+
+        pub(crate) fn begin_edit(
+            &self,
+            target: &crate::file_approval::NativeFileEndpoint,
+            cancellation: &CancellationToken,
+        ) -> Result<Transaction<'_>, FileUndoError> {
+            self.begin_copy(target, cancellation)
+        }
+
+        pub(crate) fn begin_delete(
+            &self,
+            target: &crate::file_approval::NativeFileEndpoint,
+            cancellation: &CancellationToken,
+        ) -> Result<Transaction<'_>, FileUndoError> {
+            self.begin_roots(
+                target.root().as_fd(),
+                target.root().as_fd(),
+                Operation::Delete(target.relative_path()),
+                Some((target.logical_path(), target.logical_path())),
+                cancellation,
+            )
+        }
+
         pub(crate) fn begin_rename(
             &self,
             source: &crate::file_approval::NativeFileEndpoint,

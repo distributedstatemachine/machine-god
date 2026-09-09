@@ -14,6 +14,14 @@ single-root callers continue receiving relative paths. Labels are never used as
 execution paths. Existing preimage limits, quarantine handling, history ownership,
 nonblocking reservations, and ambiguous-effect barriers are unchanged.
 
+Workspace-routed write, edit, and delete also bind their exact endpoint into the
+shared tracker, preserving logical labels for both creation-removal and preimage
+restoration receipts. There is no shared mutable path-alias map. Forward mutation
+rechecks its exact turn's live scope immediately before publication, with or without
+file-approval injection. Undo entries retain root and object proofs rather than an
+expired turn's execution permission; later undo remains subject to the explicit
+tracker owner and its normal session/reset lifecycle.
+
 ## Tracker contract
 
 `FileUndoTracker` is explicitly injected, shared native authority for inverse
