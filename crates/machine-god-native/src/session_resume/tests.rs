@@ -75,6 +75,12 @@ impl Fixture {
     fn record(&self, name: &str) -> SessionRecord {
         block_on(self.store.load(id(name))).unwrap().unwrap()
     }
+    fn observed(&self, name: &str) -> NativeObservedSession {
+        let entry = block_on(NativeSessionCatalog::new(self.store.clone()).exact(id(name)))
+            .unwrap()
+            .unwrap();
+        NativeObservedSession::from_entry(&entry)
+    }
     fn change(&self, name: &str) {
         let mut record = self.record(name);
         let expected = record.revision;
@@ -89,6 +95,156 @@ impl Drop for Fixture {
 }
 fn id(name: &str) -> SessionId {
     SessionId::new(name).unwrap()
+}
+
+#[test]
+fn unchanged_observed_row_is_adopted_without_revision_or_transcript_changes() {
+    let fixture = Fixture::new();
+    fixture.save("chosen", 1, "/workspace");
+    let before = fixture.record("chosen");
+    let observed = fixture.observed("chosen");
+    assert_eq!(observed.id(), &before.id);
+    assert_eq!(observed.incarnation_id(), &before.incarnation_id);
+    assert_eq!(observed.revision(), before.revision);
+    assert_eq!(observed, observed.clone());
+    assert_eq!(format!("{observed:?}"), "NativeObservedSession { .. }");
+    let target = NativeResumeTarget::Observed(observed);
+    assert_eq!(format!("{target:?}"), "NativeResumeTarget::Observed(..)");
+    let future = prepare_native_session_resume(
+        &fixture.lifecycle,
+        target.clone(),
+        Path::new("/elsewhere"),
+        100,
+    );
+    drop(future);
+    assert_eq!(fixture.record("chosen"), before);
+    let prepared = fixture.prepare(target).unwrap();
+    assert_eq!(prepared.revision(), before.revision);
+    assert_eq!(block_on(prepared.adopt()).unwrap().record(), before);
+    assert_eq!(fixture.record("chosen"), before);
+    assert!(fixture.provider.requests().is_empty());
+}
+
+#[test]
+fn changed_observed_row_conflicts_before_replay_or_workspace_publication() {
+    for replacement in [false, true] {
+        let fixture = Fixture::new();
+        fixture.save("chosen", 1, "/elsewhere");
+        let observed = fixture.observed("chosen");
+        if replacement {
+            drop(block_on(fixture.lifecycle.reset(id("chosen"))).unwrap());
+        } else {
+            fixture.change("chosen");
+        }
+        let before = fixture.record("chosen");
+        let result = block_on(prepare(
+            &fixture.lifecycle,
+            NativeResumeTarget::Observed(observed),
+            Path::new("/workspace"),
+            100,
+            || panic!("stale observation must fail before replay"),
+            || panic!("stale observation must fail before load"),
+        ));
+        assert_eq!(result.unwrap_err().kind(), Kind::Conflict);
+        assert_eq!(fixture.record("chosen"), before);
+        assert!(fixture.provider.requests().is_empty());
+    }
+}
+
+#[test]
+fn deleted_observed_row_is_conflict_and_does_not_create_a_replacement() {
+    let fixture = Fixture::new();
+    fixture.save("chosen", 1, "/elsewhere");
+    let observed = fixture.observed("chosen");
+    let record_path = fs::read_dir(&fixture.root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .unwrap();
+    fs::remove_file(&record_path).unwrap();
+    let result = fixture.prepare(NativeResumeTarget::Observed(observed));
+    assert_eq!(result.unwrap_err().kind(), Kind::Conflict);
+    assert!(!record_path.exists());
+    assert!(
+        block_on(fixture.store.load(id("chosen")))
+            .unwrap()
+            .is_none()
+    );
+    assert!(fixture.provider.requests().is_empty());
+}
+
+#[test]
+fn observed_rebind_preserves_history_and_does_not_invent_unknown_origin() {
+    for legacy in [false, true] {
+        let fixture = Fixture::new();
+        fixture.save("chosen", 1, "/elsewhere");
+        if legacy {
+            let mut record = fixture.record("chosen");
+            let expected = record.revision;
+            record.metadata.remove(NATIVE_SESSION_METADATA_KEY);
+            block_on(fixture.store.save(record, Some(expected))).unwrap();
+        }
+        let before = fixture.record("chosen");
+        let prepared = fixture
+            .prepare(NativeResumeTarget::Observed(fixture.observed("chosen")))
+            .unwrap();
+        assert_eq!(prepared.revision(), SessionRevision(before.revision.0 + 1));
+        let after = block_on(prepared.adopt()).unwrap().record();
+        assert_eq!(after.messages, before.messages);
+        assert_eq!(after.next_turn_sequence, before.next_turn_sequence);
+        assert_eq!(after.incarnation_id, before.incarnation_id);
+        assert_eq!(after.metadata["unrelated"], before.metadata["unrelated"]);
+        let metadata = NativeSessionMetadata::from_metadata(&after.metadata).unwrap();
+        assert_eq!(metadata.workspace(), Some(Path::new("/workspace")));
+        assert_eq!(
+            metadata.origin(),
+            (!legacy).then_some(NativeSessionOrigin::Cli)
+        );
+        assert_eq!(metadata.created_at_ms(), (!legacy).then_some(1));
+        assert_eq!(fixture.record("chosen"), after);
+        assert!(fixture.provider.requests().is_empty());
+    }
+}
+
+#[test]
+fn observed_target_keeps_prepare_and_adopt_revision_race_fences() {
+    for phase in 0..3 {
+        let fixture = Fixture::new();
+        fixture.save("chosen", 1, "/workspace");
+        let target = NativeResumeTarget::Observed(fixture.observed("chosen"));
+        let change = || {
+            std::thread::scope(|scope| scope.spawn(|| fixture.change("chosen")).join().unwrap());
+        };
+        let prepared = block_on(prepare(
+            &fixture.lifecycle,
+            target,
+            Path::new("/workspace"),
+            100,
+            || {
+                if phase == 0 {
+                    change();
+                }
+            },
+            || {
+                if phase == 1 {
+                    change();
+                }
+            },
+        ));
+        if phase == 2 {
+            let prepared = prepared.unwrap();
+            change();
+            let before = fixture.record("chosen");
+            assert_eq!(
+                block_on(prepared.adopt()).unwrap_err().kind(),
+                Kind::Conflict
+            );
+            assert_eq!(fixture.record("chosen"), before);
+        } else {
+            assert_eq!(prepared.unwrap_err().kind(), Kind::Conflict);
+        }
+        assert!(fixture.provider.requests().is_empty());
+    }
 }
 
 #[test]

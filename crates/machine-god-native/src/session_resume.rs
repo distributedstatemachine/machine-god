@@ -13,17 +13,54 @@ use machine_god_core::{
 };
 use std::{fmt, path::Path, sync::Arc};
 
-/// Explicit target selection. Neither form generates a new identity.
+/// The exact catalog row selected by a caller, without retaining its display data.
+#[derive(Clone, Eq, PartialEq)]
+pub struct NativeObservedSession {
+    id: SessionId,
+    incarnation_id: SessionIncarnationId,
+    revision: SessionRevision,
+}
+impl NativeObservedSession {
+    #[must_use]
+    pub fn from_entry(entry: &NativeSessionCatalogEntry) -> Self {
+        Self {
+            id: entry.id().clone(),
+            incarnation_id: entry.incarnation_id().clone(),
+            revision: entry.revision(),
+        }
+    }
+    #[must_use]
+    pub const fn id(&self) -> &SessionId {
+        &self.id
+    }
+    #[must_use]
+    pub const fn incarnation_id(&self) -> &SessionIncarnationId {
+        &self.incarnation_id
+    }
+    #[must_use]
+    pub const fn revision(&self) -> SessionRevision {
+        self.revision
+    }
+}
+impl fmt::Debug for NativeObservedSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativeObservedSession { .. }")
+    }
+}
+
+/// Explicit target selection. No form generates a new identity.
 #[derive(Clone)]
 pub enum NativeResumeTarget {
     Latest,
     Exact(SessionId),
+    Observed(NativeObservedSession),
 }
 impl fmt::Debug for NativeResumeTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Latest => "NativeResumeTarget::Latest",
             Self::Exact(_) => "NativeResumeTarget::Exact(..)",
+            Self::Observed(_) => "NativeResumeTarget::Observed(..)",
         })
     }
 }
@@ -200,7 +237,7 @@ async fn prepare(
         .map_err(|_| Error::new(Kind::InvalidWorkspace))?;
     let store = Arc::clone(lifecycle.session_store());
     let catalog = NativeSessionCatalog::new(Arc::clone(&store));
-    let exact = matches!(&target, NativeResumeTarget::Exact(_));
+    let explicit = !matches!(&target, NativeResumeTarget::Latest);
     let entry = match target {
         NativeResumeTarget::Latest => catalog
             .list(query)
@@ -210,6 +247,20 @@ async fn prepare(
             .map_err(|_| Error::new(Kind::SelectionIncomplete))?
             .cloned(),
         NativeResumeTarget::Exact(id) => catalog.exact(id).await.map_err(map_catalog)?,
+        NativeResumeTarget::Observed(observed) => {
+            let entry = catalog
+                .exact(observed.id.clone())
+                .await
+                .map_err(map_catalog)?
+                .ok_or_else(|| Error::new(Kind::Conflict))?;
+            if entry.id() != observed.id()
+                || entry.incarnation_id() != observed.incarnation_id()
+                || entry.revision() != observed.revision()
+            {
+                return Err(Error::new(Kind::Conflict));
+            }
+            Some(entry)
+        }
     }
     .ok_or_else(|| Error::new(Kind::NotFound))?;
     after_selection();
@@ -239,7 +290,7 @@ async fn prepare(
         .ok_or_else(|| Error::new(Kind::Conflict))?;
     let mut prepared = candidate(session, store, &entry)?;
     validate_native_record(&prepared.session.record_snapshot())?;
-    if exact {
+    if explicit {
         prepared.revision = rebind_native_session_workspace(
             &prepared.session,
             prepared.revision,

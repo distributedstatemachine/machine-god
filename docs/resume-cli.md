@@ -187,8 +187,17 @@ no index, inferred mtime ordering, or historical association manufactured from
 the current process directory.
 
 `NativeResumeTarget::Exact(id)` uses independent by-ID catalog observation and
-does not depend on enumeration or display truncation. Both forms capture the
-selected incarnation and revision, replay and validate the complete native
+does not depend on enumeration or display truncation.
+`NativeResumeTarget::Observed(NativeObservedSession::from_entry(&entry))`
+instead pins the ID, incarnation and revision of a previously displayed catalog
+row. It retains none of the row's presentation data. Preparation observes that
+exact ID again and checks all three fields before replay, canonical load or
+workspace publication. A deleted row or changed tuple returns `Conflict`, with
+no fallback to a newer incarnation/revision and no metadata write. The bounded
+tuple exposes trusted-host getters and has redacted `Debug` output. This is the
+selection fence for a picker, not a picker UI or a persistence lease.
+
+All forms capture the selected incarnation and revision, replay and validate the complete native
 conversation metadata, then use the engine's exact-revision guarded load. A
 changed revision or incarnation fails before canonical reconciliation; the
 operation does not silently follow a replacement. Busy candidates, invalid
@@ -196,8 +205,8 @@ checkpoint/context/history/model metadata, invalid saved exact permission rules,
 and ordinary load failures do not
 trigger new-session creation, provider work, tool calls or automatic repair.
 
-Exact selection explicitly persists a requested workspace-association change
-through `rebind_native_session_workspace` before returning the candidate. Its
+Exact and observed selection explicitly persist a requested workspace-association
+change through `rebind_native_session_workspace` before returning the candidate. Its
 exclusive exact-revision mutation preserves canonical transcript, allocator,
 incarnation, unrelated metadata and unknown historical origin/creation facts.
 An unchanged association uses the reconciled no-save path without advancing
@@ -232,8 +241,9 @@ not replaced by either operation.
 These operations retain the existing synchronous store-I/O and lock-latency
 contract and spawn no task, thread, retry worker or background lifecycle action.
 
-The distinction between latest without rebind and exact with persisted rebind
-follows pinned `src/core/session/session_store.zig:1093–1150` and `:3093–3199`.
+The distinction between latest without rebind and explicit selection with
+persisted rebind follows pinned `src/core/session/session_store.zig:1093–1150`
+and `:3093–3199`.
 Foreign import, native migration, recovery copies, interactive selection and
 their presentation remain separate requirements, not silent fallback paths in
 this primitive.
