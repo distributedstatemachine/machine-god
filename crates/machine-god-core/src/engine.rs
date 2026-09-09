@@ -115,7 +115,7 @@ impl fmt::Debug for EngineBuilder {
 impl Drop for EngineBuilder {
     fn drop(&mut self) {
         for registered in self.tools.values_mut() {
-            crate::session::drop_json_value_iterative(std::mem::take(
+            crate::json_bounds::drop_json_value_iterative(std::mem::take(
                 &mut registered.spec.input_schema,
             ));
         }
@@ -202,7 +202,7 @@ impl EngineBuilder {
             .tools
             .insert(name.clone(), RegisteredTool { spec, tool })
         {
-            crate::session::drop_json_value_iterative(std::mem::take(
+            crate::json_bounds::drop_json_value_iterative(std::mem::take(
                 &mut previous.spec.input_schema,
             ));
             self.duplicate_tool = Some(name);
@@ -218,7 +218,7 @@ impl EngineBuilder {
             .tools
             .insert(name.clone(), RegisteredTool { spec, tool })
         {
-            crate::session::drop_json_value_iterative(std::mem::take(
+            crate::json_bounds::drop_json_value_iterative(std::mem::take(
                 &mut previous.spec.input_schema,
             ));
             self.duplicate_tool = Some(name);
@@ -251,7 +251,7 @@ impl EngineBuilder {
             .permission_handler
             .take()
             .ok_or(BuildError::MissingPermissionHandler)?;
-        match crate::session::validate_json_roots(
+        match crate::json_bounds::validate_json_roots(
             tools
                 .as_ref()
                 .values()
@@ -259,14 +259,14 @@ impl EngineBuilder {
             self.limits,
         ) {
             Ok(()) => {}
-            Err(crate::session::JsonLimitViolation::Depth) => {
+            Err(crate::json_bounds::JsonLimitViolation::Depth) => {
                 return Err(BuildError::ToolCatalogJsonDepthExceeded);
             }
-            Err(crate::session::JsonLimitViolation::Nodes) => {
+            Err(crate::json_bounds::JsonLimitViolation::Nodes) => {
                 return Err(BuildError::ToolCatalogJsonNodeLimitExceeded);
             }
         }
-        let tool_catalog_size = crate::session::serialized_json_size_bounded(
+        let tool_catalog_size = crate::json_bounds::serialized_json_size_bounded(
             &ToolCatalog(tools.as_ref()),
             self.limits.max_tool_catalog_bytes.get(),
         )
@@ -402,7 +402,7 @@ impl Drop for ToolMapGuard {
     fn drop(&mut self) {
         if let Some(tools) = self.0.as_mut() {
             for registered in tools.values_mut() {
-                crate::session::drop_json_value_iterative(std::mem::take(
+                crate::json_bounds::drop_json_value_iterative(std::mem::take(
                     &mut registered.spec.input_schema,
                 ));
             }

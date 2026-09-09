@@ -1,3 +1,7 @@
+use crate::json_bounds::{
+    JsonLimitViolation, JsonValidationBudget, drop_json_value_iterative,
+    serialized_json_size_bounded, validate_json_roots,
+};
 use crate::session_context::ValidatedSessionContext;
 use crate::tool::ToolExecutionCancellation;
 use crate::{
@@ -16,7 +20,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::future::{Future, poll_fn};
-use std::io::{self, Write};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -2517,154 +2520,6 @@ mod assistant_content_tests {
     }
 }
 
-struct JsonByteCounter {
-    bytes: usize,
-    limit: usize,
-    exceeded: bool,
-}
-
-enum JsonChildren<'a> {
-    Array(std::slice::Iter<'a, Value>),
-    Object(serde_json::map::Values<'a>),
-}
-
-impl<'a> Iterator for JsonChildren<'a> {
-    type Item = &'a Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Array(children) => children.next(),
-            Self::Object(children) => children.next(),
-        }
-    }
-}
-
-struct JsonFrame<'a> {
-    container_depth: usize,
-    children: JsonChildren<'a>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum JsonLimitViolation {
-    Depth,
-    Nodes,
-}
-
-struct JsonValidationBudget {
-    nodes: usize,
-    max_nodes: usize,
-    max_container_depth: usize,
-}
-
-impl JsonValidationBudget {
-    fn new(limits: crate::EngineLimits) -> Self {
-        Self {
-            nodes: 0,
-            max_nodes: limits.max_json_nodes.get(),
-            max_container_depth: limits.max_json_depth.get(),
-        }
-    }
-
-    fn validate(&mut self, root: &Value) -> Result<(), JsonLimitViolation> {
-        let mut frames = Vec::<JsonFrame<'_>>::new();
-        let mut current = Some((root, 0usize));
-
-        loop {
-            if let Some((value, parent_depth)) = current.take() {
-                self.nodes = self.nodes.checked_add(1).ok_or(JsonLimitViolation::Nodes)?;
-                if self.nodes > self.max_nodes {
-                    return Err(JsonLimitViolation::Nodes);
-                }
-
-                let children = match value {
-                    Value::Array(values) => Some(JsonChildren::Array(values.iter())),
-                    Value::Object(values) => Some(JsonChildren::Object(values.values())),
-                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-                };
-                if let Some(children) = children {
-                    let container_depth = parent_depth
-                        .checked_add(1)
-                        .ok_or(JsonLimitViolation::Depth)?;
-                    if container_depth > self.max_container_depth {
-                        return Err(JsonLimitViolation::Depth);
-                    }
-                    frames.push(JsonFrame {
-                        container_depth,
-                        children,
-                    });
-                }
-            }
-
-            loop {
-                let Some(frame) = frames.last_mut() else {
-                    return Ok(());
-                };
-                if let Some(child) = frame.children.next() {
-                    current = Some((child, frame.container_depth));
-                    break;
-                }
-                frames.pop();
-            }
-        }
-    }
-}
-
-pub(crate) fn validate_json_roots<'a>(
-    roots: impl IntoIterator<Item = &'a Value>,
-    limits: crate::EngineLimits,
-) -> Result<(), JsonLimitViolation> {
-    let mut budget = JsonValidationBudget::new(limits);
-    for root in roots {
-        budget.validate(root)?;
-    }
-    Ok(())
-}
-
-enum OwnedJsonChildren {
-    Array(std::vec::IntoIter<Value>),
-    Object(serde_json::map::IntoValues),
-}
-
-impl Iterator for OwnedJsonChildren {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Array(children) => children.next(),
-            Self::Object(children) => children.next(),
-        }
-    }
-}
-
-/// Reclaims a JSON tree without recursive `Value::drop` calls.
-pub(crate) fn drop_json_value_iterative(root: Value) {
-    let mut frames = Vec::<OwnedJsonChildren>::new();
-    let mut current = Some(root);
-
-    loop {
-        if let Some(value) = current.take() {
-            match value {
-                Value::Array(values) => frames.push(OwnedJsonChildren::Array(values.into_iter())),
-                Value::Object(values) => {
-                    frames.push(OwnedJsonChildren::Object(values.into_values()));
-                }
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-            }
-        }
-
-        loop {
-            let Some(frame) = frames.last_mut() else {
-                return;
-            };
-            if let Some(child) = frame.next() {
-                current = Some(child);
-                break;
-            }
-            frames.pop();
-        }
-    }
-}
-
 fn json_limit_failure(violation: JsonLimitViolation) -> TurnFailure {
     match violation {
         JsonLimitViolation::Depth => TurnFailure::limit(
@@ -2701,7 +2556,7 @@ fn validate_tool_arguments(
                 "tool arguments exceeded the configured serialized size limit",
             )
         })?;
-    Ok((bytes, budget.nodes))
+    Ok((bytes, budget.nodes()))
 }
 
 fn add_complete_input_budget(
@@ -2795,43 +2650,6 @@ fn capability_json_value(capability: &Capability) -> Option<&Value> {
         | Capability::Process { .. }
         | Capability::Network { .. }
         | Capability::Vision { .. } => None,
-    }
-}
-
-impl Write for JsonByteCounter {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let next = self
-            .bytes
-            .checked_add(buffer.len())
-            .ok_or_else(|| io::Error::other("serialized JSON byte count overflowed"))?;
-        if next > self.limit {
-            self.exceeded = true;
-            return Err(io::Error::other("serialized JSON exceeded its byte limit"));
-        }
-        self.bytes = next;
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-pub(crate) fn serialized_json_size_bounded<T: Serialize + ?Sized>(
-    value: &T,
-    limit: usize,
-) -> Result<Option<usize>, serde_json::Error> {
-    let mut counter = JsonByteCounter {
-        bytes: 0,
-        limit,
-        exceeded: false,
-    };
-    let result = serde_json::to_writer(&mut counter, value);
-    if counter.exceeded {
-        Ok(None)
-    } else {
-        result?;
-        Ok(Some(counter.bytes))
     }
 }
 
