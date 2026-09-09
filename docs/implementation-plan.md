@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI verification; corrected timeout coverage validated, replacement full gate`
-- Next gate: `complete exact local gate, three fresh reviews and artifact-producing feature CI/Benchmark evidence`
+- Active phase: `combined CLI timeout fixture corrected; replacement verification pending`
+- Next gate: `complete replacement local verification, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -253,6 +253,14 @@ executable passed all 2,163 tests in a serial diagnostic; the earlier failure
 did not reproduce, and its truncated output does not establish a cause.
 Neither isolated success nor the already accepted maintenance-parent merge
 closes the combined feature's remaining gates.
+The replacement passed the complete local gate and three fresh independent
+reviews, then failed the same ready-shell cleanup test in all three hosted
+Linux jobs. Other unit fixtures enable process-wide child-subreaper mode; the
+new fixture's transient sleep descendant can outlive its shell as an adopted
+zombie. Controlled reproduction confirmed this; the FIFO-only correction passes
+the same focused case both normally and under an isolated subreaper.
+The correction is integrated; terminal suites and pinned Clippy pass.
+Benchmark evidence passed, but the rejected candidate is not a delivery.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

@@ -767,3 +767,61 @@ serial scheduling and the original release helper. Quiet diagnostic output
 retained the complete result. This does not recover the missing earlier
 failure details or establish their cause, and does not replace an exact
 full-candidate gate.
+
+## Combined-candidate local review and remote rejection: `a9321f6c`
+
+The complete exact Rust 1.94.1 local gate passed. Linux retained default test
+concurrency and passed 2,161 native unit tests with eleven helper ignores;
+macOS used serial scheduling and passed 2,163 native unit tests with twelve
+helper ignores. Both complete workspace runs and explicit doc tests passed
+with freshly built release helpers. Repository Python checks passed 255 tests
+with fourteen existing platform skips. Formatting, warnings-denied Clippy,
+standalone-fixture checks, dependency policy/audit, pinned drift, documentation,
+FreeBSD/WASI and Apple ABI checks passed.
+
+Three fresh independent agents reviewed the complete delta against
+`4659f0011e5add304bd24bd5cfd43e244edceac7`, each with zero actionable findings:
+`cli_full_review_api_02`, `cli_full_review_lifecycle_02`, and
+`cli_full_review_resources_02`. These were static local source/caller/test
+reviews, not independent runtime reruns. The API track also checked dispatch
+for all twenty primary commands across the five required CLI categories,
+preserving documented differences and later-milestone deferrals. All clean
+released review and verification worktrees were removed.
+
+The unchanged candidate was pushed. Benchmark run `34403352536` passed and
+retained both unexpired exact-SHA artifacts. CI run `34403352711` rejected the
+candidate: quality and both Linux architecture jobs each passed 2,160 native
+unit tests, ignored eleven existing helpers and failed only
+`terminal::tests::linux_ready_term_ignoring_shell_is_reaped_before_timeout_publication`.
+At `terminal.rs:7602`, the real executor returned `terminal_wait_failed` before
+the fixture could inspect its outcome. Later suites were not reached in those
+jobs. Both Apple architecture jobs passed. The aggregate CI gate failed;
+`main` was not advanced.
+
+Read-only diagnosis found process-wide child-subreaper setters in several
+native unit fixture constructors, with no general reaper that consumes
+unrelated adopted statuses. The new fixture signals readiness before forking
+its transient sleep child. Killing the group while that child exists can leave
+an adopted zombie owned by the test process, preserving group visibility after
+the direct shell is reaped. A controlled isolated reproduction enabled a
+subreaper only in its diagnostic test process and forced the sleep child to
+exist before readiness. The real executor returned `terminal_wait_failed` in
+0.53 seconds. `/proc` showed sleep PID 1051 as a zombie adopted by unit process
+1044, still in shell group 1048. Reaping only that exact owned child returned
+`SIGKILL`; the group then disappeared. This confirms the mechanism locally,
+not recovered process-table evidence from the failed hosted jobs.
+
+The test-only correction uses a private mode-0600 FIFO held read/write by the
+shell and a builtin `read`, avoiding transient descendants. All readiness,
+timeout-result, process/group disappearance, activity-slot and bounded-cleanup
+assertions remain unchanged. The same corrected test executable passed normally
+and through a scratch subreaper exec wrapper, each in 0.28 seconds. No diagnostic
+subreaper setter, status inspection or manual reap remains in the source patch.
+No production deadline, cleanup requirement or test concurrency is relaxed.
+Correction `3fcdf29b` passed all fifty selected terminal unit tests and all 98
+public terminal integration tests at default Linux concurrency, exact formatting,
+workspace all-target/all-feature warnings-denied Clippy and a fresh locked release
+build. Production binary SHA-256 remained
+`ca299181c7593f11b5006e0ac4aeefad5ecabb7d5196bdd4314f0ac551d1937d`.
+The clean component was fast-forward integrated. Complete replacement acceptance
+remains a separate gate.
