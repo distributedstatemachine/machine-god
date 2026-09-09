@@ -19,6 +19,9 @@ use serde_json::{Value, json};
 use crate::conversation_lifecycle::{LifecycleGate, LifecyclePermit, LifecyclePhase};
 use crate::conversation_observations::{ObservationBatch, ObservationSession};
 use crate::permission_context::{ContextRegistration, ContextSession};
+use crate::workspace_context::{
+    ConversationWorkspaceBinding, WorkspaceAdmission, WorkspaceContextRegistration,
+};
 
 use crate::{
     NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_CONVERSATION_HISTORY_KEY, NATIVE_MODEL_PREFERENCES_KEY,
@@ -44,6 +47,7 @@ pub enum NativeConversationError {
     InvalidHistory(NativeConversationHistoryError),
     Observation(NativeObservationError),
     PermissionContext(crate::NativePermissionContextError),
+    WorkspaceContext(crate::NativeWorkspaceContextError),
     InvalidContext(NativeContextError),
     InvalidModelPreferences(NativeModelPreferencesError),
     InvalidMetadata(NativeSessionMetadataError),
@@ -63,6 +67,7 @@ impl fmt::Display for NativeConversationError {
             Self::InvalidHistory(error) => error.fmt(f),
             Self::Observation(error) => error.fmt(f),
             Self::PermissionContext(error) => error.fmt(f),
+            Self::WorkspaceContext(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidModelPreferences(error) => error.fmt(f),
             Self::InvalidMetadata(error) => error.fmt(f),
@@ -159,6 +164,7 @@ pub struct NativeConversation {
     observations: Option<Arc<ObservationSession>>,
     permissions: Option<Arc<crate::NativePermissionSession>>,
     permission_contexts: Option<Arc<ContextSession>>,
+    workspace: Option<ConversationWorkspaceBinding>,
 }
 
 impl fmt::Debug for NativeConversation {
@@ -208,6 +214,9 @@ impl NativeConversation {
         if let Some(owner) = &self.permission_contexts {
             owner.retire();
         }
+        if let Some(binding) = &self.workspace {
+            binding.owner.retire();
+        }
         if let Some(owner) = &self.observations {
             owner.retire();
         }
@@ -229,6 +238,31 @@ impl NativeConversation {
             return Err(NativeConversationError::Busy);
         }
         AdmissionLease::acquire(&self.active)
+    }
+
+    pub(crate) fn acquire_workspace_control(
+        &self,
+    ) -> Result<AdmissionLease, NativeConversationError> {
+        let lease = self.acquire_admission()?;
+        if self.session.has_active_turn() {
+            return Err(NativeConversationError::Busy);
+        }
+        Ok(lease)
+    }
+
+    pub(crate) fn capture_workspace_scope(
+        &self,
+    ) -> Result<Option<crate::NativeWorkspaceScopeSnapshot>, NativeConversationError> {
+        self.workspace
+            .as_ref()
+            .map(|binding| {
+                binding.authority.snapshot().map_err(|_| {
+                    NativeConversationError::WorkspaceContext(
+                        crate::NativeWorkspaceContextError::Unavailable,
+                    )
+                })
+            })
+            .transpose()
     }
     /// Adopts a validated live session without effects or inferred metadata.
     ///
@@ -252,6 +286,7 @@ impl NativeConversation {
             observations: None,
             permissions: None,
             permission_contexts: None,
+            workspace: None,
         })
     }
 
@@ -290,6 +325,29 @@ impl NativeConversation {
                 .register(&self.session)
                 .map_err(NativeConversationError::PermissionContext)?,
         );
+        Ok(self)
+    }
+
+    /// Binds this exact incarnation to host-owned workspace authority without
+    /// I/O or permission-handler requirements. The manager is read only when a
+    /// new turn is admitted, never during tool or permission-context lookup.
+    ///
+    /// # Errors
+    /// Rejects busy/duplicate binding and exhausted or duplicate session routing.
+    pub fn with_workspace_contexts(
+        mut self,
+        authority: crate::NativeWorkspaceAuthority,
+        contexts: &Arc<crate::NativeWorkspaceContexts>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.workspace.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.workspace = Some(ConversationWorkspaceBinding {
+            authority,
+            owner: contexts
+                .register(&self.session)
+                .map_err(NativeConversationError::WorkspaceContext)?,
+        });
         Ok(self)
     }
 
@@ -801,7 +859,14 @@ impl NativeConversation {
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         let permit = self.acquire_lifecycle()?;
         let mut turn = self
-            .start_with_policy_inner(input, model, policy, now_ms, permit.as_ref())
+            .start_with_policy_inner(
+                input,
+                model,
+                policy,
+                now_ms,
+                permit.as_ref(),
+                WorkspaceAdmission::Current,
+            )
             .await?;
         turn.lease.as_mut().expect("admitted turn retains lease").1 = permit;
         Ok(turn)
@@ -814,6 +879,7 @@ impl NativeConversation {
         policy: Option<crate::NativePermissionPolicySnapshot>,
         now_ms: i64,
         permit: &LifecyclePermit,
+        workspace: Option<crate::NativeWorkspaceScopeSnapshot>,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         if self
             .lifecycle
@@ -822,8 +888,15 @@ impl NativeConversation {
         {
             return Err(NativeConversationError::Engine);
         }
-        self.start_with_policy_inner(input, model, policy, now_ms, Some(permit))
-            .await
+        self.start_with_policy_inner(
+            input,
+            model,
+            policy,
+            now_ms,
+            Some(permit),
+            WorkspaceAdmission::Taken(workspace),
+        )
+        .await
     }
 
     #[allow(clippy::too_many_lines)]
@@ -834,10 +907,20 @@ impl NativeConversation {
         policy: Option<crate::NativePermissionPolicySnapshot>,
         now_ms: i64,
         permit: Option<&LifecyclePermit>,
+        workspace: WorkspaceAdmission,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         let lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
+        }
+        let workspace = match workspace {
+            WorkspaceAdmission::Current => self.capture_workspace_scope()?,
+            WorkspaceAdmission::Taken(workspace) => workspace,
+        };
+        if self.workspace.is_some() != workspace.is_some() {
+            return Err(NativeConversationError::WorkspaceContext(
+                crate::NativeWorkspaceContextError::Unavailable,
+            ));
         }
         let mut record = self.session.record();
         let previous = Checkpoint::decode(&record)?;
@@ -915,6 +998,17 @@ impl NativeConversation {
             }
         }
         .map_err(map_engine_error)?;
+        let workspace_context = self
+            .workspace
+            .as_ref()
+            .zip(workspace)
+            .map(|(binding, scope)| {
+                binding
+                    .owner
+                    .begin(&turn, scope)
+                    .map_err(NativeConversationError::WorkspaceContext)
+            })
+            .transpose()?;
         let permission_context = self
             .permission_contexts
             .as_ref()
@@ -958,6 +1052,7 @@ impl NativeConversation {
             observation_batch: None,
             permission_turn,
             permission_context,
+            workspace_context,
             done: false,
         })
     }
@@ -1208,7 +1303,7 @@ impl Drop for PendingInput {
     }
 }
 
-struct AdmissionLease(Arc<AtomicBool>, Option<LifecyclePermit>);
+pub(crate) struct AdmissionLease(Arc<AtomicBool>, Option<LifecyclePermit>);
 impl AdmissionLease {
     fn acquire(active: &Arc<AtomicBool>) -> Result<Self, NativeConversationError> {
         active
@@ -1239,6 +1334,7 @@ pub struct NativeConversationTurn {
     observation_batch: Option<ObservationBatch>,
     permission_turn: Option<crate::NativePermissionTurn>,
     permission_context: Option<ContextRegistration>,
+    workspace_context: Option<WorkspaceContextRegistration>,
     done: bool,
 }
 
@@ -1257,6 +1353,7 @@ impl NativeConversationTurn {
     }
 
     fn finish(&mut self) {
+        self.workspace_context.take();
         self.permission_context.take();
         self.permission_turn.take();
         self.core.take();
@@ -1273,6 +1370,7 @@ impl NativeConversationTurn {
         &mut self,
         terminal: Result<EngineEvent, NativeConversationError>,
     ) -> Result<(), NativeConversationError> {
+        self.workspace_context.take();
         self.permission_context.take();
         self.core.take();
         if let Some(owner) = &self.observations {

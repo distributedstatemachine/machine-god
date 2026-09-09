@@ -101,6 +101,42 @@ reconciliation contract as other native metadata mutations.
 
 ## Native queue and selection runtime
 
+### Exact-turn workspace scopes
+
+An explicitly bound conversation shares the host's workspace authority manager
+and `NativeWorkspaceContexts`, independently of permission-controller or review
+composition. Construction only registers bounded process-local state. On first
+polled admission, direct prompts and continuations capture an immutable scope;
+the runtime captures it when taking a queued job, alongside that job's model and
+policy selection. Enqueueing and constructing an unpolled start future capture
+nothing. Later workspace publication affects future taken turns, never an
+already taken turn or its subsequent tool rounds.
+
+The registry retains at most 64 weak exact session/incarnation routes, with one
+live turn registration each. Tool preparation and permission preparation can
+look up the same pinned scope using their actual core turn context, including
+before permission authorization begins. Lookup performs no filesystem access,
+descriptor duplication, or mutable-manager read. Matching IDs selects native
+workspace context only: it proves neither user provenance nor policy approval.
+Tools still require their ordinary preparation, authorization, cancellation, and
+descriptor-relative descendant checks. Unbound legacy conversations retain
+their existing behavior; no ambient workspace is inferred.
+
+The returned native turn owns registration through its active work. Completion,
+cancellation, error, drop, and lifecycle retirement make old lookups unavailable;
+retained context handles cannot revive registration. Explicit continuation gets
+a fresh turn identity and a newly captured scope. No descriptor or scope is
+written into core state or session metadata. Failed or abandoned startup cannot
+leave a live registered route.
+
+The native workspace-control lease rejects active or queued runtime work and
+also retains conversation admission, fencing direct prompt/continuation aliases.
+The actual owner keeps this opaque lease through publication and worker cleanup;
+quiescence cannot settle until it is released. The lease itself performs no I/O
+and does not spawn work. It does not imply that CLI or tool routing is composed.
+
+### Queue and model selection
+
 `NativeConversationRuntime` owns one conversation, a FIFO of pending inputs and
 the current requested model preferences. Construction reads validated canonical
 memory only. Saved preferences replace ordinary startup defaults; an explicitly

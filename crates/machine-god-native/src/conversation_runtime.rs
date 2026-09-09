@@ -155,6 +155,7 @@ type TakenJob = (
     NativeModelSnapshot,
     u64,
     Option<crate::NativePermissionPolicySnapshot>,
+    Option<crate::NativeWorkspaceScopeSnapshot>,
 );
 
 struct RuntimeState {
@@ -671,7 +672,9 @@ impl NativeConversationRuntime {
     {
         Box::pin(async move {
             let lease = self.acquire_idle(false)?;
-            let Some((job, snapshot, generation, policy)) = self.take_job(&lease.permit)? else {
+            let Some((job, snapshot, generation, policy, workspace)) =
+                self.take_job(&lease.permit)?
+            else {
                 return Ok(None);
             };
             if let Some(expected) = job.checkpoint
@@ -697,6 +700,7 @@ impl NativeConversationRuntime {
                     policy,
                     now_ms,
                     &lease.permit,
+                    workspace,
                 )
                 .await?;
             let handle = turn.handle();
@@ -748,7 +752,8 @@ impl NativeConversationRuntime {
             .map(|owner| owner.snapshot_admitted(permit))
             .transpose()
             .map_err(|_| NativeConversationError::Engine)?;
-        Ok(Some((job, snapshot, state.generation, policy)))
+        let workspace = self.conversation.capture_workspace_scope()?;
+        Ok(Some((job, snapshot, state.generation, policy, workspace)))
     }
 
     /// Flushes one captured preference generation while idle. Concurrent runtime
@@ -887,6 +892,29 @@ impl NativeConversationRuntime {
             permit,
         })
     }
+
+    pub(crate) fn acquire_workspace_control(
+        &self,
+    ) -> Result<NativeWorkspaceControlLease, NativeConversationRuntimeError> {
+        let lease = self.acquire_idle(true)?;
+        let conversation = self
+            .conversation
+            .acquire_workspace_control()
+            .map_err(|error| match error {
+                NativeConversationError::Busy => NativeConversationRuntimeError::Busy,
+                error => NativeConversationRuntimeError::Conversation(error),
+            })?;
+        Ok(NativeWorkspaceControlLease {
+            _conversation: conversation,
+            _lease: lease,
+        })
+    }
+}
+
+/// Native-owner-only idle workspace control admission, retained through worker cleanup.
+pub(crate) struct NativeWorkspaceControlLease {
+    _conversation: crate::conversation::AdmissionLease,
+    _lease: RuntimeLease,
 }
 
 impl Drop for NativeConversationRuntime {
@@ -1139,6 +1167,10 @@ fn input_bytes(input: &PendingInput) -> Result<usize, NativeConversationRuntimeE
 }
 
 struct OptionsBytes(usize);
+
+#[cfg(test)]
+#[path = "workspace_context/runtime_tests.rs"]
+mod workspace_control_tests;
 impl Write for OptionsBytes {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if bytes.len() > MAX_NATIVE_QUEUED_OPTIONS_BYTES - self.0 {
