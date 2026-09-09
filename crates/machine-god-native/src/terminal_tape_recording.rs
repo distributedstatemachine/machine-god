@@ -1,13 +1,23 @@
 //! Explicit, bounded FXTP v1 recording owned by the native worker collector.
 
-use crate::{FileSessionStore, NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
+use crate::FileSessionStore;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_core::{BoxFuture, CancellationToken};
 use std::fmt;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, mpsc};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::{Mutex, mpsc};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod filesystem;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod reply;
 
 /// Maximum payload retained by one admitted frame.
@@ -16,6 +26,7 @@ pub const MAX_TERMINAL_TAPE_RECORDING_FRAME_BYTES: usize = 64 * 1024;
 pub const MAX_TERMINAL_TAPE_RECORDING_FRAMES: u64 = 1_000_000;
 /// Inclusive recording limit, strictly below the replay reader's input limit.
 pub const MAX_TERMINAL_TAPE_RECORDING_BYTES: u64 = 64 * 1024 * 1024 - 1;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_WRITE_ATTEMPTS: usize = 4096;
 
 /// Explicit destination authority. Automatic recording retains the selected
@@ -100,6 +111,22 @@ pub struct TerminalTapeRecordingRequest {
     pub options: TerminalTapeRecordingOptions,
 }
 
+impl TerminalTapeRecordingRequest {
+    /// Effect-free header/bounds and native-platform validation. This remains
+    /// available where the native worker-scope runtime itself is unavailable.
+    ///
+    /// # Errors
+    /// Returns a fixed invalid-request or unsupported-platform error.
+    pub fn validate(&self) -> Result<(), TerminalTapeRecordingError> {
+        self.options.validate()?;
+        if cfg!(any(target_os = "linux", target_os = "macos")) {
+            Ok(())
+        } else {
+            Err(TerminalTapeRecordingError::UnsupportedPlatform)
+        }
+    }
+}
+
 /// Fixed recording errors; no path, terminal content or native diagnostic leaks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -155,6 +182,7 @@ pub struct TerminalTapeRecordingStatus {
     pub failure: Option<TerminalTapeRecordingError>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TerminalTapeRecordingStatus {
     const fn pending() -> Self {
         Self {
@@ -171,11 +199,13 @@ impl TerminalTapeRecordingStatus {
 /// Observation-only recording progress; does not keep the recorder or worker
 /// alive. The enclosing host's completion proves collector join after closure.
 #[derive(Clone, Debug)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub struct TerminalTapeRecordingCompletion {
     status: Arc<Mutex<TerminalTapeRecordingStatus>>,
     workers: NativeOwnedWorkerCompletion,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TerminalTapeRecordingCompletion {
     /// Returns current metadata without any I/O or worker admission.
     #[must_use]
@@ -223,6 +253,7 @@ impl fmt::Debug for TerminalTapeRecordingFrame<'_> {
 
 /// Owns admission, not the file. Dropping it disconnects the bounded channel;
 /// already admitted writes and subsequent flush/close remain scoped native work.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub struct TerminalTapeRecorder {
     sender: Option<mpsc::SyncSender<Command>>,
     path: PathBuf,
@@ -231,6 +262,7 @@ pub struct TerminalTapeRecorder {
     final_receipt: reply::Receiver<TerminalTapeRecordingStatus>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl fmt::Debug for TerminalTapeRecorder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TerminalTapeRecorder")
@@ -239,6 +271,7 @@ impl fmt::Debug for TerminalTapeRecorder {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TerminalTapeRecorder {
     /// Opens the tape and writes its complete header before returning success.
     /// The future is inert before poll. A dropped start disconnects admission;
@@ -250,11 +283,8 @@ impl TerminalTapeRecorder {
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<Self, TerminalTapeRecordingError>> {
         Box::pin(async move {
-            request.options.validate()?;
+            request.validate()?;
             check_cancelled(&cancellation)?;
-            if !cfg!(any(target_os = "linux", target_os = "macos")) {
-                return Err(TerminalTapeRecordingError::UnsupportedPlatform);
-            }
             let status = Arc::new(Mutex::new(TerminalTapeRecordingStatus::pending()));
             let completion = TerminalTapeRecordingCompletion {
                 status: Arc::clone(&status),
@@ -379,6 +409,7 @@ impl TerminalTapeRecorder {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_send_error<T>(error: mpsc::TrySendError<T>) -> TerminalTapeRecordingError {
     match error {
         mpsc::TrySendError::Full(command) => {
@@ -392,11 +423,13 @@ fn map_send_error<T>(error: mpsc::TrySendError<T>) -> TerminalTapeRecordingError
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct FramePayload {
     kind: u8,
     bytes: Vec<u8>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn encode_frame(
     frame: TerminalTapeRecordingFrame<'_>,
     record_stdin: bool,
@@ -427,6 +460,7 @@ fn encode_frame(
     }))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 enum Command {
     Frame {
         payload: FramePayload,
@@ -437,16 +471,19 @@ enum Command {
     Finish,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 trait TapeSink: Write + Send {
     fn sync(&mut self) -> io::Result<()>;
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TapeSink for std::fs::File {
     fn sync(&mut self) -> io::Result<()> {
         self.sync_all()
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct TapeWriter {
     sink: Option<Box<dyn TapeSink>>,
     status: Arc<Mutex<TerminalTapeRecordingStatus>>,
@@ -455,6 +492,7 @@ struct TapeWriter {
     final_reply: Option<reply::Sender<TerminalTapeRecordingStatus>>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TapeWriter {
     fn update(&self, apply: impl FnOnce(&mut TerminalTapeRecordingStatus)) {
         apply(
@@ -578,6 +616,7 @@ impl TapeWriter {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for TapeWriter {
     fn drop(&mut self) {
         if self.sink.is_some() {
@@ -586,6 +625,7 @@ impl Drop for TapeWriter {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_recording(
     request: TerminalTapeRecordingRequest,
     receiver: mpsc::Receiver<Command>,
@@ -633,6 +673,7 @@ fn run_recording(
     drop(receiver);
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn serve(mut writer: TapeWriter, receiver: &mpsc::Receiver<Command>) {
     while let Ok(command) = receiver.recv() {
         match command {
@@ -667,6 +708,7 @@ fn serve(mut writer: TapeWriter, receiver: &mpsc::Receiver<Command>) {
     writer.close(Some(TerminalTapeRecordingError::Abandoned));
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn check_cancelled(cancellation: &CancellationToken) -> Result<(), TerminalTapeRecordingError> {
     if cancellation.is_cancelled() {
         Err(TerminalTapeRecordingError::Cancelled)

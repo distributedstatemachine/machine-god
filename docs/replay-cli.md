@@ -228,7 +228,9 @@ already exist and are walked descriptor-relatively without following symlinks.
 Neither mode follows a final symlink. These stricter no-overwrite and explicit
 failure rules intentionally differ from pinned fx's explicit-path truncation
 and optional environment-request failure suppression. Confined recording is
-implemented on Linux and macOS; other platforms fail explicitly.
+implemented on Linux and macOS, alongside the native worker-scope runtime.
+The request's effect-free `validate` method remains available on other platforms
+and returns the explicit `UnsupportedPlatform` error before native admission.
 
 The injected header supplies initial dimensions, epoch milliseconds and at most
 255 version bytes. Its one-byte length exactly matches emitted bytes; an
