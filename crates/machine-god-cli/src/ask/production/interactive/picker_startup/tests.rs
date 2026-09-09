@@ -84,6 +84,7 @@ async fn harness(fixture: &support::Fixture) -> Harness {
             options,
             input,
             OutputBridge {
+                tape: None,
                 work,
                 acknowledgements,
             },

@@ -48,6 +48,15 @@ pub(super) struct Startup {
 }
 
 impl Startup {
+    pub fn with_startup_notice(mut self, notice: Option<Vec<u8>>) -> Self {
+        if let Some(notice) = notice
+            && let Some(render) = &mut self.render
+        {
+            render.bytes.splice(..0, notice);
+        }
+        self
+    }
+
     pub fn new(
         host: Arc<NativeReferenceHost>,
         options: NativeInteractiveSessionOptions,
@@ -93,6 +102,11 @@ impl Startup {
             && let Poll::Ready(signal) = signals.poll_signal(cx)
         {
             self.signal = Some(signal);
+            if signal == AskSignal::Interrupt
+                && let Some(tape) = &mut self.output.tape
+            {
+                tape.sigint();
+            }
             self.grace = Some(Box::pin(tokio::time::sleep(SIGNAL_OUTPUT_GRACE)));
             self.stop(signal.outcome());
         }
@@ -100,10 +114,16 @@ impl Startup {
             return Poll::Ready(());
         }
         self.poll_open(cx);
+        if self.output.poll_tape(cx).is_err() {
+            self.stop(AskCommandOutcome::OutputFailure);
+        }
         self.picker.poll(cx);
         match self.resize.poll(cx) {
             Poll::Ready(Ok(dimensions)) => {
                 self.dimensions = dimensions;
+                if let Some(tape) = &mut self.output.tape {
+                    tape.resize(dimensions.columns().get(), dimensions.rows().get());
+                }
                 self.picker.resize(dimensions.rows().get());
             }
             Poll::Ready(Err(())) => self.stop(AskCommandOutcome::OperationalFailure),
@@ -173,12 +193,18 @@ impl Startup {
             .picker
             .input_binding()
             .unwrap_or(InputBinding::AwaitingPrompt);
-        let polled = self.input.poll_event(
+        let tape = &mut self.output.tape;
+        let polled = self.input.poll_event_recorded(
             cx,
             binding,
             ComposerContext {
                 active_response: false,
                 session_picker: true,
+            },
+            |bytes| {
+                if let Some(tape) = tape {
+                    tape.stdin(bytes);
+                }
             },
         );
         if self.input.take_cancel_disarm() {
@@ -255,7 +281,7 @@ impl Startup {
 
     fn poll_output(&mut self, cx: &mut Context<'_>) {
         if self.in_flight.is_some() {
-            match self.output.acknowledgements.poll_recv(cx) {
+            match self.output.poll_acknowledgement(cx) {
                 Poll::Pending => return,
                 Poll::Ready(Some(OutputAcknowledgement::Succeeded)) => {
                     if let Some(InFlight::Flush {
@@ -270,7 +296,7 @@ impl Startup {
                         self.picker.acknowledge(generation, revision);
                     }
                 }
-                Poll::Ready(Some(OutputAcknowledgement::Failed) | None) => {
+                Poll::Ready(Some(_) | None) => {
                     self.stop(AskCommandOutcome::OutputFailure);
                     return;
                 }

@@ -121,6 +121,7 @@ async fn driver(fixture: &support::Fixture) -> Driver {
         input,
         inbox,
         OutputBridge {
+            tape: None,
             work,
             acknowledgements,
         },
