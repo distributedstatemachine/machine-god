@@ -70,6 +70,37 @@ fn spec(path: &Path, saved: bool, launch: bool) -> NativeWorkspaceEntrySpec {
 }
 
 #[test]
+fn provisional_symlink_source_acquires_identity_once_then_ignores_source_retarget() {
+    let fixture = Fixture::new();
+    let first = fixture.directory("first");
+    let second = fixture.directory("second");
+    let source = fixture.base.join("future-link");
+    let provisional = NativeWorkspaceSource::new(source.clone(), source.clone(), false).unwrap();
+    let authority = fixture
+        .authority(
+            vec![NativeWorkspaceEntrySpec::new(provisional, true, false).unwrap()],
+            false,
+        )
+        .unwrap();
+    assert!(!authority.snapshot().unwrap().entries()[0].available());
+    std::os::unix::fs::symlink(&first, &source).unwrap();
+    let installed = authority
+        .install(authority.refresh_blocking().unwrap())
+        .unwrap();
+    assert!(installed.entries()[0].available() && installed.entries()[0].active());
+    assert!(installed.entries()[0].source().identity_canonical());
+    assert_eq!(installed.entries()[0].source().identity(), first);
+    std::fs::remove_file(&source).unwrap();
+    std::os::unix::fs::symlink(&second, &source).unwrap();
+    let retained = authority
+        .install(authority.refresh_blocking().unwrap())
+        .unwrap();
+    assert!(retained.entries()[0].active());
+    assert_eq!(retained.entries()[0].source().identity(), first);
+    assert!(retained.route(&second.join("file")).is_err());
+}
+
+#[test]
 fn path_validation_is_pure_and_preserves_non_unicode() {
     let bytes = OsString::from_vec(vec![b'/', b'x', 0xff]);
     let source =

@@ -682,7 +682,26 @@ fn nearest_directory(observed: &Path) -> Result<(Root, PathBuf)> {
 }
 
 fn open_additional(observed: &Path, canonical_identity: bool) -> Result<Option<Root>> {
-    let descriptor = match rustix::fs::open(observed, DIRECTORY_FLAGS, Mode::empty()) {
+    // A provisional source has not acquired a stable identity yet. Resolve it
+    // once, then open the resolved path without following a replaced leaf.
+    // Canonical identities never resolve through their historical source again.
+    let opened_identity = if canonical_identity {
+        observed.to_path_buf()
+    } else {
+        match std::fs::canonicalize(observed) {
+            Ok(identity) => identity,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(_) => return Err(NativeWorkspaceAuthorityError::Unavailable),
+        }
+    };
+    let descriptor = match rustix::fs::open(&opened_identity, DIRECTORY_FLAGS, Mode::empty()) {
         Ok(descriptor) => descriptor,
         Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP) => {
             return Ok(None);
@@ -691,8 +710,8 @@ fn open_additional(observed: &Path, canonical_identity: bool) -> Result<Option<R
     };
     let metadata =
         rustix::fs::fstat(&descriptor).map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
-    let identity =
-        std::fs::canonicalize(observed).map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
+    let identity = std::fs::canonicalize(&opened_identity)
+        .map_err(|_| NativeWorkspaceAuthorityError::Unavailable)?;
     validate_path(&identity, true)?;
     if canonical_identity && identity != observed {
         return Ok(None);

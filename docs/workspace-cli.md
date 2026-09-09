@@ -168,3 +168,38 @@ The following pinned-upstream behavior remains intentionally unsupported:
   roots; and
 - canonical filesystem identity, descriptor retention, or a compatibility-
   equivalence claim for the broader upstream workspace manager.
+
+## Native workspace operation ownership
+
+The native workspace service is shared by administrative and interactive
+workspace commands. It receives one fixed descriptor authority, an explicit
+user-config store and the actual host-owned worker scope. Construction and
+unpolled operation futures perform no filesystem work. Each service admits one
+operation at a time. Interactive mutations additionally hold the exact accepted
+runtime's idle-and-empty-queue lease through staging, publication, reconciliation
+and worker cleanup; abandoning the response does not release that ownership.
+A list requested while busy returns an explicitly cached scope without I/O.
+An idle list refreshes retained-root availability without editing configuration.
+
+Add resolves an existing directory relative to the primary root, validates state
+exclusion before publication and saves its canonical identity. Adding a launch
+root promotes its saved provenance. Remove matches retained source or identity
+before resolving the input, so missing or retargeted saved sources remain
+removable. Remove and clear drop both saved and launch provenance, while keeping
+the launch suppression setting. Runtime-only changes need not create config.
+Saved and launch identities merge before the sixteen-root bound is applied;
+unavailable and suppressed entries still count. A stale full runtime may stage
+the requested add independently and let the latest locked config decide capacity.
+The shared startup/reload merger accepts at most 64 raw launch observations,
+deduplicates canonical aliases, and resolves provisional saved sources only once.
+Later refreshes retain the acquired identity even if its old source is retargeted.
+
+Confirmed publication is followed by a fresh config read and authority rebuild,
+preserving other writers' latest saved roots and the operation's surviving launch
+roots. A failed rebuild leaves the old runtime authority installed and retains
+the confirmed save observation. An ambiguous publication accepts only its
+observed intended or previous saved set; any other set remains indeterminate.
+These reconciliation observations never establish directory durability.
+Receipts distinguish known saved/runtime changes from unknown outcomes and
+identify removed launch roots that command-line flags can restore on restart.
+Previously taken immutable scopes retain their exact original descriptors.
