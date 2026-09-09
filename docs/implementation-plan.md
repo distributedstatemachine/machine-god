@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `CLI shutdown focused checks green; Linux background-signal diagnosis`
-- Next gate: `controlled signal diagnosis, replacement local gate, three fresh reviews and exact remote gates`
+- Active phase: `combined CLI paired background-signal tests integrated; replacement verification`
+- Next gate: `parallel preparation, full platform runtime checks, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -238,9 +238,11 @@ presentation. The integrated correction starts its unchanged, non-renewable
 recording/resume scenarios pass on both platforms, including SIGINT. The full
 Linux run then rejected one native same-owner background-signal assertion with
 `Unavailable`; an unchanged isolated pass does not establish its cause. Controlled
-diagnosis is investigating descendant traversal while the fixture's child exits.
-Full macOS, fresh reviews and remote acceptance remain pending. Native deadlines,
-cleanup requirements and Linux concurrency are unchanged.
+diagnosis proved that an admitted child reaped before enumeration rejects an
+incomplete traversal with budget remaining. Paired tests now retain that failure
+and use an acknowledged stable shell for owner routing. Their focused Linux
+checks pass; complete replacement verification remains pending. Native behavior,
+deadlines, cleanup requirements and Linux concurrency are unchanged.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

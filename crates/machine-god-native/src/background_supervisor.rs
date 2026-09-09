@@ -3736,11 +3736,35 @@ mod tests {
             SessionId::new("background-signal-session").unwrap(),
             SessionIncarnationId::new("background-signal-incarnation").unwrap(),
         );
+        // This tests owner routing, not complete ancestry inspection during
+        // descendant churn. A queued child reaped before enumeration correctly
+        // fails closed; background_process has dedicated traversal coverage.
         let request =
-            BackgroundStartRequest::new("while :; do /bin/sleep 1; done", &fixture.workspace)
+            BackgroundStartRequest::new("printf 'ready\\n'; read -r ignored", &fixture.workspace)
                 .expect("request")
-                .with_output_owner(owner.clone());
+                .with_output_owner(owner.clone())
+                .with_stdin(machine_god_core::ProcessInput::Pipe)
+                .expect("owned input pipe");
         let handle = start_eventually(&supervisor, &request);
+        let ready_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            assert!(Instant::now() < ready_deadline, "owner fixture readiness");
+            let snapshot = futures_executor::block_on(TerminalBackgroundOutputReader::read(
+                &supervisor,
+                owner.clone(),
+                handle.id(),
+                1,
+                0,
+                CancellationToken::new(),
+            ))
+            .expect("owner-bound readiness output");
+            assert!(!snapshot.closed(), "owner fixture remains live");
+            assert!(b"ready\n".starts_with(snapshot.bytes()));
+            if snapshot.bytes() == b"ready\n" {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
         let other_owner = BackgroundOutputOwner::new(
             SessionId::new("other-signal-session").unwrap(),
             SessionIncarnationId::new("other-signal-incarnation").unwrap(),

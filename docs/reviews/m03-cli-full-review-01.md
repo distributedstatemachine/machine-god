@@ -996,3 +996,21 @@ The owner fixture continuously spawns and reaps one-second sleep children.
 Skipping such an incompletely inspected node could conceal descendants, so
 controlled diagnosis must preserve the fail-closed traversal and its original
 budget. No cause or correction is inferred solely from the isolated pass.
+
+A controlled diagnostic used the existing snapshot-capture callback, without a
+new production hook, to reap an admitted child while its root remained alive.
+Traversal returned the expected process error after 4.87 ms and the original
+budget still passed preflight. This proves an incomplete-traversal path, not the
+historical full run's exact cause; existing expired-budget tests cover the
+separate deadline path.
+
+Test-only component `dd16b8c8` retains that controlled case as a fail-closed
+regression. The owner-routing fixture now uses builtin output/read with owned
+piped input and requires its exact owner-bound readiness output before signaling.
+Different-owner rejection, same-owner delivery, exit status and reaped-owner
+rejection remain mandatory. Dedicated descendant tests and production behavior
+are unchanged. Pinned formatting, full warnings-denied Clippy, fresh locked
+release and both exact changed cases passed, along with 151 background-process
+tests (three existing helper ignores) and all fifty supervisor tests at default
+Linux concurrency. The production release hash was unchanged; complete
+replacement acceptance remains open.

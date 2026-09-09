@@ -8006,6 +8006,72 @@ mod linux_proc_tests {
         fixture.cleanup().unwrap();
     }
 
+    #[test]
+    fn reaped_admitted_child_rejects_incomplete_signal_snapshot() {
+        // Admission pins the child but does not yet enumerate its descendants.
+        // Reaping that queued node must fail closed, even with budget remaining.
+        let root = Command::new("/bin/bash")
+            .args([
+                "-c",
+                "exec 3<&0; (read -r child <&3) >/dev/null & child=$!; \
+                 printf '%s' \"$child\"; exec 1>&-; wait \"$child\"; read -r root <&3",
+            ])
+            .process_group(0)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut fixture = SignalSnapshotFixture::new(root);
+        let child = fixture.read_child_pid().unwrap();
+        fixture.bind_child(child);
+        let authority = GroupSnapshotAuthority::open().unwrap();
+        let mut scratch = SignalProcessScratch::new();
+        let root = read_signal_process(&authority, fixture.root(), &mut scratch)
+            .unwrap()
+            .unwrap();
+        let deadline = scratch.budget.deadline;
+        let mut retained = 0;
+        let result = signal_process_snapshot_with(
+            &authority,
+            fixture.root(),
+            &mut scratch,
+            Some(LinuxSignalSnapshotCapture {
+                root_identity: root.identity,
+                retain: &mut |process, descriptor| {
+                    assert_eq!(process.pid, child);
+                    assert_eq!(process.parent, Some(fixture.root()));
+                    retained += 1;
+                    rustix::process::pidfd_send_signal(
+                        descriptor.as_fd(),
+                        rustix::process::Signal::KILL,
+                    )
+                    .unwrap();
+                    loop {
+                        assert!(Instant::now() < deadline, "child reap must precede expiry");
+                        match rustix::process::test_kill_process(child) {
+                            Err(rustix::io::Errno::SRCH) => break,
+                            Ok(()) => thread::sleep(Duration::from_millis(1)),
+                            other => panic!("unexpected exact child observation: {other:?}"),
+                        }
+                    }
+                    assert!(matches!(observe_leader(fixture.root()), Ok(None)));
+                    Ok(())
+                },
+            }),
+        );
+        assert_eq!(retained, 1);
+        assert!(
+            matches!(result, Err(error) if error.kind() == BackgroundProcessSignalErrorKind::Process)
+        );
+        scratch
+            .budget
+            .preflight()
+            .expect("failure is not budget exhaustion");
+        assert!(matches!(observe_leader(fixture.root()), Ok(None)));
+        fixture.cleanup().unwrap();
+    }
+
     struct SignalSnapshotFixture {
         root: Option<Child>,
         group: rustix::process::Pid,
