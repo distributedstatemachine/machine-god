@@ -52,7 +52,7 @@ use status::{ProductionStatusCommandHost, StatusCommandHost, is_status_command, 
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume [last | <id>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -223,6 +223,7 @@ enum Command {
 enum SessionIdGrammar {
     Inspection,
     Resume,
+    ResumeExact,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1604,12 +1605,26 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             };
             Command::Permissions { json }
         }
-        "resume" => return parse_resume_command(arguments),
+        "-r" => Command::Interactive {
+            selection: InteractiveSessionSelection::Picker,
+        },
+        "--resume-last" | "--continue" | "-c" => Command::Interactive {
+            selection: InteractiveSessionSelection::Latest,
+        },
+        "--resume" => {
+            let selection = match arguments.next() {
+                None => InteractiveSessionSelection::Latest,
+                Some(target) => parse_interactive_resume_target(target)?,
+            };
+            Command::Interactive { selection }
+        }
+        "resume" => return parse_resume_command(arguments, true),
         "session" => {
-            let id = parse_explicit_session_id(
-                arguments.next().ok_or(())?,
-                SessionIdGrammar::Inspection,
-            )?;
+            let target = arguments.next().ok_or(())?;
+            if target == "resume" {
+                return parse_resume_command(arguments, false);
+            }
+            let id = parse_explicit_session_id(target, SessionIdGrammar::Inspection)?;
             let json = match arguments.next() {
                 None => false,
                 Some(argument) if argument == "--json" => true,
@@ -1633,6 +1648,12 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             };
             Command::Workspace { json }
         }
+        alias if alias.starts_with("--resume-") => Command::Interactive {
+            selection: InteractiveSessionSelection::Exact(parse_explicit_session_id(
+                OsString::from(&alias["--resume-".len()..]),
+                SessionIdGrammar::ResumeExact,
+            )?),
+        },
         _ => return Err(()),
     };
 
@@ -1647,9 +1668,14 @@ fn parse_explicit_session_id(
     grammar: SessionIdGrammar,
 ) -> Result<SessionId, ()> {
     let id = argument.into_string().map_err(|_| ())?;
+    let id = match grammar {
+        SessionIdGrammar::Inspection => id.as_str(),
+        SessionIdGrammar::Resume | SessionIdGrammar::ResumeExact => trim_resume_target(&id),
+    };
     let reserved = match grammar {
-        SessionIdGrammar::Inspection => matches!(id.as_str(), "last" | "--id" | "--json"),
+        SessionIdGrammar::Inspection => matches!(id, "last" | "--id" | "--json"),
         SessionIdGrammar::Resume => id == "last" || id.starts_with('-'),
+        SessionIdGrammar::ResumeExact => id.starts_with('-'),
     };
     if reserved {
         return Err(());
@@ -1665,13 +1691,51 @@ fn identity() -> String {
     )
 }
 
-fn parse_resume_command(mut arguments: impl Iterator<Item = OsString>) -> Result<Command, ()> {
+fn trim_resume_target(target: &str) -> &str {
+    target.trim_matches([' ', '\t', '\r', '\n'])
+}
+
+fn parse_interactive_resume_target(target: OsString) -> Result<InteractiveSessionSelection, ()> {
+    if target.to_str().map(trim_resume_target) == Some("last") {
+        Ok(InteractiveSessionSelection::Latest)
+    } else {
+        parse_explicit_session_id(target, SessionIdGrammar::Resume)
+            .map(InteractiveSessionSelection::Exact)
+    }
+}
+
+fn parse_resume_command(
+    mut arguments: impl Iterator<Item = OsString>,
+    allow_prompt: bool,
+) -> Result<Command, ()> {
     let Some(target) = arguments.next() else {
         return Ok(Command::Interactive {
             selection: InteractiveSessionSelection::Latest,
         });
     };
-    if target == "last" {
+    if target == "--resume" {
+        return if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--last"))
+            && arguments.next().is_none()
+        {
+            Ok(Command::Interactive {
+                selection: InteractiveSessionSelection::Latest,
+            })
+        } else {
+            Err(())
+        };
+    }
+    if target == "--id" {
+        let id =
+            parse_explicit_session_id(arguments.next().ok_or(())?, SessionIdGrammar::ResumeExact)?;
+        return if arguments.next().is_none() {
+            Ok(Command::Interactive {
+                selection: InteractiveSessionSelection::Exact(id),
+            })
+        } else {
+            Err(())
+        };
+    }
+    if target.to_str().map(trim_resume_target) == Some("last") {
         return if arguments.next().is_none() {
             Ok(Command::Interactive {
                 selection: InteractiveSessionSelection::Latest,
@@ -1686,6 +1750,9 @@ fn parse_resume_command(mut arguments: impl Iterator<Item = OsString>) -> Result
             selection: InteractiveSessionSelection::Exact(id),
         });
     };
+    if !allow_prompt {
+        return Err(());
+    }
     Ok(Command::Resume {
         id,
         prompt: parse_prompt_arguments(std::iter::once(first_prompt).chain(arguments))?,
@@ -1708,7 +1775,11 @@ fn help() -> String {
             "  machine-god permissions [--json]\n",
             "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
             "  machine-god resume [last | <id>]\n",
+            "  machine-god resume --id <id>\n",
+            "  machine-god resume --resume --last\n",
             "  machine-god resume <id> [--] <prompt...>\n",
+            "  machine-god session resume [last | <id>]\n",
+            "  machine-god session resume --id <id>\n",
             "  machine-god session <id> [--json]\n",
             "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
             "  machine-god status [--json]\n",
@@ -1731,6 +1802,11 @@ fn help() -> String {
             "Options:\n",
             "  -h, --help       Show this help\n",
             "  -V, --version    Show version\n",
+            "  -r               Pick a session to resume\n",
+            "  -c, --continue   Resume the latest workspace session\n",
+            "  --resume-last    Resume the latest workspace session\n",
+            "  --resume [last | <id>]  Resume latest or an exact session\n",
+            "  --resume-<id>    Resume an exact session\n",
         ),
         env!("CARGO_PKG_VERSION")
     )
@@ -2423,6 +2499,7 @@ mod tests {
             self.calls.set(self.calls.get() + 1);
             self.selections.borrow_mut().push(match selection {
                 InteractiveSessionSelection::Fresh => None,
+                InteractiveSessionSelection::Picker => Some("<picker>".into()),
                 InteractiveSessionSelection::Latest => Some("last".into()),
                 InteractiveSessionSelection::Exact(id) => Some(id.as_str().into()),
             });
@@ -4015,6 +4092,117 @@ mod tests {
             ],
         ] {
             assert_eq!(parse_arguments(arguments), Err(()));
+        }
+    }
+
+    #[test]
+    fn resume_aliases_select_typed_targets_and_dispatch_once_without_a_prompt() {
+        use InteractiveSessionSelection::{Exact, Latest, Picker};
+        let exact = |id| Exact(machine_god_core::SessionId::new(id).unwrap());
+        for (arguments, expected) in [
+            (vec!["-r"], Picker),
+            (vec!["-c"], Latest),
+            (vec!["--continue"], Latest),
+            (vec!["--resume-last"], Latest),
+            (vec!["--resume"], Latest),
+            (vec!["--resume", " \tlast\r\n"], Latest),
+            (vec!["--resume", " \talpha\r\n"], exact("alpha")),
+            (vec!["--resume-alpha"], exact("alpha")),
+            (vec!["--resume- last "], exact("last")),
+            (vec!["resume", " \talpha\r\n"], exact("alpha")),
+            (vec!["resume", "--id", "last"], exact("last")),
+            (vec!["resume", "--id", " \talpha\r\n"], exact("alpha")),
+            (vec!["resume", "--resume", "--last"], Latest),
+            (vec!["session", "resume"], Latest),
+            (vec!["session", "resume", " \tlast\r\n"], Latest),
+            (vec!["session", "resume", "alpha"], exact("alpha")),
+            (vec!["session", "resume", "--id", "last"], exact("last")),
+            (vec!["session", "resume", "--resume", "--last"], Latest),
+        ] {
+            assert_eq!(
+                parse_arguments(arguments.iter().map(OsString::from)),
+                Ok(Command::Interactive {
+                    selection: expected.clone()
+                }),
+                "{arguments:?}"
+            );
+            let host = FakeAskHost::new(AskCommandOutcome::Completed, b"interactive\n");
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                run_with_ask_host(
+                    arguments.iter().map(OsString::from),
+                    &mut stdout,
+                    &mut stderr,
+                    &host
+                ),
+                0,
+                "{arguments:?}"
+            );
+            assert_eq!(host.calls.get(), 1);
+            assert!(host.prompts.borrow().is_empty());
+            let target = match expected {
+                Picker => "<picker>".to_owned(),
+                Latest => "last".to_owned(),
+                Exact(id) => id.as_str().to_owned(),
+                InteractiveSessionSelection::Fresh => panic!("resume must not select fresh"),
+            };
+            assert_eq!(*host.selections.borrow(), vec![Some(target)]);
+            assert_eq!(stdout, b"interactive\n");
+            assert!(stderr.is_empty());
+        }
+    }
+
+    #[test]
+    fn resume_aliases_reject_malformed_targets_and_tails_before_host_effects() {
+        for arguments in [
+            vec!["-r", "alpha"],
+            vec!["-c", "alpha"],
+            vec!["--continue", "alpha"],
+            vec!["--resume-last", "alpha"],
+            vec!["--resume-alpha", "prompt"],
+            vec!["--resume-"],
+            vec!["--resume- \t\r\n"],
+            vec!["--resume--flag"],
+            vec!["--resume", "alpha", "prompt"],
+            vec!["--resume", "--id", "alpha"],
+            vec!["--resume", " \t\r\n"],
+            vec!["--resume", "\u{a0}alpha\u{a0}"],
+            vec!["--resume", "bad/session"],
+            vec!["--resume", "--record"],
+            vec!["resume", "--id"],
+            vec!["resume", "--id", ""],
+            vec!["resume", "--id", "--record"],
+            vec!["resume", "--id", "last", "prompt"],
+            vec!["resume", "--resume"],
+            vec!["resume", "--resume", "last"],
+            vec!["resume", "--resume", "--last", "extra"],
+            vec!["session", "resume", "alpha", "prompt"],
+            vec!["session", "resume", "--id", "last", "prompt"],
+            vec!["session", "resume", "--record"],
+            vec!["session", "resume", "last", "--json"],
+        ] {
+            let host = FakeAskHost::new(AskCommandOutcome::Completed, b"must not run");
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                parse_arguments(arguments.iter().map(OsString::from)),
+                Err(()),
+                "{arguments:?}"
+            );
+            assert_eq!(
+                run_with_ask_host(
+                    arguments.iter().map(OsString::from),
+                    &mut stdout,
+                    &mut stderr,
+                    &host
+                ),
+                2,
+                "{arguments:?}"
+            );
+            assert_eq!(host.calls.get(), 0);
+            assert!(stdout.is_empty());
+            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
         }
     }
 

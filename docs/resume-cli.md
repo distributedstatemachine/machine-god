@@ -8,7 +8,34 @@ command.
 
 ## Grammar
 
-The noninteractive form is:
+Interactive selection accepts these forms without adding a synthetic prompt:
+
+```text
+machine-god -r
+machine-god --resume-last
+machine-god --continue
+machine-god -c
+machine-god --resume [last | <id>]
+machine-god --resume-<id>
+machine-god resume [last | <id>]
+machine-god resume --id <id>
+machine-god resume --resume --last
+machine-god session resume [last | <id>]
+machine-god session resume --id <id>
+```
+
+`-r` requests the session picker. The other operand-free forms select the latest
+workspace session. `last` selects latest unless it follows explicit `--id`,
+which names the literal ID `last`. The `--resume-<id>` suffix names an exact ID;
+the separately recognized `--resume-last` remains the latest alias. Resume IDs
+trim only ASCII space, tab, CR and LF at their edges; empty results are rejected.
+Aliases accept no additional operands beyond those shown. In particular,
+`--resume` accepts at most one target and no prompt tail, while `-r`, `-c`,
+`--continue`, `--resume-last` and suffix aliases take no separate operand.
+The legacy `session resume --resume --last` spelling also selects latest.
+`session <id> [--json]` retains its separate inspection grammar.
+
+The existing noninteractive extension is:
 
 ```text
 machine-god resume <id> [--] <prompt...>
@@ -19,7 +46,7 @@ digits, `-`, `_`, `.`, or `:`, and with a first byte other than `-`. The core
 `SessionId` alphabet itself remains unchanged; rejecting a command-position ID
 that begins with `-` is an intentional CLI parser tightening because that token
 is option-like. The exact token `last` is reserved for
-interactive latest selection and cannot name an exact resume target. One or more Unicode prompt
+interactive latest selection in this prompt-bearing form. One or more Unicode prompt
 arguments follow the ID and are joined with one ASCII space into exactly one
 prompt. A single `--` after the ID ends option recognition and permits the first
 prompt part to begin with `-`; it is not part of the prompt.
@@ -33,11 +60,11 @@ and exit `2`.
 
 Grammar and prompt validation complete before configuration, current-directory,
 state-root, credential, runtime, session-store, or network effects. Standard
-input is never read by this prompt-bearing form. There is no picker, alias,
-`--resume`, `--resume-last`, `--continue`, short flag, JSON form, or interactive
-mode in this prompt-bearing form. Separately, `resume`, `resume last`, and
-`resume <id>` with no prompt start the [interactive host](cli.md#interactive-ownership)
-using validated latest/exact selection. No synthetic user prompt is added.
+input is never read by this prompt-bearing form. Only `resume <id>` supports
+the prompt-bearing extension; aliases, `session resume` and explicit `--id`
+remain interactive-only. Interactive forms use the
+[interactive host](cli.md#interactive-ownership). Unsupported options, including
+`--record` and `--json`, are rejected rather than silently ignored.
 
 ## Native composition and authority
 

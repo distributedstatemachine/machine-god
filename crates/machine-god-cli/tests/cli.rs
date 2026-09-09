@@ -62,7 +62,11 @@ const HELP: &str = concat!(
     "  machine-god permissions [--json]\n",
     "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
     "  machine-god resume [last | <id>]\n",
+    "  machine-god resume --id <id>\n",
+    "  machine-god resume --resume --last\n",
     "  machine-god resume <id> [--] <prompt...>\n",
+    "  machine-god session resume [last | <id>]\n",
+    "  machine-god session resume --id <id>\n",
     "  machine-god session <id> [--json]\n",
     "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
     "  machine-god status [--json]\n",
@@ -85,6 +89,11 @@ const HELP: &str = concat!(
     "Options:\n",
     "  -h, --help       Show this help\n",
     "  -V, --version    Show version\n",
+    "  -r               Pick a session to resume\n",
+    "  -c, --continue   Resume the latest workspace session\n",
+    "  --resume-last    Resume the latest workspace session\n",
+    "  --resume [last | <id>]  Resume latest or an exact session\n",
+    "  --resume-<id>    Resume an exact session\n",
 );
 const STATUS_HELP: &str = concat!(
     "machine-god status\n",
@@ -109,7 +118,7 @@ const STATUS_MISSING_AUTH_HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume [last | <id>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -936,6 +945,20 @@ fn interactive_startup_requires_tty_before_configuration_or_session_effects() {
         &["resume"][..],
         &["resume", "last"][..],
         &["resume", "alpha"][..],
+        &["-r"][..],
+        &["-c"][..],
+        &["--continue"][..],
+        &["--resume-last"][..],
+        &["--resume"][..],
+        &["--resume", "last"][..],
+        &["--resume", " \talpha\r\n"][..],
+        &["--resume-alpha"][..],
+        &["resume", "--id", "last"][..],
+        &["resume", "--resume", "--last"][..],
+        &["session", "resume"][..],
+        &["session", "resume", "last"][..],
+        &["session", "resume", "alpha"][..],
+        &["session", "resume", "--id", "last"][..],
     ] {
         let output = machine_god()
             .args(arguments)
@@ -1538,6 +1561,22 @@ fn invalid_resume_grammar_precedes_configuration_state_credentials_and_stdin() {
     let state_root = temporary.path().join("missing-state");
 
     for arguments in [
+        &["-r", "alpha"][..],
+        &["--continue", "alpha"][..],
+        &["-c", "alpha"][..],
+        &["--resume-last", "alpha"][..],
+        &["--resume-alpha", "prompt"][..],
+        &["--resume-"][..],
+        &["--resume", "alpha", "prompt"][..],
+        &["--resume", " \t\r\n"][..],
+        &["--resume", "--record"][..],
+        &["resume", "--id"][..],
+        &["resume", "--id", "last", "prompt"][..],
+        &["resume", "--resume"][..],
+        &["resume", "--resume", "--last", "extra"][..],
+        &["session", "resume", "alpha", "prompt"][..],
+        &["session", "resume", "--id", "last", "prompt"][..],
+        &["session", "resume", "--record"][..],
         &["resume", "last", "prompt"][..],
         &["resume", "--id", "alpha", "prompt"][..],
         &["resume", "--json", "prompt"][..],

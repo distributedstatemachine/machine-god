@@ -60,6 +60,7 @@ pub(crate) enum SessionSelection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum InteractiveSessionSelection {
     Fresh,
+    Picker,
     Latest,
     Exact(SessionId),
 }
