@@ -27,7 +27,7 @@ Model selection and /fast request native session and available user-default save
 their independent results are reported separately. /resume has no arguments.\n\
 Cmd/Super+R opens the all-workspace session picker.\n\
 /allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]\n\
-Workspace editing is not yet wired.\n> ";
+/workspace [list|add PATH|remove PATH|clear]\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -120,9 +120,7 @@ impl Driver {
             Command::Models => self.show_models(),
             Command::Fast => self.fast_command(now_ms),
             Command::Allowlist => self.allowlist_command(payload, now_ms),
-            Command::Workspace => {
-                self.note(UNAVAILABLE);
-            }
+            Command::Workspace => self.workspace_command(payload, now_ms),
         }
     }
 
@@ -161,6 +159,21 @@ impl Driver {
         };
         self.control_command(
             NativeInteractiveControl::Allowlist { request, store },
+            now_ms,
+        );
+    }
+
+    fn workspace_command(&mut self, payload: &str, now_ms: i64) {
+        let Ok(action) = crate::workspace::parse_slash(payload) else {
+            self.note(b"\n[usage: /workspace [list|add PATH|remove PATH|clear]]\n> ");
+            return;
+        };
+        let Some(store) = self.user_config.clone() else {
+            self.note(UNAVAILABLE);
+            return;
+        };
+        self.control_command(
+            NativeInteractiveControl::Workspace { action, store },
             now_ms,
         );
     }

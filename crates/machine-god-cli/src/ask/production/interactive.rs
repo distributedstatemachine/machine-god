@@ -56,6 +56,7 @@ use std::{
 };
 
 pub(super) fn execute(
+    launch: &crate::workspace::launch::LaunchWorkspaceOptions,
     selection: InteractiveSessionSelection,
     output: &mut dyn std::io::Write,
     mut controller: AskSignalController,
@@ -82,7 +83,7 @@ pub(super) fn execute(
                         machine_god_core::CancellationToken::new(),
                     );
                     let input_completion = input.completion();
-                    let PreparedConversationHost {
+                    let Ok(PreparedConversationHost {
                         host,
                         runtime,
                         workspace,
@@ -91,9 +92,15 @@ pub(super) fn execute(
                         observations: _observations,
                         catalog_cache: _catalog_cache,
                         user_config,
-                    } = prepare_conversation_host_with_activation(bridge.clone(), bridge, || {
-                        control.activate_turn()
-                    })?;
+                    }) = prepare_conversation_host_with_activation(
+                        launch,
+                        bridge.clone(),
+                        bridge,
+                        || control.activate_turn(),
+                    )
+                    else {
+                        return super::finish_setup_failure(signals, &control);
+                    };
                     let clipboard = clipboard::capture(&workspace);
                     settle(
                         host,

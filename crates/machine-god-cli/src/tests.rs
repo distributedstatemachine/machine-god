@@ -55,6 +55,7 @@ impl BackgroundCommandHost for FakeBackgroundHost {
 
 #[derive(Debug)]
 struct FakeAskHost {
+    launches: RefCell<Vec<crate::workspace::launch::LaunchWorkspaceOptions>>,
     outcome: AskCommandOutcome,
     calls: Cell<usize>,
     selections: RefCell<Vec<Option<String>>>,
@@ -65,6 +66,7 @@ struct FakeAskHost {
 impl FakeAskHost {
     fn new(outcome: AskCommandOutcome, output: &'static [u8]) -> Self {
         Self {
+            launches: RefCell::new(Vec::new()),
             outcome,
             calls: Cell::new(0),
             selections: RefCell::new(Vec::new()),
@@ -75,6 +77,13 @@ impl FakeAskHost {
 }
 
 impl AskCommandHost for FakeAskHost {
+    fn with_workspace(
+        &self,
+        options: crate::workspace::launch::LaunchWorkspaceOptions,
+    ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+        self.launches.borrow_mut().push(options);
+        Ok(Box::new(self))
+    }
     fn execute_stdin(&self, _output: &mut dyn io::Write) -> AskCommandExecution {
         self.calls.set(self.calls.get() + 1);
         self.prompts.borrow_mut().push("<stdin>".into());
@@ -117,6 +126,98 @@ impl AskCommandHost for FakeAskHost {
             self.outcome
         };
         AskCommandExecution::without_finalizer(outcome)
+    }
+}
+
+impl AskCommandHost for &FakeAskHost {
+    fn execute_stdin(&self, output: &mut dyn io::Write) -> AskCommandExecution {
+        FakeAskHost::execute_stdin(self, output)
+    }
+    fn execute_interactive(
+        &self,
+        selection: InteractiveSessionSelection,
+        output: &mut dyn io::Write,
+    ) -> AskCommandExecution {
+        FakeAskHost::execute_interactive(self, selection, output)
+    }
+    fn execute(
+        &self,
+        selection: SessionSelection,
+        prompt: String,
+        output: &mut dyn io::Write,
+    ) -> AskCommandExecution {
+        FakeAskHost::execute(self, selection, prompt, output)
+    }
+}
+
+#[test]
+fn launch_workspace_modifiers_reach_only_validated_conversation_hosts() {
+    for suffix in [
+        vec![],
+        vec!["-r"],
+        vec!["--continue"],
+        vec!["ask", "prompt"],
+        vec!["ask"],
+        vec!["resume", "session-id", "prompt"],
+        vec!["session", "resume", "session-id"],
+    ] {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, b"selected\n");
+        let args = ["--add-dir", "shared one", "--no-additional-dirs"]
+            .into_iter()
+            .chain(suffix)
+            .map(OsString::from);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_hosts(
+                args,
+                &mut stdout,
+                &mut stderr,
+                CommandHosts {
+                    ask: &host,
+                    ..Default::default()
+                }
+            ),
+            0
+        );
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(
+            host.launches.borrow().as_slice(),
+            &[crate::workspace::launch::LaunchWorkspaceOptions {
+                directories: vec!["shared one".into()],
+                suppress_saved: true
+            }]
+        );
+        assert!(stderr.is_empty());
+    }
+    for args in [
+        vec!["--add-dir"],
+        vec!["--no-additional-dirs", "--no-additional-dirs"],
+        vec!["--add-dir=one", "status"],
+        vec!["--add-dir=one", "workspace"],
+        vec!["--add-dir=one", "session", "session-id"],
+        vec!["--add-dir=one", "ask", "--bad"],
+        vec!["--add-dir=one", "--resume", "id", "extra"],
+        vec!["ask", "--add-dir=one"],
+    ] {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, b"not reached");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_hosts(
+                args.into_iter().map(OsString::from),
+                &mut stdout,
+                &mut stderr,
+                CommandHosts {
+                    ask: &host,
+                    ..Default::default()
+                }
+            ),
+            2
+        );
+        assert_eq!(host.calls.get(), 0);
+        assert!(host.launches.borrow().is_empty());
+        assert!(stdout.is_empty());
     }
 }
 

@@ -6,6 +6,73 @@ use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub(crate) mod launch;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn parse_slash(payload: &str) -> Result<machine_god_native::NativeWorkspaceAction, ()> {
+    use machine_god_native::NativeWorkspaceAction as Action;
+    let payload = payload.trim_matches([' ', '\t']);
+    if payload.is_empty() || payload == "list" {
+        return Ok(Action::List);
+    }
+    if payload == "clear" {
+        return Ok(Action::Clear);
+    }
+    let (verb, path) = payload
+        .bytes()
+        .position(|byte| matches!(byte, b' ' | b'\t'..=b'\r'))
+        .map(|offset| {
+            (
+                &payload[..offset],
+                payload[offset..].trim_matches([' ', '\t']),
+            )
+        })
+        .ok_or(())?;
+    if path.as_bytes().contains(&0) || path.len() > MAX_PATH_BYTES {
+        return Err(());
+    }
+    match (verb, path) {
+        ("add", path) if !path.is_empty() => Ok(Action::Add(path.into())),
+        ("remove", path) if !path.is_empty() => Ok(Action::Remove(path.into())),
+        _ => Err(()),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn render_control_receipt(
+    id: u64,
+    receipt: &machine_god_native::NativeWorkspaceReceipt,
+    limit: usize,
+) -> Result<Vec<u8>, ()> {
+    let action = match &receipt.action {
+        machine_god_native::NativeWorkspaceAction::List => WorkspaceAction::List,
+        machine_god_native::NativeWorkspaceAction::Add(path) => WorkspaceAction::Add(path.clone()),
+        machine_god_native::NativeWorkspaceAction::Remove(path) => {
+            WorkspaceAction::Remove(path.clone())
+        }
+        machine_god_native::NativeWorkspaceAction::Clear => WorkspaceAction::Clear,
+    };
+    let body = render_bounded(
+        &native::from_native(receipt),
+        &WorkspaceOptions {
+            action,
+            json: false,
+        },
+        limit,
+    )
+    .map_err(|_| ())?;
+    let mut output = BoundedOutput::with_capacity(limit, 8192);
+    write!(output, "\n[workspace control {id}]\n{body}> ").map_err(|_| ())?;
+    Ok(output.finish().into_bytes())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn control_error(
+    error: machine_god_native::NativeWorkspaceServiceError,
+) -> &'static str {
+    native::classify(error).category()
+}
+
 const MAX_PATH_BYTES: usize = 4096;
 const MAX_ENTRIES: usize = 16;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -305,6 +372,14 @@ fn render(
     snapshot: &WorkspaceSnapshot,
     options: &WorkspaceOptions,
 ) -> Result<String, WorkspaceOperationalFailure> {
+    render_bounded(snapshot, options, MAX_OUTPUT_BYTES)
+}
+
+fn render_bounded(
+    snapshot: &WorkspaceSnapshot,
+    options: &WorkspaceOptions,
+    limit: usize,
+) -> Result<String, WorkspaceOperationalFailure> {
     validate_path(&snapshot.primary, true)?;
     if snapshot.entries.len() > MAX_ENTRIES {
         return Err(WorkspaceOperationalFailure::ResourceLimit);
@@ -313,7 +388,7 @@ fn render(
         validate_path(&entry.source, false)?;
         validate_path(&entry.identity, true)?;
     }
-    let mut output = BoundedOutput::with_capacity(MAX_OUTPUT_BYTES, 8192);
+    let mut output = BoundedOutput::with_capacity(limit, 8192);
     if options.json {
         render_json(&mut output, snapshot, &options.action)
     } else {

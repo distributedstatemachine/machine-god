@@ -27,6 +27,61 @@ use machine_god_native::{
 use serde_json::{Value, json};
 use support::{Fixture, answer, call};
 
+#[test]
+fn public_workspace_control_keeps_additional_authority_across_resume() {
+    executor().block_on(async {
+        let fixture = Fixture::new_with_workspace();
+        let shared = fixture.workspace.parent().unwrap().join("shared-root");
+        std::fs::create_dir(&shared).unwrap();
+        let store = Arc::new(native::NativeUserConfigStore::new(
+            fixture.workspace.parent().unwrap().join("user-settings"),
+        ));
+        let mut owner = fresh(&fixture).await;
+        let original_id = owner.runtime().id();
+        owner
+            .request_control(
+                native::NativeInteractiveControl::Workspace {
+                    action: native::NativeWorkspaceAction::Add(shared.clone()),
+                    store,
+                },
+                150,
+            )
+            .unwrap();
+        let control = tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                let _ = owner.poll_progress(cx, 150);
+                owner
+                    .take_control_outcome()
+                    .map_or(Poll::Pending, Poll::Ready)
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!control.failed());
+        transition(&mut owner, NativeInteractiveTransition::New, 160).await;
+        transition(
+            &mut owner,
+            NativeInteractiveTransition::Resume(NativeResumeTarget::Exact(original_id)),
+            170,
+        )
+        .await;
+        let file = shared.join("selected.txt");
+        run_tool(
+            &fixture,
+            &mut owner,
+            "write_file",
+            &json!({"path":file,"content":"selected root"}),
+            180,
+        )
+        .await;
+        assert_eq!(std::fs::read(file).unwrap(), b"selected root");
+        shutdown(&mut owner, 190).await;
+        drop(owner);
+        fixture.finish();
+    });
+}
+
 fn preferences(model: &str) -> NativeModelPreferences {
     NativeModelPreferences::new(model, NativeReasoningEffort::default(), false).unwrap()
 }

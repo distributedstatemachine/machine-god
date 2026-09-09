@@ -1,6 +1,39 @@
 use super::*;
 use std::cell::Cell;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn workspace_slash_preserves_remainder_and_does_not_parse_shell_quotes() {
+    use machine_god_native::NativeWorkspaceAction as Action;
+    assert_eq!(parse_slash(" \t ").unwrap(), Action::List);
+    assert_eq!(parse_slash("list").unwrap(), Action::List);
+    assert_eq!(parse_slash("clear").unwrap(), Action::Clear);
+    assert_eq!(
+        parse_slash("add shared one").unwrap(),
+        Action::Add("shared one".into())
+    );
+    assert_eq!(
+        parse_slash("add\nline").unwrap(),
+        Action::Add("\nline".into())
+    );
+    assert_eq!(
+        parse_slash("remove \"literal\"").unwrap(),
+        Action::Remove("\"literal\"".into())
+    );
+    for text in [
+        "add",
+        "remove",
+        "list extra",
+        "clear extra",
+        "ADD path",
+        "--json",
+        "add a\0b",
+    ] {
+        assert!(parse_slash(text).is_err(), "{text:?}");
+    }
+    assert!(parse_slash(&format!("add {}", "a".repeat(4097))).is_err());
+}
+
 struct Host {
     result: Result<WorkspaceSnapshot, WorkspaceOperationalFailure>,
     calls: Cell<usize>,

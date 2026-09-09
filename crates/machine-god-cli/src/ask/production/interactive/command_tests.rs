@@ -17,6 +17,56 @@ fn executor() -> tokio::runtime::Runtime {
         .build()
         .unwrap()
 }
+
+#[test]
+fn workspace_slash_uses_actual_native_authority_and_reports_independent_receipts() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new_with_workspace();
+        let directory = fixture.workspace.parent().unwrap().join("shared one");
+        std::fs::create_dir(&directory).unwrap();
+        let config_path = fixture.workspace.parent().unwrap().join("workspace-config");
+        let mut driver = driver(&fixture).await;
+        driver.user_config = Some(Arc::new(NativeUserConfigStore::new(config_path.clone())));
+        let record = driver.owner.runtime().record();
+        driver.command(&format!("/workspace add {}", directory.display()), 200);
+        assert!(!config_path.exists(), "accepting the slash is inert");
+        let receipt = control(&mut driver).await;
+        assert!(!receipt.failed());
+        let NativeInteractiveControlReceipt::Workspace(value) = &receipt.result.as_ref().unwrap()
+        else {
+            panic!("workspace receipt")
+        };
+        assert_eq!(value.saved_changed, Some(true));
+        assert_eq!(value.runtime_changed, Some(true));
+        assert_eq!(value.snapshot.entries()[0].source().identity(), directory);
+        assert!(crate::workspace::render_control_receipt(receipt.id.get(), value, 0).is_err());
+        assert!(
+            config_path.join("config.json").exists(),
+            "render rejection never rolls back saved roots"
+        );
+        let output = super::super::driver::render_control(&receipt).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("shared one"));
+        assert!(output.contains("confirmed"));
+        assert_eq!(driver.owner.runtime().record(), record);
+        driver.control_outcome = Some(receipt);
+        driver.command("/workspace clear", 210);
+        assert!(
+            String::from_utf8(driver.notice.take().unwrap())
+                .unwrap()
+                .contains("previous control")
+        );
+        driver.control_outcome.take();
+        driver.command("/workspace clear", 220);
+        let receipt = control(&mut driver).await;
+        assert!(!receipt.failed());
+        let NativeInteractiveControlReceipt::Workspace(value) = receipt.result.unwrap() else {
+            panic!("workspace receipt")
+        };
+        assert!(value.snapshot.entries().is_empty());
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
 async fn driver(fixture: &support::Fixture) -> Driver {
     let owner = NativeInteractiveSession::open(
         fixture.host.clone(),
@@ -455,7 +505,8 @@ fn status_escapes_dynamic_content_and_help_does_not_claim_unwired_features() {
         assert!(help.contains(
             "/allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]"
         ));
-        assert!(help.contains("Workspace editing is not yet wired."));
+        assert!(help.contains("/workspace [list|add PATH|remove PATH|clear]"));
+        assert!(!help.contains("Workspace editing is not yet wired."));
         driver.command("/version", 200);
         assert!(
             String::from_utf8(driver.notice.take().unwrap())

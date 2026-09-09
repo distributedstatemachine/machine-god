@@ -919,19 +919,7 @@ fn outcome_failed(outcome: &NativeInteractiveOutcome) -> bool {
 }
 
 fn control_failed(outcome: &NativeInteractiveControlOutcome) -> bool {
-    match &outcome.result {
-        Err(_) => true,
-        Ok(NativeInteractiveControlReceipt::ModelDefaults(commit)) => {
-            commit.session.is_err() || commit.user_defaults.is_err()
-        }
-        Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) => match receipt {
-            machine_god_native::NativeAllowlistReceipt::View { reload, .. } => reload.is_err(),
-            machine_god_native::NativeAllowlistReceipt::Mutation { reload, .. } => {
-                reload.as_ref().is_some_and(Result::is_err)
-            }
-        },
-        Ok(_) => false,
-    }
+    outcome.failed()
 }
 
 fn output_chunk(bytes: &[u8], model_text: bool) -> Result<(Vec<u8>, usize), ()> {
@@ -1060,11 +1048,18 @@ fn session_save_name(value: &NativeModelPreferencePersistence) -> &'static str {
     }
 }
 
-fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
+pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
     use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
 
     if let Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) = &outcome.result {
         return super::allowlist_view::render(outcome.id.get(), receipt);
+    }
+    if let Ok(NativeInteractiveControlReceipt::Workspace(receipt)) = &outcome.result {
+        return crate::workspace::render_control_receipt(
+            outcome.id.get(),
+            receipt,
+            super::MAX_PRESENTATION_OUTPUT_BYTES,
+        );
     }
 
     let mut text = crate::ask::production::interactive::bounded_output();
@@ -1082,6 +1077,9 @@ fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, 
         )) => text.write_str("allowlist outcome uncertain; settings may have been saved; authoritative reload required; no automatic retry"),
         Err(NativeInteractiveControlError::Allowlist(_)) => {
             text.write_str("allowlist failed; settings and runtime must be rechecked")
+        }
+        Err(NativeInteractiveControlError::Workspace(error)) => {
+            write!(text, "workspace failed: {}; inspect /workspace before retrying", crate::workspace::control_error(*error))
         }
         Err(_) => text.write_str("failed; publication may require authoritative reload"),
         Ok(NativeInteractiveControlReceipt::Undone(FileUndoOutcome::Empty)) => {
@@ -1124,6 +1122,9 @@ fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, 
         }
         Ok(NativeInteractiveControlReceipt::Allowlist(_)) => {
             unreachable!("allowlist uses its separately bounded renderer")
+        }
+        Ok(NativeInteractiveControlReceipt::Workspace(_)) => {
+            unreachable!("workspace uses its separately bounded renderer")
         }
     }
     .map_err(|_| ())?;
