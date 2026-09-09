@@ -3,15 +3,15 @@
 The comparison observation remains pinned to `vercel-labs/fx` commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Machine-god deliberately does
 not copy fx's complete diagnostic inventory, report schema, remediation text,
-or exit semantics. This bounded command has exactly four machine-god checks
+or exit semantics. Its read-only report has exactly four machine-god checks
 and the output below. It is implemented but non-equivalent, not measured, and
 claim-ineligible in bootstrap evidence. This command makes no compatibility,
 fx-equivalence, latency, throughput, memory, size-improvement, or other product-
 performance claim.
 
-## Command grammar
+## Read-only report grammar
 
-The only accepted forms are:
+The accepted read-only report forms are:
 
 ```text
 machine-god doctor
@@ -175,3 +175,39 @@ Independent evidence must cover:
 - no configuration rewrite and no config/state/home root creation; and
 - freshly built release-binary human/JSON/count-consistency/no-create smokes on
   isolated missing XDG roots.
+
+## Guarded native session cleanup
+
+The four-check doctor report above remains read-only. Session maintenance has a
+separate explicit cleanup operation with `ReportOnly` and `Apply` modes; merely
+inspecting a report does not authorize deletion. It uses the supplied retained
+session-store authority, or the native process wrapper's existing state hierarchy,
+and runs descriptor work and nonblocking locks on completion-owned workers.
+
+Cleanup considers canonical session staging names, including uniquely named
+maintenance stages, within 1,024 directory entries and a 64 MiB aggregate read
+budget (one additional byte may witness overflow). It never recursively scans,
+deletes session records or permanent locks, or follows symlinks. Unrelated names
+are ignored. A filename and an existing lock alone are not ownership proof.
+The stage, authoritative record and existing lock must be regular, privately
+mode-0600, singly linked files owned by the current user. The retained store root
+must also be a current-user-owned directory without group/other access. Descriptor
+identities and named links are rechecked while holding the session's exclusive
+lock. The authoritative record must decode and its ID must bind the filename.
+
+Deletion is eligible only when the stage's complete bytes equal the current
+authoritative record or the exact reproducible metadata-only migration of that
+record. Partial files, invalid/future formats, unbound recovery destinations,
+arbitrary contents, hard links and uncertain ownership remain `Untrusted` and
+untouched. Active locks report `ActiveWriter`; eligible dry-run artifacts report
+`ReportOnly`. Explicit application reports `Completed` after unlink and directory
+sync, or `Indeterminate` if deletion happened but durability could not be proven.
+These are guarded cooperative-store observations, not protection against another
+process with the same user authority ignoring the store's locking protocol.
+
+Reports contain bounded status counts/entries rather than artifact paths or
+record contents. Entry/read limits or interruption after earlier outcomes produce
+an incomplete report, preserving already completed cleanup receipts. Cancellation
+before any outcome remains a cancellation error. Partial and uncertain artifacts
+can safely remain for manual investigation; ordinary migration/recovery retries
+use new staging names and do not delete them automatically.

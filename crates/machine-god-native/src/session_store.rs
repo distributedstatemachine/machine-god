@@ -3,6 +3,10 @@ use std::fmt;
 use std::path::Path;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "session_maintenance/storage.rs"]
+mod maintenance;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::BTreeMap;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io::{self, Read, Write};
