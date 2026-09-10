@@ -467,9 +467,10 @@ impl NativeBackgroundRecordInspector {
     ) -> BoxFuture<'static, Result<NativeBackgroundList, NativeBackgroundInspectionError>> {
         let state_root = Arc::clone(&self.state_root);
         let workspace = self.workspace.clone();
-        Box::pin(
-            async move { supported::list_retained(state_root.as_ref(), &workspace, &cancellation) },
-        )
+        Box::pin(async move {
+            supported::list_retained(state_root.as_ref(), &workspace, &cancellation)
+                .map(|(list, _)| list)
+        })
     }
 }
 
@@ -792,17 +793,8 @@ pub(crate) mod supported {
         workspace_root: &Path,
         query: NativeBackgroundQuery,
     ) -> Result<NativeBackgroundInspection, NativeBackgroundInspectionError> {
-        if !workspace_root.is_absolute() {
-            return Err(unavailable());
-        }
-        let workspace = std::fs::canonicalize(workspace_root).map_err(|_| unavailable())?;
-        let workspace = workspace.to_str().ok_or_else(unavailable)?;
-        if workspace.len() > MAX_BACKGROUND_PATH_BYTES {
-            return Err(NativeBackgroundInspectionError::new(
-                NativeBackgroundInspectionErrorKind::ResourceLimit,
-            ));
-        }
-
+        let workspace = canonical_workspace(workspace_root)?;
+        let workspace = workspace.as_str();
         let hierarchy = open_workspace_hierarchy(environment, workspace)?;
         match (hierarchy, query) {
             (None, NativeBackgroundQuery::List) => {
@@ -843,6 +835,22 @@ pub(crate) mod supported {
         }
     }
 
+    pub(crate) fn canonical_workspace(
+        workspace_root: &Path,
+    ) -> Result<String, NativeBackgroundInspectionError> {
+        if !workspace_root.is_absolute() {
+            return Err(unavailable());
+        }
+        let workspace = std::fs::canonicalize(workspace_root).map_err(|_| unavailable())?;
+        let workspace = workspace.to_str().ok_or_else(unavailable)?;
+        if workspace.len() > MAX_BACKGROUND_PATH_BYTES {
+            return Err(NativeBackgroundInspectionError::new(
+                NativeBackgroundInspectionErrorKind::ResourceLimit,
+            ));
+        }
+        Ok(workspace.to_owned())
+    }
+
     pub(super) fn validate_retained_state_root(
         state_root: &OwnedFd,
     ) -> Result<(), NativeBackgroundInspectionError> {
@@ -871,11 +879,14 @@ pub(crate) mod supported {
         })
     }
 
-    pub(super) fn list_retained(
+    pub(crate) fn list_retained(
         state_root: &OwnedFd,
         workspace: &str,
         cancellation: &CancellationToken,
-    ) -> Result<NativeBackgroundList, NativeBackgroundInspectionError> {
+    ) -> Result<
+        (NativeBackgroundList, Option<NativeBackgroundDetail>),
+        NativeBackgroundInspectionError,
+    > {
         if cancellation.is_cancelled() {
             return Err(unavailable());
         }
@@ -885,10 +896,13 @@ pub(crate) mod supported {
         }
         let Some(background) = open_child_directory(state_root.as_fd(), BACKGROUND_DIRECTORY)?
         else {
-            return Ok(NativeBackgroundList {
-                records: Vec::new(),
-                truncated: false,
-            });
+            return Ok((
+                NativeBackgroundList {
+                    records: Vec::new(),
+                    truncated: false,
+                },
+                None,
+            ));
         };
         validate_directory(&background, true)?;
         if cancellation.is_cancelled() {
@@ -897,13 +911,16 @@ pub(crate) mod supported {
         let workspace_name = background_workspace_name(workspace);
         let Some(workspace_root) = open_child_directory(background.as_fd(), &workspace_name)?
         else {
-            return Ok(NativeBackgroundList {
-                records: Vec::new(),
-                truncated: false,
-            });
+            return Ok((
+                NativeBackgroundList {
+                    records: Vec::new(),
+                    truncated: false,
+                },
+                None,
+            ));
         };
         validate_directory(&workspace_root, true)?;
-        list(workspace_root.as_fd(), workspace, Some(cancellation)).map(|(listing, _)| listing)
+        list(workspace_root.as_fd(), workspace, Some(cancellation))
     }
 
     fn state_base_and_suffix(
@@ -911,18 +928,10 @@ pub(crate) mod supported {
     ) -> Result<(PathBuf, &'static [&'static str]), NativeBackgroundInspectionError> {
         if let Some(value) = nonempty(environment.xdg_state_home()) {
             let base = validate_state_base(value)?;
-            Ok((base, &[crate::STATE_NAMESPACE, BACKGROUND_DIRECTORY]))
+            Ok((base, &[crate::STATE_NAMESPACE]))
         } else if let Some(value) = nonempty(environment.home()) {
             let base = validate_state_base(value)?;
-            Ok((
-                base,
-                &[
-                    ".local",
-                    "state",
-                    crate::STATE_NAMESPACE,
-                    BACKGROUND_DIRECTORY,
-                ],
-            ))
+            Ok((base, &[".local", "state", crate::STATE_NAMESPACE]))
         } else {
             Err(unavailable())
         }
@@ -949,6 +958,25 @@ pub(crate) mod supported {
         environment: &NativeEnvironment,
         workspace: &str,
     ) -> Result<Option<OwnedFd>, NativeBackgroundInspectionError> {
+        let Some(state) = open_state_hierarchy(environment)? else {
+            return Ok(None);
+        };
+        let Some(directory) = open_child_directory(state.as_fd(), BACKGROUND_DIRECTORY)? else {
+            return Ok(None);
+        };
+        validate_directory(&directory, true)?;
+        let workspace_name = background_workspace_name(workspace);
+        let Some(workspace_directory) = open_child_directory(directory.as_fd(), &workspace_name)?
+        else {
+            return Ok(None);
+        };
+        validate_directory(&workspace_directory, true)?;
+        Ok(Some(workspace_directory))
+    }
+
+    pub(crate) fn open_state_hierarchy(
+        environment: &NativeEnvironment,
+    ) -> Result<Option<OwnedFd>, NativeBackgroundInspectionError> {
         let (base, suffix) = state_base_and_suffix(environment)?;
         let Some(mut directory) = open_base(&base)? else {
             return Ok(None);
@@ -965,13 +993,7 @@ pub(crate) mod supported {
             validate_directory(&next, index >= first_private)?;
             directory = next;
         }
-        let workspace_name = background_workspace_name(workspace);
-        let Some(workspace_directory) = open_child_directory(directory.as_fd(), &workspace_name)?
-        else {
-            return Ok(None);
-        };
-        validate_directory(&workspace_directory, true)?;
-        Ok(Some(workspace_directory))
+        Ok(Some(directory))
     }
 
     fn open_base(path: &Path) -> Result<Option<OwnedFd>, NativeBackgroundInspectionError> {

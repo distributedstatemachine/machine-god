@@ -4,7 +4,7 @@ use crate::background::{BackgroundOperationalFailure, BackgroundSnapshot};
 use crate::test_support::*;
 use machine_god_core::BoxFuture;
 use machine_god_native::{
-    AI_GATEWAY_DEFAULT_MODEL, NativeBackgroundQuery, NativeRuntimeCredentialEnvironment,
+    AI_GATEWAY_DEFAULT_MODEL, NativeBackgroundHistoryQuery, NativeRuntimeCredentialEnvironment,
     NativeRuntimeStatus, NativeRuntimeStatusError, NativeRuntimeStatusInput, PermissionMode,
     inspect_native_runtime_status,
 };
@@ -46,7 +46,7 @@ struct FakeBackgroundHost {
 impl BackgroundCommandHost for FakeBackgroundHost {
     fn inspect_background(
         &self,
-        _query: NativeBackgroundQuery,
+        _query: NativeBackgroundHistoryQuery,
     ) -> BoxFuture<'static, Result<BackgroundSnapshot, BackgroundOperationalFailure>> {
         self.calls.set(self.calls.get() + 1);
         Box::pin(std::future::pending())

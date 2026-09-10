@@ -6,8 +6,9 @@ presentation, exit codes, and output writes. Native code owns environment,
 current-directory, state-root, descriptor, record, and hashing effects. This
 slice starts no work and deliberately has no process-control authority.
 
-The separately reviewed native [background supervisor](background-supervisor.md)
-is the production writer for this store. This top-level command remains a
+The native [background supervisor](background-supervisor.md) writes legacy
+numeric records; the complete [terminal host](terminal.md) writes committed
+terminal histories. This top-level command observes both and remains a
 strict read-only observer: invoking it never starts, stops, adopts, or probes a
 job. A host that has not used the supervisor may therefore still observe an
 empty list.
@@ -24,11 +25,17 @@ machine-god background last --json
 machine-god background --json last
 machine-god background <unsigned-decimal-u64> [--json]
 machine-god background --json <unsigned-decimal-u64>
+machine-god background <terminal-32-lowercase-hex> [--json]
+machine-god background --json <terminal-32-lowercase-hex>
 ```
 
 At most one target and one `--json` flag are accepted. IDs use nonempty ASCII
 decimal digits and must fit `u64`; leading zeroes are accepted within the
-20-byte token cap and do not change numeric identity. `last` is exact and
+20-byte token cap and do not change numeric identity. Terminal IDs use the
+exact generated `terminal-` prefix followed by 32 lowercase hexadecimal digits;
+the 41-byte token is an opaque string, never a numeric alias, path or display
+index. `stop`, `open`, `logs` and an explicit `list` token are not top-level
+operations. `last` is exact and
 case-sensitive. Empty, signed, whitespace-padded,
 non-Unicode, duplicate-flag, duplicate-target, option-assignment, and unknown
 arguments are invalid. Parsing completes before environment, current-directory,
@@ -44,16 +51,25 @@ record contents, environment values, filenames, OS errors, or raw numbers.
 
 ## Queries and output
 
-No target lists at most 100 validated records, ordered by `updated_at_ms`
-descending and then numeric ID descending. `last` returns the first record in
-that authoritative order. If scan or aggregate truncation could hide a newer
+No target lists a union of at most 100 validated legacy records and 128
+committed terminal histories for the canonical workspace. Ordering compares
+legacy `updated_at_ms` and terminal `last_output_ms` losslessly, descending.
+Equal timestamps put terminal IDs before legacy IDs, then sort each identity
+domain descending. Interactive selection independently uses creation time.
+`last` returns the first record in this observed order, retaining its detail
+from the same scan rather than reopening the selected record. There is no
+atomic cross-store snapshot. If scan or aggregate truncation could hide a newer
 record, `last` fails `ResourceLimit`; it never returns a possibly false latest
-record. An exact ID derives and opens only its canonical record name. Missing
+record. An exact numeric ID reads only the legacy namespace and canonical
+record name; an exact terminal ID reads only the terminal namespace. Missing
 list hierarchy is an empty complete result; missing `last` or exact ID is
 `NotFound`.
 
 List rows expose only `id`, recorded `state`, `updated_at_ms`, and a UTF-8
-command preview of at most 256 bytes. Preview truncation occurs at a character
+command preview of at most 256 bytes (empty for a commandless terminal).
+Numeric legacy IDs remain JSON numbers; terminal IDs are JSON strings.
+For terminal rows, `updated_at_ms` is the saved last-output timestamp.
+Preview truncation occurs at a character
 boundary and is explicit. List JSON uses kind `background` and fixes top-level
 key order `kind,count,truncated,records`; each row fixes key order
 `id,state,updated_at_ms,command_preview,preview_truncated`. Human mode starts
@@ -61,25 +77,35 @@ with `[background] no persisted background records` for a complete empty result
 or `[background] N saved`, then one bounded row per record. A truncated list
 ends with `[background] listing incomplete: a resource limit was reached`.
 
-Detail exposes the numeric ID, recorded state, start and update timestamps,
+Legacy detail remains unchanged: numeric ID, recorded state, start and update timestamps,
 optional PID, full bounded command, canonical recorded working directory,
 optional exit code, optional server URL, and optional diagnostic. JSON kind is
 `background_detail`; human mode labels every field. `running` and all other
 states are explicitly recorded history, not a current-liveness assertion.
+
+Terminal detail uses kind `background_terminal_detail` and fixed JSON key order
+`kind,id,state,created_at_ms,last_output_ms,command,cwd,exit_code,signal,earliest,latest,facts_cursor,recorded_only`.
+Command may be null for a commandless session. Exit code and signal are nullable
+and mutually exclusive. Each cursor contains `segment,offset`. The final
+`recorded_only` field is always true. Human mode labels the same fields.
+Terminal states are `starting`, `running`, `exited`, `lost` and `closed`;
+saved state and outcomes do not establish live ownership. No PID or server URL
+is invented from terminal history, and raw output is not rendered here.
 
 Strings are JSON-escaped in machine mode and terminal-control-sanitized in
 human mode. Both modes have exactly one final LF. The complete representation
 is validated and rendered before the first success write. Its ceiling is six
 times the command, cwd, URL and diagnostic byte limits plus 1,024 bytes for
 fixed fields and framing, including that LF. It accommodates worst-case
-escaping of every valid detail and every 100-row list. A violated snapshot invariant, checked-size overflow, or
+escaping of every valid detail and every 228-row union. A violated snapshot invariant, checked-size overflow, or
 one-byte excess becomes `ResourceLimit` with no partial success output. Writer
 failure uses only the fixed global output diagnostic.
 
 ## Native persisted schema
 
 Linux and macOS select nonempty `XDG_STATE_HOME`, otherwise nonempty `HOME`
-plus `.local/state`, and then the fixed `machine-god/background-v1` hierarchy.
+plus `.local/state`, and then the fixed `machine-god` hierarchy. Legacy records
+use `background-v1`; complete terminal histories use `terminal-v1`.
 The selected raw Unicode environment base and canonical Unicode current
 workspace are each limited to 4,096 bytes; an over-limit base is `ResourceLimit`.
 A domain-separated SHA-256 of that exact path selects
@@ -113,9 +139,26 @@ ACL-level flags and either no extended ACL entries or only zero-flag `DENY`
 entries whose sole permission is `DELETE`. An ACL outside that closed policy is
 `Corrupt`; failure to read the descriptor-bound ACL is `Unavailable`.
 
+### Committed terminal histories
+
+The read-only terminal inspector validates the existing profile topology,
+catalog ownership, terminal identity and committed facts/output cursors. It
+reads committed state only; it never prepares a profile, recovers a journal,
+repairs a torn tail, recreates a missing lock or converts saved process metadata
+into live authority. All terminal namespace entries are validated before
+workspace or exact-ID filtering. Malformed topology or committed facts therefore
+fail the query even when they would not appear in its result. Duplicate matching
+terminal identities fail closed instead of selecting an arbitrary owner.
+
+Terminal inspection is complete-or-error, bounded to 128 rows, 1 MiB of retained
+text (including identity, workspace, command and cwd) and 64 MiB of input.
+A malformed, unavailable or over-budget
+terminal namespace fails union queries; it never yields a partial-success
+legacy-only list. Legacy list truncation retains its explicit existing contract.
+
 ## Bounds, effects, and concurrency
 
-One list processes at most 1,024 non-dot directory entries plus one name-only
+The legacy portion of a list processes at most 1,024 non-dot directory entries plus one name-only
 overflow witness, accepts at most 100 records, and retains at most 479,744 bytes per
 record (six times bounded text fields plus 512 bytes of framing), plus one
 transient overflow byte used only to reject an oversized or
@@ -131,8 +174,11 @@ canonicalization, hashing, filesystem operation, allocation proportional to
 store contents, runtime construction, task, thread, timer, watcher, provider,
 permission, network, or process operation. All synchronous bounded work starts
 on first poll. Dropping before first poll is effect-free. The operation does not
-create, lock, repair, rewrite, delete, probe, signal, or explicitly change
-timestamps. Linux record and directory descriptors request `O_NOATIME`. macOS
+create, repair, rewrite, delete, probe, signal, or explicitly change timestamps.
+Legacy observation takes no lock. Terminal observation takes a shared lock on
+the existing profile lock descriptor; a busy or missing required lock is a
+fixed operational failure, never permission to create one. Linux record and
+directory descriptors request `O_NOATIME`. macOS
 has no per-open equivalent, so filesystem-managed access times may advance
 according to the mounted filesystem's policy; inspection never restores them
 with a metadata write.
@@ -147,6 +193,13 @@ as `Unavailable`. Filesystem calls have no universal wall-clock guarantee.
 
 FreeBSD, Windows, WASI, and other unsupported targets return the active fixed
 `Unsupported` category and never pretend the history is empty.
+On Linux/macOS, the public combined native facade requires its existing
+`ai-gateway-http` terminal graph for list, last and terminal queries. Without
+that feature those queries are inert until polled and return `Unsupported`,
+not a misleading complete legacy-only list. Exact numeric queries retain the
+unchanged legacy API behavior without that feature. Production Linux/macOS CLI
+builds already enable it. Existing `NativeBackgroundQuery` and inspection APIs
+remain unchanged for legacy terminal-tool consumers.
 
 ## Interactive background commands
 

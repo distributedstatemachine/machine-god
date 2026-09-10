@@ -46,9 +46,16 @@ pub use background_commands::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_control;
+mod background_history;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_input;
 mod background_inspection;
+pub use background_history::{
+    MAX_BACKGROUND_HISTORY_RECORDS, NativeBackgroundHistoryDetail, NativeBackgroundHistoryId,
+    NativeBackgroundHistoryInspection, NativeBackgroundHistoryList, NativeBackgroundHistoryQuery,
+    NativeBackgroundHistorySummary, NativeBackgroundTerminalDetail,
+    inspect_native_background_history, inspect_process_background_history,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod background_output;
 mod background_process;
@@ -56,6 +63,11 @@ mod background_process;
 mod background_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_supervisor;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+mod background_terminal_inspection;
 #[cfg(all(
     any(test, feature = "ai-gateway-http"),
     any(target_os = "linux", target_os = "macos")

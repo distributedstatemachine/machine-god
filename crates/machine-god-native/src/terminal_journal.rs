@@ -11,6 +11,7 @@
 //! headroom before dispatch; this module does not silently enforce a global cap.
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) mod inspection;
 
 use std::collections::BTreeSet;
 use std::fmt;

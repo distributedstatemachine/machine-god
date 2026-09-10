@@ -6,17 +6,20 @@ use std::fmt::Write as _;
 use std::io;
 use std::task::{Context, Poll, Waker};
 
-use machine_god_core::BoxFuture;
+use machine_god_core::{BoxFuture, TerminalCursor, TerminalSessionId};
 use machine_god_native::{
     MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_COMMAND_PREVIEW_BYTES,
-    MAX_BACKGROUND_DIAGNOSTIC_BYTES, MAX_BACKGROUND_PATH_BYTES, MAX_BACKGROUND_RECORDS,
-    MAX_BACKGROUND_SERVER_URL_BYTES, NativeBackgroundInspection, NativeBackgroundInspectionError,
-    NativeBackgroundInspectionErrorKind, NativeBackgroundQuery, inspect_process_background,
+    MAX_BACKGROUND_DIAGNOSTIC_BYTES, MAX_BACKGROUND_HISTORY_RECORDS, MAX_BACKGROUND_PATH_BYTES,
+    MAX_BACKGROUND_RECORDS, MAX_BACKGROUND_SERVER_URL_BYTES, NativeBackgroundHistoryDetail,
+    NativeBackgroundHistoryId, NativeBackgroundHistoryInspection, NativeBackgroundHistoryQuery,
+    NativeBackgroundInspection, NativeBackgroundInspectionError,
+    NativeBackgroundInspectionErrorKind, NativeBackgroundTerminalDetail,
+    inspect_process_background_history,
 };
 
 // Both renderers escape at most six output bytes per UTF-8 input byte. The
 // fixed allowance covers all labels, keys, punctuation and bounded scalars.
-// Detail is larger than a 100-row list even with maximal command previews.
+// Detail is larger than a 228-row union list even with maximal command previews.
 const MAX_BACKGROUND_OUTPUT_BYTES: usize = 6
     * (MAX_BACKGROUND_COMMAND_BYTES
         + MAX_BACKGROUND_PATH_BYTES
@@ -24,15 +27,17 @@ const MAX_BACKGROUND_OUTPUT_BYTES: usize = 6
         + MAX_BACKGROUND_DIAGNOSTIC_BYTES)
     + 1024;
 const MAX_BACKGROUND_ID_BYTES: usize = u64::MAX.ilog10() as usize + 1;
+const MAX_TERMINAL_TARGET_BYTES: usize = 41;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum BackgroundTarget {
     List,
     Last,
     Id(u64),
+    Terminal(TerminalSessionId),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct BackgroundArguments {
     target: BackgroundTarget,
     json: bool,
@@ -71,6 +76,56 @@ pub(super) struct BackgroundDetailSnapshot {
 pub(super) enum BackgroundSnapshot {
     List(BackgroundListSnapshot),
     Detail(BackgroundDetailSnapshot),
+    HistoryList(BackgroundHistoryListSnapshot),
+    TerminalDetail(BackgroundTerminalSnapshot),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct BackgroundHistoryRecordSnapshot {
+    id: NativeBackgroundHistoryId,
+    state: String,
+    updated_at_ms: i128,
+    command_preview: String,
+    preview_truncated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct BackgroundHistoryListSnapshot {
+    records: Vec<BackgroundHistoryRecordSnapshot>,
+    truncated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct BackgroundTerminalSnapshot {
+    id: TerminalSessionId,
+    state: String,
+    created_at_ms: i64,
+    last_output_ms: i64,
+    command: Option<String>,
+    cwd: String,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    earliest: TerminalCursor,
+    latest: TerminalCursor,
+    facts_cursor: TerminalCursor,
+}
+
+impl From<NativeBackgroundTerminalDetail> for BackgroundTerminalSnapshot {
+    fn from(detail: NativeBackgroundTerminalDetail) -> Self {
+        Self {
+            id: detail.id().clone(),
+            state: detail.state().to_owned(),
+            created_at_ms: detail.created_at_ms(),
+            last_output_ms: detail.last_output_ms(),
+            command: detail.command().map(str::to_owned),
+            cwd: detail.cwd().to_owned(),
+            exit_code: detail.exit_code(),
+            signal: detail.signal(),
+            earliest: detail.earliest().clone(),
+            latest: detail.latest().clone(),
+            facts_cursor: detail.facts_cursor().clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,7 +152,7 @@ impl BackgroundOperationalFailure {
 pub(super) trait BackgroundCommandHost {
     fn inspect_background(
         &self,
-        query: NativeBackgroundQuery,
+        query: NativeBackgroundHistoryQuery,
     ) -> BoxFuture<'static, Result<BackgroundSnapshot, BackgroundOperationalFailure>>;
 }
 
@@ -107,18 +162,51 @@ pub(super) struct ProductionBackgroundCommandHost;
 impl BackgroundCommandHost for ProductionBackgroundCommandHost {
     fn inspect_background(
         &self,
-        query: NativeBackgroundQuery,
+        query: NativeBackgroundHistoryQuery,
     ) -> BoxFuture<'static, Result<BackgroundSnapshot, BackgroundOperationalFailure>> {
         Box::pin(async move {
-            let inspection = inspect_process_background(query)
+            let inspection = inspect_process_background_history(query)
                 .await
                 .map_err(classify_inspection_error)?;
-            BackgroundSnapshot::from_native(inspection)
+            BackgroundSnapshot::from_history(inspection)
         })
     }
 }
 
 impl BackgroundSnapshot {
+    fn from_history(
+        inspection: NativeBackgroundHistoryInspection,
+    ) -> Result<Self, BackgroundOperationalFailure> {
+        let snapshot = match inspection {
+            NativeBackgroundHistoryInspection::Detail(NativeBackgroundHistoryDetail::Legacy(
+                detail,
+            )) => {
+                return Self::from_native(NativeBackgroundInspection::Detail(detail));
+            }
+            NativeBackgroundHistoryInspection::Detail(NativeBackgroundHistoryDetail::Terminal(
+                detail,
+            )) => Self::TerminalDetail(detail.into()),
+            NativeBackgroundHistoryInspection::List(list) => {
+                Self::HistoryList(BackgroundHistoryListSnapshot {
+                    records: list
+                        .records()
+                        .iter()
+                        .map(|record| BackgroundHistoryRecordSnapshot {
+                            id: record.id().clone(),
+                            state: record.state().to_owned(),
+                            updated_at_ms: record.updated_at_ms(),
+                            command_preview: record.command_preview().to_owned(),
+                            preview_truncated: record.preview_truncated(),
+                        })
+                        .collect(),
+                    truncated: list.truncated(),
+                })
+            }
+        };
+        validate_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+
     fn from_native(
         inspection: NativeBackgroundInspection,
     ) -> Result<Self, BackgroundOperationalFailure> {
@@ -194,10 +282,11 @@ where
         let _ = stderr.write_all(invalid_arguments.as_bytes());
         return 2;
     };
-    let query = match arguments.target {
-        BackgroundTarget::List => NativeBackgroundQuery::List,
-        BackgroundTarget::Last => NativeBackgroundQuery::Last,
-        BackgroundTarget::Id(id) => NativeBackgroundQuery::Id(id),
+    let query = match &arguments.target {
+        BackgroundTarget::List => NativeBackgroundHistoryQuery::List,
+        BackgroundTarget::Last => NativeBackgroundHistoryQuery::Last,
+        BackgroundTarget::Id(id) => NativeBackgroundHistoryQuery::Legacy(*id),
+        BackgroundTarget::Terminal(id) => NativeBackgroundHistoryQuery::Terminal(id.clone()),
     };
     let mut future = host.inspect_background(query);
     let mut context = Context::from_waker(Waker::noop());
@@ -211,7 +300,7 @@ where
             return write_failure(failure, arguments.json, stdout, stderr, output_failure);
         }
     };
-    if validate_target_snapshot(arguments.target, &snapshot).is_err() {
+    if validate_target_snapshot(&arguments.target, &snapshot).is_err() {
         return write_failure(
             BackgroundOperationalFailure::ResourceLimit,
             arguments.json,
@@ -234,14 +323,25 @@ where
 }
 
 fn validate_target_snapshot(
-    target: BackgroundTarget,
+    target: &BackgroundTarget,
     snapshot: &BackgroundSnapshot,
 ) -> Result<(), BackgroundOperationalFailure> {
     match (target, snapshot) {
-        (BackgroundTarget::List, BackgroundSnapshot::List(_))
-        | (BackgroundTarget::Last, BackgroundSnapshot::Detail(_)) => Ok(()),
+        (
+            BackgroundTarget::List,
+            BackgroundSnapshot::List(_) | BackgroundSnapshot::HistoryList(_),
+        )
+        | (
+            BackgroundTarget::Last,
+            BackgroundSnapshot::Detail(_) | BackgroundSnapshot::TerminalDetail(_),
+        ) => Ok(()),
         (BackgroundTarget::Id(requested), BackgroundSnapshot::Detail(detail))
-            if requested == detail.id =>
+            if *requested == detail.id =>
+        {
+            Ok(())
+        }
+        (BackgroundTarget::Terminal(requested), BackgroundSnapshot::TerminalDetail(detail))
+            if requested == &detail.id =>
         {
             Ok(())
         }
@@ -258,7 +358,7 @@ where
     let mut target = None;
     for argument in arguments {
         let argument = argument.as_ref();
-        if argument.len() > MAX_BACKGROUND_ID_BYTES {
+        if argument.len() > MAX_TERMINAL_TARGET_BYTES {
             return Err(());
         }
         let argument = argument.to_str().ok_or(())?;
@@ -274,8 +374,13 @@ where
         }
         target = Some(if argument == "last" {
             BackgroundTarget::Last
-        } else if !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit()) {
+        } else if !argument.is_empty()
+            && argument.len() <= MAX_BACKGROUND_ID_BYTES
+            && argument.bytes().all(|byte| byte.is_ascii_digit())
+        {
             BackgroundTarget::Id(argument.parse().map_err(|_| ())?)
+        } else if canonical_terminal_id(argument) {
+            BackgroundTarget::Terminal(TerminalSessionId::new(argument).map_err(|_| ())?)
         } else {
             return Err(());
         });
@@ -286,11 +391,112 @@ where
     })
 }
 
+fn canonical_terminal_id(value: &str) -> bool {
+    value.strip_prefix("terminal-").is_some_and(|suffix| {
+        suffix.len() == 32
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
+}
+
 fn validate_snapshot(snapshot: &BackgroundSnapshot) -> Result<(), BackgroundOperationalFailure> {
     match snapshot {
         BackgroundSnapshot::List(list) => validate_list(list),
         BackgroundSnapshot::Detail(detail) => validate_detail(detail),
+        BackgroundSnapshot::HistoryList(list) => validate_history_list(list),
+        BackgroundSnapshot::TerminalDetail(detail) => validate_terminal_detail(detail),
     }
+}
+
+fn validate_history_list(
+    list: &BackgroundHistoryListSnapshot,
+) -> Result<(), BackgroundOperationalFailure> {
+    let invalid = BackgroundOperationalFailure::ResourceLimit;
+    if list.records.len() > MAX_BACKGROUND_HISTORY_RECORDS {
+        return Err(invalid);
+    }
+    let mut legacy_count = 0;
+    for (index, record) in list.records.iter().enumerate() {
+        match &record.id {
+            NativeBackgroundHistoryId::Legacy(id) => {
+                if *id == 0 || u64::try_from(record.updated_at_ms).is_err() {
+                    return Err(invalid);
+                }
+                legacy_count += 1;
+                validate_state(&record.state)?;
+            }
+            NativeBackgroundHistoryId::Terminal(id) => {
+                if !canonical_terminal_id(id.as_str())
+                    || i64::try_from(record.updated_at_ms).is_err()
+                    || record.updated_at_ms < 0
+                {
+                    return Err(invalid);
+                }
+                validate_terminal_state(&record.state)?;
+            }
+        }
+        validate_bounded_string(
+            &record.command_preview,
+            MAX_BACKGROUND_COMMAND_PREVIEW_BYTES,
+            false,
+        )?;
+        if list.records[..index]
+            .iter()
+            .any(|prior| prior.id == record.id)
+        {
+            return Err(invalid);
+        }
+        if let Some(previous) = index.checked_sub(1).map(|previous| &list.records[previous])
+            && (record.updated_at_ms, &record.id) >= (previous.updated_at_ms, &previous.id)
+        {
+            return Err(invalid);
+        }
+    }
+    if legacy_count > MAX_BACKGROUND_RECORDS || list.records.len() - legacy_count > 128 {
+        return Err(invalid);
+    }
+    Ok(())
+}
+
+fn validate_terminal_state(state: &str) -> Result<(), BackgroundOperationalFailure> {
+    if matches!(state, "starting" | "running" | "exited" | "lost" | "closed") {
+        Ok(())
+    } else {
+        Err(BackgroundOperationalFailure::ResourceLimit)
+    }
+}
+
+fn validate_terminal_detail(
+    detail: &BackgroundTerminalSnapshot,
+) -> Result<(), BackgroundOperationalFailure> {
+    let invalid = BackgroundOperationalFailure::ResourceLimit;
+    validate_terminal_state(&detail.state)?;
+    if !canonical_terminal_id(detail.id.as_str())
+        || detail.created_at_ms < 0
+        || detail.last_output_ms < detail.created_at_ms
+        || detail
+            .exit_code
+            .is_some_and(|code| !(0..=255).contains(&code))
+        || detail
+            .signal
+            .is_some_and(|signal| !(1..=255).contains(&signal))
+        || (detail.exit_code.is_some() && detail.signal.is_some())
+        || (matches!(detail.state.as_str(), "starting" | "running" | "lost")
+            && (detail.exit_code.is_some() || detail.signal.is_some()))
+        || (detail.state == "exited" && detail.exit_code.is_none() && detail.signal.is_none())
+        || detail.earliest > detail.latest
+        || detail.facts_cursor > detail.latest
+    {
+        return Err(invalid);
+    }
+    for cursor in [&detail.earliest, &detail.latest, &detail.facts_cursor] {
+        cursor.validate().map_err(|_| invalid)?;
+    }
+    if let Some(command) = &detail.command {
+        validate_bounded_string(command, MAX_BACKGROUND_COMMAND_BYTES, true)?;
+    }
+    validate_path(&detail.cwd)
 }
 
 fn validate_list(list: &BackgroundListSnapshot) -> Result<(), BackgroundOperationalFailure> {
@@ -395,6 +601,10 @@ fn render_snapshot(
         (BackgroundSnapshot::List(list), true) => write_json_list(&mut output, list),
         (BackgroundSnapshot::Detail(detail), false) => write_human_detail(&mut output, detail),
         (BackgroundSnapshot::Detail(detail), true) => write_json_detail(&mut output, detail),
+        (BackgroundSnapshot::HistoryList(list), _) => write_history_list(&mut output, list, json),
+        (BackgroundSnapshot::TerminalDetail(detail), _) => {
+            write_terminal_detail(&mut output, detail, json)
+        }
     };
     result.map_err(|_| BackgroundOperationalFailure::ResourceLimit)?;
     Ok(output.finish())
@@ -418,6 +628,143 @@ fn write_human_list(output: &mut BoundedOutput, list: &BackgroundListSnapshot) -
         output.write_str("[background] listing incomplete: a resource limit was reached\n")?;
     }
     Ok(())
+}
+
+fn write_history_id(
+    output: &mut BoundedOutput,
+    id: &NativeBackgroundHistoryId,
+    json: bool,
+) -> std::fmt::Result {
+    match id {
+        NativeBackgroundHistoryId::Legacy(id) => write!(output, "{id}"),
+        NativeBackgroundHistoryId::Terminal(id) if json => write_json_string(output, id.as_str()),
+        NativeBackgroundHistoryId::Terminal(id) => output.write_str(id.as_str()),
+    }
+}
+
+fn write_history_list(
+    output: &mut BoundedOutput,
+    list: &BackgroundHistoryListSnapshot,
+    json: bool,
+) -> std::fmt::Result {
+    if json {
+        write!(
+            output,
+            "{{\"kind\":\"background\",\"count\":{},\"truncated\":{},\"records\":[",
+            list.records.len(),
+            list.truncated
+        )?;
+    } else if list.records.is_empty() && !list.truncated {
+        return output.write_str("[background] no persisted background records\n");
+    } else {
+        writeln!(output, "[background] {} saved", list.records.len())?;
+    }
+    for (index, record) in list.records.iter().enumerate() {
+        if json {
+            if index != 0 {
+                output.write_char(',')?;
+            }
+            output.write_str("{\"id\":")?;
+            write_history_id(output, &record.id, true)?;
+            output.write_str(",\"state\":")?;
+            write_json_string(output, &record.state)?;
+            write!(
+                output,
+                ",\"updated_at_ms\":{},\"command_preview\":",
+                record.updated_at_ms
+            )?;
+            write_json_string(output, &record.command_preview)?;
+            write!(
+                output,
+                ",\"preview_truncated\":{}}}",
+                record.preview_truncated
+            )?;
+        } else {
+            output.write_str("[background] id=")?;
+            write_history_id(output, &record.id, false)?;
+            write!(
+                output,
+                " state={} updated_at_ms={} command_preview=",
+                record.state, record.updated_at_ms
+            )?;
+            write_json_string(output, &record.command_preview)?;
+            writeln!(output, " preview_truncated={}", record.preview_truncated)?;
+        }
+    }
+    if json {
+        output.write_str("]}\n")?;
+    } else if list.truncated {
+        output.write_str("[background] listing incomplete: a resource limit was reached\n")?;
+    }
+    Ok(())
+}
+
+fn write_terminal_detail(
+    output: &mut BoundedOutput,
+    detail: &BackgroundTerminalSnapshot,
+    json: bool,
+) -> std::fmt::Result {
+    if json {
+        output.write_str("{\"kind\":\"background_terminal_detail\",\"id\":")?;
+        write_json_string(output, detail.id.as_str())?;
+        output.write_str(",\"state\":")?;
+        write_json_string(output, &detail.state)?;
+        write!(
+            output,
+            ",\"created_at_ms\":{},\"last_output_ms\":{},\"command\":",
+            detail.created_at_ms, detail.last_output_ms
+        )?;
+        write_json_optional_string(output, detail.command.as_deref())?;
+        output.write_str(",\"cwd\":")?;
+        write_json_string(output, &detail.cwd)?;
+        output.write_str(",\"exit_code\":")?;
+        write_json_optional_number(output, detail.exit_code)?;
+        output.write_str(",\"signal\":")?;
+        write_json_optional_number(output, detail.signal)?;
+    } else {
+        writeln!(output, "[background] id={}", detail.id.as_str())?;
+        writeln!(output, "[background] state={}", detail.state)?;
+        writeln!(
+            output,
+            "[background] created_at_ms={}",
+            detail.created_at_ms
+        )?;
+        writeln!(
+            output,
+            "[background] last_output_ms={}",
+            detail.last_output_ms
+        )?;
+        write_optional_string(output, "command", detail.command.as_deref())?;
+        write_optional_string(output, "cwd", Some(&detail.cwd))?;
+        write_optional_number(output, "exit_code", detail.exit_code)?;
+        write_optional_number(output, "signal", detail.signal)?;
+    }
+    for (label, cursor) in [
+        ("earliest", &detail.earliest),
+        ("latest", &detail.latest),
+        ("facts_cursor", &detail.facts_cursor),
+    ] {
+        if json {
+            write!(
+                output,
+                ",\"{label}\":{{\"segment\":{},\"offset\":{}}}",
+                cursor.segment(),
+                cursor.offset()
+            )?;
+        } else {
+            writeln!(
+                output,
+                "[background] {label}={}:{}",
+                cursor.segment(),
+                cursor.offset()
+            )?;
+        }
+    }
+    if json {
+        output.write_str(",\"recorded_only\":true}\n")
+    } else {
+        output.write_str("[background] recorded_only=true\n")
+    }
 }
 
 fn write_json_list(output: &mut BoundedOutput, list: &BackgroundListSnapshot) -> std::fmt::Result {
@@ -597,6 +944,7 @@ fn write_json_string(output: &mut BoundedOutput, value: &str) -> std::fmt::Resul
 
 #[cfg(test)]
 mod tests {
+    mod history_tests;
     use std::cell::{Cell, RefCell};
     use std::future::Future;
     use std::pin::Pin;
@@ -615,7 +963,7 @@ mod tests {
         result: Result<BackgroundSnapshot, BackgroundOperationalFailure>,
         calls: Rc<Cell<usize>>,
         polls: Arc<AtomicUsize>,
-        queries: Rc<RefCell<Vec<NativeBackgroundQuery>>>,
+        queries: Rc<RefCell<Vec<NativeBackgroundHistoryQuery>>>,
         pending: bool,
     }
 
@@ -640,7 +988,7 @@ mod tests {
     impl BackgroundCommandHost for FakeHost {
         fn inspect_background(
             &self,
-            query: NativeBackgroundQuery,
+            query: NativeBackgroundHistoryQuery,
         ) -> BoxFuture<'static, Result<BackgroundSnapshot, BackgroundOperationalFailure>> {
             self.calls.set(self.calls.get() + 1);
             self.queries.borrow_mut().push(query);
@@ -803,9 +1151,9 @@ mod tests {
     #[test]
     fn valid_queries_are_mapped_and_the_host_future_is_polled_once() {
         for (arguments, expected) in [
-            (&[][..], NativeBackgroundQuery::List),
-            (&["last"][..], NativeBackgroundQuery::Last),
-            (&["42"][..], NativeBackgroundQuery::Id(42)),
+            (&[][..], NativeBackgroundHistoryQuery::List),
+            (&["last"][..], NativeBackgroundHistoryQuery::Last),
+            (&["42"][..], NativeBackgroundHistoryQuery::Legacy(42)),
         ] {
             let snapshot = if arguments.is_empty() {
                 empty_list()
