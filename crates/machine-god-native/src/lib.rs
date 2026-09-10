@@ -373,6 +373,7 @@ mod skills_invocation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod skills_managed;
 mod skills_metadata;
+mod skills_picker;
 mod skills_prompt_context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod skills_service;
@@ -407,6 +408,11 @@ pub use skills_managed::{
 pub use skills_metadata::{
     MAX_NATIVE_SKILL_DESCRIPTION_BYTES, MAX_NATIVE_SKILL_HEADER_BYTES,
     MAX_NATIVE_SKILL_METADATA_NAME_BYTES, NativeSkillMetadata, NativeSkillMetadataError,
+};
+pub use skills_picker::{
+    NativeSkillBinding, NativeSkillDraftIdentity, NativeSkillFrameIdentity, NativeSkillInlineQuery,
+    NativeSkillPicker, NativeSkillPickerError, NativeSkillPickerInsertion, NativeSkillPickerMode,
+    NativeSkillPickerView,
 };
 pub use skills_prompt_context::{
     NATIVE_SKILL_PROMPT_CONTEXT_KEY, NativeSkillPromptContext, NativeSkillPromptContextError,

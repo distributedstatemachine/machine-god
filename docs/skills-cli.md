@@ -207,3 +207,33 @@ Prompts are limited to 256 KiB, explicit and resulting selections to 16, and
 aggregate retained selection text to 64 KiB. Incoming count/bytes are checked
 before deduplication. Result bounds are checked before selection cloning;
 failure is atomic. Materialized prompt context has its own independent limits.
+
+## Effect-free picker and draft identity
+
+`NativeSkillPicker` retains a bounded draft mirror, UTF-8 cursor, exact selection
+spans and an optional catalog-backed menu. The host supplies actual edit ranges;
+matching prefixes or suffixes between two drafts cannot establish which repeated
+token was edited. Edits intersecting a binding invalidate it. Unaffected spans
+shift with the actual edit, and uncertain token adjacency invalidates bindings
+rather than rematching names. Cursor moves invalidate frames, not selections.
+
+Inline completion replaces the captured token prefix through the cursor and
+preserves surrounding text. Menu completion inserts at the captured cursor.
+Unicode and spaces in names remain exact. Added separators keep neighboring word
+text distinct without placing unnecessary spaces before whitespace or punctuation.
+Bindings cover the inserted `$name`, excluding any separator.
+
+Frames carry opaque draft-owner/revision, menu-owner/revision and catalog
+generation identity. Selection requires acknowledgement of the exact current
+frame. Close or Escape invalidates frames while retaining the draft and valid
+bindings; reset creates a fresh owner and clears bindings even for identical text.
+The host must reset bindings on handoff or synchronization failure. A chosen
+insertion has already updated native state: apply its precise edit to the matching
+composer exactly once, without echoing it back as a second edit.
+
+The picker can traverse all 1,024 catalog candidates, exposing at most 128 rows
+per view with an absolute selected index and window offset. The host sanitizes
+display data and visibly reports incomplete discovery. Draft and selection bounds
+match invocation planning (256 KiB, 16 selections and 64 KiB retained selection
+text); failing edits are atomic. The picker performs no discovery, materialization,
+permission granting or filesystem effects.
