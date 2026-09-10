@@ -55,7 +55,8 @@ pub use session::{
     SessionStoreAccess, Turn, TurnHandle, TurnMetadataEditor, TurnMetadataSnapshot,
 };
 pub use session_context::{
-    MAX_CONTEXT_SUMMARY_BYTES, SessionContextProjection, SessionTurnPreparation,
+    MAX_CONTEXT_SUMMARY_BYTES, MAX_SESSION_USER_CONTEXT_BYTES, SessionContextProjection,
+    SessionTurnPreparation, SessionUserContext,
 };
 pub use subagent::{
     MAX_CONCURRENT_SUBAGENTS, MAX_CONCURRENT_SUBAGENTS_PER_PARENT_TURN,

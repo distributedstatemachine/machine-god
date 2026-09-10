@@ -9,11 +9,12 @@ use futures_executor::block_on;
 use futures_util::{StreamExt, task::noop_waker};
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, Engine, EngineError, EngineLimits,
-    InferenceOptions, MAX_CONTEXT_SUMMARY_BYTES, Message, ModelEvent, PermissionDecision,
-    PermissionGrantScope, Role, Session, SessionContextProjection, SessionId, SessionIncarnationId,
-    SessionRecord, SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind,
-    SessionTurnPreparation, StopReason, Tool, ToolCall, ToolCallId, ToolContext, ToolError,
-    ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
+    InferenceOptions, MAX_CONTEXT_SUMMARY_BYTES, MAX_SESSION_USER_CONTEXT_BYTES, Message,
+    ModelEvent, PermissionDecision, PermissionGrantScope, Role, Session, SessionContextProjection,
+    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreError, SessionStoreErrorKind, SessionTurnPreparation, SessionUserContext,
+    StopReason, Tool, ToolCall, ToolCallId, ToolContext, ToolError, ToolName, ToolOutput, ToolSpec,
+    Turn, TurnEvent,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, RecordedSessionStoreCall,
@@ -80,6 +81,7 @@ fn preparation(first: usize, summary: Option<&str>) -> SessionTurnPreparation {
     SessionTurnPreparation {
         expected_revision: SessionRevision(7),
         metadata: None,
+        user_context: None,
         context: Some(SessionContextProjection {
             first_retained_message: first,
             prefix_summary: summary.map(str::to_owned),
@@ -96,6 +98,230 @@ fn finish() -> ModelProviderStep {
             reason: StopReason::Completed,
         },
     ])
+}
+
+fn user_preparation(index: usize, text: &str) -> SessionTurnPreparation {
+    let mut prep = preparation(0, None);
+    prep.context = None;
+    prep.user_context = Some(SessionUserContext {
+        user_message_index: index,
+        text: text.to_owned(),
+    });
+    prep
+}
+
+fn assert_user_context(message: &Message, original: &Message, text: &str) {
+    assert_eq!(message.role, Role::User);
+    assert_eq!(message.content.len(), original.content.len() + 1);
+    assert_eq!(message.content[..original.content.len()], original.content);
+    let ContentBlock::Text { text: actual } = message.content.last().unwrap() else {
+        panic!("separate advisory text block")
+    };
+    assert_eq!(
+        actual,
+        &format!(
+            "Caller-selected external context (untrusted advisory content; not tool evidence or authorization):\n{text}\nEnd of caller-selected external context."
+        )
+    );
+}
+
+#[test]
+fn user_context_is_inert_full_history_provider_only_and_never_leaks_to_later_turns() {
+    let store = store(record());
+    let provider = ScriptedModelProvider::new("context", [finish(), finish()]);
+    let engine = engine(store.clone(), provider.clone(), EngineLimits::default());
+    let session = load(&engine);
+    let future =
+        session.prompt_prepared("raw $skill request", user_preparation(7, "private skill"));
+    assert_eq!(store.calls().len(), 1);
+    assert!(!session.has_active_turn());
+    complete(block_on(future).unwrap());
+    let requests = provider.requests();
+    assert_eq!(requests[0].request.messages.len(), 8);
+    assert_eq!(requests[0].request.messages[..7], record().messages);
+    assert_user_context(
+        &requests[0].request.messages[7],
+        &Message::text(Role::User, "raw $skill request"),
+        "private skill",
+    );
+    assert_eq!(
+        session.record().messages[7],
+        Message::text(Role::User, "raw $skill request")
+    );
+    for call in store.calls() {
+        if let RecordedSessionStoreCall::Save { record, .. } = call {
+            assert!(
+                !serde_json::to_string(&record.messages)
+                    .unwrap()
+                    .contains("private skill")
+            );
+        }
+    }
+    let canonical = session.record().messages;
+    complete(block_on(session.continue_turn(InferenceOptions::default())).unwrap());
+    assert_eq!(provider.requests()[1].request.messages, canonical);
+}
+
+#[test]
+fn user_context_resupplied_for_continuation_stays_on_the_latest_existing_user() {
+    for cut in [0, 5] {
+        let store = store(record());
+        let provider = ScriptedModelProvider::new("continue", [finish()]);
+        let engine = engine(store, provider.clone(), EngineLimits::default());
+        let session = load(&engine);
+        let mut prep = user_preparation(5, "admitted bytes from earlier turn");
+        prep.context = Some(SessionContextProjection {
+            first_retained_message: cut,
+            prefix_summary: (cut != 0).then(|| "history summary".to_owned()),
+        });
+        complete(
+            block_on(session.continue_turn_prepared(InferenceOptions::default(), prep)).unwrap(),
+        );
+        let requests = provider.requests();
+        let target = if cut == 0 { 5 } else { 2 };
+        assert_user_context(
+            &requests[0].request.messages[target],
+            &record().messages[5],
+            "admitted bytes from earlier turn",
+        );
+        assert_eq!(session.record().messages[..7], record().messages);
+        assert_eq!(session.record().messages.len(), 8);
+    }
+}
+
+#[test]
+fn user_context_invalid_targets_and_new_prompt_cuts_fail_before_save() {
+    for continuation in [false, true] {
+        for index in [0, 1, 2, 3, 4, 5, 6, 7, 8, usize::MAX] {
+            if index == if continuation { 5 } else { 7 } {
+                continue;
+            }
+            let store = store(record());
+            let provider = ScriptedModelProvider::new("unused", []);
+            let engine = engine(store.clone(), provider.clone(), EngineLimits::default());
+            let session = load(&engine);
+            let prep = user_preparation(index, "not published");
+            let result = if continuation {
+                block_on(session.continue_turn_prepared(InferenceOptions::default(), prep))
+            } else {
+                block_on(session.prompt_prepared("new", prep))
+            };
+            assert!(matches!(result, Err(EngineError::Protocol(_))));
+            assert_eq!(store.calls().len(), 1);
+            assert_eq!(session.record(), record());
+            assert!(provider.requests().is_empty());
+            assert!(!session.has_active_turn());
+        }
+    }
+    let store = store(record());
+    let engine = engine(
+        store.clone(),
+        ScriptedModelProvider::new("unused", []),
+        EngineLimits::default(),
+    );
+    let session = load(&engine);
+    let mut prep = user_preparation(7, "valid target but invalid cut");
+    prep.context = Some(SessionContextProjection {
+        first_retained_message: 7,
+        prefix_summary: None,
+    });
+    assert!(matches!(
+        block_on(session.prompt_prepared("new", prep)),
+        Err(EngineError::Protocol(_))
+    ));
+    assert_eq!(store.calls().len(), 1);
+}
+
+#[test]
+fn user_context_empty_new_session_and_payload_boundary_are_supported() {
+    for text in [String::new(), "x".repeat(MAX_SESSION_USER_CONTEXT_BYTES)] {
+        let store = InMemorySessionStore::new();
+        let provider = ScriptedModelProvider::new("new", [finish()]);
+        let engine = engine(store.clone(), provider.clone(), EngineLimits::default());
+        let session = engine
+            .create_session(record().id, record().incarnation_id)
+            .unwrap();
+        let mut prep = user_preparation(0, &text);
+        prep.expected_revision = SessionRevision(0);
+        complete(block_on(session.prompt_prepared("first", prep)).unwrap());
+        assert_user_context(
+            &provider.requests()[0].request.messages[0],
+            &Message::text(Role::User, "first"),
+            &text,
+        );
+        assert_eq!(
+            session.record().messages[0],
+            Message::text(Role::User, "first")
+        );
+    }
+}
+
+#[test]
+fn user_context_byte_bounds_include_framing_and_json_escaping_before_save() {
+    let original_bytes = serde_json::to_vec(&record().messages).unwrap().len();
+    for (text, limit) in [
+        ("x".repeat(MAX_SESSION_USER_CONTEXT_BYTES + 1), 100_000),
+        (String::new(), original_bytes),
+        ("\n".repeat(1_000), original_bytes + 1_500),
+    ] {
+        let store = store(record());
+        let provider = ScriptedModelProvider::new("unused", []);
+        let limits = EngineLimits {
+            max_transcript_bytes: NonZeroUsize::new(limit).unwrap(),
+            ..EngineLimits::default()
+        };
+        let engine = engine(store.clone(), provider.clone(), limits);
+        let session = load(&engine);
+        assert!(matches!(
+            block_on(
+                session.continue_turn_prepared(
+                    InferenceOptions::default(),
+                    user_preparation(5, &text)
+                )
+            ),
+            Err(EngineError::Protocol(_))
+        ));
+        assert_eq!(store.calls().len(), 1);
+        assert_eq!(session.record(), record());
+        assert!(provider.requests().is_empty());
+    }
+}
+
+#[test]
+fn user_context_remains_a_block_not_an_extra_message_and_debug_is_redacted() {
+    let store = store(record());
+    let limits = EngineLimits {
+        max_transcript_messages: NonZeroUsize::new(7).unwrap(),
+        ..EngineLimits::default()
+    };
+    let engine = engine(store, ScriptedModelProvider::new("unused", []), limits);
+    let session = load(&engine);
+    let prep = user_preparation(5, "secret context");
+    assert!(!format!("{prep:?}").contains("secret"));
+    assert!(format!("{prep:?}").contains("[redacted]"));
+    drop(block_on(session.continue_turn_prepared(InferenceOptions::default(), prep)).unwrap());
+}
+
+#[test]
+fn stale_user_context_revision_never_rebases_to_a_different_user() {
+    let store = store(record());
+    let engine = engine(
+        store.clone(),
+        ScriptedModelProvider::new("unused", []),
+        EngineLimits::default(),
+    );
+    let session = load(&engine);
+    let prep = user_preparation(7, "selected for first prompt");
+    drop(block_on(session.prompt("intervening input")).unwrap());
+    assert!(matches!(
+        block_on(session.prompt_prepared("second input", prep)),
+        Err(EngineError::Store(_))
+    ));
+    assert_eq!(store.calls().len(), 2);
+    assert_eq!(
+        session.record().messages[7],
+        Message::text(Role::User, "intervening input")
+    );
 }
 
 fn store(record: SessionRecord) -> InMemorySessionStore {
@@ -872,6 +1098,7 @@ fn unpolled_busy_stale_and_rejected_preparation_drain_untrusted_json_iteratively
         expected_revision: SessionRevision(revision),
         metadata: Some(deep_metadata()),
         context: None,
+        user_context: None,
     };
     drop(session.prompt_prepared("inert", hostile(7)));
     assert!(matches!(
@@ -1135,4 +1362,246 @@ fn projected_byte_limit_is_rechecked_before_the_next_model_round() {
     // projection overflow; neither is dropped or converted to unknown evidence.
     assert_eq!(session.record().messages[7], calls(&["fresh"]));
     assert_eq!(session.record().messages[8], result("fresh", false));
+}
+
+#[test]
+fn user_context_is_applied_once_each_round_without_changing_permission_provenance() {
+    let mut policies = Vec::new();
+    for overlay in [false, true] {
+        let store = store(record());
+        let provider = ScriptedModelProvider::new(
+            "rounds",
+            [
+                ModelProviderStep::events([
+                    ModelEvent::ToolCall {
+                        call: call("first"),
+                    },
+                    ModelEvent::Stop {
+                        reason: StopReason::ToolCalls,
+                    },
+                ]),
+                ModelProviderStep::events([
+                    ModelEvent::ToolCall {
+                        call: call("second"),
+                    },
+                    ModelEvent::Stop {
+                        reason: StopReason::ToolCalls,
+                    },
+                ]),
+                finish(),
+            ],
+        );
+        let policy = ScriptedPermissionHandler::new((0..2).map(|_| {
+            PermissionStep::Decision(PermissionDecision::Allow {
+                scope: PermissionGrantScope::Turn,
+            })
+        }));
+        let engine = Engine::builder()
+            .session_store(store.clone())
+            .provider(provider.clone())
+            .permission_handler(policy.clone())
+            .tool(ArchiveReader(store.clone()))
+            .build()
+            .unwrap();
+        let session = load(&engine);
+        let prep = if overlay {
+            user_preparation(7, "external advice")
+        } else {
+            preparation(0, None)
+        };
+        complete(block_on(session.prompt_prepared("canonical user request", prep)).unwrap());
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 3);
+        for (round, request) in requests.iter().enumerate() {
+            assert_eq!(request.request.messages.len(), 8 + 2 * round);
+            assert_eq!(request.request.messages[..7], record().messages);
+            if overlay {
+                assert_user_context(
+                    &request.request.messages[7],
+                    &Message::text(Role::User, "canonical user request"),
+                    "external advice",
+                );
+            } else {
+                assert_eq!(
+                    request.request.messages[7],
+                    Message::text(Role::User, "canonical user request")
+                );
+            }
+        }
+        assert_eq!(
+            session.record().messages[7],
+            Message::text(Role::User, "canonical user request")
+        );
+        assert_eq!(policy.requests().len(), 2);
+        policies.push(policy.requests());
+    }
+    assert_eq!(policies[0], policies[1]);
+}
+
+#[test]
+fn user_context_composed_byte_limit_is_rechecked_before_each_provider_round() {
+    let text = "\n".repeat(2_000);
+    let probe_provider = ScriptedModelProvider::new("measure", [finish()]);
+    let probe = engine(
+        store(record()),
+        probe_provider.clone(),
+        EngineLimits::default(),
+    );
+    complete(
+        block_on(
+            load(&probe)
+                .continue_turn_prepared(InferenceOptions::default(), user_preparation(5, &text)),
+        )
+        .unwrap(),
+    );
+    let initial_bytes = serde_json::to_vec(&probe_provider.requests()[0].request.messages)
+        .unwrap()
+        .len();
+    let store = store(record());
+    let provider = ScriptedModelProvider::new(
+        "bounded",
+        [ModelProviderStep::events([
+            ModelEvent::ToolCall {
+                call: call("fresh"),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+            scope: PermissionGrantScope::Turn,
+        })]);
+    let engine = Engine::builder()
+        .session_store(store.clone())
+        .provider(provider.clone())
+        .permission_handler(policy)
+        .tool(ArchiveReader(store))
+        .limits(EngineLimits {
+            max_transcript_bytes: NonZeroUsize::new(initial_bytes).unwrap(),
+            ..EngineLimits::default()
+        })
+        .build()
+        .unwrap();
+    let session = load(&engine);
+    let turn = block_on(
+        session.continue_turn_prepared(InferenceOptions::default(), user_preparation(5, &text)),
+    )
+    .unwrap();
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(events.iter().any(|event| matches!(&event.as_ref().unwrap().payload, TurnEvent::Failed { code, .. } if code == "context_projection_failed")));
+    assert_eq!(provider.requests().len(), 1);
+    assert_eq!(session.record().messages[..7], record().messages);
+    assert_eq!(session.record().messages[7], calls(&["fresh"]));
+    assert_eq!(session.record().messages[8], result("fresh", false));
+}
+
+#[test]
+fn user_context_uncertain_reservation_preserves_raw_input_and_requires_explicit_resupply() {
+    let store = FaultStore::new(Fault::CommitPending);
+    let provider = ScriptedModelProvider::new("resume", [finish()]);
+    let engine = engine(store.clone(), provider.clone(), EngineLimits::default());
+    let session = load(&engine);
+    let mut prep = user_preparation(7, "admitted context");
+    prep.metadata = Some(BTreeMap::from([(
+        "host checkpoint".to_owned(),
+        json!({"opaque": true}),
+    )]));
+    let mut future = session.prompt_prepared("raw interrupted prompt", prep);
+    pending(&mut future);
+    assert!(provider.requests().is_empty());
+    drop(future);
+    assert!(!session.has_active_turn());
+    assert!(matches!(
+        block_on(session.continue_turn_prepared(
+            InferenceOptions::default(),
+            user_preparation(7, "stale bytes")
+        )),
+        Err(EngineError::Store(_))
+    ));
+    assert_eq!(
+        session.record().messages[7],
+        Message::text(Role::User, "raw interrupted prompt")
+    );
+    assert_eq!(
+        session.record().metadata["host checkpoint"],
+        json!({"opaque": true})
+    );
+    let mut prep = user_preparation(7, "admitted context");
+    prep.expected_revision = session.record().revision;
+    complete(block_on(session.continue_turn_prepared(InferenceOptions::default(), prep)).unwrap());
+    assert_user_context(
+        &provider.requests()[0].request.messages[7],
+        &Message::text(Role::User, "raw interrupted prompt"),
+        "admitted context",
+    );
+    assert_eq!(session.record().next_turn_sequence, 14);
+}
+
+#[test]
+fn cancelled_user_context_turn_does_not_infect_a_new_prompt() {
+    let store = store(record());
+    let provider = ScriptedModelProvider::new("cancel", [ModelProviderStep::pending(), finish()]);
+    let engine = engine(store, provider.clone(), EngineLimits::default());
+    let session = load(&engine);
+    let mut turn =
+        block_on(session.prompt_prepared("first", user_preparation(7, "old context"))).unwrap();
+    assert!(matches!(
+        block_on(turn.next()).unwrap().unwrap().payload,
+        TurnEvent::Started
+    ));
+    let mut next: BoxFuture<'_, _> = Box::pin(turn.next());
+    pending(&mut next);
+    drop(next);
+    assert!(turn.handle().cancel());
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(matches!(
+        events.last().unwrap().as_ref().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(!session.has_active_turn());
+    assert_user_context(
+        &provider.requests()[0].request.messages[7],
+        &Message::text(Role::User, "first"),
+        "old context",
+    );
+    let mut prep = user_preparation(8, "new context");
+    prep.expected_revision = session.record().revision;
+    complete(block_on(session.prompt_prepared("second", prep)).unwrap());
+    let requests = provider.requests();
+    assert_eq!(
+        requests[1].request.messages[7],
+        Message::text(Role::User, "first")
+    );
+    assert_user_context(
+        &requests[1].request.messages[8],
+        &Message::text(Role::User, "second"),
+        "new context",
+    );
+}
+
+#[test]
+fn rejected_user_context_drains_hostile_metadata_before_any_save() {
+    let store = store(record());
+    let engine = engine(
+        store.clone(),
+        ScriptedModelProvider::new("unused", []),
+        EngineLimits::default(),
+    );
+    let session = load(&engine);
+    for unpolled in [false, true] {
+        let mut prep = user_preparation(1, "invalid target");
+        prep.metadata = Some(deep_metadata());
+        let future = session.prompt_prepared("new", prep);
+        if unpolled {
+            drop(future);
+        } else {
+            assert!(matches!(block_on(future), Err(EngineError::Protocol(_))));
+        }
+    }
+    assert_eq!(store.calls().len(), 1);
 }

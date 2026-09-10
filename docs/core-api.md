@@ -651,7 +651,8 @@ an exactly-once guarantee for uncertain external effects.
 inert-before-poll futures resolving to `Result<Turn, EngineError>`. They keep
 the existing `Prompt` and ordinary prompt/continuation APIs unchanged.
 `SessionTurnPreparation` contains an exact `expected_revision`, optional complete
-replacement `metadata`, and optional `SessionContextProjection`. Core does not
+replacement `metadata`, optional `SessionContextProjection`, and optional
+`SessionUserContext`. Core does not
 interpret native metadata, checkpoints, context preferences, or summary content.
 
 Admission acquires the ordinary exclusive turn/metadata lease and reconciles any
@@ -716,6 +717,37 @@ the full authoritative archive, not the provider projection. Projection is
 turn-local and not itself persisted: the native host owns durable preferences,
 summary generation, checkpoint availability and consumption. These core
 primitives alone do not establish `/compact` or `/continue` product completion.
+
+`SessionUserContext { user_message_index, text }` supplies caller-selected
+external advisory text, bounded to `MAX_SESSION_USER_CONTEXT_BYTES` (65,536
+UTF-8 bytes). Its public `Debug` and the preparation's `Debug` redact the text.
+The exact index must name the latest canonical `User` message: the newly
+appended message for `prompt_prepared`, or the latest existing user for
+`continue_turn_prepared`. Another role, an older user, an out-of-range index,
+or a stale preparation revision fails before saving or contacting the provider.
+History-cut validation still runs against the pre-append snapshot, so adding
+the prompt cannot legitimize a cut that previously named no existing user.
+The selected user must remain in the retained suffix. With no explicit history
+projection, supplemental context uses full history and the same closed
+tool-round validation; it needs no prefix summary. Empty text is accepted.
+
+Each provider request gets one separately delimited `Text` block appended to
+that user's copied content, identifying the bytes as untrusted external advice,
+not tool evidence or authorization. The original `Prompt.text`, canonical
+messages, saved transcript, permission provenance and tool authority are
+unchanged. Context is not a higher-priority instruction or a permission grant.
+The payload and fixed framing count toward complete serialized provider-context
+limits, including JSON escaping, before the reservation save and before every
+model round. The block consumes no additional message slot. Validation uses a
+borrowed serialization view before cloning canonical content; existing
+canonical JSON depth/node and transcript checks remain in force.
+
+The overlay is pinned to one turn and rebuilt from canonical messages exactly
+once per provider request, including after tool rounds; it never accumulates
+inside saved messages. Core persists no overlay and inspects no skill source.
+An interrupted continuation must explicitly resupply admitted bytes in its own
+preparation; ordinary continuation or a later prompt inherits none. Native owns
+any bounded inert checkpoint representation, source selection and revalidation.
 
 ### Exclusive metadata editing
 

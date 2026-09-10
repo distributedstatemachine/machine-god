@@ -1080,11 +1080,7 @@ impl SessionOperation {
         // Keep untrusted metadata guarded even when context validation fails.
         let mut preparation = preparation.into_inner();
         let metadata = preparation.metadata.take().map(JsonOwnerGuard::new);
-        let context = preparation
-            .context
-            .take()
-            .map(|context| context.validate(&snapshot.messages))
-            .transpose()?;
+        let mut context = preparation.take_context(&snapshot.messages)?;
         let mut candidate = (*snapshot).clone();
         if let Some(metadata) = metadata {
             candidate.metadata = metadata.into_inner();
@@ -1103,6 +1099,15 @@ impl SessionOperation {
             record.messages.push(Message::text(Role::User, text));
         }
         validate_record_limits(&record, self.engine.limits)?;
+        if let Some(user_context) = preparation.user_context.take() {
+            context = Some(
+                context
+                    .ok_or_else(|| {
+                        EngineError::Protocol("user context requires a projection".to_owned())
+                    })?
+                    .with_user_context(&user_context, &record.messages)?,
+            );
+        }
         if let Some(context) = &context {
             context.validate_limits(&record.messages, self.engine.limits)?;
         }

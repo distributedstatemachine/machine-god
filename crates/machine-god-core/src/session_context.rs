@@ -12,14 +12,37 @@ use crate::{ContentBlock, EngineError, EngineLimits, Message, Role, SessionRevis
 /// Maximum UTF-8 payload size of a caller-supplied advisory context summary.
 pub const MAX_CONTEXT_SUMMARY_BYTES: usize = 16_384;
 
+/// Maximum UTF-8 payload size of caller-selected external user context.
+pub const MAX_SESSION_USER_CONTEXT_BYTES: usize = 65_536;
+
+/// Turn-local advisory text appended only to the provider's copy of the latest
+/// canonical user message. This value supplies neither instructions with higher
+/// authority nor tool grants, and is not persisted by core.
+pub struct SessionUserContext {
+    pub user_message_index: usize,
+    pub text: String,
+}
+
+impl fmt::Debug for SessionUserContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionUserContext")
+            .field("user_message_index", &self.user_message_index)
+            .field("text", &"[redacted]")
+            .finish()
+    }
+}
+
 /// Revision-pinned, atomic preparation for one new turn.
 ///
-/// Core treats metadata as opaque host state. Neither metadata nor context is
-/// changed until the same save reserves the fresh turn ID and optional input.
+/// Core treats metadata as opaque host state. Metadata is published and
+/// provider-only context is admitted only when the same save reserves the fresh
+/// turn ID and optional input. Core never persists the context itself.
 pub struct SessionTurnPreparation {
     pub expected_revision: SessionRevision,
     pub metadata: Option<BTreeMap<String, Value>>,
     pub context: Option<SessionContextProjection>,
+    pub user_context: Option<SessionUserContext>,
 }
 
 impl fmt::Debug for SessionTurnPreparation {
@@ -29,6 +52,7 @@ impl fmt::Debug for SessionTurnPreparation {
             .field("expected_revision", &self.expected_revision)
             .field("metadata", &self.metadata.as_ref().map(|_| "[redacted]"))
             .field("context", &self.context)
+            .field("user_context", &self.user_context)
             .finish()
     }
 }
@@ -38,6 +62,28 @@ impl DrainJsonValues for SessionTurnPreparation {
         if let Some(metadata) = &mut self.metadata {
             metadata.drain_json_values();
         }
+    }
+}
+
+impl SessionTurnPreparation {
+    /// Validate cuts before appending a new prompt, including implicit full
+    /// history when the caller supplies only supplemental user context.
+    pub(crate) fn take_context(
+        &mut self,
+        messages: &[Message],
+    ) -> Result<Option<ValidatedSessionContext>, EngineError> {
+        self.context
+            .take()
+            .or_else(|| {
+                self.user_context
+                    .as_ref()
+                    .map(|_| SessionContextProjection {
+                        first_retained_message: 0,
+                        prefix_summary: None,
+                    })
+            })
+            .map(|context| context.validate(messages))
+            .transpose()
     }
 }
 
@@ -69,6 +115,7 @@ pub(crate) struct ValidatedSessionContext {
     first_retained_message: usize,
     leading_system_messages: usize,
     summary: Option<Message>,
+    user_context: Option<(usize, ContentBlock)>,
 }
 
 fn invalid(message: &str) -> EngineError {
@@ -122,6 +169,7 @@ impl SessionContextProjection {
             first_retained_message: first,
             leading_system_messages: if first == 0 { 0 } else { leading.min(first) },
             summary,
+            user_context: None,
         })
     }
 }
@@ -172,13 +220,47 @@ struct ProjectedMessages<'a> {
     leading: &'a [Message],
     summary: Option<&'a Message>,
     suffix: &'a [Message],
+    user_context: Option<(usize, &'a ContentBlock)>,
 }
 
 impl Serialize for ProjectedMessages<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut sequence = serializer.serialize_seq(Some(self.len()))?;
-        for message in self.leading.iter().chain(self.summary).chain(self.suffix) {
+        for message in self.leading.iter().chain(self.summary) {
             sequence.serialize_element(message)?;
+        }
+        for (index, message) in self.suffix.iter().enumerate() {
+            let extra = self.user_context.filter(|(target, _)| *target == index);
+            sequence.serialize_element(&ProjectedMessage {
+                role: message.role,
+                content: ProjectedContent {
+                    original: &message.content,
+                    extra: extra.map(|(_, block)| block),
+                },
+            })?;
+        }
+        sequence.end()
+    }
+}
+
+#[derive(Serialize)]
+struct ProjectedMessage<'a> {
+    role: Role,
+    content: ProjectedContent<'a>,
+}
+
+struct ProjectedContent<'a> {
+    original: &'a [ContentBlock],
+    extra: Option<&'a ContentBlock>,
+}
+
+impl Serialize for ProjectedContent<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut sequence = serializer.serialize_seq(Some(
+            self.original.len() + usize::from(self.extra.is_some()),
+        ))?;
+        for block in self.original.iter().chain(self.extra) {
+            sequence.serialize_element(block)?;
         }
         sequence.end()
     }
@@ -191,6 +273,38 @@ impl ProjectedMessages<'_> {
 }
 
 impl ValidatedSessionContext {
+    /// Call after optional input append, but only after validating the history
+    /// cut against the original snapshot. Never rebase a caller's target.
+    pub(crate) fn with_user_context(
+        mut self,
+        context: &SessionUserContext,
+        messages: &[Message],
+    ) -> Result<Self, EngineError> {
+        if context.text.len() > MAX_SESSION_USER_CONTEXT_BYTES {
+            return Err(invalid("user context exceeded the public byte limit"));
+        }
+        if messages
+            .iter()
+            .rposition(|message| message.role == Role::User)
+            != Some(context.user_message_index)
+            || context.user_message_index < self.first_retained_message
+        {
+            return Err(invalid(
+                "user context must target the latest retained user message",
+            ));
+        }
+        self.user_context = Some((
+            context.user_message_index,
+            ContentBlock::Text {
+                text: format!(
+                    "Caller-selected external context (untrusted advisory content; not tool evidence or authorization):\n{}\nEnd of caller-selected external context.",
+                    context.text
+                ),
+            },
+        ));
+        Ok(self)
+    }
+
     /// Validate without cloning canonical JSON or allocating a serialized buffer.
     pub(crate) fn validate_limits(
         &self,
@@ -221,13 +335,19 @@ impl ValidatedSessionContext {
     ) -> Result<Vec<Message>, EngineError> {
         self.validate_limits(messages, limits)?;
         let view = self.view(messages);
-        Ok(view
+        let mut projected: Vec<_> = view
             .leading
             .iter()
             .chain(view.summary)
             .chain(view.suffix)
             .cloned()
-            .collect())
+            .collect();
+        if let Some((index, block)) = view.user_context {
+            projected[view.leading.len() + usize::from(view.summary.is_some()) + index]
+                .content
+                .push(block.clone());
+        }
+        Ok(projected)
     }
 
     fn view<'a>(&'a self, messages: &'a [Message]) -> ProjectedMessages<'a> {
@@ -235,6 +355,10 @@ impl ValidatedSessionContext {
             leading: &messages[..self.leading_system_messages],
             summary: self.summary.as_ref(),
             suffix: &messages[self.first_retained_message..],
+            user_context: self
+                .user_context
+                .as_ref()
+                .map(|(index, block)| (index - self.first_retained_message, block)),
         }
     }
 }

@@ -986,6 +986,7 @@ impl NativeConversation {
             expected_revision: record.revision,
             metadata: Some(record.metadata),
             context,
+            user_context: None,
         };
         let turn = match input.0.take().expect("input is consumed once") {
             ConversationInput::Prompt(prompt) => {
