@@ -183,6 +183,14 @@ impl TerminalSessionFacts {
             && &self.owner_incarnation_id == owner.session_incarnation_id()
     }
 
+    /// Recorded identity only; this never restores native ownership or control.
+    pub(crate) fn owner_identity(&self) -> BackgroundOutputOwner {
+        BackgroundOutputOwner::new(
+            self.owner_session_id.clone(),
+            self.owner_incarnation_id.clone(),
+        )
+    }
+
     /// Bind data-only retention facts to their actual profile namespace. This
     /// reconstructs identity, never native ownership or a recovered session.
     /// Legacy facts without launch metadata cannot authorize cross-owner work.
