@@ -644,6 +644,7 @@ class NativeManifestTests(unittest.TestCase):
         freebsd_clippy_command = (
             'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
             "-p machine-god-native --lib --test background_inspection_unsupported "
+            "--test background_history_unsupported "
             "--test install_skill_unsupported "
             "--test memory_unsupported "
             "--test semantic_search_unsupported "
@@ -655,6 +656,7 @@ class NativeManifestTests(unittest.TestCase):
         wasi_clippy_command = (
             'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
             "-p machine-god-native --lib --test background_inspection_unsupported "
+            "--test background_history_unsupported "
             "--test terminal_unsupported --no-default-features "
             "--target wasm32-wasip1 -- -D warnings"
         )

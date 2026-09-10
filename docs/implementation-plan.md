@@ -337,7 +337,8 @@ requester, read-only terminal-history inspector and top-level old/new history
 union are integrated locally.
 Interactive service, control-lane cancellation, bounded rendering and composed
 native scenarios have passed focused checks against the integrated APIs.
-Fresh-binary history scenarios and the complete integrated verification remain
+Fresh-binary history scenarios passed, including mixed list/latest/exact targets
+and unchanged persisted artifacts. Complete integrated verification remains
 pending. Component evidence does not establish full feature acceptance;
 the complete integrated local gate, three fresh reviews and exact feature/main
 remote gates remain required before merging this feature into its accepted
