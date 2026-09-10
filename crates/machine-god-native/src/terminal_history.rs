@@ -555,6 +555,10 @@ impl TerminalHistory {
         Ok(self.journal.read(cursor, maximum)?)
     }
 
+    pub(crate) fn tail_start(&self, maximum: usize) -> Result<TerminalCursor> {
+        Ok(self.journal.tail_start(maximum)?)
+    }
+
     pub(crate) fn screen(&self) -> Result<TerminalScreen> {
         Ok(self.projection()?.screen()?)
     }

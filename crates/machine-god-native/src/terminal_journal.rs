@@ -756,6 +756,23 @@ impl TerminalJournal {
     pub(crate) fn latest(&self) -> TerminalCursor {
         self.manifest.latest.clone()
     }
+    /// Start of at most `maximum` retained tail bytes, computed only from the
+    /// validated bounded manifest. This does not claim an evicted prefix exists.
+    pub(crate) fn tail_start(&self, maximum: usize) -> Result<TerminalCursor> {
+        self.ready()?;
+        ensure(
+            (1..=MAX_PAGE_BYTES).contains(&maximum),
+            TerminalJournalError::Invalid,
+        )?;
+        let mut remaining = maximum;
+        for segment in self.manifest.segments.iter().rev() {
+            if remaining <= segment.bytes {
+                return Ok(cursor(segment.id, (segment.bytes - remaining) as u64));
+            }
+            remaining -= segment.bytes;
+        }
+        Ok(self.earliest())
+    }
     pub(crate) fn checkpoint_status(&self) -> TerminalJournalCheckpointStatus {
         if self.manifest.checkpoint.is_some() {
             TerminalJournalCheckpointStatus::Available
@@ -2133,6 +2150,22 @@ mod tests {
             segment_bytes,
             session_bytes,
         }
+    }
+    #[test]
+    fn bounded_tail_start_crosses_segments_and_respects_retained_prefix() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(4, 8));
+        assert_eq!(journal.tail_start(4).unwrap(), journal.latest());
+        journal.append(b"abcdef").unwrap();
+        assert_eq!(journal.tail_start(4).unwrap(), cursor(1, 2));
+        assert_eq!(collect(&journal, journal.tail_start(4).unwrap()), b"cdef");
+        journal.append(b"ghij").unwrap();
+        assert_eq!(journal.tail_start(5).unwrap(), cursor(2, 1));
+        assert_eq!(collect(&journal, journal.tail_start(5).unwrap()), b"fghij");
+        assert_eq!(journal.tail_start(64).unwrap(), journal.earliest());
+        assert!(journal.read(&cursor(1, 0), 4).unwrap().gap.is_some());
+        assert!(journal.tail_start(0).is_err());
+        assert!(journal.tail_start(MAX_PAGE_BYTES + 1).is_err());
     }
     fn after_owner_drop<T>(mut open: impl FnMut() -> Result<T>) -> Result<T> {
         // Concurrent process-spawn tests can transiently inherit a flock

@@ -170,12 +170,49 @@ struct Principal {
 struct PrincipalState {
     principals: Vec<Principal>,
     generation: u64,
+    closed: bool,
 }
 /// Pure bounded ingress state. No filesystem/worker/host lifetime authority;
 /// cancellation wakers are never invoked while this mutex is held.
 #[derive(Clone, Default)]
 pub(crate) struct TerminalAccessPrincipals(Arc<Mutex<PrincipalState>>);
 impl TerminalAccessPrincipals {
+    /// Observation only: background queries cannot activate a principal.
+    pub(super) fn current(
+        &self,
+        owner: &BackgroundOutputOwner,
+    ) -> Option<(CancellationToken, crate::terminal_input::TerminalWriterId)> {
+        let state = self.lock();
+        if state.closed {
+            return None;
+        }
+        state
+            .principals
+            .iter()
+            .find(|p| &p.owner == owner)
+            .filter(|p| !p.revoked.is_cancelled())
+            .map(|p| (p.revoked.clone(), p.writer))
+    }
+
+    pub(super) fn same_registry(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    pub(super) fn retire_all(&self) {
+        let tokens: Vec<_> = {
+            let mut state = self.lock();
+            state.closed = true;
+            state
+                .principals
+                .iter()
+                .map(|principal| principal.revoked.clone())
+                .collect()
+        };
+        for token in tokens {
+            token.cancel();
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, PrincipalState> {
         self.0
             .lock()
@@ -186,6 +223,9 @@ impl TerminalAccessPrincipals {
         owner: BackgroundOutputOwner,
     ) -> Result<(CancellationToken, crate::terminal_input::TerminalWriterId)> {
         let mut state = self.lock();
+        if state.closed {
+            return Err(NativeTerminalTransitionError::Closed);
+        }
         if let Some(principal) = state.principals.iter().find(|p| p.owner == owner) {
             return if principal.revoked.is_cancelled() {
                 Err(NativeTerminalTransitionError::Conflict)
@@ -250,7 +290,7 @@ impl TerminalAccessRoutes {
     ) -> Result<(CancellationToken, crate::terminal_input::TerminalWriterId)> {
         self.principals.acquire(owner)
     }
-    fn activate(&mut self, owner: BackgroundOutputOwner) -> Result<()> {
+    pub(super) fn activate(&mut self, owner: BackgroundOutputOwner) -> Result<()> {
         self.principals.activate(owner)
     }
     fn retire(&mut self, owner: &BackgroundOutputOwner) {
@@ -259,6 +299,9 @@ impl TerminalAccessRoutes {
 }
 impl PrincipalState {
     fn activate(&mut self, owner: BackgroundOutputOwner) -> Result<()> {
+        if self.closed {
+            return Err(NativeTerminalTransitionError::Closed);
+        }
         if self
             .principals
             .iter()
@@ -433,7 +476,7 @@ impl TerminalAccessRoutes {
     }
 }
 
-fn handoff<B: TerminalSessionBackend>(
+pub(super) fn handoff<B: TerminalSessionBackend>(
     mut context: TerminalOwnerContext<'_, B, HostState>,
     source: &BackgroundOutputOwner,
     destination: &BackgroundOutputOwner,

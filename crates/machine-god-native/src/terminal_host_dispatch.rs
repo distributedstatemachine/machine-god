@@ -83,6 +83,8 @@ pub(crate) enum TerminalHostFactsTiming {
 pub(crate) struct TerminalHostReply {
     pub(crate) result: TerminalActionResult,
     pub(crate) facts_timing: TerminalHostFactsTiming,
+    /// Native backend ownership observed on the owner immediately before dispatch.
+    pub(crate) owned_backend_at_admission: bool,
 }
 
 /// Route one already authorized non-command action. Monitor activation comes
@@ -135,7 +137,7 @@ where
         }
         let admitted_authority = authority.clone();
         let admitted_access = access.clone();
-        let (reply, residency) = requester
+        let (reply, residency, owned_backend_at_admission) = requester
             .request_with_context(cancellation, move |context| {
                 if admitted_access
                     .as_ref()
@@ -153,6 +155,12 @@ where
                 let residency = request
                     .session_id()
                     .and_then(|id| context.registry.lease(&admitted_authority.owner, id).ok());
+                let owned_backend = request.session_id().is_some_and(|id| {
+                    context
+                        .registry
+                        .live_mut(&admitted_authority.owner, id)
+                        .is_ok_and(|session| session.owns_backend())
+                });
                 let reply = route(context, &admitted_authority, &request, activation)?;
                 if let Some(lease) = &residency {
                     match &reply {
@@ -165,7 +173,7 @@ where
                         TerminalResidentDispatch::Ready(_) => {}
                     }
                 }
-                Ok::<_, TerminalHostDispatchError>((reply, residency))
+                Ok::<_, TerminalHostDispatchError>((reply, residency, owned_backend))
             })
             .await
             .map_err(TerminalHostDispatchError::Runtime)??;
@@ -173,6 +181,7 @@ where
             TerminalResidentDispatch::Ready(result) => Ok(TerminalHostReply {
                 result,
                 facts_timing: TerminalHostFactsTiming::Current,
+                owned_backend_at_admission,
             }),
             TerminalResidentDispatch::Wait { admitted, future } => {
                 let receipt = future.await;
@@ -183,6 +192,7 @@ where
                 Ok(TerminalHostReply {
                     result,
                     facts_timing,
+                    owned_backend_at_admission,
                 })
             }
             TerminalResidentDispatch::Write { admitted, future } => {
@@ -194,6 +204,7 @@ where
                 Ok(TerminalHostReply {
                     result,
                     facts_timing,
+                    owned_backend_at_admission,
                 })
             }
         };

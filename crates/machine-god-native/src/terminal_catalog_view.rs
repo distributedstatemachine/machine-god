@@ -189,6 +189,113 @@ fn validate_facts(
         .map_err(|_| TerminalCatalogViewError::Invalid)
 }
 
+/// Complete descriptive projection, with bounded caller-owned row construction.
+/// The callback must charge retained text before returning each row. No backend
+/// is probed, no recovered history enters residency, and no invalid row is skipped.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit retained catalog and projection authority"
+)]
+pub(crate) fn describe_selected_with<B: TerminalSessionBackend, T>(
+    registry: &mut TerminalRegistry<B>,
+    store: &TerminalProfileStore,
+    catalog: &TerminalCatalog,
+    budget: TerminalProfileBudget,
+    owner: &BackgroundOutputOwner,
+    actor: TerminalActorRole,
+    controls: &TerminalAllowedControls,
+    now_ms: i64,
+    maximum: usize,
+    visible: impl Fn(&machine_god_core::TerminalSessionId) -> bool,
+    mut project: impl FnMut(TerminalSessionFacts, PublicFacts, bool, bool) -> Result<T>,
+) -> Result<Vec<T>> {
+    let namespace = owner_name(registry.workspace(), owner);
+    if catalog.namespace_key() != namespace || now_ms < registry.minimum_time_ms() {
+        return Err(TerminalCatalogViewError::Invalid);
+    }
+    let mut transaction = store
+        .transaction()
+        .map_err(TerminalCatalogViewError::Profile)?;
+    transaction
+        .validate_catalog(catalog)
+        .map_err(TerminalCatalogViewError::Profile)?;
+    let residents = registry.owner_ids(owner);
+    let snapshot = catalog
+        .snapshot()
+        .map_err(TerminalCatalogViewError::Catalog)?;
+    let mut ids: Vec<_> = snapshot
+        .ids()
+        .cloned()
+        .chain(residents.iter().cloned())
+        .collect();
+    ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
+    ids.dedup();
+    ids.retain(visible);
+    if ids.len() > maximum {
+        return Err(TerminalCatalogViewError::ResourceLimit);
+    }
+    let mut rows = Vec::with_capacity(ids.len());
+    for id in ids {
+        let resident = residents.contains(&id);
+        let (facts, public, owns_backend) = if resident {
+            let facts = registry
+                .inspect(owner, &id)
+                .map_err(TerminalCatalogViewError::Registry)?;
+            validate_facts(&facts, owner, &namespace)?;
+            let owns_backend = registry
+                .live_mut(owner, &id)
+                .is_ok_and(|session| session.owns_backend());
+            let mut persistence =
+                TerminalProfileMutationContext::new(&mut transaction, budget, &namespace);
+            let public = registry
+                .project_facts_with(&mut persistence, owner, &id, actor, controls)
+                .map_err(TerminalCatalogViewError::Registry)?;
+            (facts, public, owns_backend)
+        } else {
+            let directory = snapshot
+                .open(&id)
+                .map_err(TerminalCatalogViewError::Catalog)?;
+            let journal = TerminalJournal::open_for_retention(directory, &id)
+                .map_err(TerminalCatalogViewError::Journal)?;
+            let history =
+                TerminalHistory::recover(journal).map_err(TerminalCatalogViewError::History)?;
+            {
+                let state = history
+                    .load_state()
+                    .map_err(TerminalCatalogViewError::History)?
+                    .ok_or(TerminalCatalogViewError::Invalid)?;
+                let (facts, _) = TerminalSessionFacts::decode(&state.bytes, &id, &state.source)
+                    .map_err(|_| TerminalCatalogViewError::Invalid)?;
+                validate_facts(&facts, owner, &namespace)?;
+            }
+            let mut persistence =
+                TerminalProfileMutationContext::new(&mut transaction, budget, &namespace);
+            let mut session =
+                TerminalRecoveredSession::recover_with(&mut persistence, history, owner, now_ms)
+                    .map_err(TerminalCatalogViewError::Session)?;
+            session
+                .prepare_public_facts_with(&mut persistence, owner)
+                .map_err(TerminalCatalogViewError::Session)?;
+            let facts = session
+                .facts(owner)
+                .map_err(TerminalCatalogViewError::Session)?
+                .clone();
+            let public = session
+                .public_facts(owner, actor, controls)
+                .map_err(TerminalCatalogViewError::Session)?;
+            (facts, public, false)
+        };
+        rows.push(project(facts, public, resident, owns_backend)?);
+    }
+    snapshot
+        .validate()
+        .map_err(TerminalCatalogViewError::Catalog)?;
+    transaction
+        .validate_catalog(catalog)
+        .map_err(TerminalCatalogViewError::Profile)?;
+    Ok(rows)
+}
+
 fn matches_filters(
     facts: &PublicFacts,
     workspace: &str,

@@ -409,6 +409,7 @@ pub struct NativeReferenceHost {
     terminal_shutdown: Option<crate::NativeOwnedWorkerCompletion>,
     control_workers: Option<crate::NativeOwnedWorkerScope>,
     terminal_lifecycle: Option<crate::NativeTerminalLifecycleRequester>,
+    terminal_background: Option<crate::NativeTerminalBackgroundRequester>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
     observations: Option<Arc<crate::NativeConversationObservations>>,
@@ -1163,6 +1164,15 @@ impl NativeReferenceHost {
         self.terminal_lifecycle.clone()
     }
 
+    /// Owner-scoped background observation/control over this complete terminal
+    /// host. Retaining it does not keep backends alive or initialize a legacy host.
+    #[must_use]
+    pub fn terminal_background_requester(
+        &self,
+    ) -> Option<crate::NativeTerminalBackgroundRequester> {
+        self.terminal_background.clone()
+    }
+
     /// Returns the exact tracker injected into all five file mutation tools.
     /// Hosts constructed without conversation options return `None`; no tracker
     /// is manufactured, cleared, or granted new filesystem authority here.
@@ -1429,6 +1439,9 @@ impl NativeReferenceHost {
         let terminal_lifecycle = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::lifecycle_requester);
+        let terminal_background = host_resource
+            .as_ref()
+            .map(NativeTerminalHostResource::background_requester);
         let builder = match host_resource {
             Some(resource) => builder.host_resource(resource),
             None => builder,
@@ -1452,6 +1465,7 @@ impl NativeReferenceHost {
             credential_source,
             terminal_shutdown,
             terminal_lifecycle,
+            terminal_background,
             undo_tracker: None,
             model_routes: None,
             observations: None,

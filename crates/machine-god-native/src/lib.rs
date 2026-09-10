@@ -616,6 +616,10 @@ pub use terminal_captured_exec::{
     any(target_os = "linux", target_os = "macos")
 ))]
 pub use terminal_host::{
+    NativeTerminalBackgroundEntry, NativeTerminalBackgroundError,
+    NativeTerminalBackgroundInspection, NativeTerminalBackgroundPage,
+    NativeTerminalBackgroundRequester, NativeTerminalBackgroundSnapshot,
+    NativeTerminalBackgroundStopReceipt, NativeTerminalBackgroundTarget,
     NativeTerminalHandoffReceipt, NativeTerminalLifecycleRequester, NativeTerminalResetEntry,
     NativeTerminalResetOutcome, NativeTerminalResetReceipt, NativeTerminalTransitionError,
 };

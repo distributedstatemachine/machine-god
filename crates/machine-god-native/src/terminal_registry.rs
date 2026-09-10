@@ -754,6 +754,18 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             Resident::Recovered(session) => session.screen(owner)?,
         })
     }
+    pub(crate) fn tail_start(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        maximum: usize,
+    ) -> Result<TerminalCursor> {
+        Ok(match &self.entries[self.index(owner, id)?].resident {
+            Resident::Live(session) => session.tail_start(owner, maximum)?,
+            #[cfg(test)]
+            Resident::Recovered(session) => session.tail_start(owner, maximum)?,
+        })
+    }
     #[cfg(test)]
     pub(crate) fn events(
         &mut self,

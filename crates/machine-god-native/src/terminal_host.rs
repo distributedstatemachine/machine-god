@@ -53,8 +53,16 @@ const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(120);
 const START_TIMEOUT: Duration = crate::terminal_helper::MAX_STARTUP_TIMEOUT;
 const MAX_EFFECTS: usize = 16;
 
+#[path = "terminal_host_background.rs"]
+mod background;
 #[path = "terminal_host_lifecycle.rs"]
 mod lifecycle;
+pub use background::{
+    NativeTerminalBackgroundEntry, NativeTerminalBackgroundError,
+    NativeTerminalBackgroundInspection, NativeTerminalBackgroundPage,
+    NativeTerminalBackgroundRequester, NativeTerminalBackgroundSnapshot,
+    NativeTerminalBackgroundStopReceipt, NativeTerminalBackgroundTarget,
+};
 use lifecycle::TerminalAccessPrincipals;
 pub(crate) use lifecycle::TerminalAccessRoutes;
 pub use lifecycle::{
@@ -88,8 +96,12 @@ pub(crate) struct NativeTerminalHostResource {
     runtime: TerminalRuntime<TerminalNativeBackend, HostState>,
     stop: CancellationToken,
     workers: NativeOwnedWorkerScope,
+    principals: TerminalAccessPrincipals,
 }
 impl NativeTerminalHostResource {
+    pub(crate) fn background_requester(&self) -> NativeTerminalBackgroundRequester {
+        NativeTerminalBackgroundRequester::new(self.runtime.requester(), self.principals.clone())
+    }
     pub(crate) fn lifecycle_requester(&self) -> NativeTerminalLifecycleRequester {
         NativeTerminalLifecycleRequester {
             requester: self.runtime.requester(),
@@ -105,6 +117,7 @@ impl NativeTerminalHostResource {
 }
 impl Drop for NativeTerminalHostResource {
     fn drop(&mut self) {
+        self.principals.retire_all();
         self.workers.close();
         self.stop.cancel();
         self.runtime.shutdown();
@@ -283,7 +296,7 @@ impl NativeTerminalHost {
         let permission_resolver =
             host_permission_resolver(&host, &workers, &stop, workspace_contexts.is_some());
         let executor = NativeTerminalActionExecutor {
-            principals,
+            principals: principals.clone(),
             access: None,
             permission,
             workspace_contexts,
@@ -305,6 +318,7 @@ impl NativeTerminalHost {
                 runtime,
                 stop,
                 workers,
+                principals,
             },
         ))
     }

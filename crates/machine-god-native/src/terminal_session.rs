@@ -741,6 +741,14 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.authorize(owner)?;
         Ok(self.history.screen()?)
     }
+    pub(crate) fn tail_start(
+        &self,
+        owner: &BackgroundOutputOwner,
+        maximum: usize,
+    ) -> Result<TerminalCursor> {
+        self.authorize(owner)?;
+        Ok(self.history.tail_start(maximum)?)
+    }
     #[cfg(test)]
     pub(crate) fn write(
         &mut self,
@@ -2166,6 +2174,14 @@ impl TerminalRecoveredSession {
     pub(crate) fn screen(&self, owner: &BackgroundOutputOwner) -> Result<TerminalScreen> {
         self.authorize(owner)?;
         Ok(self.history.screen()?)
+    }
+    pub(crate) fn tail_start(
+        &self,
+        owner: &BackgroundOutputOwner,
+        maximum: usize,
+    ) -> Result<TerminalCursor> {
+        self.authorize(owner)?;
+        Ok(self.history.tail_start(maximum)?)
     }
 
     #[cfg(test)]
