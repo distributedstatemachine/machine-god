@@ -1201,41 +1201,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
         if !close_stage("final-absence", self.process.is_absent())? {
             return close_stage("final-jobs-present", Err(TerminalTmuxError::Cleanup));
         }
-        // Process absence must be proven before retiring the owned namespace.
-        // A terminal status must be observed, never inferred from our signal.
-        // tmux closes the pane fd only after its pipe output and PTY input
-        // drain; the supervised child's exit alone is not that transport proof.
-        let transport_deadline = Instant::now() + COMMAND_TIMEOUT;
-        while !self.observation.transport_closed {
-            if Instant::now() >= transport_deadline || budget == 0 {
-                self.output_incomplete = true;
-                break;
-            }
-            if self.drain(&mut budget, output).is_err() {
-                self.output_incomplete = true;
-            }
-            let output = close_stage(
-                "transport-inspect-status",
-                success(close_stage(
-                    "transport-inspect",
-                    run(
-                        &mut self.control,
-                        TerminalTmuxCommand::Inspect,
-                        transport_deadline,
-                    ),
-                )?),
-            )?;
-            self.observation = close_stage(
-                "transport-observation",
-                process_observation(self.control.identity(), &output, &mut self.process),
-            )?;
-            if !self.observation.transport_closed {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
-        if self.observation.status == TerminalPtyStatus::Running {
-            return close_stage("transport-still-running", Err(TerminalTmuxError::Cleanup));
-        }
+        self.observe_closed_transport(&mut budget, output)?;
         let deadline = Instant::now() + COMMAND_TIMEOUT;
         let _ = run(
             &mut self.control,
@@ -1272,6 +1238,49 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             status: self.observation.status,
             output_incomplete: self.output_incomplete,
         })
+    }
+
+    fn observe_closed_transport(
+        &mut self,
+        budget: &mut usize,
+        output: &mut dyn FnMut(&[u8]),
+    ) -> Result<()> {
+        // Process absence must be proven before retiring the owned namespace.
+        // A terminal status must be observed, never inferred from our signal.
+        // tmux closes the pane fd only after its pipe output and PTY input
+        // drain; the supervised child's exit alone is not that transport proof.
+        let transport_deadline = Instant::now() + COMMAND_TIMEOUT;
+        while !self.observation.transport_closed {
+            if Instant::now() >= transport_deadline || *budget == 0 {
+                self.output_incomplete = true;
+                break;
+            }
+            if self.drain(budget, output).is_err() {
+                self.output_incomplete = true;
+            }
+            let output = close_stage(
+                "transport-inspect-status",
+                success(close_stage(
+                    "transport-inspect",
+                    run(
+                        &mut self.control,
+                        TerminalTmuxCommand::Inspect,
+                        transport_deadline,
+                    ),
+                )?),
+            )?;
+            self.observation = close_stage(
+                "transport-observation",
+                process_observation(self.control.identity(), &output, &mut self.process),
+            )?;
+            if !self.observation.transport_closed {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        if self.observation.status == TerminalPtyStatus::Running {
+            return close_stage("transport-still-running", Err(TerminalTmuxError::Cleanup));
+        }
+        Ok(())
     }
 }
 impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalSessionBackend

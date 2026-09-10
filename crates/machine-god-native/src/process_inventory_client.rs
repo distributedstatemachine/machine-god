@@ -21,7 +21,7 @@ type Result<T> = std::result::Result<T, TerminalHelperError>;
 // only fixed stages and typed, data-free errors; release builds read no clocks
 // or emit output through this wrapper.
 macro_rules! query_stage {
-    ($started:ident, $deadline:ident, $stage:literal, $result:expr) => {{
+    (($started:ident, $deadline:ident), $stage:literal, $result:expr) => {{
         let result = $result;
         #[cfg(test)]
         if let Err(error) = &result {
@@ -284,8 +284,7 @@ impl InventoryLease {
         let query_started = Instant::now();
         let cancellation = CancellationToken::new();
         query_stage!(
-            query_started,
-            deadline,
+            (query_started, deadline),
             "admission_deadline",
             check_deadline(deadline, &cancellation)
         )?;
@@ -293,8 +292,7 @@ impl InventoryLease {
             > crate::background_process::GROUP_SNAPSHOT_TIMEOUT
         {
             return query_stage!(
-                query_started,
-                deadline,
+                (query_started, deadline),
                 "admission_budget",
                 Err(failure(TerminalHelperErrorKind::InvalidRequest))
             );
@@ -305,15 +303,13 @@ impl InventoryLease {
             .matches(&NativeOwnedWorkerScopeIdentity::current())
         {
             return query_stage!(
-                query_started,
-                deadline,
+                (query_started, deadline),
                 "admission_scope",
                 Err(failure(TerminalHelperErrorKind::InvalidRequest))
             );
         }
         let mut state = query_stage!(
-            query_started,
-            deadline,
+            (query_started, deadline),
             "lock",
             lock_until(&self.0.state, deadline, &cancellation, &[])
         )?;
@@ -321,8 +317,7 @@ impl InventoryLease {
         // original deadline, only after the previous exact child has reaped.
         // There is never a retry inside the request that detected the failure.
         let result = query_stage!(
-            query_started,
-            deadline,
+            (query_started, deadline),
             "ensure_ready",
             self.0
                 .ensure_ready(&mut state, deadline, &cancellation, &[])
@@ -355,22 +350,19 @@ fn query_ready(
     let query_started = Instant::now();
     let sequence = state.next_sequence;
     state.next_sequence = query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "sequence",
         sequence
             .checked_add(1)
             .ok_or_else(|| failure(TerminalHelperErrorKind::Protocol))
     )?;
     let request = query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "encode_request",
         wire::encode_request(sequence, deadline)
     )?;
     let ready = query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "ready_state",
         state
             .ready
@@ -379,65 +371,55 @@ fn query_ready(
     )?;
     // No unsolicited/stale bytes from an earlier request may become a reply.
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "unsolicited_before",
         require_no_extra_output(ready, deadline, cancellation)
     )?;
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "write_request",
         write_gate(&mut ready.input, &request, deadline, cancellation)
     )?;
     let mut header = [0; 17];
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "read_header",
         read_gate(&mut ready.output, &mut header, deadline, cancellation)
     )?;
     let length = query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "decode_header",
         wire::decode_response_header(&header, sequence)
     )?;
     let mut bytes = vec![0; length];
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "read_payload",
         read_gate(&mut ready.output, &mut bytes, deadline, cancellation)
     )?;
     let mut completion = [0; 12];
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "read_completion",
         read_gate(&mut ready.output, &mut completion, deadline, cancellation)
     )?;
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "validate_completion",
         wire::validate_completion(&completion, sequence)
     )?;
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "decode_inventory",
         super::decode_inventory(&bytes)
     )?;
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "unsolicited_after",
         require_no_extra_output(ready, deadline, cancellation)
     )?;
     if query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "child_status",
         ready
             .child
@@ -445,15 +427,13 @@ fn query_ready(
             .map_err(|_| failure(TerminalHelperErrorKind::Process))
     )? {
         return query_stage!(
-            query_started,
-            deadline,
+            (query_started, deadline),
             "child_exited",
             Err(failure(TerminalHelperErrorKind::Process))
         );
     }
     query_stage!(
-        query_started,
-        deadline,
+        (query_started, deadline),
         "final_deadline",
         check_deadline(deadline, cancellation)
     )?;

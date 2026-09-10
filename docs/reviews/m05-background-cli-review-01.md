@@ -227,3 +227,9 @@ retry or merge followed. New error-only test diagnostics retain typed failures
 and identify query/close/server-retirement stages without new observations,
 deadline changes, retries or alternate cleanup paths. They are diagnostic
 remediation, not a claimed source fix or feature acceptance.
+
+Diagnostic candidate `fb1d617d` built its fresh release helper and native test
+executable, but focused Clippy rejected two functions exceeding the line limit.
+No runtime tests were started on that candidate. The correction separates tmux
+transport observation from namespace retirement and groups inventory diagnostic
+timing context; it does not suppress lints or change cleanup/query budgets.
