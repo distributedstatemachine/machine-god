@@ -172,7 +172,9 @@ impl BackgroundRequests for Adapter {
                     } else {
                         None
                     },
-                    script.gap_after_read.is_some_and(|read| script.reads > read),
+                    script
+                        .gap_after_read
+                        .is_some_and(|read| script.reads > read),
                 )
             };
             let mut page = read_request(

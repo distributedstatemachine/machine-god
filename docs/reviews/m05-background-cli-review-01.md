@@ -84,3 +84,24 @@ when the new read-only inspector's shared profile lock made its transaction
 busy, discarding the final drained bytes. The cleanup fallback predates the
 feature; routine read-only history inspection introduced the new trigger.
 All three completed review worktrees were verified clean and removed.
+
+### First-review remediation
+
+`4ac1b8e1` carries explicit snapshot/truncated boundary evidence into URL
+detection, preserving earlier delimited candidates while rejecting an
+unterminated trailing one. The composed regression failed on the old behavior,
+then passed twelve byte-limit, page-limit and scripted-gap scenarios covering
+ordinary/oversized candidates and earlier complete URLs. Thirteen detector
+tests and eight nonbrowser launcher tests also passed. Standalone default-feature
+native tests additionally needed their composed-service module to use the same
+feature gate as its production service; workspace feature unification had hidden
+the mismatch. Warnings-denied Clippy rejected the regression adapter's fourth
+boolean, so `7ad99073` represents gap injection as an optional read boundary.
+
+The independently implemented `b9ef174e` defers known-exit cleanup on transient
+profile `Busy`, retaining the backend and tail until a later bounded pump pass.
+Its shared-read-only-lock regression failed before the fix and passed afterward,
+proving repeated deferral, durable tail recovery and exactly-once cleanup.
+All 64 registry tests passed, including retained permanent-error and shutdown
+fallbacks. These are focused remediation results, not replacement feature
+acceptance or authorization to merge.

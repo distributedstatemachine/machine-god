@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34424264790` (`GREEN`)
 - Active branch: `agent/m61-background-cli`
 - Active phase: `M05 complete interactive background CLI implementation`
-- Next gate: `fix background CLI review findings; repeat full local gate and three fresh adversarial reviews`
+- Next gate: `replacement background CLI full local gate; then three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -341,8 +341,9 @@ Fresh-binary history scenarios passed, including mixed list/latest/exact targets
 and unchanged persisted artifacts. The first complete integrated local gate
 passed, but independent review rejected that candidate: URL opening discarded
 capture-truncation evidence, and read-only history lock contention could discard
-an exited terminal's final output. Remediation and deterministic regressions
-are in progress. The replacement complete local gate, three fresh reviews and
+an exited terminal's final output. Both fixes are integrated with deterministic
+regressions that reproduced the failures before remediation. The replacement
+complete local gate, three fresh reviews and
 exact feature/main remote gates remain required before merging this feature
 into its accepted parent. Released component and review worktrees are removed;
 active validation and implementation worktrees are retained.
