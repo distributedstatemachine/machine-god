@@ -345,13 +345,13 @@ fn fresh_cli_inspects_producer_histories_without_recovery_or_live_control() {
     fixture.legacy(3, 10);
     let terminal = fixture.terminal(3, 20, Some("printf '\u{1b}[31msecret'"));
     let before = bytes_tree(&fixture.root);
-    let binary = std::env::var_os("MACHINE_GOD_CLI_TEST_BINARY").map_or_else(
+    let binary = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY").map_or_else(
         || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/machine-god"),
         PathBuf::from,
     );
     assert!(
         binary.is_file(),
-        "build the fresh release CLI before background history scenarios"
+        "set MACHINE_GOD_TERMINAL_RELEASE_BINARY to the freshly built production CLI"
     );
     for args in [
         vec!["background", "--json"],

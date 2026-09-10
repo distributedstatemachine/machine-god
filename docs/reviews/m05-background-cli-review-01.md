@@ -105,3 +105,35 @@ proving repeated deferral, durable tail recovery and exactly-once cleanup.
 All 64 registry tests passed, including retained permanent-error and shutdown
 fallbacks. These are focused remediation results, not replacement feature
 acceptance or authorization to merge.
+
+### Replacement review and remote helper-path rejection
+
+Candidate `16f04f3b0e4b274f0a7cc930674d7e4459debbcc`, tree
+`066915b64b76c405be4375573d89748306637d76`, passed the complete replacement
+Rust 1.94.1 local gate. macOS had 4,647 non-doctest passes and 18 ignored;
+Linux had 4,652 non-doctest passes and 17 ignored. Each platform also passed
+three included workspace doctests, three explicit doctests, and the separate
+harnessless terminal CLI target. Counts exclude nested child-test summaries.
+Formatting, warnings-denied Clippy, fresh release scenarios, repository Python
+checks, documentation and upstream drift, dependency policy/audit, unsupported
+compilation and default-feature native test compilation passed. Linux used an
+unprivileged account from its first runtime invocation. Exported logs were
+hash-verified before removing its container and clean source worktree.
+
+Three fresh independent local static reviewers—
+`background_review_correctness_02`, `background_review_lifecycle_02`, and
+`background_review_resources_02`—reported zero actionable findings against the
+same candidate and accepted parent. No named Bugbot service was available.
+All three clean review worktrees were removed before pushing the feature.
+
+Feature Benchmark `34472264651` succeeded with both exact-SHA artifacts, but
+feature CI `34472264644` exposed a native test configuration defect. The new
+`fresh_cli_inspects_producer_histories_without_recovery_or_live_control` test
+looked at `MACHINE_GOD_CLI_TEST_BINARY` and then `target/release`; platform CI
+instead correctly exports `MACHINE_GOD_TERMINAL_RELEASE_BINARY` pointing into
+the exact target triple's release directory. The x86_64 Linux job failed its
+binary-existence assertion before invoking the scenario. The local recipe set
+both variables and therefore did not expose this mismatch. Remediation uses
+the existing native-test helper contract without changing CI, skipping the
+scenario, weakening assertions, or changing product behavior. This candidate
+was not merged; the helper-selection correction requires replacement gates.

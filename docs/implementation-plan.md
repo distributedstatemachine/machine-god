@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34424264790` (`GREEN`)
 - Active branch: `agent/m61-background-cli`
 - Active phase: `M05 complete interactive background CLI implementation`
-- Next gate: `replacement background CLI full local gate; then three fresh adversarial reviews`
+- Next gate: `CI helper-selection remediation full local gate; then three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -343,10 +343,14 @@ passed, but independent review rejected that candidate: URL opening discarded
 capture-truncation evidence, and read-only history lock contention could discard
 an exited terminal's final output. Both fixes are integrated with deterministic
 regressions that reproduced the failures before remediation. The replacement
-complete local gate, three fresh reviews and
-exact feature/main remote gates remain required before merging this feature
-into its accepted parent. Released component and review worktrees are removed;
-active validation and implementation worktrees are retained.
+complete local gate and three fresh reviews passed, but the remote platform
+matrix exposed a test-helper path mismatch: the new history scenario ignored
+the target-specific release helper already exported by CI. It now selects the
+same native-test helper variable as the other native scenarios. A complete
+replacement local gate, three fresh reviews and exact feature/main remote
+gates remain required before merging this feature into its accepted parent.
+Released component and review worktrees are removed; active validation
+worktrees are retained.
 
 ## Parked complete-feature scope: fx session import
 
