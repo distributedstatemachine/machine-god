@@ -40,3 +40,47 @@ artifacts whose names identify the exact accepted behavior SHA.
 This review seal makes no package, release, or comparative-performance claim.
 The implementation plan remains the sole live source for delivery and workflow
 gates.
+
+## Complete interactive feature: rejected first review candidate
+
+The expanded interactive controls and combined legacy/terminal history were
+independently reviewed at `77b6f34814887bdb1b1775c6c1d088ee1c3dea91`, tree
+`b5e4207b73e16575013aec44b88464b593c2df83`, against accepted parent
+`79d3d4d426aa52816ce6dd70020b7f6a0866da38`. This was not a delivery.
+
+Before review, the exact Rust 1.94.1 local gate passed: macOS workspace
+4,644 passed, 18 ignored; Linux workspace 4,650 passed, 17 ignored; explicit
+workspace doctests 3 passed on each platform. Counts use top-level harness
+summaries, excluding nested child-process summaries. The harnessless terminal
+CLI target also exited successfully. Fresh locked release binaries, formatting,
+warnings-denied Clippy, 269 repository Python tests (14 expected skips),
+documentation policy, pinned compatibility/Unicode drift, dependency policy,
+vulnerability audit and the three FreeBSD/WASI compile gates passed.
+
+The Linux gate required correcting two environment-only failures: root bypassed
+a permission-denial fixture, then root-owned shared temporary fixtures denied
+the corrected unprivileged test user. After isolating those stale fixtures,
+the complete replacement run passed with a real unprivileged NSS account,
+private home, normal shell profiles and container init. Failed and successful
+logs were exported and hash-verified before removing the container. No source
+fix, test skip or deadline relaxation concealed either failed invocation.
+
+Three fresh local fallback reviewers inspected clean isolated worktrees of the
+same candidate; the host did not expose the named Bugbot service. Their static
+reviews ran no builds or tests and produced these actionable findings:
+
+| Track | Agent | Findings |
+| --- | --- | --- |
+| Correctness/API | `background_review_correctness_01` | P2: a truncated capture can open a partial URL. |
+| Lifecycle/platform | `background_review_lifecycle_01` | P2: read-only profile-lock contention can discard exit output; P2: the same truncated-URL defect. |
+| Performance/resources | `background_review_resources_01` | P2: the same truncated-URL defect. |
+
+The two distinct defects reject this candidate. At
+`background_commands/service.rs`, URL detection discarded the captured window's
+truncation evidence: 65,515 spaces followed by
+`http://localhost:3000/private` and LF could open the root URL instead.
+At `terminal_registry.rs`, an exited backend fell into no-persistence cleanup
+when the new read-only inspector's shared profile lock made its transaction
+busy, discarding the final drained bytes. The cleanup fallback predates the
+feature; routine read-only history inspection introduced the new trigger.
+All three completed review worktrees were verified clean and removed.

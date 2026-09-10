@@ -1,6 +1,6 @@
 //! Composition of explicit native background selection, logs and desktop handoff.
 
-use super::url::{MAX_BACKGROUND_URL_INPUT_BYTES, detect_server_url};
+use super::url::{BackgroundUrlCaptureEnd, MAX_BACKGROUND_URL_INPUT_BYTES, detect_server_url};
 use super::{NativeBackgroundCommand, NativeBackgroundTarget};
 use crate::{
     NativeBackgroundOpenError, NativeBackgroundOpenOutcome, NativeBackgroundUrlOpener,
@@ -259,7 +259,12 @@ pub(crate) fn execute_with(
                     &cancellation,
                 )
                 .await?;
-                let Some(url) = detect_server_url(evidence.bytes())
+                let capture_end = if evidence.truncated() {
+                    BackgroundUrlCaptureEnd::Truncated
+                } else {
+                    BackgroundUrlCaptureEnd::Snapshot
+                };
+                let Some(url) = detect_server_url(evidence.bytes(), capture_end)
                     .map_err(|_| NativeBackgroundControlError::ResourceLimit)?
                 else {
                     return Ok(Receipt::NoKnownUrl { session_id });

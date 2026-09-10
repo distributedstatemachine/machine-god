@@ -31,6 +31,7 @@ use std::sync::{
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+#[cfg(feature = "ai-gateway-http")]
 #[path = "tests/service.rs"]
 mod service;
 

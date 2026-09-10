@@ -24,6 +24,7 @@ struct Script {
     cancel_after_second_inspection: Option<CancellationToken>,
     after_first_read: Option<Vec<u8>>,
     page_cap: Option<usize>,
+    gap_after_first_read: bool,
 }
 
 #[derive(Clone)]
@@ -161,7 +162,7 @@ impl BackgroundRequests for Adapter {
         let adapter = self.clone();
         let target = target.clone();
         Box::pin(async move {
-            let (maximum, append) = {
+            let (maximum, append, gap) = {
                 let mut script = adapter.script.lock().unwrap();
                 script.reads += 1;
                 (
@@ -171,17 +172,23 @@ impl BackgroundRequests for Adapter {
                     } else {
                         None
                     },
+                    script.gap_after_first_read && script.reads > 1,
                 )
             };
-            let page = read_request(
+            let mut page = read_request(
                 adapter.requester.clone(),
                 adapter.principals.clone(),
                 target.clone(),
-                cursor,
+                cursor.clone(),
                 maximum,
                 cancellation,
             )
             .await?;
+            if gap {
+                // Explicit scheduling seam: retained output disappeared after
+                // the first page. The service must not use this next span.
+                page.page.gap = Some(TerminalGap::new(cursor, page.next().clone()).unwrap());
+            }
             if let Some(bytes) = append {
                 append_history(&adapter, target.id().clone(), bytes).await;
             }
@@ -672,4 +679,68 @@ fn url_evidence_and_page_iterations_are_bounded_and_truncation_is_explicit() {
     assert_eq!(logs.tail().bytes(), &[b'a'; 1024]);
     assert!(logs.head().truncated());
     assert!(logs.tail().truncated());
+}
+
+#[test]
+fn url_capture_boundaries_never_open_incomplete_candidates() {
+    for (boundary, page_cap, retention_gap) in [
+        (65_536, None, false),
+        (1024, Some(1), false),
+        (256, Some(256), true),
+    ] {
+        for oversized in [false, true] {
+            for earlier_complete in [false, true] {
+                let mut row = Row::new(1, 10, false);
+                row.bytes = vec![b' '; boundary - b"http://localhost:3000/".len()];
+                if earlier_complete {
+                    let earlier = b"http://example.test/complete\n";
+                    row.bytes[..earlier.len()].copy_from_slice(earlier);
+                }
+                row.bytes.extend_from_slice(b"http://localhost:3000/");
+                row.bytes.extend_from_slice(if oversized {
+                    &[b'a'; 2100]
+                } else {
+                    b"private-path"
+                });
+                row.bytes.push(b'\n');
+                let fixture = Fixture::new(vec![row]);
+                let adapter = Adapter::new(&fixture);
+                {
+                    let mut script = adapter.script.lock().unwrap();
+                    script.page_cap = page_cap;
+                    script.gap_after_first_read = retention_gap;
+                }
+                let launcher = Launcher::new();
+                let receipt = block_on(execute_with(
+                    adapter.clone(),
+                    owner("a"),
+                    Command::Open(Target::Last),
+                    Some(launcher.opener.clone()),
+                    CancellationToken::new(),
+                ))
+                .unwrap();
+                if earlier_complete {
+                    assert!(matches!(receipt, Receipt::Opened {
+                        url, outcome: NativeBackgroundOpenOutcome::Opened, ..
+                    } if url == "http://example.test/complete"));
+                } else {
+                    assert!(
+                        matches!(receipt, Receipt::NoKnownUrl { .. }),
+                        "boundary={boundary}, oversized={oversized}"
+                    );
+                }
+                assert_eq!(
+                    adapter.script.lock().unwrap().reads,
+                    if retention_gap {
+                        2
+                    } else if page_cap.is_some() {
+                        1024
+                    } else {
+                        1
+                    }
+                );
+                assert_eq!(fixture.backend.lock().unwrap().closes, 0);
+            }
+        }
+    }
 }

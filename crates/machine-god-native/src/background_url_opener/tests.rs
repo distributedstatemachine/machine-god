@@ -3,7 +3,7 @@ use super::{
     NativeBackgroundOpenError as Error, NativeBackgroundOpenOutcome as Outcome,
     NativeBackgroundUrlOpener, NativeOwnedWorkerScope, Ordering, PathBuf,
 };
-use crate::background_commands::url::detect_server_url;
+use crate::background_commands::url::{BackgroundUrlCaptureEnd, detect_server_url};
 use futures_executor::block_on;
 use std::sync::{Arc, atomic::AtomicU64};
 use std::task::{Context, Poll, Waker};
@@ -65,9 +65,12 @@ impl Drop for Fixture {
 }
 
 fn url() -> BackgroundServerUrl {
-    detect_server_url(b"http://localhost:3000/path?q=one&other=two")
-        .unwrap()
-        .unwrap()
+    detect_server_url(
+        b"http://localhost:3000/path?q=one&other=two",
+        BackgroundUrlCaptureEnd::Snapshot,
+    )
+    .unwrap()
+    .unwrap()
 }
 
 fn poll<T>(future: &mut BoxFuture<'static, T>) -> Poll<T> {

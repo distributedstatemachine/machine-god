@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34424264790` (`GREEN`)
 - Active branch: `agent/m61-background-cli`
 - Active phase: `M05 complete interactive background CLI implementation`
-- Next gate: `complete integrated background CLI local verification; then three fresh adversarial reviews`
+- Next gate: `fix background CLI review findings; repeat full local gate and three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -338,11 +338,13 @@ union are integrated locally.
 Interactive service, control-lane cancellation, bounded rendering and composed
 native scenarios have passed focused checks against the integrated APIs.
 Fresh-binary history scenarios passed, including mixed list/latest/exact targets
-and unchanged persisted artifacts. Complete integrated verification remains
-pending. Component evidence does not establish full feature acceptance;
-the complete integrated local gate, three fresh reviews and exact feature/main
-remote gates remain required before merging this feature into its accepted
-parent. Released component worktrees are removed after clean integration;
+and unchanged persisted artifacts. The first complete integrated local gate
+passed, but independent review rejected that candidate: URL opening discarded
+capture-truncation evidence, and read-only history lock contention could discard
+an exited terminal's final output. Remediation and deterministic regressions
+are in progress. The replacement complete local gate, three fresh reviews and
+exact feature/main remote gates remain required before merging this feature
+into its accepted parent. Released component and review worktrees are removed;
 active validation and implementation worktrees are retained.
 
 ## Parked complete-feature scope: fx session import
@@ -396,7 +398,10 @@ toolchain with `rustup`; no floating-channel substitution satisfies the gate.
 Run affected tests first, with the same prerequisites. From the repository root,
 use this canonical full-gate recipe in one shell. Both Linux and macOS runtime
 tests require `/bin/bash`, `/bin/zsh` and tmux; install them before starting.
-Containerized runs also need a passwd entry and valid login shell for the test UID.
+Containerized runs need an unprivileged test UID without DAC-bypass capabilities,
+a passwd entry, private home and valid login shell before their first test.
+Start with clean fixtures; running permission tests as root or reusing root-owned
+fixture directories does not establish the supported Linux gate.
 Keep their normal profile behavior. Concurrent builds can contend with
 process-lifecycle fixtures, so finish worker builds before the full runtime gate.
 When Linux and macOS share one physical host, also separate their process-heavy

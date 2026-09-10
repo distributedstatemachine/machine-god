@@ -2,7 +2,7 @@ use super::*;
 use std::fmt::Write as _;
 
 fn detected(input: &[u8]) -> Option<String> {
-    detect_server_url(input)
+    detect_server_url(input, BackgroundUrlCaptureEnd::Snapshot)
         .expect("bounded snapshot")
         .map(|url| url.as_str().to_owned())
 }
@@ -158,9 +158,12 @@ fn parsed_hosts_prevent_authority_path_and_query_rank_spoofing() {
 
 #[test]
 fn canonical_serialization_is_the_only_exposed_form_and_debug_is_redacted() {
-    let url = detect_server_url(b"HTTPS://LOCALHOST:443/private?token=secret")
-        .expect("bounded")
-        .expect("URL");
+    let url = detect_server_url(
+        b"HTTPS://LOCALHOST:443/private?token=secret",
+        BackgroundUrlCaptureEnd::Snapshot,
+    )
+    .expect("bounded")
+    .expect("URL");
     assert_eq!(url.as_str(), "https://localhost/private?token=secret");
     assert_eq!(format!("{url:?}"), "BackgroundServerUrl([REDACTED])");
     assert_eq!(url.clone(), url);
@@ -174,7 +177,7 @@ fn input_bound_is_exact_and_never_truncates() {
     assert_eq!(detected(&input), Some("http://localhost:3000/".to_owned()));
     input.push(b' ');
     assert_eq!(
-        detect_server_url(&input),
+        detect_server_url(&input, BackgroundUrlCaptureEnd::Snapshot),
         Err(BackgroundUrlError::ResourceLimit)
     );
     assert_eq!(detected(&[]), None);
@@ -223,7 +226,9 @@ fn arbitrary_byte_values_cannot_escape_validation() {
     for byte in 0..=255_u8 {
         let mut input = b"http://localhost/".to_vec();
         input.push(byte);
-        if let Some(url) = detect_server_url(&input).expect("bounded") {
+        if let Some(url) =
+            detect_server_url(&input, BackgroundUrlCaptureEnd::Snapshot).expect("bounded")
+        {
             assert!(url.as_str().len() <= MAX_BACKGROUND_SERVER_URL_BYTES);
             assert!(!url.as_str().chars().any(char::is_control));
             let parsed = Url::parse(url.as_str()).expect("validated URL");
@@ -232,5 +237,45 @@ fn arbitrary_byte_values_cannot_escape_validation() {
             assert!(parsed.username().is_empty());
             assert!(parsed.password().is_none());
         }
+    }
+}
+
+#[test]
+fn truncated_capture_requires_a_delimiter_for_its_last_candidate() {
+    for suffix in [b"".as_slice(), b"/private", b"?key=partial", b"#fragment"] {
+        let mut input = b"http://localhost:3000".to_vec();
+        input.extend_from_slice(suffix);
+        assert!(
+            detect_server_url(&input, BackgroundUrlCaptureEnd::Truncated)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            detect_server_url(&input, BackgroundUrlCaptureEnd::Snapshot)
+                .unwrap()
+                .is_some()
+        );
+        for delimiter in 0..=127_u8 {
+            if is_delimiter(delimiter) {
+                let mut terminated = input.clone();
+                terminated.push(delimiter);
+                assert_eq!(
+                    detect_server_url(&terminated, BackgroundUrlCaptureEnd::Truncated)
+                        .unwrap()
+                        .map(|url| url.as_str().to_owned()),
+                    detected(&input)
+                );
+            }
+        }
+    }
+    for separator in [" ", "\n"] {
+        let input = format!("http://example.test/complete{separator}http://localhost:3000/partial");
+        assert_eq!(
+            detect_server_url(input.as_bytes(), BackgroundUrlCaptureEnd::Truncated)
+                .unwrap()
+                .map(|url| url.as_str().to_owned())
+                .as_deref(),
+            Some("http://example.test/complete")
+        );
     }
 }

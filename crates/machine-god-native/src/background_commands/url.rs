@@ -28,17 +28,26 @@ pub(crate) enum BackgroundUrlError {
     ResourceLimit,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BackgroundUrlCaptureEnd {
+    Snapshot,
+    Truncated,
+}
+
 /// Invalid and overlong candidates are ignored, never shortened into a URL.
 /// An oversized snapshot is rejected before scanning; callers own its capture.
+/// A truncated capture cannot establish termination of its final candidate.
 pub(crate) fn detect_server_url(
     captured: &[u8],
+    end: BackgroundUrlCaptureEnd,
 ) -> Result<Option<BackgroundServerUrl>, BackgroundUrlError> {
     if captured.len() > MAX_BACKGROUND_URL_INPUT_BYTES {
         return Err(BackgroundUrlError::ResourceLimit);
     }
 
     let mut best: Option<(i32, BackgroundServerUrl)> = None;
-    for line in captured.split(|byte| *byte == b'\n') {
+    let mut lines = captured.split(|byte| *byte == b'\n').peekable();
+    while let Some(line) = lines.next() {
         // Fixed hint patterns scan each line only once each, never per candidate.
         let hint_score = line_hint_score(line);
         let mut offset = 0;
@@ -48,10 +57,16 @@ pub(crate) fn detect_server_url(
                 offset += 1;
                 continue;
             }
-            let length = remainder
-                .iter()
-                .position(|byte| is_delimiter(*byte))
-                .unwrap_or(remainder.len());
+            let delimiter = remainder.iter().position(|byte| is_delimiter(*byte));
+            if delimiter.is_none()
+                && lines.peek().is_none()
+                && end == BackgroundUrlCaptureEnd::Truncated
+            {
+                // EOF here is a byte/page/gap boundary, not the URL's end.
+                // Earlier delimited candidates remain eligible.
+                break;
+            }
+            let length = delimiter.unwrap_or(remainder.len());
             let candidate = &remainder[..length];
             // Advance over every candidate, including invalid/overlong ones.
             // Each byte participates in at most one candidate validation.

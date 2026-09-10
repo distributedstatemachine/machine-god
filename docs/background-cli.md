@@ -244,7 +244,11 @@ before the output write and never changes the native receipt on output failure.
 URL selection examines at most 64 KiB of captured output. It accepts only
 validated HTTP(S) candidates whose raw and canonical spellings each fit 2,048
 bytes. Invalid and oversized candidates are skipped, not truncated into valid
-URLs; an oversized input capture is an error. Parsed-host ranking prefers
+URLs; an oversized input capture is an error. If a byte limit, page limit or
+retention gap cuts the captured span short of its snapshot end, its trailing
+unterminated candidate is ineligible. Earlier delimited candidates remain
+eligible. A complete snapshot may end a candidate without a trailing delimiter.
+Parsed-host ranking prefers
 loopback and local-network addresses, uses pinned line hints, and chooses the
 latest candidate on a score tie. Credentials, missing authority, backslashes,
 invalid UTF-8 and embedded whitespace/control characters are rejected.
