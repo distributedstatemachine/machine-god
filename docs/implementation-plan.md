@@ -364,10 +364,13 @@ catalog, installer or picker fragments:
 
 Before workers edit, agree exact shared interfaces, managed location/root
 selection, limits, consent/receipt semantics and continuation representation.
-Use three isolated non-overlapping lanes for catalog/metadata, managed
-installation and thin CLI/picker components. The coordinator owns core context
-projection, native control/host integration, shared exports, composed scenarios
-and behavior documentation. All components feed one complete local gate and
+Use isolated non-overlapping lanes for catalog/metadata, managed installation,
+core context projection and thin CLI/picker components as interfaces permit.
+The coordinator owns native control/host integration, shared exports, composed
+scenarios and behavior documentation, including integration of the core context
+component. The [skills CLI contract](skills-cli.md) records integrated native
+component behavior without claiming that the full CLI is already available.
+All components feed one complete local gate and
 three fresh independent adversarial reviews; retain the same delivery workflow.
 
 ## Parked complete-feature scope: fx session import

@@ -367,6 +367,11 @@ mod session_metadata_commands;
 mod session_resume;
 mod session_store;
 mod skill;
+mod skills_commands;
+pub use skills_commands::{
+    MAX_NATIVE_SKILLS_COMMAND_BYTES, MAX_NATIVE_SKILLS_SELECTOR_BYTES, NativeSkillsCommand,
+    NativeSkillsCommandError,
+};
 mod slash_commands;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
