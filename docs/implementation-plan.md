@@ -332,15 +332,16 @@ All components feed one full feature gate and three fresh adversarial reviews;
 none is a separately delivered feature. Cross-process control and detached
 process survival are not introduced by these interactive commands.
 
-The parser, URL detector/launcher, CLI launcher capture and native terminal
-requester components are integrated locally with focused component evidence.
-Interactive service, control-lane cancellation and bounded rendering are being
-checked against the actual integrated APIs; component checks do not establish
-full feature acceptance. Read-only terminal-history inspection and the top-level
-old/new union are parallel worktree owners. Remaining work includes composed
-interactive scenarios, top-level union/target inspection, fresh-binary scenarios
-and the unchanged full local/review/remote gates. Released capture and requester
-worktrees were removed after clean integration; active worktrees are retained.
+The parser, URL detector/launcher, CLI launcher capture, native terminal
+requester and read-only terminal-history inspector are integrated locally.
+Interactive service, control-lane cancellation, bounded rendering and composed
+native scenarios have passed focused checks against the integrated APIs.
+Top-level old/new history union and fresh-binary scenarios are completing in an
+isolated worktree. Component evidence does not establish full feature acceptance;
+the complete integrated local gate, three fresh reviews and exact feature/main
+remote gates remain required before merging this feature into its accepted
+parent. Released component worktrees are removed after clean integration;
+active validation and implementation worktrees are retained.
 
 ## Parked complete-feature scope: fx session import
 
