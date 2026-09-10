@@ -332,6 +332,16 @@ All components feed one full feature gate and three fresh adversarial reviews;
 none is a separately delivered feature. Cross-process control and detached
 process survival are not introduced by these interactive commands.
 
+The command parser and URL detector components are integrated locally. The
+explicit URL launcher has focused process-fixture coverage; its module and the
+URL detector are currently connected only to the unit-test graph, pending native
+control-lane integration. Do not mistake these component checks for working
+slash commands or a full feature gate. Native terminal requesters and read-only
+terminal-history inspection are separate active worktree owners. Remaining
+integration includes launcher authority capture, command service and receipts,
+interactive dispatch/rendering, top-level union/target inspection, composed
+scenarios and the unchanged full local/review/remote gates.
+
 ## Parked complete-feature scope: fx session import
 
 After the combined CLI delivery seal, implement M04 foreign-session import as

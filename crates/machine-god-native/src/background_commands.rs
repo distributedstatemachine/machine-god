@@ -8,6 +8,9 @@ use std::{fmt, str::FromStr};
 
 use machine_god_core::TerminalSessionId;
 
+#[cfg(test)]
+pub(crate) mod url;
+
 /// Maximum UTF-8 payload size, checked before scanning or allocating.
 pub const MAX_NATIVE_BACKGROUND_COMMAND_BYTES: usize = 256;
 

@@ -150,6 +150,54 @@ FreeBSD, Windows, WASI, and other unsupported targets return the active fixed
 
 ## Deferred pinned-fx surface
 
+### Interactive request and URL-handoff contracts
+
+`NativeBackgroundCommand` parses the payload following `/background` without
+environment, filesystem or process access. An empty payload requests the list;
+`stop`, `open` and `logs` accept one optional target, with an omitted target or
+`last` selecting the latest entry. Space and tab separate tokens. The parser
+rejects more than 256 UTF-8 bytes, other controls, extra tokens, unknown commands
+and invalid targets before any effect.
+
+Interactive targets use the complete terminal host's existing
+`terminal-<32-lowercase-hex>` identities. They are not numeric indices into a
+changing display. This is an intentional spelling difference from pinned fx's
+numeric interactive background IDs; legacy numeric top-level inspection remains
+distinct. Identifiers are descriptive, never process or workspace authority.
+
+URL selection examines at most 64 KiB of captured output. It accepts only
+validated HTTP(S) candidates whose raw and canonical spellings each fit 2,048
+bytes. Invalid and oversized candidates are skipped, not truncated into valid
+URLs; an oversized input capture is an error. Parsed-host ranking prefers
+loopback and local-network addresses, uses pinned line hints, and chooses the
+latest candidate on a score tie. Credentials, missing authority, backslashes,
+invalid UTF-8 and embedded whitespace/control characters are rejected.
+Canonicalization may normalize host spelling, default ports and path encoding.
+Uppercase HTTP(S) schemes are accepted. Candidate text in a path or query cannot
+masquerade as a loopback host.
+
+`NativeBackgroundUrlOpener` receives explicit executable, environment and native
+worker-scope authority. Construction does not discover a browser, read the
+environment or launch a process. The caller protects the executable installation
+for the capability lifetime; retained-file identity checks do not replace that
+prerequisite. A polled request passes one validated URL argument directly to the
+launcher, with no shell interpolation, null standard streams and a fixed root
+working directory. The exact target's generation and cancellation are checked
+at launch admission. No network probe or claim of continued server availability
+follows from a URL observed in output.
+
+Clones share one operation admission through actual direct-child reaping. The
+launcher has a ten-second observation deadline, and cancellation or caller drop
+retains native cleanup ownership. A successful launcher exit reports `Opened`,
+not browser lifetime or network reachability. A nonzero exit reports
+`LauncherFailed` without promising rollback. Once launch begins, lost completion
+or cancellation reports `Indeterminate`; it cannot be represented as proof that
+no browser opened. None of these contracts adds process-control authority to the
+top-level inspection command. Full feature integration and gate state belongs
+only in the [implementation plan](implementation-plan.md).
+
+### Supervisor and terminal ownership
+
 Pinned fx also connects its native supervisor to interactive `/background
 stop`, `open`, and `logs` commands. Machine-god's process-local supervisor is
 not exposed through those commands. Durable cross-process control still
