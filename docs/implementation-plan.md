@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `1a142174fa9302c0475c1260beecb8e2b8e833a0`
 - Main CI: `34424264794` (`GREEN`)
 - Main Benchmark evidence: `34424264790` (`GREEN`)
-- Active branch: `agent/m60-cli-delivery`
-- Active phase: `M03 complete; documentation-only delivery seal`
-- Next gate: `exact lightweight feature/main CI and Benchmark for this seal; then complete fx session import`
+- Active branch: `agent/m61-background-cli`
+- Active phase: `M05 complete interactive background CLI implementation`
+- Next gate: `integrate native terminal-backed background commands, CLI and scenarios; full feature verification`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -296,7 +296,43 @@ the explicitly assigned M04–M07 work or assert literal upstream UI parity.
 | M06 | SDKs and advanced CLI/compatibility surfaces including `pr`, `issue`, account, setup, credit, usage, upgrade, media, product, and appearance categories |
 | M07 | Claim-eligible performance comparison, thresholds, optimization, packaging evidence, and final hardening |
 
-## Next complete feature: fx session import
+## Active complete feature: background CLI
+
+Following the user's request to return to CLI work, continue from accepted
+`main` without merging unfinished import code. Import components remain saved
+on `agent/m61-fx-session-import` at `5e77b1b4`; its worker worktrees are removed,
+and its complete feature requirements below remain outstanding.
+
+Implement the four pinned interactive forms as one feature: `/background`,
+`/background stop`, `/background open`, and `/background logs`. The top-level
+command remains read-only, matching pinned fx's command split. The complete
+CLI launches through the durable terminal host, not the older background
+supervisor, so a facade over legacy numeric records alone is insufficient.
+
+- Reuse native terminal identities, exact session/incarnation access routes,
+  retained worker ownership, durable output and close receipts. Show existing
+  opaque terminal IDs as selectable targets instead of inventing mutable UI
+  indices; keep legacy numeric targets for legacy top-level records.
+- Provide native-owned listing/selection, latest ordering, bounded log
+  presentation, URL detection and explicitly requested URL opening. Listing,
+  selection and help must not start a process or install new authority.
+- Use the same underlying terminal histories for interactive commands and
+  top-level read-only inspection, including complete old/new record handling.
+  Historical records and PIDs cannot recreate live-control authority.
+- Preserve access across existing conversation handoffs and revoke stale
+  operations through the existing generation checks. Cancellation and dropped
+  callers must retain ownership of committed effects and their outcomes.
+- Exercise every command, malformed input, no-match/closed/history-only cases,
+  binary/control-bearing logs, stale URLs, handoff/revocation and output errors
+  with deterministic native fixtures and the fresh release CLI.
+
+Keep parsing and presentation in thin command adapters, and all state/effects
+in native services. Parallel work uses isolated non-overlapping ownership.
+All components feed one full feature gate and three fresh adversarial reviews;
+none is a separately delivered feature. Cross-process control and detached
+process survival are not introduced by these interactive commands.
+
+## Parked complete-feature scope: fx session import
 
 After the combined CLI delivery seal, implement M04 foreign-session import as
 one complete feature on its own branch. This is not the existing metadata-only
