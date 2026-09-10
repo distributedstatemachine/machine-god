@@ -125,10 +125,10 @@ impl Driver {
             Command::Workspace => self.workspace_command(payload, now_ms),
             Command::Background => match payload.parse() {
                 Ok(command) => {
-                    self.control_command(NativeInteractiveControl::Background { command }, now_ms)
+                    self.control_command(NativeInteractiveControl::Background { command }, now_ms);
                 }
                 Err(_) => {
-                    self.note(b"\n[usage: /background [open|logs|stop [terminal-id|last]]]\n> ")
+                    self.note(b"\n[usage: /background [open|logs|stop [terminal-id|last]]]\n> ");
                 }
             },
         }

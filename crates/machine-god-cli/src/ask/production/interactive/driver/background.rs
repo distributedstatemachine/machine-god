@@ -216,9 +216,10 @@ mod tests {
 
     #[test]
     fn head_and_tail_select_opposite_forty_lines() {
-        let bytes = (0..60)
-            .map(|line| format!("line-{line}\n"))
-            .collect::<String>();
+        let mut bytes = String::new();
+        for line in 0..60 {
+            writeln!(bytes, "line-{line}").unwrap();
+        }
         let mut head = BoundedOutput::with_capacity(MAX_OUTPUT_BYTES, 1024);
         let mut tail = BoundedOutput::with_capacity(MAX_OUTPUT_BYTES, 1024);
         render_lines(&mut head, bytes.as_bytes(), false).unwrap();
