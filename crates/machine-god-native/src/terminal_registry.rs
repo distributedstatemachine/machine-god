@@ -13,7 +13,9 @@ use crate::terminal_profile::{
     TerminalJournalPersistence, TerminalProfileBudget, TerminalProfileError,
     TerminalProfileMutationContext,
 };
-use crate::terminal_profile_store::{TerminalProfileStore, TerminalProfileTransaction};
+use crate::terminal_profile_store::{
+    TerminalProfileStore, TerminalProfileStoreError, TerminalProfileTransaction,
+};
 #[cfg(test)]
 use crate::terminal_session::TerminalRecoveredSession;
 use crate::terminal_session::{
@@ -906,6 +908,14 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             };
             let mut transaction = match store.transaction() {
                 Ok(transaction) => transaction,
+                Err(error @ TerminalProfileStoreError::Busy) => {
+                    // A read-only inspector can hold a shared profile lock
+                    // while the shell exits. Keep the backend and its final
+                    // output for the next bounded owner-loop pass; ordinary
+                    // contention must not select the lossy teardown fallback.
+                    // Explicit shutdown still attempts cleanup without a lock.
+                    return Err(profile_error(error.into()));
+                }
                 Err(error) if cleanup => {
                     return session
                         .teardown_without_persistence(true, now_ms, profile_error(error.into()))
@@ -1600,7 +1610,6 @@ mod tests {
     use crate::terminal_journal::{TerminalJournal, TerminalJournalError, TerminalJournalLimits};
     use crate::terminal_monitor::TerminalMonitorActivation;
     use crate::terminal_profile::{TerminalProfileLimits, TerminalTestPersistence};
-    use crate::terminal_profile_store::TerminalProfileStoreError;
     use crate::terminal_pty::{TerminalPtyClose, TerminalPtyRead, TerminalPtyStatus};
     use crate::terminal_session_record::test_metadata;
     use machine_god_core::{
@@ -3048,7 +3057,7 @@ mod tests {
     }
 
     #[test]
-    fn known_exit_without_profile_lock_still_closes_native() {
+    fn known_exit_busy_profile_defers_and_preserves_exit_tail() {
         let fixture = Fixture::new();
         let owner = owner("exit");
         let id = id("busy-profile-exit");
@@ -3058,7 +3067,108 @@ mod tests {
             .start(owner.clone(), id.clone(), || Ok(session))
             .unwrap();
         let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
-        let held = store.transaction().unwrap();
+        // Hold the same read-only shared flock as background history inspection.
+        let held = rustix::fs::open(
+            fixture.path.join("terminal-v1/profile-lock"),
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .unwrap();
+        rustix::fs::flock(&held, rustix::fs::FlockOperation::NonBlockingLockShared).unwrap();
+        let expected = b"final output\nlast line\n";
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.statuses.extend([TerminalPtyStatus::Exited(0); 5]);
+            state.tail = vec![b"final output\n".to_vec(), b"last line\n".to_vec()];
+        }
+        let before = registry.inspect(&owner, &id).unwrap();
+        for now_ms in 1..=3 {
+            let steps = registry
+                .pump_with_profile(&store, &budget, now_ms, 1)
+                .unwrap();
+            assert_eq!(steps.len(), 1);
+            assert!(matches!(
+                steps[0].result,
+                Err(TerminalSessionError::History(
+                    TerminalHistoryError::Profile(TerminalProfileError::Store(
+                        TerminalProfileStoreError::Busy
+                    ))
+                ))
+            ));
+            assert!(steps[0].cleanup_error.is_none());
+            let session = registry.live_mut(&owner, &id).unwrap();
+            assert!(session.owns_backend());
+            assert!(session.publication_error().is_none());
+            assert_eq!(session.context().cursor, before.context.cursor);
+            assert_eq!(session.context().lifecycle, before.context.lifecycle);
+            assert_eq!(session.context().now_ms, before.context.now_ms);
+            assert_eq!(
+                registry.release(&owner, &id),
+                Err(TerminalRegistryError::Busy)
+            );
+        }
+        assert_eq!(fixture.state.lock().unwrap().reads, 0);
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        assert_eq!(fixture.state.lock().unwrap().dropped, 0);
+        assert_eq!(fixture.state.lock().unwrap().tail.concat(), expected);
+        rustix::fs::flock(&held, rustix::fs::FlockOperation::Unlock).unwrap();
+        drop(held);
+        let mut steps = registry.pump_with_profile(&store, &budget, 4, 1).unwrap();
+        let receipt = steps.remove(0);
+        assert!(receipt.cleanup_error.is_none());
+        assert_eq!(receipt.result.unwrap().lifecycle, TerminalLifecycle::Exited);
+        let cursor = TerminalCursor::new(1, 0).unwrap();
+        let page = registry.read(&owner, &id, &cursor, 64 * 1024).unwrap();
+        assert_eq!(page.bytes, expected);
+        assert!(page.gap.is_none());
+        assert!(
+            registry
+                .pump_with_profile(&store, &budget, 5, 1)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            registry
+                .shutdown_with_profile(&store, &budget, 6, TerminalClosePolicy::Force)
+                .unwrap()
+                .is_empty()
+        );
+        registry.release(&owner, &id).unwrap();
+        let directory = rustix::fs::open(
+            fixture
+                .path
+                .join("terminal-v1")
+                .join(owner_name("/workspace", &owner))
+                .join("sessions")
+                .join(id.as_str()),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .unwrap();
+        let journal =
+            TerminalJournal::open_existing(directory, &id, TerminalJournalLimits::default())
+                .unwrap();
+        let history = TerminalHistory::recover(journal).unwrap();
+        let page = history.read(&cursor, 64 * 1024).unwrap();
+        assert_eq!(page.bytes, expected);
+        assert!(page.gap.is_none());
+        assert_eq!(fixture.state.lock().unwrap().reads, 0);
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert_eq!(fixture.state.lock().unwrap().dropped, 1);
+    }
+
+    #[test]
+    fn known_exit_with_missing_profile_lock_still_closes_native() {
+        let fixture = Fixture::new();
+        let owner = owner("exit");
+        let id = id("missing-profile-exit");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        std::fs::remove_file(fixture.path.join("terminal-v1/profile-lock")).unwrap();
         fixture
             .state
             .lock()
@@ -3069,14 +3179,9 @@ mod tests {
         assert!(steps[0].result.is_err());
         assert_eq!(fixture.state.lock().unwrap().reads, 0);
         assert_eq!(fixture.state.lock().unwrap().closes, 1);
-        assert!(
-            registry
-                .live_mut(&owner, &id)
-                .unwrap()
-                .publication_error()
-                .is_some()
-        );
-        drop(held);
+        let session = registry.live_mut(&owner, &id).unwrap();
+        assert!(!session.owns_backend());
+        assert!(session.publication_error().is_some());
     }
 
     #[test]

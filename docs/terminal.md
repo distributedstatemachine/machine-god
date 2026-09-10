@@ -985,7 +985,14 @@ and unexecuted probe descriptions without adding another retained output queue.
 Profile-aware pumping acquires a nonblocking transaction and read reservation
 for each running session before consuming native output. Lock contention or
 capacity refusal advances fairness but leaves that session's output and input
-authority untouched. Known exit cleanup does not require normal-read headroom.
+authority untouched. Known exit cleanup does not require normal-read headroom,
+but transient profile-lock contention, including a shared read-only background
+inspection, defers its drain and close until a later bounded owner-loop pass can
+acquire the transaction. The resident retains its backend and unread exit tail;
+it cannot be recycled or released during that deferral. Retries use the existing
+pump cadence and residency bound, without an additional queue or worker. Other
+profile-authority failures retain the no-persistence cleanup path, as do host
+shutdown and final registry drop; shutdown does not wait indefinitely for a reader.
 Native status failures are not capacity deferrals: they mark the session lost
 and quiesce input and monitors. The owner publishes that observation when
 admitted, otherwise retaining an explicit publication failure without journal
