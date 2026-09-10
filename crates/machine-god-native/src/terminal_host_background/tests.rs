@@ -31,6 +31,9 @@ use std::sync::{
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+#[path = "tests/service.rs"]
+mod service;
+
 #[derive(Default)]
 struct Spawner(Mutex<Vec<std::thread::JoinHandle<()>>>);
 impl TerminalRuntimeSpawner for Spawner {
@@ -116,6 +119,7 @@ struct Row {
     cold: bool,
     bytes: Vec<u8>,
     command: String,
+    history_limits: Option<TerminalJournalLimits>,
 }
 impl Row {
     fn new(number: u32, created: i64, cold: bool) -> Self {
@@ -125,6 +129,7 @@ impl Row {
             cold,
             bytes: b"hello\0\xff\x1b[31m".to_vec(),
             command: "SECRET command".into(),
+            history_limits: None,
         }
     }
 }
@@ -292,21 +297,25 @@ fn populate(
                 &mut transaction,
                 catalog.namespace_key(),
                 &session_id,
-                TerminalJournalLimits {
+                row.history_limits.unwrap_or(TerminalJournalLimits {
                     segment_bytes: 128 * 1024,
                     session_bytes: 16 * 1024 * 1024,
-                },
+                }),
             )
             .unwrap();
         created.accounting.unwrap();
         let mut persistence =
             TerminalProfileMutationContext::new(&mut transaction, budget, catalog.namespace_key());
-        let mut history = TerminalHistory::create_with(
-            &mut persistence,
-            created.operation.unwrap(),
-            &TerminalDimensions::new(3, 20).unwrap(),
-        )
-        .unwrap();
+        let dimensions = TerminalDimensions::new(3, 20).unwrap();
+        let mut history = if row.history_limits.is_some() {
+            // Historical small-segment fixtures predate live checkpoint reserve
+            // admission. Never use this path to construct a live backend.
+            assert!(row.cold);
+            TerminalHistory::create(created.operation.unwrap(), &dimensions).unwrap()
+        } else {
+            TerminalHistory::create_with(&mut persistence, created.operation.unwrap(), &dimensions)
+                .unwrap()
+        };
         for chunk in row.bytes.chunks(65536) {
             history.append_with(&mut persistence, chunk).unwrap();
         }
