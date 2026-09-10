@@ -137,3 +137,46 @@ both variables and therefore did not expose this mismatch. Remediation uses
 the existing native-test helper contract without changing CI, skipping the
 scenario, weakening assertions, or changing product behavior. This candidate
 was not merged; the helper-selection correction requires replacement gates.
+
+### Helper correction gate and rejected cancellation review
+
+Candidate `8c1fcbfb53fc86df23590ceb289c6f2184301a5d`, tree
+`e94e5ebfeb3a533f99c4c49f39a506d595c1f70f`, passed the complete replacement
+local gate. macOS had 4,647 non-doctest passes and 18 ignored; Linux had 4,652
+non-doctest passes and 17 ignored. Each platform also passed three included
+doctests, three explicit doctests and the separate harnessless terminal CLI
+target. The fresh background-history CLI scenario passed with only the native
+helper variable set on both platforms; macOS also passed with an intentionally
+invalid unrelated CLI override. Linux's fresh helper was outside the source
+tree's fallback location. All other canonical local checks passed, including
+269 Python tests with 14 expected skips. Neither runtime required retries or
+changed deadlines. Logs were retained and the clean validation environments
+removed before the review iteration finished.
+
+Three new independent static local fallback reviewers inspected the complete
+feature against parent `79d3d4d426aa52816ce6dd70020b7f6a0866da38`:
+
+| Track | Agent | Findings |
+| --- | --- | --- |
+| Correctness/API | `background_review_correctness_03` | P2: background-control cancellation suppresses simultaneous turn/admission cancellation. |
+| Lifecycle/platform | `background_review_lifecycle_03` | Zero actionable introduced findings. |
+| Performance/resources | `background_review_resources_03` | Zero actionable introduced findings. |
+
+The early return in `NativeInteractiveSession::request_cancel` cancelled the
+background token without setting `cancel_requested` for an existing admission
+or turn. Control admission permits those operations to coexist, so the turn
+could resume after a cancelled background operation settled. This contradicted
+the existing public turn-cancellation contract. The finding rejects this
+candidate despite its complete local gate; it was not pushed or merged. All
+three clean review worktrees were released and removed. Remediation must retain
+both cancellation requests and the control's completion receipt, preserve
+admission settlement, and avoid cancelling future queued work.
+
+Five deterministic regressions reproduced the defect before correction: the
+active-turn case failed because cancellation never reached its owned turn;
+the pending-admission case settled as completed instead of cancelled. The three
+background-only and shutdown/closed receipt cases already passed. The fix
+guards closed/shutting-down owners first, cancels an existing background token,
+and independently latches cancellation only for an already-owned admission or
+turn. It does not drop the control future or set cancellation for later queued
+prompts. These red results establish the defect, not replacement acceptance.

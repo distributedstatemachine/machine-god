@@ -231,6 +231,9 @@ from readable history; command previews are explicitly shortened at 256 bytes.
 history-only result does not assert a process was stopped. `/cancel` and shutdown
 cancel background controls while continuing to own their completion futures;
 committed or uncertain effects are not reported as rollback and are not retried.
+When an admission or conversation turn is also active, `/cancel` requests its
+cancellation as well; cancelling the control cannot suppress turn cancellation.
+A background-only cancellation does not spill into a later queued prompt.
 
 `logs` reads separate head and tail windows of at most 16 KiB each, with at most
 1,024 native pages per window. Each window freezes its first observed end

@@ -235,7 +235,10 @@ saved and failed targets. Without injected defaults authority only the session
 target is available; `save-default` never discovers an ambient store.
 Ordinary prompts retain their 256 KiB bound independently of the 64 KiB slash
 envelope. `/cancel` requests owned turn cancellation without replacing its
-session or discarding untaken prompts; an accepted save settles first.
+session or discarding untaken prompts; an accepted save settles first. If a
+background control coexists with an admission or current turn, the same request
+cancels both while retaining the control's completion receipt. Cancelling a
+background control alone does not cancel a later queued prompt.
 
 `/undo` requests the latest cooperating file inverse from the complete host's
 shared native tracker, including during an active response. It does not cancel

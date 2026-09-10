@@ -431,16 +431,21 @@ impl NativeInteractiveSession {
     /// Requests cancellation of the owned admission/current turn without
     /// replacing the session or discarding queued input. Accepted publications
     /// settle first; cancellation never drops their metadata editor.
+    /// Also signals a pending background control without dropping its future
+    /// or receipt, including when that control coexists with the current turn.
     /// Returns acceptance, not a settled turn or persistence receipt.
     pub fn request_cancel(&mut self) -> bool {
-        if !self.closed && !self.shutting_down && self.cancel_background_control() {
-            self.notify();
-            return true;
-        }
-        if self.closed || self.shutting_down || (self.admission.is_none() && self.turn.is_none()) {
+        if self.closed || self.shutting_down {
             return false;
         }
-        self.cancel_requested = true;
+        let background_cancelled = self.cancel_background_control();
+        let owns_turn = self.admission.is_some() || self.turn.is_some();
+        if !background_cancelled && !owns_turn {
+            return false;
+        }
+        if owns_turn {
+            self.cancel_requested = true;
+        }
         self.notify();
         true
     }

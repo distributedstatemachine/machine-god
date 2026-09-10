@@ -38,6 +38,9 @@ mod allowlist;
 #[path = "workspace_tests.rs"]
 mod workspace;
 
+#[path = "cancellation_tests.rs"]
+mod cancellation;
+
 fn preferences(model: &str) -> NativeModelPreferences {
     NativeModelPreferences::new(model, NativeReasoningEffort::default(), false).unwrap()
 }

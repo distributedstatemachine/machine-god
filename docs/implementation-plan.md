@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34424264790` (`GREEN`)
 - Active branch: `agent/m61-background-cli`
 - Active phase: `M05 complete interactive background CLI implementation`
-- Next gate: `CI helper-selection remediation full local gate; then three fresh adversarial reviews`
+- Next gate: `cancellation remediation replacement full local gate; then three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -346,11 +346,17 @@ regressions that reproduced the failures before remediation. The replacement
 complete local gate and three fresh reviews passed, but the remote platform
 matrix exposed a test-helper path mismatch: the new history scenario ignored
 the target-specific release helper already exported by CI. It now selects the
-same native-test helper variable as the other native scenarios. A complete
-replacement local gate, three fresh reviews and exact feature/main remote
-gates remain required before merging this feature into its accepted parent.
-Released component and review worktrees are removed; active validation
-worktrees are retained.
+same native-test helper variable as the other native scenarios. That replacement
+local gate passed, including explicit helper-only regressions on Linux and
+macOS. Fresh review then found that cancelling a background control could
+suppress cancellation of a simultaneously active turn or admission. The fix
+independently latches cancellation for both owned operations without discarding
+committed receipts or cancelling later queued prompts. Five deterministic
+regressions reproduced the two affected cases before correction while preserving
+the three background-only and shutdown cases. A complete replacement local gate,
+three fresh reviews and exact feature/main remote gates remain required before merging this
+feature into its accepted parent. Released validation and review worktrees are
+removed; active implementation worktrees are retained.
 
 ## Parked complete-feature scope: fx session import
 
