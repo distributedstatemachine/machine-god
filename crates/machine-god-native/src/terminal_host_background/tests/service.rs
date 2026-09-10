@@ -24,7 +24,7 @@ struct Script {
     cancel_after_second_inspection: Option<CancellationToken>,
     after_first_read: Option<Vec<u8>>,
     page_cap: Option<usize>,
-    gap_after_first_read: bool,
+    gap_after_read: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -172,7 +172,7 @@ impl BackgroundRequests for Adapter {
                     } else {
                         None
                     },
-                    script.gap_after_first_read && script.reads > 1,
+                    script.gap_after_read.is_some_and(|read| script.reads > read),
                 )
             };
             let mut page = read_request(
@@ -708,7 +708,7 @@ fn url_capture_boundaries_never_open_incomplete_candidates() {
                 {
                     let mut script = adapter.script.lock().unwrap();
                     script.page_cap = page_cap;
-                    script.gap_after_first_read = retention_gap;
+                    script.gap_after_read = retention_gap.then_some(1);
                 }
                 let launcher = Launcher::new();
                 let receipt = block_on(execute_with(
