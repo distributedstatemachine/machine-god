@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34424264794` (`GREEN`)
 - Main Benchmark evidence: `34424264790` (`GREEN`)
 - Active branch: `agent/m61-background-cli`
-- Active phase: `M05 background CLI macOS cleanup diagnosis`
-- Next gate: `focused diagnostic reproduction; replacement full local gate and three fresh reviews`
+- Active phase: `M05 background CLI replacement local gate`
+- Next gate: `complete exact local gate and three fresh independent reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -359,8 +359,14 @@ failed in two different macOS terminal-close fixtures across its initial run
 and one unchanged retry. Neither failure establishes a source defect; both
 erase the precise cleanup error. Error-only test diagnostics now distinguish
 inventory query, tmux close and private-server retirement stages without new
-observations, retries, fallback paths or changed deadlines. Focused reproduction
-and replacement local/review/remote gates remain required before merging.
+process observations, retries, fallback paths or changed deadlines. Both original
+close fixtures passed three focused repetitions, but the serial terminal group hit a
+previously observed inventory-readiness timeout before the PTY command started.
+The immediate predecessor/target pair, a wider PTY prefix and one full terminal
+group passed with bounded external process observation; they do not establish
+a cause. The original failed log remains retained. Replacement full
+local/review/remote gates remain required before merging. No deadline is relaxed
+and no source-fix claim follows from these runs.
 Completed validation and review worktrees are removed; active diagnostic work
 is retained. Detailed evidence belongs in the existing background review ledger.
 

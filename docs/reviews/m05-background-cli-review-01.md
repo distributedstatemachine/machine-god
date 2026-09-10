@@ -224,7 +224,7 @@ cancellation changes are outside these tests' direct backend paths. Indirect
 suite/resource interactions remain possible; neither runner load nor a shared
 inventory cause is proven. Both failed logs are retained, and no third blind
 retry or merge followed. New error-only test diagnostics retain typed failures
-and identify query/close/server-retirement stages without new observations,
+and identify query/close/server-retirement stages without new process observations,
 deadline changes, retries or alternate cleanup paths. They are diagnostic
 remediation, not a claimed source fix or feature acceptance.
 
@@ -233,3 +233,33 @@ executable, but focused Clippy rejected two functions exceeding the line limit.
 No runtime tests were started on that candidate. The correction separates tmux
 transport observation from namespace retirement and groups inventory diagnostic
 timing context; it does not suppress lints or change cleanup/query budgets.
+
+Candidate `173d800a` passed focused native library Clippy, fresh release/test
+builds, 27 inventory tests, 29 tmux tests and three repetitions of each original
+CI-close fixture. Its serial terminal group failed with 775 passes, one failure
+and five ignored tests. `full_command_boundary_executes_as_one_argument_and_reaps`
+received zero inventory-readiness bytes over about 1.995 seconds; the subsequent
+bounded reap also timed out. This is startup, before command transmission or an
+inventory query, not either remote close failure. Native all-target Clippy and
+full-gate expansion did not start after that failed command.
+
+Read-only predecessor analysis found no persistent state mutation establishing
+a cause. A bounded external observer then accompanied the exact two-test
+predecessor/target pair (two passes) and PTY prefix (12 passes), without source
+changes or adjusted deadlines. Seven PID-only snapshots were attempted. One
+validated helper briefly reported state `U` and was absent at the next sample;
+the remaining absence or executable-mismatch stops do not identify a loader,
+kernel, scheduling or product cause. Raw failed and controlled logs remain
+separate. These passing controlled runs do not replace the failed gate or
+establish remediation. The same candidate also passed all 269 repository Python
+tests with 14 expected skips, pinned compatibility/Unicode drift checks,
+dependency policy and vulnerability audit.
+
+One additional observed full-context run selected the same 781 terminal tests
+and passed: 776 passes, five ignored, no failures, in 219.01 seconds. Observation
+remained limited to the target fixture's three inventory-service spawns, with
+four PID-only snapshots and no signals, suspension, source changes or deadline
+changes. One exact helper reported state `S` before disappearing at the next
+sample; no failing startup or close was captured. This bounds the reproduction
+attempts and supports proceeding to a complete replacement gate, not a source
+fix or feature-acceptance claim.
