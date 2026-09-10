@@ -1,7 +1,7 @@
 # Skills CLI components
 
-The complete skills CLI is being integrated as one feature. Its current
-implementation and delivery gates are tracked only in the
+This document describes native components supporting human-invoked skills.
+Implementation status and delivery gates are tracked only in the
 [implementation plan](implementation-plan.md). The native component APIs below
 does not by itself register an interactive CLI command or install authority.
 Existing model-facing [skill](skill.md) and [install_skill](install-skill.md)
@@ -144,3 +144,38 @@ native capability; the storage API does not execute a package manager or shell.
 
 Already admitted prompt text uses the checkpoint-bound continuation contract in
 [native conversation](native-conversation.md#checkpoint-bound-skill-context).
+
+## Exact invocation planning
+
+`NativeSkillInvocationPlan::resolve` is effect-free. The caller supplies the
+exact prompt, an observed catalog snapshot and already prompt/span-bound picker
+selections. The planner additionally validates every explicit selection's
+authority and revision against that snapshot, including duplicates, before
+cloning anything. Explicit selections retain their caller order; automatic
+matches follow in catalog order, deduplicated by location. The originating
+catalog must remain available for later exact materialization.
+
+Automatic matching follows the pinned leading forms: `$name` or `/name` after
+ASCII whitespace, or an initial affirmative `use`/`apply`/`activate`/`invoke`/`run`
+request naming a skill, with optional `Please` and `the`. Initial quoted forms,
+negations and incidental later mentions do not match. Sigils compare ASCII case
+insensitively and otherwise preserve bytes; their continuation boundary excludes
+only ASCII alphanumeric, underscore and hyphen bytes. Natural references use
+the pinned ASCII-word normalization, not Unicode case folding. Consequently,
+`$reviewé` can match `review`, and `Please-use review skill` is accepted. These
+are compatibility rules, not a general natural-language intent classifier.
+
+Exact duplicate advertised names are excluded from automatic matching. Distinct
+case variants or names that normalize alike may both match; neither becomes an
+arbitrary precedence winner. Arbitrary inline `$` mentions require explicit
+picker bindings rather than automatic sentence scanning.
+
+Incomplete discovery suppresses all automatic selection while preserving valid
+explicit selections. `automatic_matching_incomplete()` must be visibly reported
+by the composed host; an empty automatic result is not proof of absence or
+uniqueness. No context is read or authority inferred by this planner.
+
+Prompts are limited to 256 KiB, explicit and resulting selections to 16, and
+aggregate retained selection text to 64 KiB. Incoming count/bytes are checked
+before deduplication. Result bounds are checked before selection cloning;
+failure is atomic. Materialized prompt context has its own independent limits.

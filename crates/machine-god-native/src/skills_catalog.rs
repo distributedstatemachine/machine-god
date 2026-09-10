@@ -293,6 +293,11 @@ pub struct NativeSkillEntry {
     selection: NativeSkillSelection,
 }
 impl NativeSkillEntry {
+    /// Borrows the exact binding for comparison and admission without copying.
+    #[must_use]
+    pub fn selection_ref(&self) -> &NativeSkillSelection {
+        &self.selection
+    }
     #[must_use]
     pub fn selection(&self) -> NativeSkillSelection {
         self.selection.clone()
