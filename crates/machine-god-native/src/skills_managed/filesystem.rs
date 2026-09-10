@@ -4,7 +4,7 @@ use super::{
 };
 use machine_god_core::CancellationToken;
 use rustix::fd::AsFd;
-use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::fs::File;
@@ -253,16 +253,49 @@ pub(super) fn read_tree(
 }
 fn names(directory: &File, budget: &mut Budget<'_>) -> Result<Vec<String>, Error> {
     budget.charge()?;
-    let stream = Dir::read_from(directory.as_fd()).map_err(|_| Error::Unavailable)?;
+    // A new open-file description gives each bounded rewalk its own cursor.
+    // Duplicating the retained descriptor would share its seek position.
+    let cursor = open_directory(directory, ".")?;
+    #[cfg(target_os = "linux")]
+    let mut buffer = [std::mem::MaybeUninit::uninit(); 16 * 1024];
+    #[cfg(target_os = "linux")]
+    let mut stream = rustix::fs::RawDir::new(cursor.as_fd(), &mut buffer);
+    #[cfg(target_os = "macos")]
+    let mut stream = crate::macos_directory::MacosDirectoryReader::new(cursor.as_fd());
     let mut names = Vec::new();
-    for entry in stream {
+    loop {
+        // CPU iteration and each actual refill are independently charged. The
+        // platform reader makes at most one native call and does not retry INTR.
         budget.charge()?;
-        let entry = entry.map_err(|_| Error::Unavailable)?;
-        let raw = entry.file_name().to_bytes();
+        if stream.is_buffer_empty() {
+            budget.charge()?;
+        }
+        #[cfg(target_os = "linux")]
+        let next = stream
+            .next()
+            .map(|entry| entry.map(|entry| entry.file_name().to_bytes().to_vec()));
+        #[cfg(target_os = "macos")]
+        let next = stream.next_name().map(|entry| {
+            entry.map(|entry| match entry {
+                crate::macos_directory::MacosDirectoryEntry::Name(name) => name,
+                crate::macos_directory::MacosDirectoryEntry::Skipped => b".".to_vec(),
+            })
+        });
+        #[cfg(test)]
+        after_directory_read();
+        if budget.cancellation.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let raw = match next {
+            None => break,
+            Some(Err(error)) if error == rustix::io::Errno::INTR => continue,
+            Some(Err(_)) => return Err(Error::Unavailable),
+            Some(Ok(raw)) => raw,
+        };
         if raw == b"." || raw == b".." {
             continue;
         }
-        let name = std::str::from_utf8(raw).map_err(|_| Error::InvalidEntry)?;
+        let name = std::str::from_utf8(&raw).map_err(|_| Error::InvalidEntry)?;
         if name.is_empty()
             || name.len() > 255
             || name
@@ -277,6 +310,18 @@ fn names(directory: &File, budget: &mut Budget<'_>) -> Result<Vec<String>, Error
     names.sort();
     Ok(names)
 }
+
+#[cfg(test)]
+thread_local! { static DIRECTORY_READ_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(test)]
+fn after_directory_read() {
+    DIRECTORY_READ_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
 fn read_directory(
     directory: &File,
     prefix: &str,
@@ -476,4 +521,74 @@ pub(super) fn random_name() -> Result<String, Error> {
         write!(&mut name, "{byte:02x}").map_err(|_| Error::Unavailable)?;
     }
     Ok(name)
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    struct Fixture(std::path::PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "mg-managed-directory-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("entry"), "bytes").unwrap();
+            Self(path)
+        }
+        fn file(&self) -> File {
+            open_absolute_directory(&self.0).unwrap()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn repeated_rewalks_have_independent_directory_cursors() {
+        let fixture = Fixture::new();
+        let directory = fixture.file();
+        let token = CancellationToken::new();
+        for _ in 0..3 {
+            assert_eq!(
+                names(&directory, &mut Budget::new(&token)).unwrap(),
+                ["entry"]
+            );
+        }
+    }
+    #[test]
+    fn exhausted_work_or_entry_budget_does_not_succeed() {
+        let fixture = Fixture::new();
+        let directory = fixture.file();
+        let token = CancellationToken::new();
+        let mut budget = Budget::new(&token);
+        budget.operations = MAX_MANAGED_SKILL_OPERATIONS;
+        assert_eq!(names(&directory, &mut budget), Err(Error::ResourceLimit));
+        let mut budget = Budget::new(&token);
+        budget.entries = MAX_MANAGED_SKILL_ENTRIES;
+        assert_eq!(names(&directory, &mut budget), Err(Error::ResourceLimit));
+    }
+    #[test]
+    fn cancellation_after_native_return_discards_observation() {
+        let fixture = Fixture::new();
+        let directory = fixture.file();
+        let token = CancellationToken::new();
+        let signal = token.clone();
+        DIRECTORY_READ_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                signal.cancel();
+            }));
+        });
+        assert_eq!(
+            names(&directory, &mut Budget::new(&token)),
+            Err(Error::Cancelled)
+        );
+    }
 }

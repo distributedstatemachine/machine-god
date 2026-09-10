@@ -3,7 +3,7 @@
 This document describes native components supporting human-invoked skills.
 Implementation status and delivery gates are tracked only in the
 [implementation plan](implementation-plan.md). The native component APIs below
-does not by itself register an interactive CLI command or install authority.
+do not by themselves register an interactive CLI command or install authority.
 Existing model-facing [skill](skill.md) and [install_skill](install-skill.md)
 tools keep their independent contracts and permission boundaries.
 
@@ -133,6 +133,9 @@ at most 16,384 work steps; a path-open step may include up to 32 descriptor-rela
 opens, so this is not a raw syscall count. Cleanup separately allows 8,194 entries,
 2 MiB names and 65,536 steps to cover both staged and backup trees. Lock waiting
 is limited to two seconds and 201 attempts; kernel-call latency remains separate.
+Directory enumeration charges both iteration and buffer refills, including
+bounded interrupted-call retries, and checks cancellation after native returns.
+Repeated walks use independently opened descriptor-relative directory cursors.
 
 Remote preparation injects `NativeSkillGitRunner` with the exact precreated
 private clone directory, cancellation, a 120-second deadline, 64 KiB output limit
@@ -144,6 +147,31 @@ native capability; the storage API does not execute a package manager or shell.
 
 Already admitted prompt text uses the checkpoint-bound continuation contract in
 [native conversation](native-conversation.md#checkpoint-bound-skill-context).
+
+## Native command service
+
+`NativeSkillsService` combines an explicit catalog with optional managed-write
+authority. Construction is inert; synchronous execution requires an admitted
+host-owned worker. Every command is validated before effects, including directly
+constructed command variants. The caller supplies the current directory and
+cancellation token; the service never reads ambient home or environment values.
+
+List returns catalog data. Show returns a menu query and optional exact focus,
+not skill contents. Missing names produce a not-found notice; ambiguous or
+incomplete discovery cannot invent a unique name selection. Path requires the
+managed adapter. Create and install derive replacement consent solely from the
+outer `--replace` flag and the plan's exact destination revisions. Mutation
+receipts remain separate from any caller-requested later refresh; partial,
+rolled-back, unattempted or uncertain batches are not successful controls.
+
+Removal resolves only managed entries by advertised name, basename or exact
+location. Name-only removal rejects incomplete discovery. Compose the catalog
+using `NativeManagedSkills::catalog_root()` so discovery and mutation retain the
+same directory capability. Equal path labels, or independent opens of the same
+inode, do not recreate that identity. Removal rejects foreign capabilities before
+preparation, then materializes the original selection before committing the
+captured destination revision. It cannot transfer a stale name selection to a
+replacement occupant. Managed recovery identifiers remain reporting evidence.
 
 ## Exact invocation planning
 

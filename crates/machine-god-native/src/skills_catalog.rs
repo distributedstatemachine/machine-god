@@ -243,6 +243,15 @@ pub struct NativeSkillSelection {
 }
 
 impl NativeSkillSelection {
+    /// Capability identity, deliberately stricter than equal path or inode spelling.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn belongs_to_managed_directory(&self, directory: &Arc<File>) -> bool {
+        Arc::ptr_eq(&self.root.directory, directory)
+            && self.root.relative == std::path::Path::new("skills")
+            && self.root.source == NativeSkillSource::Managed
+            && self.root.links == NativeSkillLinkPolicy::Reject
+    }
+
     #[must_use]
     pub fn location(&self) -> &std::path::Path {
         &self.location

@@ -374,6 +374,8 @@ mod skills_invocation;
 mod skills_managed;
 mod skills_metadata;
 mod skills_prompt_context;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod skills_service;
 pub use skills_catalog::{
     MAX_NATIVE_SKILL_CANDIDATES, MAX_NATIVE_SKILL_DIAGNOSTICS, MAX_NATIVE_SKILL_DIRECTORY_BYTES,
     MAX_NATIVE_SKILL_DISCOVERY_BYTES, MAX_NATIVE_SKILL_IO_ATTEMPTS, MAX_NATIVE_SKILL_LINK_HOPS,
@@ -408,6 +410,11 @@ pub use skills_metadata::{
 };
 pub use skills_prompt_context::{
     NATIVE_SKILL_PROMPT_CONTEXT_KEY, NativeSkillPromptContext, NativeSkillPromptContextError,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use skills_service::{
+    NativeSkillsCatalogView, NativeSkillsNotice, NativeSkillsService, NativeSkillsServiceError,
+    NativeSkillsServiceResult,
 };
 mod slash_commands;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

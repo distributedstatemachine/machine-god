@@ -196,6 +196,38 @@ impl fmt::Debug for NativeManagedSkills {
     }
 }
 impl NativeManagedSkills {
+    /// Reports the configured native managed location without inspecting or creating it.
+    #[must_use]
+    pub fn managed_path(&self) -> PathBuf {
+        self.root_path.join("skills")
+    }
+
+    /// Binds discovery to this exact retained state-root capability without I/O.
+    /// # Errors
+    /// Rejects labels which exceed the catalog's independent path bounds.
+    pub fn catalog_root(
+        &self,
+    ) -> Result<
+        crate::skills_catalog::NativeSkillRoot,
+        crate::skills_catalog::NativeSkillCatalogError,
+    > {
+        crate::skills_catalog::NativeSkillRoot::from_directory(
+            Arc::clone(&self.root),
+            PathBuf::from("skills"),
+            self.root_path.clone(),
+            self.managed_path(),
+            crate::skills_catalog::NativeSkillSource::Managed,
+            crate::skills_catalog::NativeSkillLinkPolicy::Reject,
+        )
+    }
+
+    pub(crate) fn owns_selection(
+        &self,
+        selection: &crate::skills_catalog::NativeSkillSelection,
+    ) -> bool {
+        selection.belongs_to_managed_directory(&self.root)
+    }
+
     /// Opens the selected existing state root without creating the managed namespace.
     /// # Errors
     /// Rejects nonabsolute, unavailable, or non-directory roots.
