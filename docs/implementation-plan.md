@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34424264790` (`GREEN`)
 - Active branch: `agent/m61-background-cli`
 - Active phase: `M05 complete interactive background CLI implementation`
-- Next gate: `integrate native terminal-backed background commands, CLI and scenarios; full feature verification`
+- Next gate: `complete integrated background CLI local verification; then three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -333,11 +333,12 @@ none is a separately delivered feature. Cross-process control and detached
 process survival are not introduced by these interactive commands.
 
 The parser, URL detector/launcher, CLI launcher capture, native terminal
-requester and read-only terminal-history inspector are integrated locally.
+requester, read-only terminal-history inspector and top-level old/new history
+union are integrated locally.
 Interactive service, control-lane cancellation, bounded rendering and composed
 native scenarios have passed focused checks against the integrated APIs.
-Top-level old/new history union and fresh-binary scenarios are completing in an
-isolated worktree. Component evidence does not establish full feature acceptance;
+Fresh-binary history scenarios and the complete integrated verification remain
+pending. Component evidence does not establish full feature acceptance;
 the complete integrated local gate, three fresh reviews and exact feature/main
 remote gates remain required before merging this feature into its accepted
 parent. Released component worktrees are removed after clean integration;
