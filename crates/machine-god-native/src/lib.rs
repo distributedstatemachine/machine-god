@@ -367,11 +367,39 @@ mod session_metadata_commands;
 mod session_resume;
 mod session_store;
 mod skill;
+mod skills_catalog;
 mod skills_commands;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod skills_managed;
+mod skills_metadata;
 mod skills_prompt_context;
+pub use skills_catalog::{
+    MAX_NATIVE_SKILL_CANDIDATES, MAX_NATIVE_SKILL_DIAGNOSTICS, MAX_NATIVE_SKILL_DIRECTORY_BYTES,
+    MAX_NATIVE_SKILL_DISCOVERY_BYTES, MAX_NATIVE_SKILL_IO_ATTEMPTS, MAX_NATIVE_SKILL_LINK_HOPS,
+    MAX_NATIVE_SKILL_MATERIALIZED_BYTES, MAX_NATIVE_SKILL_PATH_BYTES,
+    MAX_NATIVE_SKILL_PATH_COMPONENTS, MAX_NATIVE_SKILL_QUERY_BYTES, MAX_NATIVE_SKILL_QUERY_ROWS,
+    MAX_NATIVE_SKILL_ROOTS, MAX_NATIVE_SKILL_SNAPSHOT_BYTES, MAX_NATIVE_SKILL_VISITED_ENTRIES,
+    NativeSkillCatalog, NativeSkillCatalogError, NativeSkillDiagnostic, NativeSkillEntry,
+    NativeSkillLinkPolicy, NativeSkillMaterialized, NativeSkillRoot, NativeSkillSelection,
+    NativeSkillSnapshot, NativeSkillSource,
+};
 pub use skills_commands::{
     MAX_NATIVE_SKILLS_COMMAND_BYTES, MAX_NATIVE_SKILLS_SELECTOR_BYTES, NativeSkillsCommand,
     NativeSkillsCommandError,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use skills_managed::{
+    MAX_MANAGED_SKILL_ENTRIES, MAX_MANAGED_SKILL_FILE_BYTES, MAX_MANAGED_SKILL_ITEMS,
+    MAX_MANAGED_SKILL_OPERATIONS, MAX_MANAGED_SKILL_TOTAL_BYTES, NativeManagedSkills,
+    NativeSkillBatchReceipt, NativeSkillDestinationRevision, NativeSkillGitLease,
+    NativeSkillGitRequest, NativeSkillGitRunner, NativeSkillInstallItem, NativeSkillInstallPlan,
+    NativeSkillInstallSource, NativeSkillItemOutcome, NativeSkillItemReceipt,
+    NativeSkillManagedError, NativeSkillManagedErrorKind, NativeSkillReplacementConsent,
+    NativeSkillSourceKind, parse_skill_create_command, parse_skill_install_command,
+};
+pub use skills_metadata::{
+    MAX_NATIVE_SKILL_DESCRIPTION_BYTES, MAX_NATIVE_SKILL_HEADER_BYTES,
+    MAX_NATIVE_SKILL_METADATA_NAME_BYTES, NativeSkillMetadata, NativeSkillMetadataError,
 };
 pub use skills_prompt_context::{
     NATIVE_SKILL_PROMPT_CONTEXT_KEY, NativeSkillPromptContext, NativeSkillPromptContextError,
