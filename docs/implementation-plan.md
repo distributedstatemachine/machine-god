@@ -21,26 +21,27 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `59`
-- Delivered main: `229cf94a798fa561f3ff7401c07a549b79e50616`
-- Main CI: `34163483918` (`GREEN`)
-- Main Benchmark evidence: `34163483934` (`GREEN`)
-- Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI settings-free workspace listing integrated; replacement verification`
-- Next gate: `focused and full checks, three fresh reviews and exact remote gates`
+- Delivered slices: `60`
+- Delivered main: `1a142174fa9302c0475c1260beecb8e2b8e833a0`
+- Main CI: `34424264794` (`GREEN`)
+- Main Benchmark evidence: `34424264790` (`GREEN`)
+- Active branch: `agent/m60-cli-delivery`
+- Active phase: `M03 complete; documentation-only delivery seal`
+- Next gate: `exact lightweight feature/main CI and Benchmark for this seal; then complete fx session import`
 <!-- canonical-live-status:end -->
 
-The complete terminal is delivered as one feature. The exact behavior commit
-passes the full Rust 1.94.1 local gate, three fresh independent reviews with zero
+The complete terminal and combined CLI are delivered features. The exact CLI
+behavior commit passes the full Rust 1.94.1 local gate, three fresh independent reviews with zero
 actionable findings, and both feature and main CI/Benchmark gates. Native Linux
-and macOS pass on x86_64 and aarch64, including the previously failing Intel
-inventory path. Both required unexpired exact-main benchmark artifacts are
-retained. Main was advanced by fast-forward without force. This establishes
+and macOS pass on x86_64 and aarch64. Both required unexpired exact-main
+benchmark artifacts are retained. Main was advanced by fast-forward without
+force. This establishes
 regression acceptance, not an M07 performance claim; documentation-only seals
 do not increment the count or replace the canonical behavior evidence.
 
 Detailed candidate, failure, remediation and review history is retained in the
-[full terminal review ledger](reviews/m03-terminal-full-review-01.md).
+[terminal review](reviews/m03-terminal-full-review-01.md) and
+[combined CLI review](reviews/m03-cli-full-review-01.md).
 This compact plan does not repeat that history.
 
 ### Delivered terminal acceptance boundary
@@ -75,194 +76,41 @@ Durable behavior belongs in [terminal](terminal.md),
 The pinned schema, session and monitor references are maintained there.
 ACP, teams and extension slash commands retain their later milestone ownership.
 
-### Active maintenance work
+### Combined CLI acceptance boundary
 
-Feature candidate: `0193fab9926cd0aa9b6e348fffabd11e8e3d4e46`.
-Feature CI: `34363000919` (`GREEN`).
-Feature Benchmark evidence: `34363001004` (`GREEN`).
+The delivered combined CLI completes native conversation and interactive
+ownership, bounded input/output queues, model selection, persistent permission
+rules and approval enforcement, file history and undo, macOS sandboxing,
+validated session catalogs/resume, prompts/editing/resize, piped input, picker
+transitions, recording/replay, session maintenance and workspace management.
 
-The maintenance branch was stacked on `agent/m60-cli-shell` at `3a0df99` to implement
-all twelve findings from the [agent-readiness review](reviews/agent-readiness-rust-structure-review.md).
-This bounded maintenance task does not deliver the unfinished combined CLI
-feature, increment the delivered count, or authorize promoting its parent to
-`main`. Existing unintegrated product worktrees remain preserved.
+Schema-v7 workspace persistence and retained multi-root authority compose
+exact-turn contexts with reads, enumeration, grep, metadata, mutations,
+permissions, history, undo, vision, sandboxing and Linux/macOS semantic search.
+Settings-free workspace launch/listing remains supported; persistence mutations
+require settings authority and invalid selected settings remain errors.
+Historical tool cards project validated saved evidence without executing tools
+or inventing current state.
 
-Parallel ownership is split between CLI rendering/command modules, native
-history/approval binding, and native test topology/formatting. The coordinator
-owns CI prerequisites, the canonical check recipe, ledger compaction and
-integration. All workers use separate worktrees; shared contracts and ownership
-changes must be agreed before editing overlapping files.
-
-The expanded scope adds independent core JSON-helper, contextual testkit, and
-native retained-root observation worktrees. Native environment/status extraction
-follows integration of the test-topology changes to avoid concurrent crate-root
-ownership. The coordinator retains the single live ledger and integration.
-
-The maintenance acceptance boundary is:
-
-- Select the production release helper before native or CLI runtime tests in
-  quality and every supported matrix target, preserving package selection.
-- Keep one complete local-check recipe below, including platform prerequisites;
-  AGENTS and README link to it instead of copying incomplete commands.
-- Compact superseded checkpoint narratives into the existing review archive.
-- Share the seven CLI bounded-output writers without changing command limits,
-  output formats, capacities or error categories.
-- Make included Rust test fragments discoverable by formatting checks.
-- Characterize and fix non-workspace history/approval construction-time binding
-  for all five mutation backends, preserving deferred effects and cancellation.
-- Consolidate duplicated private-source test graphs without dropping unique
-  tests, fault injection or required helper-process entrypoints.
-- Separate models, doctor and session inspection from the CLI entry point and
-  replace positional host tuples with named dependencies.
-- Move generic JSON bounds and iterative cleanup into a private core module,
-  preserving limits, error mapping, and cleanup behavior across consumers.
-- Share the narrow macOS retained-root identity observation across seven native
-  consumers without changing caller checkpoints, phase errors, or retryability.
-- Add source-compatible contextual preparation recording to the shared testkit
-  double, preserving bounded recording, strict scripts and invocation timing.
-- Extract native environment/status implementation behind compatible root
-  exports with unchanged feature/platform behavior.
-
-All twelve changes are integrated and accepted on the stacked branch. Component checks
-preserved the original 2,089 unique native test identities while removing 965
-duplicate executions. The broader run also identified a stale model-save error
-fixture; it now uses a deterministically obstructed parent, with its original
-receipt and transition assertions preserved. No production behavior was changed
-for that fixture correction. The complete run also exposed two stale credential
-configuration assertions; current/default and future-version fixtures now match
-the existing schema-v7 contract, while legacy schema-v3 coverage is preserved.
-
-The first reviewed remote candidate (`53378c8c`) passed its local gate and all
-three independent review tracks, but remote Linux checks exposed a fixture lint
-and missing release-helper provisioning. The fixture now appends hexadecimal
-bytes directly; quality and Linux/Apple matrix jobs provision the explicit
-helper before applicable tests. Test selection, Linux concurrency and product
-behavior are unchanged. Both benchmark collectors now invoke explicit `--help`
-with matching strict evidence validation, without relabeling historical
-no-argument measurements or claiming workload equivalence. The replacement
-passed its complete pinned-toolchain local gate and all three fresh independent
-review tracks with no actionable findings. Remote quality, dependency policy,
-FreeBSD/WASI, documentation, both Linux targets and both macOS targets are green,
-including the aggregate CI gate. Both expected exact-candidate benchmark
-artifacts are retained and unexpired through 2026-12-08. No performance milestone
-claim follows from these gates.
-
-All integrated maintenance implementation and review worktrees were cleaned up;
-the three earlier unfinished product worktrees were preserved for resumption. Documentation
-seal `e14cab5d` passed exact lightweight CI `34365966890` and Benchmark
-`34365966876`, with heavy jobs skipped and no new artifacts. The parent CLI
-branch was then fast-forwarded to that accepted descendant without conflicts.
-The unfinished combined feature remains outside the maintenance acceptance and
-must not be promoted to main before its complete product gates.
-
-The agent-readiness review also records a separately scoped test-speed follow-up:
-selective nextest concurrency, release-probe/build reuse, and overlapping frozen
-candidate verification. This is advisory, not an unmeasured runner migration or
-an amendment to the existing gates. Keep it separate from product-tool work.
-
-### Retained combined CLI boundary
-
-The resumed implementation finishes workspace integration and the remaining
-combined CLI boundary below. The macOS semantic scanner and its directory-reader
-prerequisite are integrated; both clean released worktrees have been removed.
-Their focused tests cover real macOS scanning, concurrent cursors, exact roots,
-both Apple ABI/link probes, Linux compilation and FreeBSD/WASI unsupported
-compilation. These component checks are not full-feature acceptance.
-Terminal routing is integrated and its clean released worktree removed after
-focused composition, permission, PTY/tmux and monitor checks. CLI launch/slash
-workspace selection and the native FXTP recording backend are also integrated.
-Native session maintenance, recording lifecycle/scenarios, configured permission
-reporting, saved-rule interaction and startup-resume scenarios are integrated;
-all released clean implementation worktrees are removed. The coordinator owns
-integration, historical cards, the live plan,
-shared-contract integration, cross-platform prerequisites and final gates.
-Preserve uncommitted paused work before updating a worker's base. Remove worker
-trees only after their changes are committed, integrated and released.
-
-The parent feature's completed components include native conversation and
-interactive ownership; bounded queues and model selection; persistent permission
-rules and approval enforcement; file history and shared undo; macOS sandboxing;
-rich session catalogs and validated resume; terminal editing, prompts and
-resize; piped prompts; clipboard and undo commands; picker startup and session
-transitions; allowlist configuration; and top-level workspace management.
-
-Workspace schema-v7 persistence, retained multi-root authority, exact-turn
-contexts and preparation are integrated. Actual prepared-root host composition
-shares those contexts with reads, metadata, folder creation, enumeration, grep,
-all five mutations, permissions, undo, history, vision and sandbox scopes.
-Linux and macOS semantic routing are integrated. State aliases compare retained object
-identities; native interactive transitions attach the selected workspace.
-Historical command/file/replacement/background cards now project native-validated
-saved evidence without execution, filesystem reads or invented current state.
-Focused history tests and the CLI unit suite, all-target Clippy, formatting and
-documentation checks pass; these are component checks, not release acceptance.
-
-Launch/slash workspace selection preserves launches without a settings directory:
-explicit launch roots and listing work, while persistent mutations require
-settings authority. The recording backend owns bounded FXTP writes and close
-receipts; its CLI startup, accepted-output, finalization and explicit parent-path
-compatibility are integrated. Six real-PTY, local-Gateway recording scenarios
-exercise the private production-flow fixture seams without shipping endpoint
-overrides; they are not fresh release-binary acceptance.
-The recording modifier parser is integrated: one trailing `--record` selects
-only an interactive launch/resume, composes with leading workspace flags, and
-rejects one-shot, duplicate and misplaced requests before host effects. Its
-dispatch tests pass. Session migration/recovery and guarded cleanup now compose
-the native state-only, completion-owned process facade with CLI grammar, bounded
-receipts and six public subprocess tests. The integrated CLI package passes
-370 unit tests (six subprocess fixture helpers ignored), 108 command subprocess
-tests, ten replay tests and warnings-denied Clippy. These are component checks,
-not a fresh-release or complete-feature gate. A positive acknowledged startup
-picker test restores the selected identity, preferences and history without new
-sessions, provider requests or repeated file effects. Configured rule discovery
-now uses native scope selection and explicit unavailable runtime-state reporting.
-Saved exact-rule confirmation/revocation and composed policy-effect scenarios
-exercise actual file effects, reset, stale answers and captured-versus-queued
-policy. Latest/exact startup-resume scenarios pass under PTY. Native Linux also
-passes configured permission discovery from an actual non-Unicode working path.
-These integrated component checks leave the complete feature gates pending;
-they do not constitute a delivery or fresh-release acceptance.
-The combined feature has reached complete local and independent-review checks,
-but subsequent candidate gates exposed fixture and prerequisite defects.
-Integrated corrections cover composed macOS semantic expectations, recording
-documentation, explicit lock release, admission-inclusive timeout evidence,
-subreaper-safe shell cleanup, bounded HTTP timeout fixtures and container account
-setup. Their exact accepted/rejected checks remain in the combined CLI history.
-Paired public-budget and mandatory real-overflow tests corrected a terminal
-ordering assertion. The replacement passed the full Linux run, but macOS
-rejected one CLI SIGINT recording assertion: the tape lacked final terminal-reset
-bytes. Controlled active-session and startup regressions established that the
-interactive signal timer could expire across native/input joins before final
-presentation. The integrated correction starts its unchanged, non-renewable
-100 ms budget in the post-cleanup tail. All four new timing regressions and eight
-recording/resume scenarios pass on both platforms, including SIGINT. The full
-Linux run then rejected one native same-owner background-signal assertion with
-`Unavailable`; an unchanged isolated pass does not establish its cause. Controlled
-diagnosis proved that an admitted child reaped before enumeration rejects an
-incomplete traversal with budget remaining. Paired tests now retain that failure
-and use an acknowledged stable shell for owner routing. The replacement passed
-the full Linux and macOS local gates, but fresh correctness review found that
-top-level workspace listing unnecessarily requires settings authority. The
-integrated correction restores settings-free listing through the existing native
-service; persistence mutations still require settings. Its new public regression
-rejects the unchanged release, with selected-invalid and mutation contrasts passing.
-The lifecycle/platform and resource reviews found no actionable issues. The
-corrected candidate requires fresh full verification and all three reviews.
-Native signal behavior, deadlines, cleanup and Linux concurrency are unchanged.
-The resumed product changes are not covered by the earlier maintenance review.
-Required scenarios cannot close with unsupported stubs.
-
-The combined CLI feature pulls required permission modes/grants, native schema
-migration/recovery, guarded cleanup and actual workspace authority forward from
-M04, as reflected in the milestone ownership below. Foreign fx import, broader
-concurrency hardening, encryption, record authentication, key management, secure
-erasure and hardened non-Unix support remain later work. Its complete local,
-review and remote product gates remain open.
-
-Detailed component inventory, earlier remaining-work statements, exact
-checkpoint checks and failure/retry evidence are preserved in the
+The exact candidate passed the full local gate and three independent local
+review tracks. Feature and exact-main CI and Benchmark passed, retaining both
+main-run artifacts, and main was fast-forwarded without force. This closes the
+frozen M03 boundary without an M07 performance claim.
+Detailed rejected candidates, controlled regressions, complete gate results
+and review provenance belong in the
 [combined CLI history](reviews/m03-cli-full-review-01.md).
-They are historical evidence, not separate deliveries or final acceptance.
+
+All twelve agent-readiness maintenance findings were integrated into this
+feature's parent before final CLI verification. Their historical acceptance and
+separately scoped nextest/build-reuse advice belong in the
+[agent-readiness review](reviews/agent-readiness-rust-structure-review.md).
+Test-infrastructure maintenance is not part of subsequent product-tool work.
+
+Required permission modes/grants, native migration/recovery and guarded cleanup
+are included in the combined CLI boundary. Foreign fx import, encryption,
+record authentication, key management, secure erasure, broader persistence and
+lifecycle concurrency hardening, and hardened non-Unix construction retain
+their later milestone ownership below.
 
 ### CI and documentation maintenance
 
@@ -329,7 +177,7 @@ handoff.
 | --- | --- | --- |
 | M01 | Repository, documentation, CI, workspace, pinned upstream benchmark harness, and non-product bootstrap evidence | COMPLETE |
 | M02 | Provider-neutral streaming engine and deterministic testkit | COMPLETE |
-| M03 | Providers, native tools, permissions, sessions, configuration, and CLI | IN PROGRESS |
+| M03 | Providers, native tools, permissions, sessions, configuration, and CLI | COMPLETE |
 | M04 | Security, lifecycle, concurrency, and persistence hardening | IN PROGRESS |
 | M05 | Skills, MCP, ACP, and subagent extensibility | IN PROGRESS |
 | M06 | SDK surfaces and advanced compatibility | NOT STARTED |
@@ -403,6 +251,7 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 57 | Bounded same-incarnation `terminal` background output read | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-read-review-01.md) | `b1bbb81` |
 | 58 | Bounded same-incarnation `terminal` native signal | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-signal-review-01.md) | `8545ea4` |
 | 59 | Complete terminal actions, PTY/tmux sessions, durable history/screens, monitors, archives and owned cleanup | [terminal](terminal.md), [host](native-reference-host.md) | [review](reviews/m03-terminal-full-review-01.md) | `229cf94` |
+| 60 | Complete combined CLI, interactive conversation, permissions, workspace authority, session lifecycle, history/undo and recording | [CLI](cli.md), [host](native-reference-host.md) | [review](reviews/m03-cli-full-review-01.md) | `1a142174` |
 
 The exact delivered-main record is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
@@ -411,8 +260,8 @@ not current status.
 
 ## Milestone 03 completion boundary
 
-M03 is not complete. Its ownership boundary is frozen as follows; changing it
-requires an explicit reviewed plan change.
+M03 is complete at its frozen ownership boundary below. This does not close
+the explicitly assigned M04–M07 work or assert literal upstream UI parity.
 
 ### Complete
 
@@ -427,29 +276,66 @@ requires an explicit reviewed plan change.
 - Delivered CLI slices for `help`, `status`, `ask`, `resume`, `permissions`,
   `models`, `doctor`, `sessions`, `workspace`, `replay`, and strict
   summary-only `session <id>`.
-
-### Remaining
-
-- Complete combined top-level CLI ownership for `permissions`, `models`,
-  `doctor`, `session`, `sessions`, and `resume`.
-  Existing partial/delivered commands do not close the combined boundary.
-- Complete the pinned slash-command categories `general`, `session`, `model`,
-  `security`, and `workspace`. Compatibility is scenario-based; documented
-  command-name differences may remain intentional.
-- Retain deterministic composed-host evidence through fake provider, prompt,
-  and network boundaries; exercise user-visible behavior through a freshly
-  built release binary; close three fresh product-review tracks; pass every
-  exact local and remote gate; and update compatibility status without making
-  an unsupported performance claim.
+- Combined top-level ownership for `permissions`, `models`, `doctor`,
+  `session`, `sessions`, and `resume`, beyond their earlier partial slices.
+- Pinned slash-command categories `general`, `session`, `model`, `security`,
+  and `workspace`, with scenario-based compatibility and documented intentional
+  command-name differences.
+- Deterministic composed-host evidence through fake provider, prompt and
+  network boundaries, fresh release-binary scenarios, three independent
+  product-review tracks and exact local/feature/main gates. The existing
+  compatibility inventory records this native category ownership while its
+  larger aggregates remain planned for M05/M06; no performance claim follows.
 
 ### Later-milestone ownership
 
 | Owner | Explicitly assigned work |
 | --- | --- |
-| M04 | Required modes/grants, native migration/recovery and guarded cleanup are pulled into the active combined CLI feature above; remaining work includes explicit legacy import, encryption, record authentication, key management, secure erasure, broader persistence/lifecycle concurrency hardening, and hardened non-Unix workspace/store construction |
+| M04 | Required modes/grants, native migration/recovery and guarded cleanup were delivered with the combined CLI; remaining work includes foreign fx import, encryption, record authentication, key management, secure erasure, broader persistence/lifecycle concurrency hardening, and hardened non-Unix workspace/store construction |
 | M05 | Skills, MCP, ACP, subagents, top-level `acp`/`background`/`teams`, extension/agent slash commands, and built-in memory/search/skill/subagent/MCP tools |
 | M06 | SDKs and advanced CLI/compatibility surfaces including `pr`, `issue`, account, setup, credit, usage, upgrade, media, product, and appearance categories |
 | M07 | Claim-eligible performance comparison, thresholds, optimization, packaging evidence, and final hardening |
+
+## Next complete feature: fx session import
+
+After the combined CLI delivery seal, implement M04 foreign-session import as
+one complete feature on its own branch. This is not the existing metadata-only
+native migration or FXTP replay. Read-only analysis of the pinned source found
+legacy schema-v1/v2 snapshots and schema-v3 authority-fenced event logs; both
+are in scope. The importer must:
+
+- Accept an explicitly selected fx session directory with retained read-only
+  source authority, separate from native destination authority. Preserve source
+  bytes and never infer permission/workspace/process grants from imported data.
+- Reconstruct the exact committed v3 prefix, including chunked state
+  replacements, generation/sequence/digest validation and concurrent-writer
+  handling. Reject incomplete committed state and pending authority transitions;
+  do not replace canonical history with stale projections or migration backups.
+- Preserve all history variants, ordering, tool arguments/results, interruption
+  evidence, context/compaction boundaries and known/unknown metadata. Assign a
+  fresh native identity and stable tool-call mappings; retain non-UTF-8 source
+  evidence losslessly with explicit model/display conversion.
+- Import and verify referenced result archives, binary command replay and image
+  snapshots into native-owned storage. Resumed image history requires core
+  attachment representation, native authority and Gateway projection, not only
+  an opaque metadata copy. General advanced media commands remain M06 work.
+- Define bounded storage/reference representation without silent truncation,
+  no-overwrite publication, cancellation ownership, orphan cleanup and receipts
+  for uncertain postpublication outcomes across multiple durable objects.
+- Expose thin CLI grammar and receipts through a native import facade beside
+  session maintenance. Exercise import, catalog, inspection, archived paging
+  and resumed provider requests through the fresh release CLI after source
+  removal, without import-time provider/tool execution or restored grants.
+
+Use producer-derived fixtures for every format and replacement mode, artifact
+integrity failures, opaque bytes/identifier remapping, stale or truncated logs,
+concurrent source replacement, cancellation and destination publication faults.
+Parallel owners can implement the effect-free codec, native storage/artifacts,
+and thin CLI/scenarios after agreeing shared contracts; isolate their worktrees
+and keep integration, documentation and the full feature gate coordinator-owned.
+Encryption, record authentication, key custody/rotation, secure erasure and the
+other M04–M07 boundaries remain required after this feature, not silently closed
+by import acceptance.
 
 ## Required gates
 

@@ -422,6 +422,31 @@ Findings 9–12 broaden the advisory review and are not silently added to that
 implementation batch. Accepted work and its delivery status belong in the
 existing implementation plan, not this historical document.
 
+## Historical maintenance acceptance
+
+The selected scope ultimately included all twelve findings. Candidate
+`0193fab9926cd0aa9b6e348fffabd11e8e3d4e46` passed its complete pinned-toolchain
+local gate, three independent local reviews with no actionable findings,
+feature CI `34363000919` and artifact-producing Benchmark `34363001004`.
+Both exact-candidate benchmark artifacts were retained through 2026-12-08.
+The test-graph change preserved all 2,089 unique native test identities while
+removing 965 duplicate executions. Additional fixture corrections preserved
+production behavior: deterministic model-save obstruction, schema-v7 current
+and future credential expectations, and direct hexadecimal-byte construction.
+Quality and Linux/Apple jobs now provision the explicit production helper;
+benchmark collectors and evidence validation agree on explicit `--help`.
+These corrections followed rejected remote candidate `53378c8c`; that
+candidate's earlier local/review success did not override its CI failure.
+
+Documentation seal `e14cab5d` passed lightweight CI `34365966890` and Benchmark
+`34365966876`, with heavy jobs skipped and no new artifacts. It was
+fast-forwarded into parent `agent/m60-cli-shell`. Maintenance implementation
+and review worktrees were removed; the three then-unfinished product trees were
+preserved. This accepted the maintenance only, not the unfinished combined CLI
+or an M07 performance claim. Superseded checkpoint detail is retained in the
+implementation plan at that seal; current delivery state belongs only in the
+live implementation plan.
+
 ## Test execution and parallelism follow-up
 
 Assessment date: 2026-09-09. This follow-up examines maintenance revision

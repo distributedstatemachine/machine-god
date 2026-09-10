@@ -1050,3 +1050,80 @@ contrasting tests passed: configured listing, invalid selected environment,
 malformed/future settings, and settings-free mutation rejection. Pinned harness
 compilation and formatting passed. Positive replacement and full-feature gates
 remain pending; the unchanged release's negative result is not acceptance.
+
+## Combined-candidate verification: `1a142174`
+
+Candidate `1a142174fa9302c0475c1260beecb8e2b8e833a0` integrates the settings-free
+listing correction and its public regressions. Exact Rust 1.94.1 formatting,
+full all-target/all-feature warnings-denied Clippy, fresh locked releases,
+focused workspace tests and complete workspace/doc gates passed on Linux and
+macOS. Linux used default concurrency and passed 4,548 tests with seventeen
+existing helper ignores. The accepted complete macOS recheck passed 4,543 tests
+with eighteen existing helper ignores. Explicit doctests passed all three
+cases on each platform. Focused CLI workspace checks passed sixteen Linux and
+fifteen macOS cases through the newly built production release binary.
+
+The first macOS full run instead passed 4,540 tests and failed three PTY cases
+at reaping admission, before their intended scenarios. Each fixed `/bin/sh -c
+'exit 0'` child remained unobserved through the 500 ms observation and 500 ms
+post-kill cleanup budgets. Two independent read-only diagnoses found no
+established product defect or exact historical cause; native code was unchanged
+from the preceding candidate. One unchanged isolated three-case check passed,
+then one unchanged complete workspace recheck passed, including all three cases.
+The isolated result was not acceptance. No deadline, test assertion, Linux
+concurrency or production behavior was relaxed, and the historical cause is
+not claimed fixed. Original and recheck logs remain separate:
+
+- Initial macOS workspace SHA-256:
+  `55bb2e338cf52adb72d5169086a1cc711536e9efafa96469f777c423868982c0`.
+- Accepted macOS workspace SHA-256:
+  `d214612d98b26034c23a459fb6b12e188ba4f031b1451ac0c95fe21ec2403c05`.
+- Accepted Linux workspace SHA-256:
+  `8883adbc0ac80b4999027a1c91e93f67ae8b8f905bfcb033a3d5f03e0778ad35`.
+
+Linux preparation initially encountered stale incremental missing-crate
+metadata in `memory_engine`. Only that validated cache entry was moved to a
+retained quarantine; unchanged complete preparation then passed. This was not
+a source fix or lint suppression. Python ran 269 tests: 255 passed and fourteen
+existing platform cases skipped, including the genuine fresh optimized cleanup
+probe. Documentation/drift, dependency policy/audit, FreeBSD/WASI compilation,
+both Apple binding/ABI checks and standalone support checks passed.
+
+After the complete local gate, three independent read-only local agents
+reviewed the whole feature against `4659f001`, not only the final listing diff:
+correctness/API, lifecycle/platform and performance/resources each reported
+zero actionable findings. These were not Bugbot service results. Two reviews
+used new agent threads; the host rejected a third new thread at its limit, so
+an independent earlier read-only diagnostic agent performed a new full resource
+review. It had authored no changes and had not previously performed acceptance
+review. Its narrow diagnosis was explicitly not substituted for full review.
+All review trees, released implementation/verification trees and the idle Linux
+container were removed; diagnostic logs, build caches and quarantines remain.
+
+Feature CI `34422445114` and Benchmark `34422445178` passed for the exact SHA.
+All four Linux/macOS native targets, quality, FreeBSD/WASI, documentation and
+the CI aggregate passed. Dependency audit was intentionally unselected for the
+feature delta; the local gate passed it and the larger main delta selects it.
+Feature Benchmark retained nonempty, unexpired artifacts `10131611045`
+(`upstream-benchmark-1a142174fa9302c0475c1260beecb8e2b8e833a0-ubuntu-24.04-x86_64`)
+and `10131495635`
+(`bootstrap-benchmark-1a142174fa9302c0475c1260beecb8e2b8e833a0`), both expiring
+2026-12-09T00:42:46Z. Main then advanced by fast-forward from `4659f001` to the
+same reviewed candidate without force. These results establish regression
+acceptance of the candidate, not an M07 performance comparison.
+
+Main Benchmark `34424264790` subsequently passed for exact `1a142174` on the
+main push. Its own artifacts, distinct from the feature-run artifacts, were
+verified nonempty and unexpired: upstream `10132231075` (66,804 bytes) and
+bootstrap `10132110335` (632 bytes), both expiring 2026-12-09T01:08:36Z.
+Both names include the exact candidate SHA and the upstream name also includes
+`ubuntu-24.04-x86_64`. Benchmark success alone does not close the main CI gate.
+
+Main CI `34424264794` then passed for exact `1a142174`, including dependency
+policy/audit, quality, documentation, FreeBSD/WASI, both Linux targets, both
+macOS targets and the aggregate. Intel macOS completed in 26 minutes 5 seconds;
+no main jobs were restarted or waived. Exact run SHA, main push provenance and
+both unexpired main-run artifacts were reverified before recording acceptance.
+This accepts the complete frozen M03 CLI boundary as one delivery. The plan was
+compacted at that delivery; subsequent documentation-only seals do not create
+additional product deliveries or replace this artifact-producing evidence.
