@@ -21,18 +21,19 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `60`
-- Delivered main: `1a142174fa9302c0475c1260beecb8e2b8e833a0`
-- Main CI: `34424264794` (`GREEN`)
-- Main Benchmark evidence: `34424264790` (`GREEN`)
-- Active branch: `agent/m61-background-cli`
-- Active phase: `M05 background CLI replacement local gate`
-- Next gate: `complete exact local gate and three fresh independent reviews`
+- Delivered slices: `61`
+- Delivered main: `fe7a793c60840526cb5ca6e706d1a81cb9a577dc`
+- Main CI: `34534157308` (`GREEN`)
+- Main Benchmark evidence: `34534157220` (`GREEN`)
+- Active branch: `agent/m62-skills-cli`
+- Active phase: `M05 complete skills CLI implementation`
+- Next gate: `implement the full skills CLI, then exact local and three-review gates`
 <!-- canonical-live-status:end -->
 
-The complete terminal and combined CLI are delivered features. The exact CLI
-behavior commit passes the full Rust 1.94.1 local gate, three fresh independent reviews with zero
-actionable findings, and both feature and main CI/Benchmark gates. Native Linux
+The complete terminal, combined CLI and background CLI are delivered features.
+The latest behavior commit passes the full Rust 1.94.1 local gate, three fresh
+independent reviews with zero actionable findings, and both feature and main
+CI/Benchmark gates. Native Linux
 and macOS pass on x86_64 and aarch64. Both required unexpired exact-main
 benchmark artifacts are retained. Main was advanced by fast-forward without
 force. This establishes
@@ -40,8 +41,9 @@ regression acceptance, not an M07 performance claim; documentation-only seals
 do not increment the count or replace the canonical behavior evidence.
 
 Detailed candidate, failure, remediation and review history is retained in the
-[terminal review](reviews/m03-terminal-full-review-01.md) and
-[combined CLI review](reviews/m03-cli-full-review-01.md).
+[terminal review](reviews/m03-terminal-full-review-01.md),
+[combined CLI review](reviews/m03-cli-full-review-01.md), and
+[background CLI review](reviews/m05-background-cli-review-01.md).
 This compact plan does not repeat that history.
 
 ### Delivered terminal acceptance boundary
@@ -252,6 +254,7 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 58 | Bounded same-incarnation `terminal` native signal | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-signal-review-01.md) | `8545ea4` |
 | 59 | Complete terminal actions, PTY/tmux sessions, durable history/screens, monitors, archives and owned cleanup | [terminal](terminal.md), [host](native-reference-host.md) | [review](reviews/m03-terminal-full-review-01.md) | `229cf94` |
 | 60 | Complete combined CLI, interactive conversation, permissions, workspace authority, session lifecycle, history/undo and recording | [CLI](cli.md), [host](native-reference-host.md) | [review](reviews/m03-cli-full-review-01.md) | `1a142174` |
+| 61 | Complete interactive background list/stop/open/logs, owned terminal control and unified read-only histories | [background CLI](background-cli.md), [host](native-reference-host.md) | [review](reviews/m05-background-cli-review-01.md) | `fe7a793c` |
 
 The exact delivered-main record is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
@@ -296,84 +299,81 @@ the explicitly assigned M04–M07 work or assert literal upstream UI parity.
 | M06 | SDKs and advanced CLI/compatibility surfaces including `pr`, `issue`, account, setup, credit, usage, upgrade, media, product, and appearance categories |
 | M07 | Claim-eligible performance comparison, thresholds, optimization, packaging evidence, and final hardening |
 
-## Active complete feature: background CLI
+## Delivered background CLI boundary
 
-Following the user's request to return to CLI work, continue from accepted
-`main` without merging unfinished import code. Import components remain saved
-on `agent/m61-fx-session-import` at `5e77b1b4`; its worker worktrees are removed,
-and its complete feature requirements below remain outstanding.
+The four interactive forms, `/background`, `/background stop`,
+`/background open`, and `/background logs`, compose native terminal identities,
+generation-bound controls, retained output and owned cancellation receipts.
+The read-only top-level command unifies legacy numeric records and opaque
+terminal histories without restoring process authority. URL detection and
+explicit launching remain bounded and preserve truncation evidence. Both
+feature and main gates passed, with three fresh full-feature review tracks.
+All validation/review worktrees are removed and evidence is retained. Earlier
+intermittent terminal failures remain recorded without an unsupported cause or
+source-fix claim in the [review history](reviews/m05-background-cli-review-01.md).
 
-Implement the four pinned interactive forms as one feature: `/background`,
-`/background stop`, `/background open`, and `/background logs`. The top-level
-command remains read-only, matching pinned fx's command split. The complete
-CLI launches through the durable terminal host, not the older background
-supervisor, so a facade over legacy numeric records alone is insufficient.
+## Active complete feature: skills CLI
 
-- Reuse native terminal identities, exact session/incarnation access routes,
-  retained worker ownership, durable output and close receipts. Show existing
-  opaque terminal IDs as selectable targets instead of inventing mutable UI
-  indices; keep legacy numeric targets for legacy top-level records.
-- Provide native-owned listing/selection, latest ordering, bounded log
-  presentation, URL detection and explicitly requested URL opening. Listing,
-  selection and help must not start a process or install new authority.
-- Use the same underlying terminal histories for interactive commands and
-  top-level read-only inspection, including complete old/new record handling.
-  Historical records and PIDs cannot recreate live-control authority.
-- Preserve access across existing conversation handoffs and revoke stale
-  operations through the existing generation checks. Cancellation and dropped
-  callers must retain ownership of committed effects and their outcomes.
-- Exercise every command, malformed input, no-match/closed/history-only cases,
-  binary/control-bearing logs, stale URLs, handoff/revocation and output errors
-  with deterministic native fixtures and the fresh release CLI.
+Continue CLI work from accepted `main`. Import components remain parked on
+`agent/m61-fx-session-import` at `5e77b1b4`; do not merge that unfinished feature.
+Deliver the complete skills CLI as one feature, not separately delivered parser,
+catalog, installer or picker fragments:
 
-Keep parsing and presentation in thin command adapters, and all state/effects
-in native services. Parallel work uses isolated non-overlapping ownership.
-All components feed one full feature gate and three fresh adversarial reviews;
-none is a separately delivered feature. Cross-process control and detached
-process survival are not introduced by these interactive commands.
+- Implement `/skills` and `/skills list`, `show`, `path`, `create`, `add`/`install`,
+  and `remove`, plus inline `$` query/picker selection and exact per-prompt skill
+  invocation. Include local sources, Git URLs/shorthand, filtered/multi-skill
+  installs, replacement and removal; do not reduce installation to local-only
+  no-overwrite behavior. Pasted `npx`/`bunx` forms are parsed, never executed.
+- Native owns explicitly admitted workspace/ancestor, managed and home
+  compatibility roots, ordered discovery, metadata, diagnostics and duplicate
+  locations. Other products' skill roots remain read-only. Capture native
+  environment inputs once; core gains no ambient filesystem or environment
+  access. Existing model `skill`/`install_skill` contracts and permissions do not
+  widen merely because human-invoked CLI management is added.
+- Preserve pinned bounded frontmatter behavior: 64 KiB header, 256-byte name,
+  4 KiB description, supported quoted/block descriptions, basename fallback
+  only without frontmatter, and diagnostics for malformed recognized fields.
+  Bound aggregate discovery, file reads, traversal, entries, rendered output,
+  installation bytes, Git execution and cleanup. Incomplete discovery must not
+  imply that a name is globally unambiguous.
+- Preserve affirmative leading invocation forms and exact picker bindings.
+  Automatic matching must not choose an arbitrary duplicate location or invoke
+  quoted, negated or incidental mentions. Revalidate exact selection/revision
+  before materializing content; metadata and skill text confer no tool grants.
+- Managed publication uses explicit destination authority, deterministic source
+  selection and collision handling, bounded staging/locks, replacement consent,
+  rollback and per-item receipts. Preserve recovery state after uncertain
+  publication/rollback; retain Git/worker ownership through cancellation and
+  cleanup. No package-manager execution, shell interpolation or mutation of fx
+  roots follows from pasted installation syntax.
+- Inline picking preserves the draft, cursor and surrounding text. Bind the
+  selected location to the exact token span and observed frame/catalog/runtime
+  generation; edits, Escape, stale acknowledgements, handoff and reset cannot
+  silently transfer that binding to another prompt.
+- Queue selections with their exact prompt and charge them to queue limits.
+  Materialize after FIFO admission under the captured turn scope, outside
+  runtime locks. Provider-only skill context must preserve canonical user text
+  and permission provenance, obey limits on every round, and not accumulate.
+  Persist only bounded inert context needed for an interrupted continuation;
+  continuation reuses admitted bytes instead of rescanning changed sources.
+  New prompts and finalization cannot leak an earlier turn's skill context.
+- Exercise every command and complete launch path through deterministic native
+  fixtures and the fresh release CLI: discovery/metadata ambiguity, source and
+  destination races, replacement/rollback faults, cancellation, queue ordering,
+  stale picker frames, continuation/restart and provider projection limits.
 
-The parser, URL detector/launcher, CLI launcher capture, native terminal
-requester, read-only terminal-history inspector and top-level old/new history
-union are integrated locally.
-Interactive service, control-lane cancellation, bounded rendering and composed
-native scenarios have passed focused checks against the integrated APIs.
-Fresh-binary history scenarios passed, including mixed list/latest/exact targets
-and unchanged persisted artifacts. The first complete integrated local gate
-passed, but independent review rejected that candidate: URL opening discarded
-capture-truncation evidence, and read-only history lock contention could discard
-an exited terminal's final output. Both fixes are integrated with deterministic
-regressions that reproduced the failures before remediation. The replacement
-complete local gate and three fresh reviews passed, but the remote platform
-matrix exposed a test-helper path mismatch: the new history scenario ignored
-the target-specific release helper already exported by CI. It now selects the
-same native-test helper variable as the other native scenarios. That replacement
-local gate passed, including explicit helper-only regressions on Linux and
-macOS. Fresh review then found that cancelling a background control could
-suppress cancellation of a simultaneously active turn or admission. The fix
-independently latches cancellation for both owned operations without discarding
-committed receipts or cancelling later queued prompts. Five deterministic
-regressions reproduced the two affected cases before correction while preserving
-the three background-only and shutdown cases. The complete replacement local
-gate and three fresh reviews passed. Exact feature Benchmark passed, but CI
-failed in two different macOS terminal-close fixtures across its initial run
-and one unchanged retry. Neither failure establishes a source defect; both
-erase the precise cleanup error. Error-only test diagnostics now distinguish
-inventory query, tmux close and private-server retirement stages without new
-process observations, retries, fallback paths or changed deadlines. Both original
-close fixtures passed three focused repetitions, but the serial terminal group hit a
-previously observed inventory-readiness timeout before the PTY command started.
-The immediate predecessor/target pair, a wider PTY prefix and one full terminal
-group passed with bounded external process observation; they do not establish
-a cause. The original failed log remains retained. Replacement full
-local/review/remote gates remain required before merging. No deadline is relaxed
-and no source-fix claim follows from these runs.
-Completed validation and review worktrees are removed; active diagnostic work
-is retained. Detailed evidence belongs in the existing background review ledger.
+Before workers edit, agree exact shared interfaces, managed location/root
+selection, limits, consent/receipt semantics and continuation representation.
+Use three isolated non-overlapping lanes for catalog/metadata, managed
+installation and thin CLI/picker components. The coordinator owns core context
+projection, native control/host integration, shared exports, composed scenarios
+and behavior documentation. All components feed one complete local gate and
+three fresh independent adversarial reviews; retain the same delivery workflow.
 
 ## Parked complete-feature scope: fx session import
 
-After the combined CLI delivery seal, implement M04 foreign-session import as
-one complete feature on its own branch. This is not the existing metadata-only
+Retain M04 foreign-session import as one complete feature on its own branch
+after the current CLI work. This is not the existing metadata-only
 native migration or FXTP replay. Read-only analysis of the pinned source found
 legacy schema-v1/v2 snapshots and schema-v3 authority-fenced event logs; both
 are in scope. The importer must:

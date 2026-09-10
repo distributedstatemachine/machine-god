@@ -263,3 +263,49 @@ changes. One exact helper reported state `S` before disappearing at the next
 sample; no failing startup or close was captured. This bounds the reproduction
 attempts and supports proceeding to a complete replacement gate, not a source
 fix or feature-acceptance claim.
+
+### Accepted complete-feature replacement
+
+Candidate `fe7a793c60840526cb5ca6e706d1a81cb9a577dc`, tree
+`4aff3a124d5d6b23cdd759453a9d0c3652ce8562`, passed the full exact-Rust-1.94.1
+replacement gate. macOS had 4,653 top-level non-doctest passes and 18 ignored;
+Linux had 4,658 passes and 17 ignored with default concurrency. Both passed
+three included and three explicit doctests, the harnessless terminal CLI,
+focused scenarios and fresh locked release checks. Nested helper summaries
+were excluded from these counts. Formatting, all-target/all-feature Clippy,
+269 Python tests with 14 expected skips, documentation policy, pinned drift,
+dependency policy/audit and FreeBSD/WASI/no-default checks also passed.
+
+Two external gate-script mistakes are retained separately, not hidden as test
+passes: the macOS cancellation prelude initially selected zero tests; all five
+actual cancellation cases passed in the workspace and a corrected focused run.
+Linux's initial prelude failed before any Rust test because of a shell-variable
+collision; the corrected chain passed. Neither correction changed product
+source. Linux's 63 exported evidence files (604,013 bytes) were hash-verified
+inside the container and on the host before and after owned-container cleanup.
+
+Three fresh independent local static fallback reviewers inspected the entire
+61-file feature against merge base `79d3d4d426aa52816ce6dd70020b7f6a0866da38`:
+`background_review_correctness_05`, `background_review_lifecycle_05`, and
+`background_review_resources_05`. Each reported zero actionable introduced
+findings. Scope included related callers/tests, command and history semantics,
+cancellation/receipts, lifecycle/platform behavior, resource bounds and diagnostic
+production equivalence. These were not named Bugbot-service reviews; reviewers
+ran no builds, runtime tests, benchmarks or remote checks. All clean isolated
+review and validation worktrees were removed; evidence and build caches remain.
+
+Exact feature CI `34531709727` and Benchmark `34531709747` passed without a
+retry. Feature upstream artifact `10174055028` and bootstrap artifact
+`10173895370` were retained. Main was re-fetched, verified at the merge base,
+fast-forwarded without force to the same candidate and pushed. Exact main CI
+`34534157308` and Benchmark `34534157220` passed, including native Linux/macOS
+on x86_64 and aarch64. Main upstream artifact `10174957373` and bootstrap
+artifact `10174832240` were downloaded and unexpired at acceptance, with expiry
+`2026-12-09T21:48:23Z`.
+
+Downloaded bootstrap validation passed; upstream provenance checks matched the
+exact candidate/tree, clean source, runner class and pinned fx revision.
+The upstream workflow performed full binary/materialization validation; local
+download checks do not independently revalidate binaries held only on that
+runner. Evidence remains non-claim-eligible regression evidence, not an M07
+performance claim or a proven source fix for earlier intermittent failures.
