@@ -47,6 +47,10 @@ pub enum NativeInteractiveControl {
         action: crate::NativeWorkspaceAction,
         store: Option<Arc<NativeUserConfigStore>>,
     },
+    /// Resolves only this conversation's native terminal access routes.
+    Background {
+        command: crate::NativeBackgroundCommand,
+    },
 }
 
 impl fmt::Debug for NativeInteractiveControl {
@@ -70,6 +74,7 @@ pub enum NativeInteractiveControlError {
     Permission(PermissionError),
     Allowlist(crate::NativeAllowlistError),
     Workspace(crate::NativeWorkspaceServiceError),
+    Background(crate::NativeBackgroundControlError),
     Unavailable,
 }
 impl fmt::Debug for NativeInteractiveControlError {
@@ -100,6 +105,7 @@ pub enum NativeInteractiveControlReceipt {
     PermissionRuleConfirmed(SessionRevision),
     Allowlist(crate::NativeAllowlistReceipt),
     Workspace(crate::NativeWorkspaceReceipt),
+    Background(crate::NativeBackgroundControlReceipt),
 }
 impl fmt::Debug for NativeInteractiveControlReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -127,6 +133,7 @@ impl NativeInteractiveControlOutcome {
                 commit.session.is_err() || commit.user_defaults.is_err()
             }
             Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) => receipt.failed(),
+            Ok(NativeInteractiveControlReceipt::Background(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Workspace(receipt)) => !matches!(
                 receipt.reconciliation,
                 crate::NativeWorkspaceReconciliation::CachedBusy
@@ -141,6 +148,7 @@ impl NativeInteractiveControlOutcome {
 pub(super) struct OwnedControl {
     id: NativeInteractiveControlId,
     source: BackgroundOutputOwner,
+    pub(super) cancellation: Option<machine_god_core::CancellationToken>,
     pub(super) future:
         BoxFuture<'static, Result<NativeInteractiveControlReceipt, NativeInteractiveControlError>>,
 }
@@ -182,30 +190,29 @@ impl NativeInteractiveSession {
             .ok_or(NativeInteractiveError::IdentityExhausted)?;
         let id = NativeInteractiveControlId(self.next_control);
         let source = transition::principal(&self.current);
-        let control = match control {
-            NativeInteractiveControl::Rename { title } => {
-                // Reuse the native title contract before retaining its bounded,
-                // normalized value; no record, clock or filesystem is read.
-                let mut checked = NativeSessionMetadata::new(
-                    &self.options.workspace,
-                    now_ms,
-                    NativeSessionOrigin::Cli,
-                )
-                .map_err(|_| NativeInteractiveError::Configuration)?;
-                checked
-                    .rename(&title, now_ms)
-                    .map_err(|_| NativeInteractiveError::Configuration)?;
-                NativeInteractiveControl::Rename {
-                    title: checked
-                        .title()
-                        .expect("validated rename has title")
-                        .to_owned(),
-                }
-            }
-            other => other,
-        };
+        let control = normalize_control(control, &self.options.workspace, now_ms)?;
         let runtime = self.current.clone();
+        let mut cancellation = None;
         let future = match control {
+            NativeInteractiveControl::Background { command } => {
+                let token = machine_god_core::CancellationToken::new();
+                let future = crate::background_commands::service::execute(
+                    self.host
+                        .terminal_background_requester()
+                        .ok_or(NativeInteractiveError::Configuration)?,
+                    source.clone(),
+                    command,
+                    self.background_opener.clone(),
+                    token.clone(),
+                );
+                cancellation = Some(token);
+                Box::pin(async move {
+                    future
+                        .await
+                        .map(NativeInteractiveControlReceipt::Background)
+                        .map_err(NativeInteractiveControlError::Background)
+                }) as BoxFuture<'static, _>
+            }
             NativeInteractiveControl::Workspace { action, store } => {
                 if let crate::NativeWorkspaceAction::Add(path)
                 | crate::NativeWorkspaceAction::Remove(path) = &action
@@ -263,7 +270,12 @@ impl NativeInteractiveSession {
             other => Box::pin(execute(runtime, other, now_ms)),
         };
         self.next_control = next;
-        self.control = Some(OwnedControl { id, source, future });
+        self.control = Some(OwnedControl {
+            id,
+            source,
+            cancellation,
+            future,
+        });
         self.notify();
         Ok(id)
     }
@@ -364,6 +376,32 @@ impl NativeInteractiveSession {
     }
 }
 
+fn normalize_control(
+    control: NativeInteractiveControl,
+    workspace: &std::path::Path,
+    now_ms: i64,
+) -> Result<NativeInteractiveControl, NativeInteractiveError> {
+    match control {
+        NativeInteractiveControl::Rename { title } => {
+            // Reuse the native title contract before retaining its bounded,
+            // normalized value; no record, clock or filesystem is read.
+            let mut checked =
+                NativeSessionMetadata::new(workspace, now_ms, NativeSessionOrigin::Cli)
+                    .map_err(|_| NativeInteractiveError::Configuration)?;
+            checked
+                .rename(&title, now_ms)
+                .map_err(|_| NativeInteractiveError::Configuration)?;
+            Ok(NativeInteractiveControl::Rename {
+                title: checked
+                    .title()
+                    .expect("validated rename has title")
+                    .to_owned(),
+            })
+        }
+        other => Ok(other),
+    }
+}
+
 async fn execute(
     runtime: Arc<NativeConversationRuntime>,
     control: NativeInteractiveControl,
@@ -393,6 +431,7 @@ async fn execute(
             )
         }
         NativeInteractiveControl::Continue { .. }
+        | NativeInteractiveControl::Background { .. }
         | NativeInteractiveControl::Workspace { .. }
         | NativeInteractiveControl::UndoLast
         | NativeInteractiveControl::Allowlist { .. } => {

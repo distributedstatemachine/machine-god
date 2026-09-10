@@ -8,7 +8,18 @@ use std::{fmt, str::FromStr};
 
 use machine_god_core::TerminalSessionId;
 
-#[cfg(test)]
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+pub(crate) mod service;
+#[cfg(any(
+    test,
+    all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos")
+    )
+))]
 pub(crate) mod url;
 
 /// Maximum UTF-8 payload size, checked before scanning or allocating.

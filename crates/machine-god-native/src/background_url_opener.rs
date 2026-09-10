@@ -55,9 +55,43 @@ pub struct NativeBackgroundUrlOpener {
     inner: Arc<OpenerInner>,
 }
 
+/// Retained launcher installation, independent of any particular host lifetime.
+#[derive(Clone)]
+pub struct NativeBackgroundUrlExecutable {
+    program: PathBuf,
+    executable: Arc<File>,
+}
+impl fmt::Debug for NativeBackgroundUrlExecutable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeBackgroundUrlExecutable")
+            .finish_non_exhaustive()
+    }
+}
+impl NativeBackgroundUrlExecutable {
+    /// Validates spelling without inspecting the retained executable.
+    /// # Errors
+    /// Rejects nonabsolute, parent-relative, NUL-containing or oversized paths.
+    pub fn new(program: PathBuf, executable: File) -> Result<Self, NativeBackgroundOpenError> {
+        if !program.is_absolute()
+            || program.as_os_str().len() > 4096
+            || program.as_os_str().as_bytes().contains(&0)
+            || program
+                .components()
+                .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
+        {
+            return Err(NativeBackgroundOpenError::InvalidAuthority);
+        }
+        Ok(Self {
+            program,
+            executable: Arc::new(executable),
+        })
+    }
+}
+
 struct OpenerInner {
     program: PathBuf,
-    executable: File,
+    executable: Arc<File>,
     environment: ValidatedBackgroundEnvironment,
     workers: NativeOwnedWorkerScope,
     active: Arc<AtomicBool>,
@@ -88,21 +122,24 @@ impl NativeBackgroundUrlOpener {
         environment: Vec<(OsString, OsString)>,
         workers: NativeOwnedWorkerScope,
     ) -> Result<Self, NativeBackgroundOpenError> {
-        if !program.is_absolute()
-            || program.as_os_str().len() > 4096
-            || program.as_os_str().as_bytes().contains(&0)
-            || program
-                .components()
-                .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
-        {
-            return Err(NativeBackgroundOpenError::InvalidAuthority);
-        }
+        Self::from_executable(
+            NativeBackgroundUrlExecutable::new(program, executable)?,
+            environment,
+            workers,
+        )
+    }
+
+    pub(crate) fn from_executable(
+        executable: NativeBackgroundUrlExecutable,
+        environment: Vec<(OsString, OsString)>,
+        workers: NativeOwnedWorkerScope,
+    ) -> Result<Self, NativeBackgroundOpenError> {
         let environment = ValidatedBackgroundEnvironment::new(environment)
             .map_err(|_| NativeBackgroundOpenError::InvalidAuthority)?;
         Ok(Self {
             inner: Arc::new(OpenerInner {
-                program,
-                executable,
+                program: executable.program,
+                executable: executable.executable,
                 environment,
                 workers,
                 active: Arc::new(AtomicBool::new(false)),
@@ -242,8 +279,8 @@ fn launch(
 }
 
 fn verify_executable(inner: &OpenerInner) -> Result<(), NativeBackgroundOpenError> {
-    let retained =
-        rustix::fs::fstat(&inner.executable).map_err(|_| NativeBackgroundOpenError::Unavailable)?;
+    let retained = rustix::fs::fstat(&*inner.executable)
+        .map_err(|_| NativeBackgroundOpenError::Unavailable)?;
     let named = rustix::fs::open(
         &inner.program,
         OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC | OFlags::NOFOLLOW,

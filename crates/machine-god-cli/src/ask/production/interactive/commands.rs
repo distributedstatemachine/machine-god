@@ -28,7 +28,8 @@ Model selection and /fast request native session and available user-default save
 their independent results are reported separately. /resume has no arguments.\n\
 Cmd/Super+R opens the all-workspace session picker.\n\
 /allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]\n\
-/workspace [list|add PATH|remove PATH|clear]\n> ";
+/workspace [list|add PATH|remove PATH|clear]\n\
+/background [open|logs|stop [terminal-id|last]]\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -122,6 +123,14 @@ impl Driver {
             Command::Fast => self.fast_command(now_ms),
             Command::Allowlist => self.allowlist_command(payload, now_ms),
             Command::Workspace => self.workspace_command(payload, now_ms),
+            Command::Background => match payload.parse() {
+                Ok(command) => {
+                    self.control_command(NativeInteractiveControl::Background { command }, now_ms)
+                }
+                Err(_) => {
+                    self.note(b"\n[usage: /background [open|logs|stop [terminal-id|last]]]\n> ")
+                }
+            },
         }
     }
 

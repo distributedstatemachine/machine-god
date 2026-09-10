@@ -167,7 +167,7 @@ fn abandoned_request_does_not_cancel_the_callers_token_or_abandon_cleanup() {
 fn mismatched_retained_executable_fails_before_launch() {
     let mut fixture = Fixture::new("exit 9");
     Arc::get_mut(&mut fixture.opener.inner).unwrap().executable =
-        File::open(&fixture.directory).unwrap();
+        Arc::new(File::open(&fixture.directory).unwrap());
     assert_eq!(block_on(fixture.open()), Err(Error::Unavailable));
     assert!(!fixture.directory.join("output").exists());
 }

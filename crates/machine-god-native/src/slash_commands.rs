@@ -1,4 +1,4 @@
-//! Effect-free catalog and command-envelope routing for the five native slash categories.
+//! Effect-free catalog and command-envelope routing for native slash categories.
 //!
 //! Payload validation and execution belong to the command handlers, not this catalog.
 
@@ -10,7 +10,7 @@ pub const MAX_NATIVE_SLASH_INPUT_BYTES: usize = 65_536;
 /// Inclusive UTF-8 byte bound checked before completion or help-query inspection.
 pub const MAX_NATIVE_SLASH_QUERY_BYTES: usize = 4096;
 
-/// The twenty pinned primary commands in the five native categories.
+/// Primary commands supported by the native interactive host.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeSlashCommand {
     Help,
@@ -21,6 +21,7 @@ pub enum NativeSlashCommand {
     Continue,
     Rename,
     Status,
+    Background,
     Model,
     Models,
     Permissions,
@@ -43,6 +44,7 @@ pub enum NativeSlashCategory {
     Model,
     Security,
     Workspace,
+    Agents,
 }
 
 impl NativeSlashCategory {
@@ -55,16 +57,18 @@ impl NativeSlashCategory {
             Self::Model => "Model",
             Self::Security => "Security",
             Self::Workspace => "Workspace",
+            Self::Agents => "Agents",
         }
     }
 }
 
-const CATEGORIES: [NativeSlashCategory; 5] = [
+const CATEGORIES: [NativeSlashCategory; 6] = [
     NativeSlashCategory::General,
     NativeSlashCategory::Session,
     NativeSlashCategory::Model,
     NativeSlashCategory::Security,
     NativeSlashCategory::Workspace,
+    NativeSlashCategory::Agents,
 ];
 
 /// Static catalog metadata, not a declaration that runtime effects are implemented.
@@ -101,7 +105,7 @@ macro_rules! spec {
 }
 
 // Preserve the relative order of the pinned complete registry, not category order.
-static REGISTRY: [NativeSlashSpec; 20] = [
+static REGISTRY: [NativeSlashSpec; 21] = [
     spec!(
         Help,
         "/help",
@@ -179,6 +183,16 @@ static REGISTRY: [NativeSlashSpec; 20] = [
         "show runtime configuration",
         General,
         false,
+        true,
+        false
+    ),
+    spec!(
+        Background,
+        "/background",
+        "/background [open|logs|stop [terminal-id|last]]",
+        "inspect background command history",
+        Agents,
+        true,
         true,
         false
     ),
@@ -307,9 +321,9 @@ static REGISTRY: [NativeSlashSpec; 20] = [
     },
 ];
 
-/// Returns the twenty static entries in pinned registry order, without allocation.
+/// Returns static entries in pinned registry order, without allocation.
 #[must_use]
-pub fn native_slash_registry() -> &'static [NativeSlashSpec; 20] {
+pub fn native_slash_registry() -> &'static [NativeSlashSpec; 21] {
     &REGISTRY
 }
 
@@ -544,7 +558,7 @@ enum CompletionState<'a> {
     Done,
 }
 
-/// Allocation-free completion iterator; at most twenty rows are returned.
+/// Allocation-free completion iterator, bounded by the static registry size.
 #[derive(Clone)]
 pub struct NativeSlashCompletions<'a> {
     state: CompletionState<'a>,
@@ -756,7 +770,7 @@ impl Iterator for NativeSlashCompletions<'_> {
             Some(if matches!(self.state, CompletionState::Done) {
                 0
             } else {
-                20
+                REGISTRY.len()
             }),
         )
     }
@@ -1029,7 +1043,7 @@ impl Iterator for NativeSlashHelp<'_> {
             Some(if self.category == CATEGORIES.len() {
                 0
             } else {
-                20
+                REGISTRY.len()
             }),
         )
     }
@@ -1078,6 +1092,22 @@ mod tests {
     }
 
     #[test]
+    fn background_routes_payload_without_completing_hidden_subcommands() {
+        assert_eq!(rows("/background"), ["/background"]);
+        assert!(rows("/background s").is_empty());
+        assert_eq!(
+            valid("/background logs last").command,
+            NativeSlashCommand::Background
+        );
+        assert_eq!(valid("/background logs last").payload, "logs last");
+        assert_eq!(
+            NativeSlashCommand::Background.spec().category,
+            NativeSlashCategory::Agents
+        );
+        assert!(NativeSlashCommand::Background.spec().show_in_welcome);
+    }
+
+    #[test]
     fn slash_commands_registry_preserves_complete_pinned_category_scope_and_order() {
         let expected = [
             "/help",
@@ -1088,6 +1118,7 @@ mod tests {
             "/continue",
             "/rename",
             "/status",
+            "/background",
             "/model",
             "/models",
             "/permissions",
@@ -1119,7 +1150,7 @@ mod tests {
                 .iter()
                 .filter(|spec| spec.category == category)
                 .count()),
-            [5, 8, 3, 3, 1]
+            [5, 8, 3, 3, 1, 1]
         );
     }
 
@@ -1504,7 +1535,8 @@ mod tests {
                 "/permissions",
                 "/allowlist",
                 "/sandbox",
-                "/workspace"
+                "/workspace",
+                "/background"
             ]
         );
         let search = |query: &str| {
@@ -1585,11 +1617,11 @@ mod tests {
             })
         );
         let mut completions = native_slash_completions("/").unwrap();
-        assert_eq!(completions.by_ref().count(), 20);
+        assert_eq!(completions.by_ref().count(), REGISTRY.len());
         assert_eq!(completions.next(), None);
         assert_eq!(completions.next(), None);
         let mut help = native_slash_help("").unwrap();
-        assert_eq!(help.by_ref().count(), 20);
+        assert_eq!(help.by_ref().count(), REGISTRY.len());
         assert_eq!(help.next(), None);
         assert_eq!(help.next(), None);
     }

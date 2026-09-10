@@ -32,6 +32,14 @@ mod ai_gateway_web_search;
 mod ask_permission;
 mod ask_user_question;
 mod background_commands;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+pub use background_commands::service::{
+    NativeBackgroundControlError, NativeBackgroundControlReceipt, NativeBackgroundLogSummary,
+    NativeBackgroundLogWindow,
+};
 pub use background_commands::{
     MAX_NATIVE_BACKGROUND_COMMAND_BYTES, NativeBackgroundCommand, NativeBackgroundCommandError,
     NativeBackgroundTarget,
@@ -48,8 +56,19 @@ mod background_process;
 mod background_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_supervisor;
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
 mod background_url_opener;
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+pub use background_url_opener::{
+    NativeBackgroundOpenError, NativeBackgroundOpenOutcome, NativeBackgroundUrlExecutable,
+    NativeBackgroundUrlOpener,
+};
 mod model_catalog_cache;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod owned_worker;

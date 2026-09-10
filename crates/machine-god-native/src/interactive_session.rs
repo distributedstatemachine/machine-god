@@ -43,6 +43,10 @@ pub struct NativeInteractiveSessionOptions {
         crate::NativeClipboardExecutable,
         Vec<(std::ffi::OsString, std::ffi::OsString)>,
     )>,
+    background_url: Option<(
+        crate::NativeBackgroundUrlExecutable,
+        Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    )>,
 }
 impl fmt::Debug for NativeInteractiveSessionOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,6 +69,7 @@ impl NativeInteractiveSessionOptions {
             process_model: None,
             catalog: None,
             clipboard: None,
+            background_url: None,
         })
     }
     /// Applies only to initial startup; fresh transitions use workspace defaults.
@@ -95,6 +100,18 @@ impl NativeInteractiveSessionOptions {
         environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
     ) -> Self {
         self.clipboard = Some((executable, environment));
+        self
+    }
+
+    /// Retains explicit desktop launcher authority without inspecting or starting it.
+    /// Invalid optional authority disables URL opening, not interactive startup.
+    #[must_use]
+    pub fn with_background_url_opener(
+        mut self,
+        executable: crate::NativeBackgroundUrlExecutable,
+        environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    ) -> Self {
+        self.background_url = Some((executable, environment));
         self
     }
 }
@@ -232,6 +249,7 @@ pub struct NativeInteractiveSession {
     control_outcome: Option<NativeInteractiveControlOutcome>,
     next_control: u64,
     clipboard: Result<crate::NativeClipboard, crate::NativeClipboardError>,
+    background_opener: Option<crate::NativeBackgroundUrlOpener>,
     copy: Option<clipboard::OwnedCopy>,
     copy_outcome: Option<NativeInteractiveCopyOutcome>,
     next_copy: u64,
@@ -307,6 +325,18 @@ impl NativeInteractiveSession {
                     )
                 },
             );
+            let background_opener =
+                options
+                    .background_url
+                    .take()
+                    .and_then(|(executable, environment)| {
+                        crate::NativeBackgroundUrlOpener::from_executable(
+                            executable,
+                            environment,
+                            host.control_workers()?,
+                        )
+                        .ok()
+                    });
             Ok(Self {
                 host,
                 options,
@@ -322,6 +352,7 @@ impl NativeInteractiveSession {
                 control_outcome: None,
                 next_control: 1,
                 clipboard,
+                background_opener,
                 copy: None,
                 copy_outcome: None,
                 next_copy: 1,
@@ -391,6 +422,7 @@ impl NativeInteractiveSession {
     }
     pub fn request_shutdown(&mut self) {
         self.cancel_copy();
+        self.cancel_background_control();
         self.shutting_down = true;
         self.pending.take();
         self.presentation.take();
@@ -401,12 +433,28 @@ impl NativeInteractiveSession {
     /// settle first; cancellation never drops their metadata editor.
     /// Returns acceptance, not a settled turn or persistence receipt.
     pub fn request_cancel(&mut self) -> bool {
+        if !self.closed && !self.shutting_down && self.cancel_background_control() {
+            self.notify();
+            return true;
+        }
         if self.closed || self.shutting_down || (self.admission.is_none() && self.turn.is_none()) {
             return false;
         }
         self.cancel_requested = true;
         self.notify();
         true
+    }
+
+    fn cancel_background_control(&self) -> bool {
+        if let Some(token) = self
+            .control
+            .as_ref()
+            .and_then(|control| control.cancellation.as_ref())
+        {
+            token.cancel();
+            return true;
+        }
+        false
     }
     #[must_use]
     pub fn take_presentation(&mut self) -> Option<EngineEvent> {

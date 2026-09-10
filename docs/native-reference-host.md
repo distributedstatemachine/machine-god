@@ -307,6 +307,15 @@ returns `None` without initializing its lazy background supervisor. This getter
 does not select or switch a conversation; transition operations retain the
 durability, ownership and uncertainty contract in [terminal](terminal.md).
 
+`terminal_background_requester()` exposes non-owning listing, exact/latest
+selection, inspection, bounded durable output and graceful close through the same
+terminal owner. Each selected target retains its exact access generation;
+handoff and final host shutdown revoke it. Unknown owners cannot create routes
+by listing. Interactive background controls compose these requesters with an
+optional explicitly captured URL launcher bound to the host's control workers,
+not another supervisor or process-lifetime vote. Saved records and IDs never
+restore live authority; details belong in [background commands](background-cli.md).
+
 The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or
 ancestor disjointness. The prepared-root path performs the stronger

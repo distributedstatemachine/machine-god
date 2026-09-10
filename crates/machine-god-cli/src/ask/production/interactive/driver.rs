@@ -1105,8 +1105,14 @@ fn session_save_name(value: &NativeModelPreferencePersistence) -> &'static str {
     }
 }
 
+mod background;
+
 pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
     use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
+
+    if let Ok(NativeInteractiveControlReceipt::Background(receipt)) = &outcome.result {
+        return background::render(outcome.id.get(), receipt);
+    }
 
     if let Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) = &outcome.result {
         return super::allowlist_view::render(outcome.id.get(), receipt);
@@ -1126,6 +1132,7 @@ pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Resul
             "undo outcome uncertain; effects may be partial; recovery artifacts retained; manual inspection required; no automatic retry",
         ),
         Err(NativeInteractiveControlError::Undo(error)) => write!(text, "undo failed: {error}"),
+        Err(NativeInteractiveControlError::Background(error)) => write!(text, "background command failed: {error}; no automatic retry"),
         Err(NativeInteractiveControlError::Allowlist(
             machine_god_native::NativeAllowlistError::Ambiguous
             | machine_god_native::NativeAllowlistError::Config(
@@ -1182,6 +1189,9 @@ pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Resul
         }
         Ok(NativeInteractiveControlReceipt::Workspace(_)) => {
             unreachable!("workspace uses its separately bounded renderer")
+        }
+        Ok(NativeInteractiveControlReceipt::Background(_)) => {
+            unreachable!("background uses its separately bounded renderer")
         }
     }
     .map_err(|_| ())?;

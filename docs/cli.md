@@ -174,6 +174,14 @@ Already-received chunks and partial drafts retain their original binding; they
 cannot be retargeted to a replacement prompt or next question page. This does
 not claim timestamps or provenance for unread bytes still in the kernel.
 
+`/background` lists the current native terminal history. `/background stop`,
+`open` and `logs` accept an optional native terminal ID or `last`; omission means
+`last`. These controls use the existing native control lane, and their exact
+receipts remain owned through cancellation, handoff and output failure. Logs
+are bounded and terminal-safe; opening a URL requires an explicitly captured
+desktop launcher and does not assert server reachability. Top-level inspection
+remains read-only. See [background commands](background-cli.md).
+
 Initial resume displays a single canonical record snapshot; confirmed session
 installation replaces that projection with the destination's history. Unchanged
 or rejected transitions do not manufacture a new history. Projection neither

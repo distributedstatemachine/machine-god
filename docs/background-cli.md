@@ -148,7 +148,7 @@ as `Unavailable`. Filesystem calls have no universal wall-clock guarantee.
 FreeBSD, Windows, WASI, and other unsupported targets return the active fixed
 `Unsupported` category and never pretend the history is empty.
 
-## Deferred pinned-fx surface
+## Interactive background commands
 
 ### Interactive request and URL-handoff contracts
 
@@ -164,6 +164,29 @@ Interactive targets use the complete terminal host's existing
 changing display. This is an intentional spelling difference from pinned fx's
 numeric interactive background IDs; legacy numeric top-level inspection remains
 distinct. Identifiers are descriptive, never process or workspace authority.
+
+The interactive control lane resolves the current conversation's exact native
+terminal generation. Its complete list contains at most 128 rows and 1 MiB of
+command/cwd text, newest creation timestamp first and descending terminal ID on
+ties. Unknown owners are errors, not empty successes. Selection resolves `last`
+once; later reads, close and URL admission retain that same sealed target.
+Conversation handoff and host shutdown revoke stale targets. Saved PIDs never
+reconstruct control authority. Listing distinguishes retained backend ownership
+from readable history; command previews are explicitly shortened at 256 bytes.
+
+`stop` requests native graceful close and retains its exact receipt. A
+history-only result does not assert a process was stopped. `/cancel` and shutdown
+cancel background controls while continuing to own their completion futures;
+committed or uncertain effects are not reported as rollback and are not retried.
+
+`logs` reads separate head and tail windows of at most 16 KiB each, with at most
+1,024 native pages per window. Each window freezes its first observed end
+cursor; the pair is not an atomic snapshot. Gaps and incomplete windows are
+explicit, and discontinuous spans are not concatenated into synthetic output.
+Presentation selects the first 40 head lines and last 40 tail lines, marks omitted
+lines and prints source/next/end cursors. Invalid UTF-8 bytes use visible hex
+escapes; terminal controls are escaped. The bounded 256 KiB renderer completes
+before the output write and never changes the native receipt on output failure.
 
 URL selection examines at most 64 KiB of captured output. It accepts only
 validated HTTP(S) candidates whose raw and canonical spellings each fit 2,048
@@ -185,6 +208,19 @@ launcher, with no shell interpolation, null standard streams and a fixed root
 working directory. The exact target's generation and cancellation are checked
 at launch admission. No network probe or claim of continued server availability
 follows from a URL observed in output.
+
+Interactive startup captures the optional fixed desktop launcher on its existing
+blocking startup worker: `/usr/bin/open` on macOS, `/usr/bin/xdg-open` on Linux.
+There is no PATH search, workspace fallback or shell. The retained descriptor
+must name the canonical regular executable; symlinks and parent-symlink paths
+are rejected. Failure disables URL opening without failing interactive startup.
+The launcher receives fixed `PATH=/usr/bin:/bin` and only the bounded desktop
+keys `HOME`, `USER`, `LOGNAME`, `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`,
+`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `XDG_CURRENT_DESKTOP`,
+`XDG_SESSION_DESKTOP`, `DESKTOP_SESSION`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+`XDG_CONFIG_DIRS`, `XDG_DATA_DIRS`, `LANG`, `LC_ALL`, `LC_CTYPE` and `TMPDIR`.
+Capture does not enumerate the environment or forward unrelated credentials,
+loader settings or `BROWSER`.
 
 Clones share one operation admission through actual direct-child reaping. The
 launcher has a ten-second observation deadline, and cancellation or caller drop

@@ -19,6 +19,54 @@ fn executor() -> tokio::runtime::Runtime {
 }
 
 #[test]
+fn background_commands_use_native_control_and_reject_malformed_targets() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new_with_workspace();
+        let mut driver = driver(&fixture).await;
+        driver.command("/background", 200);
+        let receipt = control(&mut driver).await;
+        assert!(!receipt.failed());
+        assert!(matches!(&receipt.result, Ok(NativeInteractiveControlReceipt::Background(native::NativeBackgroundControlReceipt::Listed(snapshot))) if snapshot.entries().is_empty()));
+        let rendered = super::super::driver::render_control(&receipt).unwrap();
+        assert!(String::from_utf8(rendered).unwrap().contains("No background command history"));
+        for command in ["/background stop", "/background logs last", "/background open last"] {
+            driver.command(command, 210);
+            let receipt = control(&mut driver).await;
+            assert!(receipt.failed());
+            assert!(matches!(receipt.result, Err(native::NativeInteractiveControlError::Background(native::NativeBackgroundControlError::Terminal(native::NativeTerminalBackgroundError::NotFound)))));
+        }
+        for command in ["/background stop 1", "/background logs --last", "/background open last extra"] {
+            driver.command(command, 220);
+            let notice = String::from_utf8(driver.notice.take().unwrap()).unwrap();
+            assert!(notice.contains("usage: /background"));
+            assert!(driver.owner.take_control_outcome().is_none());
+        }
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
+
+#[test]
+fn cancelling_background_control_keeps_its_native_receipt() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new_with_workspace();
+        let mut driver = driver(&fixture).await;
+        driver.command("/background", 200);
+        assert!(driver.owner.request_cancel());
+        let receipt = control(&mut driver).await;
+        assert!(matches!(
+            receipt.result,
+            Err(native::NativeInteractiveControlError::Background(
+                native::NativeBackgroundControlError::Terminal(
+                    native::NativeTerminalBackgroundError::Cancelled
+                )
+            ))
+        ));
+        assert!(!driver.owner.request_cancel());
+        Box::pin(finish(driver, fixture)).await;
+    });
+}
+
+#[test]
 fn workspace_without_settings_lists_but_cannot_save() {
     executor().block_on(async {
         let fixture = support::Fixture::new_with_workspace();
