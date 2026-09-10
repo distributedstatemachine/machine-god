@@ -10,7 +10,8 @@ use crate::{
     NativeUserConfigStore,
 };
 use machine_god_core::{
-    BackgroundOutputOwner, BoxFuture, InferenceOptions, PermissionError, SessionRevision,
+    BackgroundOutputOwner, BoxFuture, CancellationToken, InferenceOptions, PermissionError,
+    SessionRevision,
 };
 use std::{
     fmt,
@@ -145,12 +146,14 @@ impl NativeInteractiveControlOutcome {
     }
 }
 
+type ControlFuture =
+    BoxFuture<'static, Result<NativeInteractiveControlReceipt, NativeInteractiveControlError>>;
+
 pub(super) struct OwnedControl {
     id: NativeInteractiveControlId,
     source: BackgroundOutputOwner,
-    pub(super) cancellation: Option<machine_god_core::CancellationToken>,
-    pub(super) future:
-        BoxFuture<'static, Result<NativeInteractiveControlReceipt, NativeInteractiveControlError>>,
+    pub(super) cancellation: Option<CancellationToken>,
+    pub(super) future: ControlFuture,
 }
 
 impl NativeInteractiveSession {
@@ -195,23 +198,9 @@ impl NativeInteractiveSession {
         let mut cancellation = None;
         let future = match control {
             NativeInteractiveControl::Background { command } => {
-                let token = machine_god_core::CancellationToken::new();
-                let future = crate::background_commands::service::execute(
-                    self.host
-                        .terminal_background_requester()
-                        .ok_or(NativeInteractiveError::Configuration)?,
-                    source.clone(),
-                    command,
-                    self.background_opener.clone(),
-                    token.clone(),
-                );
+                let (token, future) = self.prepare_background_control(source.clone(), command)?;
                 cancellation = Some(token);
-                Box::pin(async move {
-                    future
-                        .await
-                        .map(NativeInteractiveControlReceipt::Background)
-                        .map_err(NativeInteractiveControlError::Background)
-                }) as BoxFuture<'static, _>
+                future
             }
             NativeInteractiveControl::Workspace { action, store } => {
                 if let crate::NativeWorkspaceAction::Add(path)
@@ -278,6 +267,32 @@ impl NativeInteractiveSession {
         });
         self.notify();
         Ok(id)
+    }
+
+    fn prepare_background_control(
+        &self,
+        source: BackgroundOutputOwner,
+        command: crate::NativeBackgroundCommand,
+    ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
+        let token = CancellationToken::new();
+        let future = crate::background_commands::service::execute(
+            self.host
+                .terminal_background_requester()
+                .ok_or(NativeInteractiveError::Configuration)?,
+            source,
+            command,
+            self.background_opener.clone(),
+            token.clone(),
+        );
+        Ok((
+            token,
+            Box::pin(async move {
+                future
+                    .await
+                    .map(NativeInteractiveControlReceipt::Background)
+                    .map_err(NativeInteractiveControlError::Background)
+            }),
+        ))
     }
 
     fn request_continuation(
