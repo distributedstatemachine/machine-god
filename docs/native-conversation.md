@@ -66,6 +66,40 @@ exclusive title mutation. It preserves paused checkpoints and cannot enter the
 gap between core completion and native finalization. A returned revision proves
 title persistence, not a process-only display update.
 
+## Checkpoint-bound skill context
+
+`prompt_with_skill_context(prompt, context, optional_model, now_ms)` accepts
+already materialized `NativeSkillPromptContext` from an explicitly composed
+native host. Construction validates at most 65,536 UTF-8 text bytes; it does not
+discover, read or authorize a skill. The borrowed admission future is inert
+before polling. The optional model has the same atomic snapshot semantics as
+`prompt_with_model`.
+
+Core projects the context in its fixed untrusted-advisory wrapper as a separate
+text block on this exact latest user message for every provider round.
+Canonical prompt text and permission
+provenance remain unchanged. Native stores the inert text atomically with the
+checkpoint under `machine_god.skill_prompt_context`: exactly `schema_version`
+(`1`), `turn_sequence`, `first_user_message`, and `text`. The latter two identity
+fields must match the validated checkpoint; absent legacy metadata means no
+context. Unknown fields, malformed values, oversized text, orphaned context,
+and mismatched attempt/user identities fail validation before provider work or
+new publication. Validation checks shape and length before copying context.
+
+Explicit continuation copies the admitted bytes, updates the attempt identity
+in the same reservation, and never rescans a skill source. Cancelled, failed or
+dropped turns retain the context alongside recovery evidence. Normal completion
+removes both checkpoint and context in one finalization save. Every new prompt
+replaces or clears the preceding context, including when abandoning paused work.
+Model changes, rename and compaction do not alter these inert bytes. They confer
+no path, process, filesystem or permission authority after restart.
+
+The 65,536-byte text ceiling is not a guarantee that a composed turn fits:
+core independently checks total serialized session metadata (256 KiB by default,
+including JSON escaping and unrelated entries) and provider payload limits.
+Rejected or uncertain saves retain the existing reconciliation semantics;
+there is no separate context writer, destructor save or automatic retry.
+
 ## Durable model preferences and job snapshots
 
 `model_preferences` observes saved requested settings under idle admission;

@@ -301,14 +301,14 @@ impl NativeInteractiveSession {
     ) -> Result<NativeInteractiveControlId, NativeInteractiveError> {
         use crate::conversation::{ConversationInput, PendingInput};
         // This guard also releases deeply nested rejected JSON iteratively.
-        let mut input = PendingInput(Some(ConversationInput::Continue(options)));
+        let mut input = PendingInput::new(ConversationInput::Continue(options));
         self.check_control_admission()?;
         let next = self
             .next_control
             .checked_add(1)
             .ok_or(NativeInteractiveError::IdentityExhausted)?;
         let id = NativeInteractiveControlId(self.next_control);
-        let Some(ConversationInput::Continue(options)) = input.0.take() else {
+        let Some(ConversationInput::Continue(options)) = input.input.take() else {
             unreachable!("owned continuation");
         };
         let job = self.current.enqueue_continuation(options)?;

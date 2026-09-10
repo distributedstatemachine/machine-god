@@ -368,9 +368,13 @@ mod session_resume;
 mod session_store;
 mod skill;
 mod skills_commands;
+mod skills_prompt_context;
 pub use skills_commands::{
     MAX_NATIVE_SKILLS_COMMAND_BYTES, MAX_NATIVE_SKILLS_SELECTOR_BYTES, NativeSkillsCommand,
     NativeSkillsCommandError,
+};
+pub use skills_prompt_context::{
+    NATIVE_SKILL_PROMPT_CONTEXT_KEY, NativeSkillPromptContext, NativeSkillPromptContextError,
 };
 mod slash_commands;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

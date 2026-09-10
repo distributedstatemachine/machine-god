@@ -27,6 +27,9 @@ use machine_god_testkit::{
 };
 use serde_json::{Value, json};
 
+#[path = "conversation/skills.rs"]
+mod skills;
+
 fn initial_record() -> SessionRecord {
     let mut record = SessionRecord::empty(
         SessionId::new("conversation").unwrap(),

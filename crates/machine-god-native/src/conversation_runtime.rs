@@ -558,7 +558,7 @@ impl NativeConversationRuntime {
         &self,
         prompt: Prompt,
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
-        let input = PendingInput(Some(ConversationInput::Prompt(prompt)));
+        let input = PendingInput::new(ConversationInput::Prompt(prompt));
         let bytes = input_bytes(&input)?;
         self.insert(input, bytes, None)
     }
@@ -572,7 +572,7 @@ impl NativeConversationRuntime {
         &self,
         options: InferenceOptions,
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
-        let input = PendingInput(Some(ConversationInput::Continue(options)));
+        let input = PendingInput::new(ConversationInput::Continue(options));
         let bytes = input_bytes(&input)?;
         let _lease = self.acquire_idle(true)?;
         let checkpoint = self
@@ -1128,7 +1128,7 @@ impl Drop for NativeConversationRuntimeTurn {
 }
 
 fn input_bytes(input: &PendingInput) -> Result<usize, NativeConversationRuntimeError> {
-    let (text_bytes, options) = match input.0.as_ref().expect("owned queue input") {
+    let (text_bytes, options) = match input.input.as_ref().expect("owned queue input") {
         ConversationInput::Prompt(prompt) => (prompt.text.len(), &prompt.options),
         ConversationInput::Continue(options) => (0, options),
     };

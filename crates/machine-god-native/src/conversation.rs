@@ -49,6 +49,7 @@ pub enum NativeConversationError {
     PermissionContext(crate::NativePermissionContextError),
     WorkspaceContext(crate::NativeWorkspaceContextError),
     InvalidContext(NativeContextError),
+    InvalidSkillContext(crate::NativeSkillPromptContextError),
     InvalidModelPreferences(NativeModelPreferencesError),
     InvalidMetadata(NativeSessionMetadataError),
     Lifecycle(NativeSessionLifecycleError),
@@ -69,6 +70,7 @@ impl fmt::Display for NativeConversationError {
             Self::PermissionContext(error) => error.fmt(f),
             Self::WorkspaceContext(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
+            Self::InvalidSkillContext(error) => error.fmt(f),
             Self::InvalidModelPreferences(error) => error.fmt(f),
             Self::InvalidMetadata(error) => error.fmt(f),
             Self::Lifecycle(error) => error.fmt(f),
@@ -637,19 +639,23 @@ impl NativeConversation {
             return Err(NativeConversationError::Busy);
         }
         let record = self.session.record();
-        Ok(
-            Checkpoint::decode(&record)?.map(|checkpoint| NativePausedTurn {
-                turn_sequence: checkpoint.turn_sequence,
-                has_uncertain_tool_results: record.messages[checkpoint.first_user_message..]
-                    .iter()
-                    .flat_map(|message| &message.content)
-                    .any(|block| {
-                        matches!(block, ContentBlock::ToolResult { output, .. }
+        let checkpoint = Checkpoint::decode(&record)?;
+        crate::skills_prompt_context::saved_text(
+            &record,
+            checkpoint.map(|value| (value.turn_sequence, value.first_user_message)),
+        )
+        .map_err(NativeConversationError::InvalidSkillContext)?;
+        Ok(checkpoint.map(|checkpoint| NativePausedTurn {
+            turn_sequence: checkpoint.turn_sequence,
+            has_uncertain_tool_results: record.messages[checkpoint.first_user_message..]
+                .iter()
+                .flat_map(|message| &message.content)
+                .any(|block| {
+                    matches!(block, ContentBlock::ToolResult { output, .. }
                         if output.is_error && output.content.get("code").and_then(Value::as_str)
                             == Some("tool_result_unknown"))
-                    }),
-            }),
-        )
+                }),
+        }))
     }
 
     /// Observes explicitly recorded native facts without reconstructing missing history.
@@ -787,7 +793,7 @@ impl NativeConversation {
         prompt: Prompt,
         now_ms: i64,
     ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
-        let input = PendingInput(Some(ConversationInput::Prompt(prompt)));
+        let input = PendingInput::new(ConversationInput::Prompt(prompt));
         Box::pin(async move { self.start(input, None, now_ms).await })
     }
 
@@ -802,7 +808,7 @@ impl NativeConversation {
         model: NativeModelSnapshot,
         now_ms: i64,
     ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
-        let input = PendingInput(Some(ConversationInput::Prompt(prompt)));
+        let input = PendingInput::new(ConversationInput::Prompt(prompt));
         Box::pin(async move { self.start(input, Some(model), now_ms).await })
     }
 
@@ -815,7 +821,7 @@ impl NativeConversation {
         options: InferenceOptions,
         now_ms: i64,
     ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
-        let input = PendingInput(Some(ConversationInput::Continue(options)));
+        let input = PendingInput::new(ConversationInput::Continue(options));
         Box::pin(async move { self.start(input, None, now_ms).await })
     }
 
@@ -829,8 +835,26 @@ impl NativeConversation {
         model: NativeModelSnapshot,
         now_ms: i64,
     ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
-        let input = PendingInput(Some(ConversationInput::Continue(options)));
+        let input = PendingInput::new(ConversationInput::Continue(options));
         Box::pin(async move { self.start(input, Some(model), now_ms).await })
+    }
+
+    /// Admits already materialized skill data with exactly this new prompt.
+    /// Canonical user text and permission provenance remain unchanged. Context
+    /// is saved atomically with the checkpoint for explicit continuation, never
+    /// interpreted as a path or permission grant. This future is inert before
+    /// polling; native hosts must materialize under their own owned admission.
+    #[must_use]
+    pub fn prompt_with_skill_context(
+        &self,
+        prompt: Prompt,
+        context: crate::NativeSkillPromptContext,
+        model: Option<NativeModelSnapshot>,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
+        let mut input = PendingInput::new(ConversationInput::Prompt(prompt));
+        input.skill_context = Some(context);
+        Box::pin(async move { self.start(input, model, now_ms).await })
     }
 
     async fn start(
@@ -943,8 +967,29 @@ impl NativeConversation {
             &record,
             &mut history,
             previous,
-            matches!(&input.0, Some(ConversationInput::Prompt(_))),
+            matches!(&input.input, Some(ConversationInput::Prompt(_))),
         )?;
+        let skill_context = match &input.input {
+            Some(ConversationInput::Prompt(_)) => input.skill_context.take(),
+            Some(ConversationInput::Continue(_)) => crate::skills_prompt_context::saved_text(
+                &record,
+                previous.map(|value| (value.turn_sequence, value.first_user_message)),
+            )
+            .map_err(NativeConversationError::InvalidSkillContext)?
+            .map(|text| crate::NativeSkillPromptContext::new(text.to_owned()))
+            .transpose()
+            .map_err(NativeConversationError::InvalidSkillContext)?,
+            None => return Err(NativeConversationError::Engine),
+        };
+        record
+            .metadata
+            .remove(crate::NATIVE_SKILL_PROMPT_CONTEXT_KEY);
+        if let Some(skill_context) = &skill_context {
+            record.metadata.insert(
+                crate::NATIVE_SKILL_PROMPT_CONTEXT_KEY.to_owned(),
+                skill_context.to_value(checkpoint.turn_sequence, checkpoint.first_user_message),
+            );
+        }
         let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidMetadata)?;
         metadata
@@ -962,7 +1007,7 @@ impl NativeConversation {
             history.to_value(),
         );
         let root_context = if self.permission_contexts.is_some() {
-            let prompt = match input.0.as_ref().expect("input is consumed once") {
+            let prompt = match input.input.as_ref().expect("input is consumed once") {
                 ConversationInput::Prompt(prompt) => Some(prompt.text.as_str()),
                 ConversationInput::Continue(_) => None,
             };
@@ -978,7 +1023,7 @@ impl NativeConversation {
         if let Some(model) = &model {
             apply_model_snapshot(&mut input, &mut record, model);
         }
-        let source_model = match input.0.as_ref().expect("input is consumed once") {
+        let source_model = match input.input.as_ref().expect("input is consumed once") {
             ConversationInput::Prompt(prompt) => prompt.options.model.clone(),
             ConversationInput::Continue(options) => options.model.clone(),
         };
@@ -986,9 +1031,10 @@ impl NativeConversation {
             expected_revision: record.revision,
             metadata: Some(record.metadata),
             context,
-            user_context: None,
+            user_context: skill_context
+                .map(|context| context.into_user_context(checkpoint.first_user_message)),
         };
-        let turn = match input.0.take().expect("input is consumed once") {
+        let turn = match input.input.take().expect("input is consumed once") {
             ConversationInput::Prompt(prompt) => {
                 self.session.prompt_prepared(prompt, preparation).await
             }
@@ -1089,7 +1135,7 @@ fn apply_model_snapshot(
         NATIVE_MODEL_PREFERENCES_KEY.to_owned(),
         model.preferences().to_value(),
     );
-    let options = match input.0.as_mut().expect("input is consumed once") {
+    let options = match input.input.as_mut().expect("input is consumed once") {
         ConversationInput::Prompt(prompt) => &mut prompt.options,
         ConversationInput::Continue(options) => options,
     };
@@ -1235,6 +1281,11 @@ pub(crate) fn validated_history(
     let history = NativeConversationHistory::from_record(record)
         .map_err(NativeConversationError::InvalidHistory)?;
     let checkpoint = Checkpoint::decode(record)?;
+    crate::skills_prompt_context::saved_text(
+        record,
+        checkpoint.map(|value| (value.turn_sequence, value.first_user_message)),
+    )
+    .map_err(NativeConversationError::InvalidSkillContext)?;
     for group in history.groups() {
         if group.state() == NativeHistoryState::Running
             && checkpoint.is_none_or(|checkpoint| {
@@ -1285,10 +1336,22 @@ pub(crate) enum ConversationInput {
 
 // Own untrusted inference JSON safely even when a future is never polled or
 // admission rejects before core can install its own iterative-drop guard.
-pub(crate) struct PendingInput(pub(crate) Option<ConversationInput>);
+pub(crate) struct PendingInput {
+    pub(crate) input: Option<ConversationInput>,
+    pub(crate) skill_context: Option<crate::NativeSkillPromptContext>,
+}
+
+impl PendingInput {
+    pub(crate) fn new(input: ConversationInput) -> Self {
+        Self {
+            input: Some(input),
+            skill_context: None,
+        }
+    }
+}
 impl Drop for PendingInput {
     fn drop(&mut self) {
-        let metadata = match &mut self.0 {
+        let metadata = match &mut self.input {
             Some(ConversationInput::Prompt(prompt)) => &mut prompt.options.metadata,
             Some(ConversationInput::Continue(options)) => &mut options.metadata,
             None => return,
@@ -1420,6 +1483,9 @@ impl NativeConversationTurn {
         }) if *reason != StopReason::Cancelled)
         {
             record.metadata.remove(NATIVE_CONVERSATION_CHECKPOINT_KEY);
+            record
+                .metadata
+                .remove(crate::NATIVE_SKILL_PROMPT_CONTEXT_KEY);
         } else {
             record.metadata.insert(
                 NATIVE_CONVERSATION_CHECKPOINT_KEY.to_owned(),
