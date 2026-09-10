@@ -7,6 +7,7 @@ fn bounded_output() -> crate::bounded_output::BoundedOutput {
 }
 
 mod allowlist_view;
+mod background_open;
 mod clipboard;
 mod commands;
 mod composer;
@@ -166,6 +167,7 @@ fn run_interactive(
         return super::finish_setup_failure(signals, control);
     };
     let clipboard = clipboard::capture(&workspace);
+    let background_opener = background_open::capture();
     let recording_selection =
         super::recording_startup::Selection::capture(record_requested, &workspace);
     let recording = super::recording_startup::Settlement::default();
@@ -203,6 +205,7 @@ fn run_interactive(
                     options = options.with_catalog(catalog.clone());
                 }
                 let options = clipboard::configure(options, clipboard);
+                let options = background_open::configure(options, background_opener);
                 let opening = InitialPresentation {
                     selection,
                     input,
