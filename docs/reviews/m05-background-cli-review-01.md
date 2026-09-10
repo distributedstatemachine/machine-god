@@ -180,3 +180,50 @@ guards closed/shutting-down owners first, cancels an existing background token,
 and independently latches cancellation only for an already-owned admission or
 turn. It does not drop the control future or set cancellation for later queued
 prompts. These red results establish the defect, not replacement acceptance.
+
+### Cancellation correction gate and macOS cleanup failures
+
+Candidate `78300fc631ac93c60f767f17e5b84beda4516259`, tree
+`bf5aaf9c0b1f46f937ff8aaedd14600cdfff9c92`, passed the full replacement local
+gate: macOS 4,652 non-doctest passes and 18 ignored; Linux 4,657 passes and
+17 ignored. Each platform also passed three included and three explicit
+doctests, the harnessless terminal CLI target, focused cancellation/helper
+selection regressions, fresh release checks and the other canonical checks.
+The first macOS local attempt had one inventory-readiness timeout. Three
+unchanged focused repetitions and an unchanged full replacement passed; its
+cause was not established and the failed log was retained. Linux passed its
+first runtime attempt. Exported Linux logs were hash-verified before cleanup.
+
+Three new independent local static fallback reviewers inspected the complete
+56-file feature against parent `79d3d4d426aa52816ce6dd70020b7f6a0866da38`:
+`background_review_correctness_04`, `background_review_lifecycle_04`, and
+`background_review_resources_04`. All reported zero actionable introduced
+findings. They ran no tests or remote checks and made no changes; this was not
+a named Bugbot-service review. Their clean isolated worktrees were removed.
+
+Feature Benchmark `34484595531` passed with unexpired exact-SHA upstream
+artifact `10155441963` and bootstrap artifact `10155213261`. The downloaded
+evidence matches the exact candidate/tree and pinned fx revision, but remains
+non-claim-eligible regression evidence. Feature CI `34484595470` did not pass:
+
+- Attempt 1: Apple ARM job `102895629230` failed
+  `long_quoted_artifact_paths_preserve_command_and_commandless_startup` while
+  closing clean zsh after exit 17. A subsequent inventory-service restart in
+  Drop strongly supports a failed close-time query, but does not identify its
+  error or prove eventual cleanup. All other jobs passed.
+- One unchanged failed-job retry, attempt 2: Apple ARM job `102904758206`
+  passed that earlier test but failed
+  `real_owned_backend_preserves_fast_signal_and_cleans_reparented_jobs` while
+  closing its reparented-job case after shell exit 0. Its erased error cannot
+  distinguish inner terminal close from private-server retirement. Each failed
+  native unit run had 2,250 passes, one failure and 12 ignored tests.
+
+Read-only diagnosis found the traced startup, PTY, tmux, cleanup, inventory,
+binding and helper paths unchanged from the accepted parent. Interactive
+cancellation changes are outside these tests' direct backend paths. Indirect
+suite/resource interactions remain possible; neither runner load nor a shared
+inventory cause is proven. Both failed logs are retained, and no third blind
+retry or merge followed. New error-only test diagnostics retain typed failures
+and identify query/close/server-retirement stages without new observations,
+deadline changes, retries or alternate cleanup paths. They are diagnostic
+remediation, not a claimed source fix or feature acceptance.

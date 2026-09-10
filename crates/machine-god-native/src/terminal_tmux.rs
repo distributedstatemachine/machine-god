@@ -59,6 +59,16 @@ impl fmt::Display for TerminalTmuxError {
 impl std::error::Error for TerminalTmuxError {}
 type Result<T> = std::result::Result<T, TerminalTmuxError>;
 
+// Keep error provenance in test output without another observation or a
+// production logging/timing effect. The original result is returned unchanged.
+fn close_stage<T>(stage: &'static str, result: Result<T>) -> Result<T> {
+    result.inspect_err(|error| {
+        let _ = (stage, error);
+        #[cfg(test)]
+        eprintln!("tmux close: stage={stage} error={error:?}");
+    })
+}
+
 /// Inert, bounded comparison data. Constructing it grants no process authority.
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct TerminalTmuxIdentity {
@@ -1149,31 +1159,38 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             // outstanding command. Pending or failed completion stays ambiguous.
             let _ = self.drive();
         }
-        self.control.abort()?;
+        close_stage("control-abort", self.control.abort())?;
         self.pending.take();
         let mut budget = 128;
         if self.drain(&mut budget, output).is_err() {
             self.output_incomplete = true;
         }
-        if !self.process.is_absent()? {
-            self.process.validate(self.control.identity())?;
+        if !close_stage("initial-absence", self.process.is_absent())? {
+            close_stage("validate", self.process.validate(self.control.identity()))?;
             *delivery_attempted = true;
-            self.process.signal(if force {
-                TerminalSignal::Kill
-            } else {
-                TerminalSignal::Terminate
-            })?;
+            close_stage(
+                if force { "initial-kill" } else { "term" },
+                self.process.signal(if force {
+                    TerminalSignal::Kill
+                } else {
+                    TerminalSignal::Terminate
+                }),
+            )?;
             let deadline = Instant::now() + if force { CLOSE_SETTLE } else { CLOSE_GRACE };
-            while Instant::now() < deadline && !self.process.is_absent()? {
+            while Instant::now() < deadline
+                && !close_stage("grace-absence", self.process.is_absent())?
+            {
                 if self.drain(&mut budget, output).is_err() {
                     self.output_incomplete = true;
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }
-            if !self.process.is_absent()? {
-                self.process.signal(TerminalSignal::Kill)?;
+            if !close_stage("post-grace-absence", self.process.is_absent())? {
+                close_stage("kill", self.process.signal(TerminalSignal::Kill))?;
                 let deadline = Instant::now() + CLOSE_SETTLE;
-                while Instant::now() < deadline && !self.process.is_absent()? {
+                while Instant::now() < deadline
+                    && !close_stage("force-absence", self.process.is_absent())?
+                {
                     if self.drain(&mut budget, output).is_err() {
                         self.output_incomplete = true;
                     }
@@ -1181,8 +1198,8 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
                 }
             }
         }
-        if !self.process.is_absent()? {
-            return Err(TerminalTmuxError::Cleanup);
+        if !close_stage("final-absence", self.process.is_absent())? {
+            return close_stage("final-jobs-present", Err(TerminalTmuxError::Cleanup));
         }
         // Process absence must be proven before retiring the owned namespace.
         // A terminal status must be observed, never inferred from our signal.
@@ -1197,19 +1214,27 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             if self.drain(&mut budget, output).is_err() {
                 self.output_incomplete = true;
             }
-            let output = success(run(
-                &mut self.control,
-                TerminalTmuxCommand::Inspect,
-                transport_deadline,
-            )?)?;
-            self.observation =
-                process_observation(self.control.identity(), &output, &mut self.process)?;
+            let output = close_stage(
+                "transport-inspect-status",
+                success(close_stage(
+                    "transport-inspect",
+                    run(
+                        &mut self.control,
+                        TerminalTmuxCommand::Inspect,
+                        transport_deadline,
+                    ),
+                )?),
+            )?;
+            self.observation = close_stage(
+                "transport-observation",
+                process_observation(self.control.identity(), &output, &mut self.process),
+            )?;
             if !self.observation.transport_closed {
                 std::thread::sleep(Duration::from_millis(2));
             }
         }
         if self.observation.status == TerminalPtyStatus::Running {
-            return Err(TerminalTmuxError::Cleanup);
+            return close_stage("transport-still-running", Err(TerminalTmuxError::Cleanup));
         }
         let deadline = Instant::now() + COMMAND_TIMEOUT;
         let _ = run(
@@ -1222,8 +1247,13 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             TerminalTmuxCommand::KillSession,
             deadline,
         );
-        if run(&mut self.control, TerminalTmuxCommand::HasSession, deadline)?.success {
-            return Err(TerminalTmuxError::Cleanup);
+        if close_stage(
+            "session-absence",
+            run(&mut self.control, TerminalTmuxCommand::HasSession, deadline),
+        )?
+        .success
+        {
+            return close_stage("session-still-present", Err(TerminalTmuxError::Cleanup));
         }
         let deadline = Instant::now() + CLOSE_SETTLE;
         while !self.capture_eof && budget != 0 && Instant::now() < deadline {
@@ -1341,7 +1371,11 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalSessionBackend
         force: bool,
         output: &mut dyn FnMut(&[u8]),
     ) -> std::result::Result<TerminalPtyClose, ()> {
-        self.close_inner(force, output).map_err(|_| ())
+        self.close_inner(force, output).map_err(|error| {
+            let _ = error;
+            #[cfg(test)]
+            eprintln!("tmux native close failed: {error:?}; force={force}");
+        })
     }
 }
 impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> Drop for TerminalTmuxBackend<C, P> {

@@ -210,13 +210,25 @@ impl NativeTerminalTmuxServer {
 
     fn retire(&mut self) -> Result<()> {
         if let Some(child) = self.child.as_mut() {
-            child.abort().map_err(process_error)?;
+            child
+                .abort()
+                .inspect_err(|error| {
+                    let _ = error;
+                    #[cfg(test)]
+                    eprintln!("tmux server retirement: stage=child-abort error={error:?}");
+                })
+                .map_err(process_error)?;
             self.child.take();
         }
         self.artifacts
             .as_mut()
             .ok_or(TerminalTmuxLaunchError::Cleanup)?
             .cleanup()
+            .inspect_err(|error| {
+                let _ = error;
+                #[cfg(test)]
+                eprintln!("tmux server retirement: stage=artifacts error={error:?}");
+            })
     }
 
     fn artifacts(&self) -> Result<&Artifacts> {
@@ -725,17 +737,32 @@ impl TerminalTmuxProcess for NativeTerminalTmuxProcess {
                 || !self
                     .authority
                     .jobs_absent()
+                    .inspect_err(|error| {
+                        let _ = error;
+                        #[cfg(test)]
+                        eprintln!("tmux process absence: stage=jobs error={error:?}");
+                    })
                     .map_err(|_| TerminalTmuxError::Cleanup)?
             {
                 return Ok(false);
             }
             self.authority
                 .retire_anchor()
+                .inspect_err(|error| {
+                    let _ = error;
+                    #[cfg(test)]
+                    eprintln!("tmux process absence: stage=retire-anchor error={error:?}");
+                })
                 .map_err(|_| TerminalTmuxError::Cleanup)?;
             self.retiring = true;
         }
         self.authority
             .is_absent()
+            .inspect_err(|error| {
+                let _ = error;
+                #[cfg(test)]
+                eprintln!("tmux process absence: stage=anchor-absence error={error:?}");
+            })
             .map_err(|_| TerminalTmuxError::Cleanup)
     }
     fn outcome(&mut self) -> std::result::Result<Option<TerminalPtyStatus>, TerminalTmuxError> {
@@ -873,7 +900,11 @@ impl TerminalSessionBackend for NativeTerminalTmuxBackend {
         self.tty.take();
         let mut receipt = self.backend.close(force, output)?;
         receipt.output_incomplete |= !self.capture_completion.finish();
-        self.server.retire().map_err(|_| ())?;
+        self.server.retire().map_err(|error| {
+            let _ = error;
+            #[cfg(test)]
+            eprintln!("tmux native close: stage=server-retire error={error:?}");
+        })?;
         Ok(receipt)
     }
 }

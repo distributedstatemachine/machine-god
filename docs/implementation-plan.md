@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34424264794` (`GREEN`)
 - Main Benchmark evidence: `34424264790` (`GREEN`)
 - Active branch: `agent/m61-background-cli`
-- Active phase: `M05 complete interactive background CLI implementation`
-- Next gate: `cancellation remediation replacement full local gate; then three fresh adversarial reviews`
+- Active phase: `M05 background CLI macOS cleanup diagnosis`
+- Next gate: `focused diagnostic reproduction; replacement full local gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal and combined CLI are delivered features. The exact CLI
@@ -353,10 +353,16 @@ suppress cancellation of a simultaneously active turn or admission. The fix
 independently latches cancellation for both owned operations without discarding
 committed receipts or cancelling later queued prompts. Five deterministic
 regressions reproduced the two affected cases before correction while preserving
-the three background-only and shutdown cases. A complete replacement local gate,
-three fresh reviews and exact feature/main remote gates remain required before merging this
-feature into its accepted parent. Released validation and review worktrees are
-removed; active implementation worktrees are retained.
+the three background-only and shutdown cases. The complete replacement local
+gate and three fresh reviews passed. Exact feature Benchmark passed, but CI
+failed in two different macOS terminal-close fixtures across its initial run
+and one unchanged retry. Neither failure establishes a source defect; both
+erase the precise cleanup error. Error-only test diagnostics now distinguish
+inventory query, tmux close and private-server retirement stages without new
+observations, retries, fallback paths or changed deadlines. Focused reproduction
+and replacement local/review/remote gates remain required before merging.
+Completed validation and review worktrees are removed; active diagnostic work
+is retained. Detailed evidence belongs in the existing background review ledger.
 
 ## Parked complete-feature scope: fx session import
 

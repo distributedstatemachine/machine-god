@@ -1,5 +1,25 @@
 // Exercise owned command cleanup alongside the tmux lifecycle fixtures.
 
+#[test]
+fn close_diagnostics_preserve_success_and_every_typed_error() {
+    let value = vec![1, 2, 3];
+    assert_eq!(close_stage("test", Ok(value.clone())), Ok(value));
+    for error in [
+        TerminalTmuxError::Invalid,
+        TerminalTmuxError::Identity,
+        TerminalTmuxError::Busy,
+        TerminalTmuxError::Closed,
+        TerminalTmuxError::Command,
+        TerminalTmuxError::Protocol,
+        TerminalTmuxError::Timeout,
+        TerminalTmuxError::Capacity,
+        TerminalTmuxError::Cleanup,
+        TerminalTmuxError::WriteAmbiguous,
+    ] {
+        assert_eq!(close_stage::<()>("test", Err(error)), Err(error));
+    }
+}
+
 struct CommandReapHold(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
 impl CommandReapHold {

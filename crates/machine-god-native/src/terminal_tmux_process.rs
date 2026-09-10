@@ -443,6 +443,15 @@ impl AuthenticatedTerminalProcess {
         let observation = self.refresh();
         // A failed snapshot cannot revoke already captured cleanup authority.
         let delivery = self.signal_retained(signal);
+        #[cfg(test)]
+        {
+            if let Err(error) = &observation {
+                eprintln!("tmux process signal: stage=refresh error={error:?}");
+            }
+            if let Err(error) = &delivery {
+                eprintln!("tmux process signal: stage=retained-delivery error={error:?}");
+            }
+        }
         if observation.is_err() || delivery.is_err() {
             Err(cleanup_error())
         } else {

@@ -17,6 +17,25 @@ use std::time::{Duration, Instant};
 
 type Result<T> = std::result::Result<T, TerminalHelperError>;
 
+// Keep the result and its evaluation order intact. Test diagnostics include
+// only fixed stages and typed, data-free errors; release builds read no clocks
+// or emit output through this wrapper.
+macro_rules! query_stage {
+    ($started:ident, $deadline:ident, $stage:literal, $result:expr) => {{
+        let result = $result;
+        #[cfg(test)]
+        if let Err(error) = &result {
+            eprintln!(
+                "inventory query: stage={} error={error:?} elapsed={:?} remaining={:?}",
+                $stage,
+                $started.elapsed(),
+                $deadline.saturating_duration_since(Instant::now())
+            );
+        }
+        result
+    }};
+}
+
 #[derive(Default)]
 pub(crate) struct ServiceRegistration {
     slot: Mutex<ServiceSlot>,
@@ -261,28 +280,54 @@ impl InventoryLease {
         self.0.state.lock().unwrap().next_sequence = sequence;
     }
     pub(crate) fn query(&self, deadline: Instant) -> Result<Vec<u8>> {
+        #[cfg(test)]
+        let query_started = Instant::now();
         let cancellation = CancellationToken::new();
-        check_deadline(deadline, &cancellation)?;
+        query_stage!(
+            query_started,
+            deadline,
+            "admission_deadline",
+            check_deadline(deadline, &cancellation)
+        )?;
         if deadline.saturating_duration_since(Instant::now())
             > crate::background_process::GROUP_SNAPSHOT_TIMEOUT
         {
-            return Err(failure(TerminalHelperErrorKind::InvalidRequest));
+            return query_stage!(
+                query_started,
+                deadline,
+                "admission_budget",
+                Err(failure(TerminalHelperErrorKind::InvalidRequest))
+            );
         }
         if !self
             .0
             .scope
             .matches(&NativeOwnedWorkerScopeIdentity::current())
         {
-            return Err(failure(TerminalHelperErrorKind::InvalidRequest));
+            return query_stage!(
+                query_started,
+                deadline,
+                "admission_scope",
+                Err(failure(TerminalHelperErrorKind::InvalidRequest))
+            );
         }
-        let mut state = lock_until(&self.0.state, deadline, &cancellation, &[])?;
+        let mut state = query_stage!(
+            query_started,
+            deadline,
+            "lock",
+            lock_until(&self.0.state, deadline, &cancellation, &[])
+        )?;
         // A previous failed request may restart here, under this request's own
         // original deadline, only after the previous exact child has reaped.
         // There is never a retry inside the request that detected the failure.
-        let result = self
-            .0
-            .ensure_ready(&mut state, deadline, &cancellation, &[])
-            .and_then(|()| query_ready(&mut state, deadline, &cancellation));
+        let result = query_stage!(
+            query_started,
+            deadline,
+            "ensure_ready",
+            self.0
+                .ensure_ready(&mut state, deadline, &cancellation, &[])
+        )
+        .and_then(|()| query_ready(&mut state, deadline, &cancellation));
         if result.is_err() {
             state.ready.take();
         }
@@ -306,36 +351,112 @@ fn query_ready(
     deadline: Instant,
     cancellation: &CancellationToken,
 ) -> Result<Vec<u8>> {
+    #[cfg(test)]
+    let query_started = Instant::now();
     let sequence = state.next_sequence;
-    state.next_sequence = sequence
-        .checked_add(1)
-        .ok_or_else(|| failure(TerminalHelperErrorKind::Protocol))?;
-    let request = wire::encode_request(sequence, deadline)?;
-    let ready = state
-        .ready
-        .as_mut()
-        .ok_or_else(|| failure(TerminalHelperErrorKind::Process))?;
+    state.next_sequence = query_stage!(
+        query_started,
+        deadline,
+        "sequence",
+        sequence
+            .checked_add(1)
+            .ok_or_else(|| failure(TerminalHelperErrorKind::Protocol))
+    )?;
+    let request = query_stage!(
+        query_started,
+        deadline,
+        "encode_request",
+        wire::encode_request(sequence, deadline)
+    )?;
+    let ready = query_stage!(
+        query_started,
+        deadline,
+        "ready_state",
+        state
+            .ready
+            .as_mut()
+            .ok_or_else(|| failure(TerminalHelperErrorKind::Process))
+    )?;
     // No unsolicited/stale bytes from an earlier request may become a reply.
-    require_no_extra_output(ready, deadline, cancellation)?;
-    write_gate(&mut ready.input, &request, deadline, cancellation)?;
+    query_stage!(
+        query_started,
+        deadline,
+        "unsolicited_before",
+        require_no_extra_output(ready, deadline, cancellation)
+    )?;
+    query_stage!(
+        query_started,
+        deadline,
+        "write_request",
+        write_gate(&mut ready.input, &request, deadline, cancellation)
+    )?;
     let mut header = [0; 17];
-    read_gate(&mut ready.output, &mut header, deadline, cancellation)?;
-    let length = wire::decode_response_header(&header, sequence)?;
+    query_stage!(
+        query_started,
+        deadline,
+        "read_header",
+        read_gate(&mut ready.output, &mut header, deadline, cancellation)
+    )?;
+    let length = query_stage!(
+        query_started,
+        deadline,
+        "decode_header",
+        wire::decode_response_header(&header, sequence)
+    )?;
     let mut bytes = vec![0; length];
-    read_gate(&mut ready.output, &mut bytes, deadline, cancellation)?;
+    query_stage!(
+        query_started,
+        deadline,
+        "read_payload",
+        read_gate(&mut ready.output, &mut bytes, deadline, cancellation)
+    )?;
     let mut completion = [0; 12];
-    read_gate(&mut ready.output, &mut completion, deadline, cancellation)?;
-    wire::validate_completion(&completion, sequence)?;
-    super::decode_inventory(&bytes)?;
-    require_no_extra_output(ready, deadline, cancellation)?;
-    if ready
-        .child
-        .exited()
-        .map_err(|_| failure(TerminalHelperErrorKind::Process))?
-    {
-        return Err(failure(TerminalHelperErrorKind::Process));
+    query_stage!(
+        query_started,
+        deadline,
+        "read_completion",
+        read_gate(&mut ready.output, &mut completion, deadline, cancellation)
+    )?;
+    query_stage!(
+        query_started,
+        deadline,
+        "validate_completion",
+        wire::validate_completion(&completion, sequence)
+    )?;
+    query_stage!(
+        query_started,
+        deadline,
+        "decode_inventory",
+        super::decode_inventory(&bytes)
+    )?;
+    query_stage!(
+        query_started,
+        deadline,
+        "unsolicited_after",
+        require_no_extra_output(ready, deadline, cancellation)
+    )?;
+    if query_stage!(
+        query_started,
+        deadline,
+        "child_status",
+        ready
+            .child
+            .exited()
+            .map_err(|_| failure(TerminalHelperErrorKind::Process))
+    )? {
+        return query_stage!(
+            query_started,
+            deadline,
+            "child_exited",
+            Err(failure(TerminalHelperErrorKind::Process))
+        );
     }
-    check_deadline(deadline, cancellation)?;
+    query_stage!(
+        query_started,
+        deadline,
+        "final_deadline",
+        check_deadline(deadline, cancellation)
+    )?;
     Ok(bytes)
 }
 
