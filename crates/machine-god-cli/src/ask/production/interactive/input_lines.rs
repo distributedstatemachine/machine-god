@@ -6,6 +6,7 @@ use machine_god_native::{
 };
 use std::{
     future::Future,
+    ops::Range,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -214,7 +215,20 @@ impl InputLines {
         cx: &mut Context<'_>,
         binding: InputBinding,
         context: ComposerContext,
+        received: impl FnMut(&[u8]),
+    ) -> Poll<Option<Result<(ComposerEvent, InputBinding), LineError>>> {
+        self.poll_event_observed(cx, binding, context, received, |_, _, _, _| {})
+    }
+
+    /// Exact edits retain the first received-byte binding, just like events.
+    /// The observer runs synchronously and must remain bounded/nonblocking.
+    pub fn poll_event_observed(
+        &mut self,
+        cx: &mut Context<'_>,
+        binding: InputBinding,
+        context: ComposerContext,
         mut received: impl FnMut(&[u8]),
+        mut edited: impl FnMut(&InputBinding, Range<usize>, &str, usize),
     ) -> Poll<Option<Result<(ComposerEvent, InputBinding), LineError>>> {
         if self.composer.is_none() {
             return Poll::Ready(Some(Err(LineError::Input(
@@ -224,28 +238,8 @@ impl InputLines {
         if self.ended {
             return Poll::Ready(None);
         }
-        if self
-            .escape_timer
-            .as_mut()
-            .is_some_and(|timer| timer.as_mut().poll(cx).is_ready())
-        {
-            self.escape_timer = None;
-            if let Some(event) = self
-                .composer
-                .as_mut()
-                .expect("raw mode checked")
-                .expire_escape()
-            {
-                let binding = self
-                    .line_binding
-                    .as_ref()
-                    .expect("escape has an input binding")
-                    .clone();
-                if binding.picker_view().is_some() {
-                    self.line_binding = None;
-                }
-                return Poll::Ready(Some(Ok((event, binding))));
-            }
+        if let Some(event) = self.poll_expired_escape(cx) {
+            return Poll::Ready(Some(Ok(event)));
         }
         if self.chunk.is_none() {
             match self.input.poll_chunk(cx) {
@@ -277,7 +271,12 @@ impl InputLines {
                 .is_some_and(|binding| binding.picker_view().is_some()),
             ..context
         };
-        let (consumed, event) = composer.feed(&chunk.as_bytes()[self.offset..], effective_context);
+        let edit_binding = self.line_binding.as_ref().expect("received-byte binding");
+        let (consumed, event) = composer.feed_with_edits(
+            &chunk.as_bytes()[self.offset..],
+            effective_context,
+            |range, inserted, cursor| edited(edit_binding, range, inserted, cursor),
+        );
         if composer.waiting_for_escape() {
             if self.escape_timer.is_none() {
                 self.escape_timer = Some(Box::pin(tokio::time::sleep(ESCAPE_TIMEOUT)));
@@ -315,6 +314,34 @@ impl InputLines {
             self.line_binding = None;
         }
         Poll::Ready(Some(Ok((event, binding))))
+    }
+
+    fn poll_expired_escape(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Option<(ComposerEvent, InputBinding)> {
+        if !self
+            .escape_timer
+            .as_mut()
+            .is_some_and(|timer| timer.as_mut().poll(cx).is_ready())
+        {
+            return None;
+        }
+        self.escape_timer = None;
+        let event = self
+            .composer
+            .as_mut()
+            .expect("raw mode checked")
+            .expire_escape()?;
+        let binding = self
+            .line_binding
+            .as_ref()
+            .expect("escape has an input binding")
+            .clone();
+        if binding.picker_view().is_some() {
+            self.line_binding = None;
+        }
+        Some((event, binding))
     }
 }
 
@@ -355,6 +382,59 @@ mod tests {
     fn raw_source() -> (InputLines, std::io::PipeWriter) {
         let (canonical, write) = source();
         (InputLines::new_raw(canonical.input), write)
+    }
+
+    #[test]
+    fn exact_edit_observer_retains_first_chunk_binding_across_utf8_and_new_modal() {
+        let (mut input, mut write) = raw_source();
+        let mut edits = Vec::new();
+        runtime().block_on(async {
+            write.write_all(&[0xc3]).unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                poll_fn(|cx| {
+                    let result = input.poll_event_observed(
+                        cx,
+                        InputBinding::Command,
+                        ComposerContext::default(),
+                        |_| {},
+                        |_, _, _, _| panic!("incomplete UTF-8 is not an edit"),
+                    );
+                    assert!(result.is_pending());
+                    if input.line_binding.is_some() && input.chunk.is_none() {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            write.write_all(&[0xa9]).unwrap();
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                poll_fn(|cx| {
+                    input.poll_event_observed(
+                        cx,
+                        InputBinding::SavedRule(42),
+                        ComposerContext::default(),
+                        |_| {},
+                        |binding, range, inserted, cursor| {
+                            assert!(*binding == InputBinding::Command);
+                            edits.push((range, inserted.to_owned(), cursor));
+                        },
+                    )
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+            assert!(matches!(result.0, ComposerEvent::Changed));
+            assert!(result.1 == InputBinding::Command);
+        });
+        assert_eq!(edits, [(0..0, "é".to_owned(), 2)]);
+        finish(input);
     }
 
     #[test]

@@ -64,6 +64,14 @@ executing embedded control actions or changing the previous draft. Invalid
 ordinary UTF-8, NUL, or oversized input retains the valid draft and rejects through the next Enter;
 that Enter does not submit a truncated prefix. Submitted prompt identity comes
 from the first received byte, including buffered answers across modal pages.
+The composer can synchronously report the actual UTF-8 replacement range,
+inserted bytes and resulting cursor for each edit. This avoids inferring token
+identity from a text diff when identical text occurs more than once. Cursor-only
+movement and rejected input report no text replacement; submit, cancellation
+and explicit reset retain their separate lifecycle meaning. Atomic paste emits
+one replacement only after its closing marker is accepted.
+The input owner forwards these receipts with the first received-byte binding;
+later chunks, modal changes or redraws cannot relabel a partial edit.
 
 A bounded single-row viewport uses the native screen's pinned Unicode display
 units. It never truncates the underlying draft. Columns and rows come from one

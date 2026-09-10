@@ -1,5 +1,99 @@
 use super::*;
 
+type EditReceipt = (Range<usize>, String, usize);
+
+fn observed_feed(editor: &mut Composer, mut bytes: &[u8]) -> Vec<EditReceipt> {
+    let mut edits = Vec::new();
+    while !bytes.is_empty() {
+        let before = edits.len();
+        let (consumed, _) = editor.feed_with_edits(
+            bytes,
+            ComposerContext::default(),
+            |range, inserted, cursor| edits.push((range, inserted.to_owned(), cursor)),
+        );
+        assert!(consumed > 0 && consumed <= MAX_COMPOSER_STEP_BYTES);
+        assert!(edits.len() - before <= 1);
+        bytes = &bytes[consumed..];
+    }
+    edits
+}
+
+#[test]
+fn edit_receipts_distinguish_actual_deletions_of_identical_text() {
+    let mut editor = Composer::default();
+    assert_eq!(
+        observed_feed(&mut editor, b"$same $same"),
+        [(0..0, "$same $same".into(), 11)]
+    );
+    assert!(observed_feed(&mut editor, b"\x01").is_empty());
+    assert_eq!(
+        observed_feed(&mut editor, b"\x04"),
+        [(0..1, String::new(), 0)]
+    );
+    assert_eq!(editor.text(), "same $same");
+    assert!(observed_feed(&mut editor, b"\x05").is_empty());
+    assert_eq!(
+        observed_feed(&mut editor, b"\x7f"),
+        [(9..10, String::new(), 9)]
+    );
+    assert_eq!(editor.text(), "same $sam");
+}
+
+#[test]
+fn edit_receipts_preserve_unicode_byte_ranges_and_atomic_paste() {
+    let mut editor = Composer::default();
+    assert_eq!(
+        observed_feed(&mut editor, "é界".as_bytes()),
+        [(0..0, "é界".into(), 5)]
+    );
+    assert_eq!(
+        observed_feed(&mut editor, b"\x7f"),
+        [(2..5, String::new(), 2)]
+    );
+    assert!(observed_feed(&mut editor, b"\x1b[200~a\r\nb").is_empty());
+    assert_eq!(editor.text(), "é");
+    assert_eq!(
+        observed_feed(&mut editor, b"\x1b[201~"),
+        [(2..2, "a\nb".into(), 5)]
+    );
+    assert!(observed_feed(&mut editor, b"\x1b[200~\x1b[201~").is_empty());
+}
+
+#[test]
+fn rejected_noop_and_lifecycle_events_do_not_replay_text_edits() {
+    let mut editor = Composer::default();
+    observed_feed(&mut editor, b"draft");
+    for bytes in [
+        b"\x06\x0c".as_slice(),
+        b"\0ignored\r",
+        b"\x1b[200~bad\0\x1b[201~",
+    ] {
+        assert!(observed_feed(&mut editor, bytes).is_empty());
+        assert_eq!(editor.text(), "draft");
+    }
+    assert!(observed_feed(&mut editor, b"\r").is_empty());
+    assert!(editor.is_empty());
+    observed_feed(&mut editor, b"next");
+    assert!(observed_feed(&mut editor, b"\x03").is_empty());
+    assert!(editor.is_empty());
+    editor.reset();
+    let (_, event) = editor.feed_with_edits(b"", ComposerContext::default(), |_, _, _| {
+        panic!("stale receipt")
+    });
+    assert!(event.is_none());
+}
+
+#[test]
+fn rejected_oversized_input_and_split_utf8_emit_no_partial_receipt() {
+    let mut editor = Composer::default();
+    observed_feed(&mut editor, &vec![b'x'; MAX_COMPOSER_BYTES]);
+    assert!(observed_feed(&mut editor, b"overflow\r").is_empty());
+    assert_eq!(editor.text().len(), MAX_COMPOSER_BYTES);
+    editor.reset();
+    assert!(observed_feed(&mut editor, &[0xc3]).is_empty());
+    assert_eq!(observed_feed(&mut editor, &[0xa9]), [(0..0, "é".into(), 2)]);
+}
+
 fn feed(editor: &mut Composer, mut bytes: &[u8], active: bool) -> Vec<ComposerEvent> {
     let mut events = Vec::new();
     while !bytes.is_empty() {

@@ -10,7 +10,7 @@
 //! Physical EOF belongs to the input owner and is never inferred from byte 4.
 
 use machine_god_native::native_terminal_display_unit_at;
-use std::fmt;
+use std::{fmt, ops::Range};
 
 pub(super) const MAX_COMPOSER_BYTES: usize = 256 * 1024;
 pub(super) const MAX_COMPOSER_STEP_BYTES: usize = 4096;
@@ -78,6 +78,9 @@ pub(super) struct Composer {
     cursor: usize,
     decoder: Decoder,
     skip_lf: bool,
+    // One edit per feed event. Inserted bytes are borrowed from the new draft
+    // only until the synchronous observer returns; no second draft is retained.
+    last_edit: Option<(Range<usize>, Range<usize>)>,
 }
 impl fmt::Debug for Composer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -174,7 +177,33 @@ impl Composer {
 
     /// Consumes at most 4,096 bytes and emits at most one event. Empty input is
     /// inert. A returned prefix must be removed before feeding the remainder.
+    #[cfg(test)]
     pub fn feed(
+        &mut self,
+        bytes: &[u8],
+        context: ComposerContext,
+    ) -> (usize, Option<ComposerEvent>) {
+        self.feed_with_edits(bytes, context, |_, _, _| {})
+    }
+
+    /// Reports actual UTF-8 replacement ranges, never a diff between drafts.
+    /// Cursor-only events and rejected input report no text edit. Submission,
+    /// cancellation and explicit reset are lifecycle events handled by the owner.
+    pub fn feed_with_edits(
+        &mut self,
+        bytes: &[u8],
+        context: ComposerContext,
+        mut edited: impl FnMut(Range<usize>, &str, usize),
+    ) -> (usize, Option<ComposerEvent>) {
+        self.last_edit = None;
+        let result = self.feed_inner(bytes, context);
+        if let Some((replaced, inserted)) = self.last_edit.take() {
+            edited(replaced, &self.text[inserted], self.cursor);
+        }
+        result
+    }
+
+    fn feed_inner(
         &mut self,
         bytes: &[u8],
         context: ComposerContext,
@@ -279,8 +308,12 @@ impl Composer {
         if text.len() > byte_limit(context).saturating_sub(self.text.len()) {
             return ComposerEvent::InputError(ComposerInputError::TooLong);
         }
-        self.text.insert_str(self.cursor, text);
+        let start = self.cursor;
+        self.text.insert_str(start, text);
         self.cursor += text.len();
+        if !text.is_empty() {
+            self.last_edit = Some((start..start, start..self.cursor));
+        }
         ComposerEvent::Changed
     }
 
@@ -319,6 +352,7 @@ impl Composer {
                     return None;
                 }
                 self.text.replace_range(previous..self.cursor, "");
+                self.last_edit = Some((previous..self.cursor, previous..previous));
                 self.cursor = previous;
                 Some(ComposerEvent::Changed)
             }
@@ -355,6 +389,7 @@ impl Composer {
             return None;
         }
         self.text.replace_range(self.cursor..end, "");
+        self.last_edit = Some((self.cursor..end, self.cursor..self.cursor));
         Some(ComposerEvent::Changed)
     }
 
