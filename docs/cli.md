@@ -303,6 +303,14 @@ the native control lane. The CLI does not resolve sources, grant replacement
 consent independently, execute pasted package-manager commands or mutate files.
 Create/install require explicit outer `--replace` for an observed replacement.
 
+Production conversation startup supplies that service through explicitly
+prepared native roots and one captured root/terminal/Git environment snapshot.
+Interactive startup also discovers its initial catalog on a temporary owned
+worker scope; all setup workers are joined before the complete terminal host is
+acquired. Missing Git leaves local management available. Invalid selected HOME,
+PATH or changed workspace ancestry fails startup instead of silently changing
+the search scope. See the [startup contract](skills-cli.md#composed-startup).
+
 Typed control reporting retains per-item outcomes and opaque recovery IDs; an
 uncertain or partial batch never becomes success. Reporting is bounded to 64 KiB.
 Catalog text previews show at most 128 rows with clipped names/descriptions/paths,

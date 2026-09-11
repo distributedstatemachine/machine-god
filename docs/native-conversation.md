@@ -199,6 +199,16 @@ native finalization and drops native/core work before releasing that lease.
 Dropping the runtime clears pending inputs but does not invalidate a separately
 owned active turn. `cancel_queued` and `clear_queued` affect pending input only.
 
+`enqueue_with_skills` additionally pins a bounded effect-free invocation plan to
+that exact input and charges retained selections to the queue budget. After FIFO
+take, an owned worker revalidates and materializes selections outside runtime
+locks while retaining the runtime lease and captured turn scopes. The interactive
+facade takes catalog/worker authority from its host; missing authority rejects
+without retaining input. Pre-handle cancellation remains effective when the
+worker or later core handle becomes available. Continuation reuses saved context,
+not a new scan. See [skills admission](skills-cli.md#fifo-admission-and-materialization)
+for complete limits and failure semantics.
+
 ### Quiescence and irreversible retirement
 
 `begin_quiescence()` synchronously fences new runtime work and requests active

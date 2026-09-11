@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 #[path = "skills_metadata/parser.rs"]
 mod parser;
 #[cfg(test)]
@@ -63,13 +64,15 @@ impl std::error::Error for NativeSkillMetadataError {}
 ///
 /// # Errors
 /// Returns a fixed error for malformed or oversized recognized metadata.
-pub fn parse_skill_metadata(
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+pub(crate) fn parse_skill_metadata(
     bytes: &[u8],
     fallback: &str,
 ) -> Result<NativeSkillMetadata, NativeSkillMetadataError> {
     parser::parse(bytes, fallback)
 }
 
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 pub(crate) fn header_start(bytes: &[u8]) -> Option<usize> {
     if bytes.starts_with(b"---\r\n") {
         Some(5)
@@ -83,6 +86,7 @@ pub(crate) fn header_start(bytes: &[u8]) -> Option<usize> {
 }
 
 /// Finds an exact bounded closing line, excluding an unterminated CR suffix.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 pub(crate) fn closing_delimiter(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
     let mut offset = start;
     while offset <= bytes.len().min(MAX_NATIVE_SKILL_HEADER_BYTES) {
