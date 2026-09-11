@@ -29,6 +29,8 @@ const READ: OFlags = OFlags::RDONLY
 pub(crate) enum ProfileFileKind {
     Settings,
     Mcp,
+    #[cfg(feature = "mcp-http")]
+    McpCredentials,
 }
 
 impl ProfileFileKind {
@@ -36,24 +38,32 @@ impl ProfileFileKind {
         match self {
             Self::Settings => "config.json",
             Self::Mcp => "mcp.json",
+            #[cfg(feature = "mcp-http")]
+            Self::McpCredentials => "mcp-credentials.json",
         }
     }
     fn lock(self) -> &'static str {
         match self {
             Self::Settings => ".config.lock",
             Self::Mcp => ".mcp.lock",
+            #[cfg(feature = "mcp-http")]
+            Self::McpCredentials => ".mcp-credentials.lock",
         }
     }
     fn temp(self) -> &'static str {
         match self {
             Self::Settings => ".config.tmp",
             Self::Mcp => ".mcp.tmp",
+            #[cfg(feature = "mcp-http")]
+            Self::McpCredentials => ".mcp-credentials.tmp",
         }
     }
     fn limit(self) -> usize {
         match self {
             Self::Settings => crate::MAX_CONFIG_BYTES,
             Self::Mcp => crate::mcp::config::MAX_CONFIG_BYTES,
+            #[cfg(feature = "mcp-http")]
+            Self::McpCredentials => 1024 * 1024,
         }
     }
 }
@@ -155,7 +165,7 @@ impl ProfileFile {
             .unwrap_or_default();
         if let Some(resolved) = &resolved {
             resolved.validate()?;
-            if self.kind == ProfileFileKind::Mcp
+            if self.kind != ProfileFileKind::Settings
                 && let Some(root) = &root
             {
                 validate_link(resolved.descriptor(), name, root)?;
@@ -326,7 +336,7 @@ impl LockedProfileUpdate<'_> {
             sync_directory(&self.root).map_err(|_| ProfileFileError::Persistence)?;
             self.parent.validate()?;
             validate_link(self.parent.descriptor(), self.name, &self.root)?;
-            if self.kind == ProfileFileKind::Mcp {
+            if self.kind != ProfileFileKind::Settings {
                 validate_link(&self.root, self.kind.data(), &temp)?;
                 if source::read_current(&self.root, self.kind)?.bytes() != Some(encoded) {
                     return Err(ProfileFileError::Conflict);
@@ -382,7 +392,7 @@ fn retry_lock_interrupted<T>(
     loop {
         match operation() {
             Err(rustix::io::Errno::INTR) => {
-                if kind == ProfileFileKind::Mcp {
+                if kind != ProfileFileKind::Settings {
                     interruptions += 1;
                     if interruptions == 16 {
                         return Err(rustix::io::Errno::INTR);

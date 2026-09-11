@@ -46,7 +46,7 @@ impl ObservedFile {
         if self.bytes != other.bytes {
             return Err(Error::Conflict);
         }
-        if kind == ProfileFileKind::Mcp {
+        if kind != ProfileFileKind::Settings {
             match (&self.source, &other.source) {
                 (None, None) => {}
                 (Some(expected), Some(actual)) if expected.revision == actual.revision => {
@@ -78,10 +78,7 @@ fn read_with_hook(
         Err(error) if error == rustix::io::Errno::NOENT => return Ok(ObservedFile::default()),
         Err(_) => return Err(Error::UnsafePath),
     };
-    if kind == ProfileFileKind::Mcp {
-        validate_private(&fd, false)?;
-        validate_link(root, kind.data(), &fd)?;
-    } else {
+    if kind == ProfileFileKind::Settings {
         // Preserve legacy settings' readable-file compatibility exactly.
         let stat = rustix::fs::fstat(&fd).map_err(|_| Error::Persistence)?;
         if !FileType::from_raw_mode(stat.st_mode).is_file()
@@ -91,12 +88,15 @@ fn read_with_hook(
         {
             return Err(Error::UnsafePath);
         }
+    } else {
+        validate_private(&fd, false)?;
+        validate_link(root, kind.data(), &fd)?;
     }
     let mut file = File::from(fd);
-    let revision = if kind == ProfileFileKind::Mcp {
-        Some(Revision::read(&file)?)
-    } else {
+    let revision = if kind == ProfileFileKind::Settings {
         None
+    } else {
+        Some(Revision::read(&file)?)
     };
     let bytes = read_bounded(&mut file, kind.limit())?;
     after_read(&file);
