@@ -4,8 +4,8 @@ use futures_core::Stream;
 use futures_executor::block_on;
 use futures_util::{StreamExt, task::noop_waker};
 use machine_god_core::{
-    CancellationToken, Capability, Engine, ModelEvent, ModelEventStream, ModelProvider,
-    ModelRequest, PermissionRequestId, PermissionRisk, ProviderError, SessionRecord,
+    CancellationToken, Capability, Engine, InferenceOptions, ModelEvent, ModelEventStream,
+    ModelProvider, ModelRequest, PermissionRequestId, PermissionRisk, ProviderError, SessionRecord,
     SessionRevision, StopReason, ToolCallId, ToolName, TurnEvent,
 };
 use machine_god_testkit::{
@@ -24,7 +24,7 @@ struct RoutingProvider {
     drops: Arc<AtomicUsize>,
 }
 impl ModelProvider for RoutingProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "context-test"
     }
     fn stream(
@@ -298,7 +298,12 @@ fn completion_and_continuation_use_fresh_turn_registries() {
     let old = contexts.snapshot_for_tool(&first_context).unwrap();
     let registry = old.registry().unwrap();
     drop(first);
-    let second = block_on(fixture.conversation.continue_turn(Default::default(), 300)).unwrap();
+    let second = block_on(
+        fixture
+            .conversation
+            .continue_turn(InferenceOptions::default(), 300),
+    )
+    .unwrap();
     let context = ToolContext {
         turn_id: second.handle().id().clone(),
         ..first_context.clone()
@@ -334,10 +339,10 @@ fn route_is_retired_before_pending_durable_finalization() {
     loop {
         match turn.as_mut().poll_next(&mut Context::from_waker(&waker)) {
             Poll::Ready(Some(Ok(event))) => {
-                assert!(!matches!(event.payload, TurnEvent::Completed { .. }))
+                assert!(!matches!(event.payload, TurnEvent::Completed { .. }));
             }
             Poll::Pending => break,
-            result => panic!("unexpected {result:?}"),
+            result @ Poll::Ready(_) => panic!("unexpected {result:?}"),
         }
     }
     assert!(fixture.conversation.is_busy());
@@ -381,7 +386,7 @@ fn retirement_wakes_reentrant_lookup_after_unpublishing_and_unlocking() {
         let snapshot = contexts.snapshot_for_tool(&context).unwrap();
         let routes = contexts.clone();
         let owner = routes.routes.lock().unwrap()[0].upgrade().unwrap();
-        let (waker, observed) = reentrant_waker(Callback::Wake, move || {
+        let (waker, callbacks) = reentrant_waker(Callback::Wake, move || {
             assert!(routes.routes.try_lock().is_ok());
             assert!(owner.active.try_lock().is_ok());
             assert!(routes.snapshot_for_tool(&context).is_err());
@@ -398,7 +403,7 @@ fn retirement_wakes_reentrant_lookup_after_unpublishing_and_unlocking() {
         } else {
             drop(turn);
         }
-        assert!(observed.calls() > 0);
+        assert!(callbacks.calls() > 0);
         assert!(
             observer
                 .as_mut()
@@ -455,7 +460,7 @@ fn retired_owner_drop_cannot_remove_replacement_for_same_real_session() {
         .unwrap()
         .with_mcp_contexts(&contexts)
         .unwrap();
-    let second = block_on(replacement.continue_turn(Default::default(), 300)).unwrap();
+    let second = block_on(replacement.continue_turn(InferenceOptions::default(), 300)).unwrap();
     let new_context = ToolContext {
         turn_id: second.handle().id().clone(),
         ..context.clone()
