@@ -2116,6 +2116,7 @@ async fn run_turn_inner(
             check_cancelled(&cancellation)?;
             let mut complete_output = None;
 
+            let mut finish_turn = false;
             let (output, next_round_tool, emit_finished, cancellation_deferral) = match preparation
             {
                 Err(error) => (tool_error_output(&error), None, false, None),
@@ -2230,7 +2231,9 @@ async fn run_turn_inner(
                         .await?;
                         let (output, next_round_tool) = match result {
                             Ok(execution) => {
-                                let (output, persisted, registration) = execution.into_parts();
+                                let (output, persisted, registration, finish) =
+                                    execution.into_parts();
+                                finish_turn = finish;
                                 match persisted {
                                     Some(persisted) => {
                                         complete_output = Some(JsonOwnerGuard::new(output));
@@ -2367,6 +2370,17 @@ async fn run_turn_inner(
                     .await;
             }
             drop(cancellation_deferral);
+            if finish_turn {
+                // A stop directive cannot turn interrupted or failed work into
+                // successful termination, including completion-wins execution.
+                // Unstarted siblings keep their precommitted unknown results.
+                check_cancelled(&cancellation)?;
+                emitter.establish_terminal();
+                return Ok(CompletedTurn {
+                    reason: StopReason::Completed,
+                    usage,
+                });
+            }
         }
         tool_calls = new_total;
     }

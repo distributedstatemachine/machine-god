@@ -297,6 +297,7 @@ pub struct ToolExecution {
     output: ToolOutput,
     persisted_output: Option<ToolOutput>,
     next_round_tool: Option<Arc<TurnToolRegistration>>,
+    finish_turn: bool,
 }
 
 impl ToolExecution {
@@ -307,6 +308,7 @@ impl ToolExecution {
             output,
             persisted_output: None,
             next_round_tool: None,
+            finish_turn: false,
         }
     }
 
@@ -321,6 +323,7 @@ impl ToolExecution {
             output,
             persisted_output: None,
             next_round_tool: Some(next_round_tool),
+            finish_turn: false,
         }
     }
 
@@ -331,11 +334,28 @@ impl ToolExecution {
     }
 
     /// Consumes the complete output without cloning it. Optional persisted
-    /// projections and next-round registrations are discarded, not installed.
+    /// projections, next-round registrations and turn-completion directives
+    /// are discarded, not installed or acted upon.
     /// Hosts using turn effects should preserve the complete execution instead.
     #[must_use]
     pub fn into_output(self) -> ToolOutput {
         self.output
+    }
+
+    /// Requests termination after this tool's validated result is durably
+    /// stored and its `ToolFinished` event is delivered. This is an inert
+    /// directive, not successful execution of remaining sibling calls.
+    /// Cancellation, validation and persistence failures retain precedence.
+    #[must_use]
+    pub fn finish_turn(mut self) -> Self {
+        self.finish_turn = true;
+        self
+    }
+
+    /// Whether this execution explicitly requests no further calls or rounds.
+    #[must_use]
+    pub const fn finishes_turn(&self) -> bool {
+        self.finish_turn
     }
 
     /// Carries a complete result and its already-durable bounded reference.
@@ -354,6 +374,7 @@ impl ToolExecution {
             output,
             persisted_output: Some(persisted_output),
             next_round_tool: None,
+            finish_turn: false,
         }
     }
 
@@ -375,8 +396,14 @@ impl ToolExecution {
         ToolOutput,
         Option<ToolOutput>,
         Option<Arc<TurnToolRegistration>>,
+        bool,
     ) {
-        (self.output, self.persisted_output, self.next_round_tool)
+        (
+            self.output,
+            self.persisted_output,
+            self.next_round_tool,
+            self.finish_turn,
+        )
     }
 
     pub(crate) fn drain_owned_json(&mut self) {
@@ -393,6 +420,7 @@ impl fmt::Debug for ToolExecution {
             .debug_struct("ToolExecution")
             .field("has_persisted_output", &self.persisted_output.is_some())
             .field("has_next_round_tool", &self.next_round_tool.is_some())
+            .field("finish_turn", &self.finish_turn)
             .finish_non_exhaustive()
     }
 }

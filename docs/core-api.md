@@ -1076,9 +1076,10 @@ the other three values can repeat after a durable reset.
 Ordinary implementations return only `ToolOutput`; the source-compatible
 default `Tool::execute_for_turn` wraps that value in `ToolExecution`.
 `ToolExecution::into_output` consumes its complete output without cloning it;
-it discards optional persisted projections and next-round registrations without
-installing registrations or performing external actions. Turn-aware execution
-must retain the complete `ToolExecution` to preserve those effects.
+it discards optional persisted projections, next-round registrations and turn
+completion directives without installing registrations or performing external
+actions. Turn-aware execution must retain the complete `ToolExecution` to preserve
+those effects.
 An explicitly opted-in tool can instead return
 `ToolExecution::with_persisted_output(complete, persisted)`. The trusted native
 implementation must durably publish the complete result under the exact
@@ -1095,6 +1096,28 @@ placeholder replacement. Validation or persistence failure leaves no successful
 completion event, and rejected JSON in both representations is dropped
 iteratively. This extension does not enlarge argument admission or ordinary
 tools' limits and does not itself implement a native result archive.
+
+`ToolExecution::finish_turn()` explicitly requests termination after that tool;
+`finishes_turn()` observes the inert directive. Every existing constructor defaults
+to ordinary continuation, and core never infers a directive from output JSON,
+error messages or tool names. The tool's complete and persisted output bounds,
+registration validation, exact placeholder replacement and `ToolFinished`
+delivery remain unchanged. After those succeed, core observes cancellation
+(including after releasing completion-wins deferral) before establishing a
+`Completed` turn. Validation, persistence and observer failure cannot become a
+successful stop. `Completed` describes turn termination, not success of an
+error-bearing tool result.
+
+The ordered call loop stops immediately: later siblings receive no `Tool::prepare`,
+permission or execution, and no further provider round starts. Existing pre-batch
+input-persistence hooks are unchanged. The previously committed whole-batch
+assistant message and one result per call remain intact.
+Completed prefixes retain exact known results; unstarted siblings retain core's
+explicit `tool_result_unknown` placeholders, never fabricated successful outputs.
+No extra assistant text or provider `Stop` event is manufactured. Any accepted
+next-round registration follows its ordinary validation/activation boundary and
+is dropped with the ending turn, without reaching another provider request or
+another turn. Native protocols and interaction policy remain outside core.
 
 A bounded
 extension tool may instead attach one opaque `TurnToolRegistration` containing

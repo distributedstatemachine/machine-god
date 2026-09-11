@@ -32,6 +32,9 @@ fn consuming_complete_output_preserves_allocation_and_discards_turn_effects() {
             drop(tool);
             ToolExecution::with_persisted_output(output, ToolOutput::success("archived reference"))
         };
+        assert!(!execution.finishes_turn());
+        let execution = execution.finish_turn();
+        assert!(execution.finishes_turn());
         let complete = execution.into_output();
         assert_eq!(complete.content.as_str().unwrap().as_ptr(), pointer);
         assert!(weak.upgrade().is_none());
