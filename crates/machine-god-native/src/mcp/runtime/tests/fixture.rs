@@ -151,27 +151,52 @@ pub(super) struct Fixture {
     pub transport: Arc<Transport>,
     pub writes: Arc<Mutex<Vec<u8>>>,
     pub provider: ScriptedModelProvider,
+    pub store: InMemorySessionStore,
     _engine: Engine,
 }
 impl Fixture {
     pub fn new(values: &[Value], mode: PermissionMode, skip: usize) -> Self {
+        Self::configured(values, mode, skip, None, false, |runtime, writes| {
+            candidate(runtime, "calendar", &["lookup"], writes)
+        })
+    }
+    pub fn with_executor(
+        values: &[Value],
+        mode: PermissionMode,
+        executor: Arc<dyn NativeMcpToolExecutor>,
+        policy: NativeMcpToolExecutionPolicy,
+        batch: bool,
+        prepare: impl FnOnce(&NativeMcpRuntime, Arc<Mutex<Vec<u8>>>) -> NativeMcpRuntimeCandidate,
+    ) -> Self {
+        Self::configured(values, mode, 0, Some((executor, policy)), batch, prepare)
+    }
+    fn configured(
+        values: &[Value],
+        mode: PermissionMode,
+        skip: usize,
+        custom: Option<(Arc<dyn NativeMcpToolExecutor>, NativeMcpToolExecutionPolicy)>,
+        batch: bool,
+        prepare: impl FnOnce(&NativeMcpRuntime, Arc<Mutex<Vec<u8>>>) -> NativeMcpRuntimeCandidate,
+    ) -> Self {
         let contexts = Arc::new(NativeMcpContexts::new());
         let review_contexts = Arc::new(NativePermissionContexts::new());
         let clock = Arc::new(Clock(Instant::now()));
         let executor = Arc::new(Executor::default());
         executor.skip.store(skip, Ordering::SeqCst);
+        let (selected_executor, selected_policy) =
+            custom.unwrap_or_else(|| (executor.clone(), policy()));
         let runtime = Arc::new(
             NativeMcpRuntime::new(
                 contexts.clone(),
                 clock.clone(),
-                executor.clone(),
-                policy(),
+                selected_executor,
+                selected_policy,
                 NativeMcpRuntimeLimits::default(),
             )
             .unwrap(),
         );
         let writes: Arc<Mutex<Vec<u8>>> = Arc::default();
-        let selected = candidate(&runtime, "calendar", &["lookup"], writes.clone());
+        let selected = prepare(&runtime, writes.clone());
         let name = selected.descriptors().tools()[0].name().to_owned();
         runtime.publish(selected).unwrap();
         let transport = Arc::new(Transport::default());
@@ -198,14 +223,19 @@ impl Fixture {
             .unwrap(),
         );
         let controller = Arc::new(NativePermissionController::new(preparer, Arc::new(Prompt)));
-        let provider = provider(values, &name);
+        let provider = if batch {
+            batch_provider(values, &name)
+        } else {
+            provider(values, &name)
+        };
+        let store = InMemorySessionStore::default();
         let engine = Engine::builder()
             .limits(EngineLimits {
                 max_model_rounds: 128.try_into().unwrap(),
                 max_tool_calls_per_turn: 128.try_into().unwrap(),
                 ..Default::default()
             })
-            .session_store(InMemorySessionStore::default())
+            .session_store(store.clone())
             .provider(provider.clone())
             .shared_permission_handler(controller.clone())
             .tool(McpSelectTool::shared_catalog(runtime.clone()))
@@ -245,6 +275,7 @@ impl Fixture {
             transport,
             writes,
             provider,
+            store,
             _engine: engine,
         }
     }
@@ -297,4 +328,31 @@ fn provider(values: &[Value], name: &str) -> ScriptedModelProvider {
                 }])])
         });
     ScriptedModelProvider::new("fixture", script)
+}
+
+fn batch_provider(values: &[Value], name: &str) -> ScriptedModelProvider {
+    let mut calls: Vec<_> = values
+        .iter()
+        .enumerate()
+        .map(|(index, arguments)| ModelEvent::ToolCall {
+            call: ToolCall {
+                id: ToolCallId::new(format!("call-{index}")).unwrap(),
+                name: ToolName::new(name).unwrap(),
+                arguments: arguments.clone(),
+            },
+        })
+        .collect();
+    calls.push(ModelEvent::Stop {
+        reason: StopReason::ToolCalls,
+    });
+    ScriptedModelProvider::new(
+        "fixture",
+        [
+            step("select", MCP_SELECT_TOOL_NAME, json!({"name":name})),
+            ModelProviderStep::events(calls),
+            ModelProviderStep::events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    )
 }

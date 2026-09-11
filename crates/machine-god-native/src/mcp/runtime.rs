@@ -11,7 +11,9 @@ mod tool;
 
 pub use call::{NativeMcpRuntimeToolCall, NativeMcpRuntimeToolResponse};
 pub use candidate::{NativeMcpRuntimeCandidate, NativeMcpServerCandidate};
-pub use executor::{NativeMcpToolExecutionPolicy, NativeMcpToolExecutor};
+pub use executor::{
+    NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy, NativeMcpToolExecutor,
+};
 pub use peer::{NativeMcpOwnedPeer, NativeMcpPeerCompletion};
 
 use super::{context::NativeMcpContexts, submission::McpSubmissionRegistry};

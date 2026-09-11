@@ -5,6 +5,14 @@ use machine_god_core::{
 };
 use serde_json::Value;
 
+/// Explicit ownership of cancellation versus an executor's durable completion.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NativeMcpToolCompletionPolicy {
+    #[default]
+    Cancellable,
+    CompletionWinsAfterFirstPoll,
+}
+
 /// Immutable host policy, never inferred from a server capability or tool hint.
 /// Form/URL flags assert that the supplied executor owns an actual responder.
 /// Archive limits opt into core's existing independent persistence contracts.
@@ -13,6 +21,9 @@ pub struct NativeMcpToolExecutionPolicy {
     pub form: bool,
     pub url: bool,
     pub progress: bool,
+    /// The executor owns durable completion after its first poll. It must still
+    /// cancel queued/network work itself, but may not discard a published receipt.
+    pub completion: NativeMcpToolCompletionPolicy,
     pub complete_input_limits: Option<ToolInputLimits>,
     pub complete_output_limits: Option<ToolOutputLimits>,
 }

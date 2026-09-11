@@ -9,6 +9,8 @@ use std::{
     task::{Context, Poll},
 };
 
+type Response = dyn Fn(i64) -> Box<[u8]> + Send + Sync;
+
 /// Test-only concrete peer. Exercises real marker custody and native proof
 /// writing, without exposing an arbitrary production peer/callback interface.
 pub struct ScriptPeer {
@@ -18,6 +20,7 @@ pub struct ScriptPeer {
     next: i64,
     pub(in crate::mcp::runtime) closed: Arc<AtomicBool>,
     writes: Arc<Mutex<Vec<u8>>>,
+    response: Option<Arc<Response>>,
 }
 impl std::fmt::Debug for ScriptPeer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -33,7 +36,15 @@ impl ScriptPeer {
             next: 1,
             closed: Arc::new(AtomicBool::new(false)),
             writes,
+            response: None,
         }
+    }
+    pub(super) fn with_response(
+        mut self,
+        response: impl Fn(i64) -> Box<[u8]> + Send + Sync + 'static,
+    ) -> Self {
+        self.response = Some(Arc::new(response));
+        self
     }
     pub(in crate::mcp::runtime) fn reserve(&mut self) -> Result<McpToolReservation> {
         if self.closed.load(Ordering::Acquire) {
@@ -64,6 +75,9 @@ impl ScriptPeer {
             .await
             .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
         let RpcId::Integer(id) = id else { panic!() };
+        if let Some(response) = &self.response {
+            return Ok(response(id));
+        }
         Ok(format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","content":[{{"type":"text","text":"fixture"}}]}}}}"#).into_bytes().into())
     }
     pub(in crate::mcp::runtime) fn close(&self) {

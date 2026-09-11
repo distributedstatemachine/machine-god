@@ -1,4 +1,4 @@
-use super::{NativeMcpRuntimeToolCall, route::ToolRoute};
+use super::{NativeMcpRuntimeToolCall, NativeMcpToolCompletionPolicy, route::ToolRoute};
 use crate::tool_output_serializer::{CompactToolOutputLimits, measure_json_value_compact};
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, PreparedToolCall, Tool, ToolCall, ToolContext,
@@ -82,14 +82,23 @@ impl Tool for RuntimeTool {
         validate_arguments(&call.arguments, &CancellationToken::new())?;
         // Shared typed permission preparation owns pinned schema/header
         // validation. Preserve original nulls, exact numbers and literal keys.
-        Ok(PreparedToolCall::new(
+        let prepared = PreparedToolCall::new(
             Capability::Tool {
                 name: call.name,
                 call_id: call.id,
                 arguments: call.arguments.clone(),
             },
             call.arguments,
-        ))
+        );
+        Ok(
+            if self.0.policy.completion
+                == NativeMcpToolCompletionPolicy::CompletionWinsAfterFirstPoll
+            {
+                prepared.completion_wins_after_first_poll()
+            } else {
+                prepared
+            },
+        )
     }
 
     fn execute(
@@ -126,6 +135,14 @@ impl Tool for RuntimeTool {
                 .map_err(|_| unavailable())?;
             let server = self.0.server.upgrade().ok_or_else(unavailable)?;
             let execution = self.0.executor.execute(call).await?;
+            if self.0.policy.completion
+                == NativeMcpToolCompletionPolicy::CompletionWinsAfterFirstPoll
+            {
+                // The explicit executor owns publication completion. A stale
+                // route cannot erase a durable receipt or imply safe replay.
+                // Core still observes cancellation after storing that receipt.
+                return Ok(execution);
+            }
             turn.revalidate().map_err(|_| unavailable())?;
             self.0.binding.live().map_err(|_| unavailable())?;
             if cancellation.is_cancelled() || server.cancellation.is_cancelled() {
