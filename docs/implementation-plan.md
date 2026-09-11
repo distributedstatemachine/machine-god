@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `replacement full skills CLI local gate, then three exact-SHA reviews`
+- Next gate: `repair three skills review findings, then replacement full gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -375,19 +375,17 @@ three fresh independent adversarial reviews; retain the same delivery workflow.
 
 The native command service, managed Git runner, startup root composition,
 FIFO invocation, checkpoint context and CLI command receipts are integrated.
-The interactive picker, initial snapshot, owned refresh and input-generation
-handling are integrated, with composed launch/PTY scenarios ready for execution.
-Focused startup/queue, routing and helper-free input checks pass; these component
-checks do not replace the full feature gate. The initial full workspace run
-exposed the Gateway codec's older single-text-block user-message assumption:
-automatic and exact-picker skill invocation correctly append provider-only
-context, but the codec rejected that second block. The codec now accepts bounded
-ordered user text parts without changing canonical history. Its 60 codec/engine
-tests and strict native Clippy pass; both PTY regressions and the complete
-replacement gate remain required. The complete local/review/remote
-gates remain, including fresh release-helper process scenarios and both supported
-platforms. Linux gate prerequisites are prepared under an unprivileged account;
-macOS and Linux process-heavy runtime runs must remain separate.
+The interactive picker, initial snapshot, owned refresh, input-generation and
+Gateway multipart projection are integrated. The complete local gate passed
+on macOS and Linux, including fresh release scenarios. Three independent reviews
+then rejected the candidate with three distinct findings: executable resource
+mode loss, copying an oversized borrowed install filter before validation, and
+quadratic picker query matching. Repair these in isolated parallel lanes, retain
+regressions, then rerun the complete replacement gate and three fresh reviews.
+Historical candidate, gate and finding evidence belongs in the
+[skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
+accepted yet. Linux validation retains its unprivileged environment; macOS and
+Linux process-heavy runtime runs must remain separate.
 
 ## Parked complete-feature scope: fx session import
 
