@@ -52,43 +52,13 @@ fn run(
     + Send
     + 'static,
 ) -> BoxFuture<'static, Result<Receipt, Error>> {
-    let cancellation_on_drop = CancelOnDrop(cancellation.clone());
-    Box::pin(async move {
-        // Constructed outside the async body so dropping an unpolled response
-        // also requests cancellation, but never starts work or acquires a fence.
-        let _cancellation_on_drop = cancellation_on_drop;
-        if cancellation.is_cancelled() {
-            return Err(Error::Skills(NativeSkillsServiceError::Cancelled));
-        }
-        let permit = runtime.acquire_file_control().map_err(Error::Runtime)?;
-        workers
-            .run(move || {
-                // Contain callback unwinding before dropping the admission permit:
-                // waking an injected lifecycle waiter must not double-panic.
-                let result = contain(|| operation(&cancellation));
-                // A panicking lifecycle notification must not discard publication
-                // receipts or managed errors carrying retained recovery identifiers.
-                let _release = contain(|| drop(permit));
-                result?.map_err(Error::Skills)
-            })
-            .await
-            .map_err(|_| Error::Unavailable)?
-            .map(Receipt::Skills)
-    })
-}
-
-struct CancelOnDrop(CancellationToken);
-impl Drop for CancelOnDrop {
-    fn drop(&mut self) {
-        self.0.cancel();
-    }
-}
-
-fn contain<T>(operation: impl FnOnce() -> T) -> Result<T, Error> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).map_err(|payload| {
-        std::mem::forget(payload);
-        Error::Unavailable
-    })
+    super::owned_operation::run(
+        runtime,
+        workers,
+        cancellation,
+        Error::Skills(NativeSkillsServiceError::Cancelled),
+        move |token| operation(token).map(Receipt::Skills).map_err(Error::Skills),
+    )
 }
 
 #[cfg(test)]

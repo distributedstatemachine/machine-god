@@ -4,6 +4,8 @@
     any(target_os = "linux", target_os = "macos")
 ))]
 
+#[path = "interactive_session/mcp.rs"]
+mod mcp;
 #[path = "interactive_session/support.rs"]
 mod support;
 

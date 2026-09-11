@@ -28,6 +28,7 @@ pub enum NativeSlashCommand {
     Allowlist,
     Undo,
     Skills,
+    Mcp,
     Copy,
     Compact,
     Fast,
@@ -109,7 +110,7 @@ macro_rules! spec {
 }
 
 // Preserve the relative order of the pinned complete registry, not category order.
-static REGISTRY: [NativeSlashSpec; 22] = [
+static REGISTRY: [NativeSlashSpec; 23] = [
     spec!(
         Help,
         "/help",
@@ -261,6 +262,16 @@ static REGISTRY: [NativeSlashSpec; 22] = [
         false
     ),
     spec!(
+        Mcp,
+        "/mcp",
+        "/mcp [list|path|add SERVER COMMAND [args...]|remove SERVER]",
+        "inspect and edit native MCP profiles",
+        Extensions,
+        true,
+        false,
+        false
+    ),
+    spec!(
         Copy,
         "/copy",
         "/copy",
@@ -337,7 +348,7 @@ static REGISTRY: [NativeSlashSpec; 22] = [
 
 /// Returns static entries in pinned registry order, without allocation.
 #[must_use]
-pub fn native_slash_registry() -> &'static [NativeSlashSpec; 22] {
+pub fn native_slash_registry() -> &'static [NativeSlashSpec; 23] {
     &REGISTRY
 }
 
@@ -1122,6 +1133,20 @@ mod tests {
     }
 
     #[test]
+    fn mcp_routes_profile_intent_without_granting_runtime_authority() {
+        assert_eq!(rows("/mcp"), ["/mcp"]);
+        assert!(rows("/mcp add ").is_empty());
+        let invocation = valid("/mcp add selected command literal");
+        assert_eq!(invocation.command, NativeSlashCommand::Mcp);
+        assert_eq!(invocation.payload, "add selected command literal");
+        assert_eq!(
+            invocation.command.spec().category,
+            NativeSlashCategory::Extensions
+        );
+        assert!(!invocation.requires_prompt_credential());
+    }
+
+    #[test]
     fn skills_routes_native_management_payload_in_extensions_category() {
         assert_eq!(rows("/skills"), ["/skills"]);
         assert!(rows("/skills add ").is_empty());
@@ -1156,6 +1181,7 @@ mod tests {
             "/allowlist",
             "/undo",
             "/skills",
+            "/mcp",
             "/copy",
             "/compact",
             "/fast",
@@ -1182,7 +1208,7 @@ mod tests {
                 .iter()
                 .filter(|spec| spec.category == category)
                 .count()),
-            [5, 8, 3, 3, 1, 1, 1]
+            [5, 8, 3, 3, 1, 1, 2]
         );
     }
 
@@ -1569,7 +1595,8 @@ mod tests {
                 "/sandbox",
                 "/workspace",
                 "/background",
-                "/skills"
+                "/skills",
+                "/mcp"
             ]
         );
         let search = |query: &str| {

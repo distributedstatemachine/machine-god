@@ -130,26 +130,36 @@ pub struct Fixture {
     _temporary: TemporaryDirectory,
 }
 
+enum FixtureExtension {
+    None,
+    Skills,
+    Mcp,
+}
+
 impl Fixture {
     pub fn new() -> Self {
         Self::with_prompter(Arc::new(AllowPrompter))
     }
 
     pub fn with_prompter(prompter: Arc<dyn PermissionPrompter>) -> Self {
-        Self::configured(false, false, prompter)
+        Self::configured(false, FixtureExtension::None, prompter)
     }
 
     pub fn new_with_workspace() -> Self {
-        Self::configured(true, false, Arc::new(AllowPrompter))
+        Self::configured(true, FixtureExtension::None, Arc::new(AllowPrompter))
     }
 
     pub fn new_with_skills() -> Self {
-        Self::configured(false, true, Arc::new(AllowPrompter))
+        Self::configured(false, FixtureExtension::Skills, Arc::new(AllowPrompter))
+    }
+
+    pub fn new_with_mcp() -> Self {
+        Self::configured(false, FixtureExtension::Mcp, Arc::new(AllowPrompter))
     }
 
     fn configured(
         with_workspace: bool,
-        with_skills: bool,
+        extension: FixtureExtension,
         prompter: Arc<dyn PermissionPrompter>,
     ) -> Self {
         let temporary = TemporaryDirectory::new();
@@ -231,9 +241,18 @@ impl Fixture {
                 Arc::new(super::native::NativeWorkspaceContexts::new()),
             );
         }
-        if with_skills {
-            options = options.with_skills(skills_service(&state_root));
-        }
+        options = match extension {
+            FixtureExtension::None => options,
+            FixtureExtension::Skills => options.with_skills(skills_service(&state_root)),
+            FixtureExtension::Mcp => options.with_mcp_management(Arc::new(
+                super::native::mcp::management::NativeMcpManagementService::new(Arc::new(
+                    super::native::mcp::store::NativeMcpConfigStore::new(
+                        workspace.parent().unwrap().join("mcp-profile"),
+                    )
+                    .unwrap(),
+                )),
+            )),
+        };
         let transport = ScriptedTransport::default();
         let host = Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             config, Arc::new(transport.clone()), NetworkTarget {

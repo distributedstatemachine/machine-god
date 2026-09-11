@@ -56,6 +56,10 @@ pub enum NativeInteractiveControl {
     Skills {
         command: crate::NativeSkillsCommand,
     },
+    /// Uses explicitly selected native MCP profile authority, not tool authority.
+    Mcp {
+        command: crate::mcp::commands::McpCommand,
+    },
 }
 
 impl fmt::Debug for NativeInteractiveControl {
@@ -81,6 +85,7 @@ pub enum NativeInteractiveControlError {
     Workspace(crate::NativeWorkspaceServiceError),
     Background(crate::NativeBackgroundControlError),
     Skills(crate::NativeSkillsServiceError),
+    Mcp(crate::mcp::management::NativeMcpManagementError),
     Unavailable,
 }
 impl fmt::Debug for NativeInteractiveControlError {
@@ -113,6 +118,7 @@ pub enum NativeInteractiveControlReceipt {
     Workspace(crate::NativeWorkspaceReceipt),
     Background(crate::NativeBackgroundControlReceipt),
     Skills(crate::NativeSkillsServiceResult),
+    Mcp(crate::mcp::management::NativeMcpManagementReceipt),
 }
 impl fmt::Debug for NativeInteractiveControlReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -142,6 +148,7 @@ impl NativeInteractiveControlOutcome {
             Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Background(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Skills(receipt)) => receipt.failed(),
+            Ok(NativeInteractiveControlReceipt::Mcp(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Workspace(receipt)) => !matches!(
                 receipt.reconciliation,
                 crate::NativeWorkspaceReconciliation::CachedBusy
@@ -204,6 +211,11 @@ impl NativeInteractiveSession {
         let runtime = self.current.clone();
         let mut cancellation = None;
         let future = match control {
+            NativeInteractiveControl::Mcp { command } => {
+                let (token, future) = mcp::prepare(runtime, &self.host, command)?;
+                cancellation = Some(token);
+                future
+            }
             NativeInteractiveControl::Skills { command } => {
                 let (token, future) = self.prepare_skills_control(runtime, command)?;
                 cancellation = Some(token);
@@ -480,6 +492,7 @@ async fn execute(
             )
         }
         NativeInteractiveControl::Continue { .. }
+        | NativeInteractiveControl::Mcp { .. }
         | NativeInteractiveControl::Skills { .. }
         | NativeInteractiveControl::Background { .. }
         | NativeInteractiveControl::Workspace { .. }
@@ -490,5 +503,7 @@ async fn execute(
     })
 }
 
+mod mcp;
+mod owned_operation;
 mod skills;
 pub(super) mod undo;

@@ -275,6 +275,7 @@ struct TerminalCompositionSelection {
 /// Construction is inert and does not capture files, open roots, or start work.
 #[derive(Clone)]
 pub struct NativeReferenceHostConversationOptions {
+    mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Arc<FileUndoTracker>,
@@ -289,6 +290,7 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
         Self {
+            mcp_management: None,
             skills: None,
             workspace_binding: None,
             undo_tracker,
@@ -312,6 +314,17 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn with_skills(mut self, skills: Arc<crate::NativeSkillsService>) -> Self {
         self.skills = Some(skills);
+        self
+    }
+
+    /// Retains explicit MCP profile authority without reading or activating it.
+    /// Composition requires complete terminal options for owned worker cleanup.
+    #[must_use]
+    pub fn with_mcp_management(
+        mut self,
+        service: Arc<crate::mcp::management::NativeMcpManagementService>,
+    ) -> Self {
+        self.mcp_management = Some(service);
         self
     }
 
@@ -370,6 +383,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 
 #[derive(Default)]
 struct PreparedCompositionOptions {
+    mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
@@ -382,6 +396,7 @@ struct PreparedCompositionOptions {
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
     fn from(options: NativeReferenceHostConversationOptions) -> Self {
         Self {
+            mcp_management: options.mcp_management,
             skills: options.skills,
             undo_tracker: Some(options.undo_tracker),
             workspace_binding: options.workspace_binding,
@@ -411,6 +426,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
+    mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     engine: Engine,
@@ -656,6 +672,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
+        let mcp_management = options.mcp_management.clone();
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -690,6 +707,7 @@ impl NativeReferenceHost {
             permissions,
         )
         .map(|mut host| {
+            host.mcp_management = mcp_management;
             host.skills = skills;
             host.undo_tracker = undo_tracker;
             host.model_routes = model_routes;
@@ -1071,6 +1089,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
+        let mcp_management = options.mcp_management.clone();
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -1099,6 +1118,7 @@ impl NativeReferenceHost {
             permissions,
         )
         .map(|mut host| {
+            host.mcp_management = mcp_management;
             host.skills = skills;
             host.undo_tracker = undo_tracker;
             host.model_routes = model_routes;
@@ -1125,6 +1145,14 @@ impl NativeReferenceHost {
     #[must_use]
     pub fn skills(&self) -> Option<Arc<crate::NativeSkillsService>> {
         self.skills.clone()
+    }
+
+    /// Returns the exact optional profile-management allocation without effects.
+    #[must_use]
+    pub fn mcp_management(
+        &self,
+    ) -> Option<Arc<crate::mcp::management::NativeMcpManagementService>> {
+        self.mcp_management.clone()
     }
 
     /// Attaches this host's exact native permission routes before admitting work.
@@ -1479,6 +1507,7 @@ impl NativeReferenceHost {
 
         Ok(Self {
             engine,
+            mcp_management: None,
             skills: None,
             workspace_binding: None,
             control_workers,
@@ -1991,7 +2020,8 @@ fn validate_prepared_selections(
     loaded_config: &LoadedNativeConfig,
     options: &PreparedCompositionOptions,
 ) -> Result<(), NativeReferenceHostBuildError> {
-    if options.skills.is_some() && options.terminal.is_none() {
+    if (options.skills.is_some() || options.mcp_management.is_some()) && options.terminal.is_none()
+    {
         return Err(terminal_options_error());
     }
     if options.permissions.is_none() {
@@ -2120,6 +2150,40 @@ fn consume_prepared_composition(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mcp_management_options_are_inert_shared_and_require_owned_cleanup() {
+        use super::*;
+        use crate::mcp::{management::NativeMcpManagementService, store::NativeMcpConfigStore};
+        let service = Arc::new(NativeMcpManagementService::new(Arc::new(
+            NativeMcpConfigStore::new("/unopened-mcp-profile".into()).unwrap(),
+        )));
+        let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+            .with_mcp_management(service.clone());
+        assert!(Arc::ptr_eq(
+            options.mcp_management.as_ref().unwrap(),
+            &service
+        ));
+        let prepared: PreparedCompositionOptions = options.clone().into();
+        assert!(Arc::ptr_eq(
+            prepared.mcp_management.as_ref().unwrap(),
+            &service
+        ));
+        let config = LoadedNativeConfig::from_file(crate::NativeConfig::default());
+        assert_eq!(
+            validate_prepared_selections(&config, &prepared)
+                .unwrap_err()
+                .kind(),
+            NativeReferenceHostBuildErrorKind::TerminalConfig
+        );
+        let prepared = options
+            .with_terminal(
+                NativeReferenceHostTerminalOptions::new("/unopened-helper".into(), None, vec![])
+                    .unwrap(),
+            )
+            .into();
+        assert!(validate_prepared_selections(&config, &prepared).is_ok());
+    }
+
     #[test]
     fn skills_options_are_inert_shared_and_require_owned_terminal_lifecycle() {
         use super::*;

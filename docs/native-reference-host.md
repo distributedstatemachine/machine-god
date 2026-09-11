@@ -162,6 +162,16 @@ without discovery or execution. It is not implicitly copied to a replacement
 host or constructed from ambient roots, and it does not widen model-facing
 `skill` or `install_skill` permissions. See [skills CLI](skills-cli.md).
 
+`with_mcp_management(Arc<NativeMcpManagementService>)` separately selects a
+native profile-management service. Both prepared composition paths retain that
+exact allocation and require complete terminal options for collected control
+workers. The getter is inert; selection does not load configuration, connect a
+server or change model-facing MCP authority. Human profile controls acquire the
+accepted conversation's file-control fence only on first poll and preserve
+publication receipts through cancellation and cleanup. Skills and MCP profile
+controls share the same private owned-operation wrapper. Configuration saves
+and runtime activation remain independent facts; see [MCP management](mcp-management.md).
+
 For non-workspace file mutations, the history wrapper captures the trusted
 backend's existing read-only approval ticket when the outer execution future
 is constructed. It retains both success and denial outcomes; a later grant
