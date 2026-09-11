@@ -29,6 +29,10 @@ use crate::NativePermissionExecutionProof;
 
 mod runtime;
 pub use runtime::{McpSubmissionRuntime, McpSubmissionRuntimeBinding, McpSubmissionRuntimeOwner};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod http;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use http::{McpSubmissionHttpDriver, McpSubmissionHttpHead};
 
 /// Maximum reserved, ready and claimed call identities in one registered turn.
 pub const MAX_MCP_SUBMISSION_SLOTS: usize = 64;
@@ -102,10 +106,17 @@ struct Data {
     tool: ToolName,
     arguments: Box<[u8]>,
     wire: Box<[u8]>,
+    framing: Framing,
     rpc_id: RpcId,
     runtime: Arc<McpSubmissionRuntime>,
     cancellation: CancellationToken,
     reservation: Reservation,
+}
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Framing {
+    Ndjson,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Http,
 }
 struct Reservation {
     registry: Weak<McpSubmissionRegistry>,
@@ -225,6 +236,15 @@ impl McpSubmissionRegistry {
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<PreparedMcpSubmission>> {
         let copied = self.copy_request(request, invocation, &runtime, wire, &cancellation);
+        self.prepare_copied(runtime, copied, cancellation)
+    }
+
+    fn prepare_copied(
+        self: &Arc<Self>,
+        runtime: Arc<McpSubmissionRuntime>,
+        copied: Result<CopiedRequest>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<PreparedMcpSubmission>> {
         let registry = self.clone();
         Box::pin(async move {
             check(&cancellation)?;
@@ -236,6 +256,7 @@ impl McpSubmissionRegistry {
                 call,
                 arguments,
                 wire,
+                framing,
                 rpc_id,
             } = copied?;
             let generation = {
@@ -271,6 +292,7 @@ impl McpSubmissionRegistry {
                     tool,
                     arguments,
                     wire,
+                    framing,
                     rpc_id,
                     runtime,
                     cancellation,
@@ -450,6 +472,7 @@ impl McpSubmissionRegistry {
             call: invocation.call_id.clone(),
             arguments: canonical,
             wire: framed.into_boxed_slice(),
+            framing: Framing::Ndjson,
             rpc_id,
         })
     }
@@ -461,6 +484,7 @@ struct CopiedRequest {
     call: ToolCallId,
     arguments: Box<[u8]>,
     wire: Box<[u8]>,
+    framing: Framing,
     rpc_id: RpcId,
 }
 
@@ -591,20 +615,18 @@ impl McpSubmission {
     /// future can outlive its proof. Dropping the guard never enables replay.
     #[must_use]
     pub fn into_writer<W: McpSubmissionWriter>(self, writer: W) -> McpSubmissionWrite<W> {
-        let cancellations = Some([
-            self.cancellation.cancelled(),
-            self.ready.data.cancellation.cancelled(),
-            self.registry.cancellation.cancelled(),
-            self.registry.handle.cancelled(),
-            self.ready.data.runtime.cancellation.cancelled(),
-        ]);
         McpSubmissionWrite {
-            submission: self,
+            guard: WriteGuard::new(self),
             writer,
-            offset: 0,
-            terminal: false,
-            cancellations,
         }
+    }
+
+    /// Tests exact retained runtime allocation membership, not merely matching
+    /// server names or numeric generations. This observation is not a grant;
+    /// the final writer still revalidates live runtime and policy authority.
+    #[must_use]
+    pub fn belongs_to_runtime(&self, runtime: &Arc<McpSubmissionRuntime>) -> bool {
+        Arc::ptr_eq(&self.ready.data.runtime, runtime)
     }
 
     /// Whether writer delegation was attempted; does not report bytes written.
@@ -636,6 +658,18 @@ impl McpSubmission {
 pub trait McpSubmissionWriter {
     /// Delegates only the supplied remaining request suffix.
     fn poll_write(&mut self, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>>;
+    /// Delegates a vectored plaintext prefix synchronously. The default uses
+    /// only the first nonempty slice; it never concatenates or retains buffers.
+    fn poll_write_vectored(
+        &mut self,
+        cx: &mut Context<'_>,
+        bytes: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        bytes
+            .iter()
+            .find(|bytes| !bytes.is_empty())
+            .map_or(Poll::Ready(Ok(0)), |bytes| self.poll_write(cx, bytes))
+    }
     /// Flushes under the same retained authority after every byte is accepted.
     fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>>;
 }
@@ -645,22 +679,124 @@ pub trait McpSubmissionWriter {
 /// Successful byte counts advance a private offset; Pending retries cannot
 /// restart an accepted prefix. Any failure permanently terminates this guard.
 pub struct McpSubmissionWrite<W> {
-    submission: McpSubmission,
+    guard: WriteGuard,
     writer: W,
+}
+
+/// Shared one-shot policy/cancellation state for direct and HTTP driver writes.
+struct WriteGuard {
+    submission: McpSubmission,
     offset: usize,
     terminal: bool,
     cancellations: Option<[Cancelled; 5]>,
+}
+impl WriteGuard {
+    fn new(submission: McpSubmission) -> Self {
+        let cancellations = Some([
+            submission.cancellation.cancelled(),
+            submission.ready.data.cancellation.cancelled(),
+            submission.registry.cancellation.cancelled(),
+            submission.registry.handle.cancelled(),
+            submission.ready.data.runtime.cancellation.cancelled(),
+        ]);
+        Self {
+            submission,
+            offset: 0,
+            terminal: false,
+            cancellations,
+        }
+    }
+    fn stop(&mut self) {
+        self.terminal = true;
+        self.cancellations = None;
+    }
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if self.terminal {
+            return Err(McpSubmissionError::AlreadyAttempted);
+        }
+        if self.cancellations.as_mut().is_some_and(|waiters| {
+            waiters
+                .iter_mut()
+                .any(|waiter| Pin::new(waiter).poll(cx).is_ready())
+        }) {
+            self.stop();
+            return Err(McpSubmissionError::Cancelled);
+        }
+        self.checkpoint()
+    }
+    fn checkpoint(&mut self) -> Result<()> {
+        let result = self.submission.checkpoint();
+        if result.is_err() {
+            self.stop();
+        }
+        result
+    }
+    fn begin_delegate(&mut self) -> Result<()> {
+        self.checkpoint()?;
+        // A panic, error or unexplained zero count never enables another attempt.
+        self.terminal = true;
+        self.submission.attempted = true;
+        Ok(())
+    }
+    fn write_result(
+        &mut self,
+        outcome: &Poll<io::Result<usize>>,
+        offered: usize,
+    ) -> Poll<Result<usize>> {
+        if let Poll::Ready(Ok(count)) = outcome
+            && *count > 0
+            && *count <= offered
+        {
+            self.offset += count;
+        }
+        self.checkpoint()?;
+        match outcome {
+            Poll::Pending => {
+                self.terminal = false;
+                Poll::Pending
+            }
+            Poll::Ready(Ok(count)) if *count > 0 && *count <= offered => {
+                self.terminal = false;
+                Poll::Ready(Ok(*count))
+            }
+            Poll::Ready(_) => {
+                self.stop();
+                Poll::Ready(Err(McpSubmissionError::WriterFailed))
+            }
+        }
+    }
+    fn flush_result(&mut self, outcome: &Poll<io::Result<()>>) -> Poll<Result<()>> {
+        self.checkpoint()?;
+        match outcome {
+            Poll::Pending => {
+                self.terminal = false;
+                Poll::Pending
+            }
+            Poll::Ready(Ok(())) => {
+                if self.offset == self.submission.ready.data.wire.len() {
+                    self.stop();
+                } else {
+                    self.terminal = false;
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(_)) => {
+                self.stop();
+                Poll::Ready(Err(McpSubmissionError::WriterFailed))
+            }
+        }
+    }
 }
 impl<W> McpSubmissionWrite<W> {
     /// True once any writer method was entered, even if it returned an error.
     #[must_use]
     pub const fn was_attempted(&self) -> bool {
-        self.submission.was_attempted()
+        self.guard.submission.was_attempted()
     }
     /// Successfully acknowledged bytes; errors can have additional unknown effects.
     #[must_use]
     pub const fn acknowledged_bytes(&self) -> usize {
-        self.offset
+        self.guard.offset
     }
 }
 impl<W> fmt::Debug for McpSubmissionWrite<W> {
@@ -672,74 +808,26 @@ impl<W: McpSubmissionWriter + Unpin> Future for McpSubmissionWrite<W> {
     type Output = Result<()>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        if this.terminal {
-            return Poll::Ready(Err(McpSubmissionError::AlreadyAttempted));
+        this.guard.poll_ready(cx)?;
+        if this.guard.submission.ready.data.framing != Framing::Ndjson {
+            this.guard.stop();
+            return Poll::Ready(Err(McpSubmissionError::Invalid));
         }
-        if this.cancellations.as_mut().is_some_and(|waiters| {
-            waiters
-                .iter_mut()
-                .any(|waiter| Pin::new(waiter).poll(cx).is_ready())
-        }) {
-            this.terminal = true;
-            this.cancellations = None;
-            return Poll::Ready(Err(McpSubmissionError::Cancelled));
-        }
-        if let Err(error) = this.submission.checkpoint() {
-            this.terminal = true;
-            this.cancellations = None;
-            return Poll::Ready(Err(error));
-        }
-        // Mark terminal/attempted before delegation, including a writer panic.
-        this.terminal = true;
-        this.submission.attempted = true;
-        let remaining = &this.submission.ready.data.wire[this.offset..];
+        this.guard.begin_delegate()?;
+        let remaining = &this.guard.submission.ready.data.wire[this.guard.offset..];
         if remaining.is_empty() {
             let outcome = this.writer.poll_flush(cx);
-            if let Err(error) = this.submission.checkpoint() {
-                this.cancellations = None;
-                return Poll::Ready(Err(error));
-            }
-            match outcome {
-                Poll::Pending => {
-                    this.terminal = false;
-                    Poll::Pending
-                }
-                Poll::Ready(Ok(())) => {
-                    this.cancellations = None;
-                    Poll::Ready(Ok(()))
-                }
-                Poll::Ready(Err(_)) => {
-                    this.cancellations = None;
-                    Poll::Ready(Err(McpSubmissionError::WriterFailed))
-                }
-            }
+            this.guard.flush_result(&outcome)
         } else {
             let remaining_len = remaining.len();
             let outcome = this.writer.poll_write(cx, remaining);
-            if let Poll::Ready(Ok(count)) = &outcome
-                && *count > 0
-                && *count <= remaining_len
-            {
-                this.offset += count;
-            }
-            if let Err(error) = this.submission.checkpoint() {
-                this.cancellations = None;
-                return Poll::Ready(Err(error));
-            }
-            match outcome {
-                Poll::Pending => {
-                    this.terminal = false;
-                    Poll::Pending
-                }
-                Poll::Ready(Ok(count)) if count > 0 && count <= remaining_len => {
-                    this.terminal = false;
+            match this.guard.write_result(&outcome, remaining_len) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Ok(_)) => {
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }
-                Poll::Ready(_) => {
-                    this.cancellations = None;
-                    Poll::Ready(Err(McpSubmissionError::WriterFailed))
-                }
+                Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             }
         }
     }
@@ -831,4 +919,4 @@ fn bounded_json(value: &impl Serialize, limit: usize) -> Result<Box<[u8]>> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

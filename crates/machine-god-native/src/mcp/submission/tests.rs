@@ -15,6 +15,10 @@ use crate::{
     PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
 };
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "http/tests.rs"]
+mod http_tests;
+
 struct Adapter(Mutex<Option<PreparedMcpSubmission>>);
 impl NativePermissionActionPreparer for Adapter {
     fn prepare<'a>(
@@ -73,7 +77,7 @@ impl PermissionPrompter for Prompter {
     }
 }
 
-struct Fixture {
+pub(crate) struct Fixture {
     _engine: Engine,
     session: Session,
     turn: Turn,
@@ -82,7 +86,7 @@ struct Fixture {
     registry: Arc<McpSubmissionRegistry>,
     registration: Option<McpSubmissionTurnRegistration>,
     runtime_owner: McpSubmissionRuntimeOwner,
-    runtime: Arc<McpSubmissionRuntime>,
+    pub(crate) runtime: Arc<McpSubmissionRuntime>,
     controller: Arc<NativePermissionController>,
     adapter: Arc<Adapter>,
 }
@@ -98,7 +102,16 @@ fn binding() -> McpSubmissionRuntimeBinding {
     .unwrap()
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn revoke(&self) {
+        self.owner.reset().unwrap();
+    }
+    pub(crate) fn turn_handle(&self) -> TurnHandle {
+        self.turn.handle()
+    }
+    pub(crate) fn close(&mut self) {
+        drop(self.registration.take());
+    }
+    pub(crate) fn new() -> Self {
         let adapter = Arc::new(Adapter(Mutex::new(None)));
         let controller = Arc::new(NativePermissionController::new(
             adapter.clone(),
@@ -227,12 +240,12 @@ impl Fixture {
         .admission
         .unwrap()
     }
-    fn ready(&self, call: &str) {
+    pub(crate) fn ready(&self, call: &str) {
         self.admission(call, self.prepare(call, CancellationToken::new()))
             .admit()
             .unwrap();
     }
-    fn claim(
+    pub(crate) fn claim(
         &self,
         call: &str,
         cancellation: CancellationToken,
@@ -429,6 +442,24 @@ fn all_context_fields_tool_arguments_and_runtime_allocation_are_exact() {
         .is_err()
     );
     assert!(block_on(fixture.claim("call", CancellationToken::new())).is_ok());
+}
+
+#[test]
+fn submission_runtime_membership_is_allocation_identity_not_a_grant() {
+    let fixture = Fixture::new();
+    fixture.ready("call");
+    let submission = block_on(fixture.claim("call", CancellationToken::new())).unwrap();
+    assert!(submission.belongs_to_runtime(&fixture.runtime));
+    assert!(submission.belongs_to_runtime(&fixture.runtime.clone()));
+    let other_owner = McpSubmissionRuntimeOwner::new();
+    let other = other_owner.install(binding()).unwrap();
+    assert_eq!(other.generation(), fixture.runtime.generation());
+    assert!(!submission.belongs_to_runtime(&other));
+    fixture.runtime_owner.retire();
+    assert!(submission.belongs_to_runtime(&fixture.runtime));
+    let mut writer = submission.into_writer(Writer(Arc::default()));
+    assert!(matches!(poll(&mut writer), Poll::Ready(Err(_))));
+    assert!(!writer.was_attempted());
 }
 
 #[test]
