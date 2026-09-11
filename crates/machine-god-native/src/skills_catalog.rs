@@ -78,6 +78,11 @@ pub struct NativeSkillRoot {
 }
 
 impl NativeSkillRoot {
+    pub(crate) const fn is_managed_root(&self) -> bool {
+        matches!(self.source, NativeSkillSource::Managed)
+            && matches!(self.links, NativeSkillLinkPolicy::Reject)
+    }
+
     /// Validates spelling without inspecting the descriptor or filesystem.
     /// Display spelling must equal the captured authority identity plus relative
     /// components. Absolute compatibility links are mapped beneath that captured

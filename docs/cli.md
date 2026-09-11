@@ -72,6 +72,9 @@ and explicit reset retain their separate lifecycle meaning. Atomic paste emits
 one replacement only after its closing marker is accepted.
 The input owner forwards these receipts with the first received-byte binding;
 later chunks, modal changes or redraws cannot relabel a partial edit.
+Externally supplied replacements validate byte bounds and UTF-8 cursor/range
+boundaries before mutation, reject partial decoder state, and are not echoed as
+received-input edits. Rejection leaves the previous draft and decoder intact.
 
 A bounded single-row viewport uses the native screen's pinned Unicode display
 units. It never truncates the underlying draft. Columns and rows come from one
@@ -291,6 +294,21 @@ acknowledgement; another copy waits for that receipt, but ordinary prompts do
 not. Started clipboard work settles before conversion to the native-free output
 tail, and full host completion still joins its real worker and child cleanup
 before the tail is presented.
+
+### Skills controls
+
+Interactive hosts explicitly supplied a native skills service route `/skills`
+and its `list`, `show`, `path`, `create`, `add`/`install`, and `remove` forms through
+the native control lane. The CLI does not resolve sources, grant replacement
+consent independently, execute pasted package-manager commands or mutate files.
+Create/install require explicit outer `--replace` for an observed replacement.
+
+Typed control reporting retains per-item outcomes and opaque recovery IDs; an
+uncertain or partial batch never becomes success. Reporting is bounded to 64 KiB.
+Catalog text previews show at most 128 rows with clipped names/descriptions/paths,
+state the catalog count and incomplete-discovery warning, and preserve an exact
+show focus. They are previews, not full skill bodies or a uniqueness claim.
+The native component and picker contracts are in [skills CLI](skills-cli.md).
 
 ### Persistent allowlist
 

@@ -30,6 +30,7 @@ pub(super) enum ComposerInputError {
     InvalidUtf8,
     ContainsNul,
     InvalidEscape,
+    InvalidEdit,
 }
 impl fmt::Display for ComposerInputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -38,6 +39,7 @@ impl fmt::Display for ComposerInputError {
             Self::InvalidUtf8 => "interactive input is not valid UTF-8",
             Self::ContainsNul => "interactive input contains a NUL byte",
             Self::InvalidEscape => "interactive input escape sequence is unsupported",
+            Self::InvalidEdit => "interactive draft edit is invalid or unavailable",
         })
     }
 }
@@ -148,6 +150,50 @@ impl Composer {
     }
     pub fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    /// Applies one already admitted external edit without reporting it again to
+    /// the input observer. The owner must check its native draft identity first.
+    /// Invalid edits retain both draft and decoder; partial input cannot be
+    /// overwritten by an asynchronously acknowledged picker choice.
+    pub fn replace(
+        &mut self,
+        range: Range<usize>,
+        inserted: &str,
+        cursor_after: usize,
+    ) -> Result<(), ComposerInputError> {
+        if !matches!(self.decoder, Decoder::Ready)
+            || range.start > range.end
+            || range.end > self.text.len()
+            || !self.text.is_char_boundary(range.start)
+            || !self.text.is_char_boundary(range.end)
+        {
+            return Err(ComposerInputError::InvalidEdit);
+        }
+        let remaining = self.text.len() - range.len();
+        if inserted.len() > MAX_COMPOSER_BYTES - remaining {
+            return Err(ComposerInputError::TooLong);
+        }
+        if inserted.contains('\0') {
+            return Err(ComposerInputError::ContainsNul);
+        }
+        let insertion_end = range.start + inserted.len();
+        let valid_cursor = cursor_after <= remaining + inserted.len()
+            && if cursor_after <= range.start {
+                self.text.is_char_boundary(cursor_after)
+            } else if cursor_after <= insertion_end {
+                inserted.is_char_boundary(cursor_after - range.start)
+            } else {
+                self.text
+                    .is_char_boundary(range.end + cursor_after - insertion_end)
+            };
+        if !valid_cursor {
+            return Err(ComposerInputError::InvalidEdit);
+        }
+        self.text.replace_range(range, inserted);
+        self.cursor = cursor_after;
+        self.last_edit = None;
+        Ok(())
     }
 
     pub fn restore_picker_query(&mut self, text: &str) -> Result<(), ()> {
@@ -309,8 +355,9 @@ impl Composer {
             return ComposerEvent::InputError(ComposerInputError::TooLong);
         }
         let start = self.cursor;
-        self.text.insert_str(start, text);
-        self.cursor += text.len();
+        if let Err(error) = self.replace(start..start, text, start + text.len()) {
+            return ComposerEvent::InputError(error);
+        }
         if !text.is_empty() {
             self.last_edit = Some((start..start, start..self.cursor));
         }
@@ -351,9 +398,10 @@ impl Composer {
                 if previous == self.cursor {
                     return None;
                 }
-                self.text.replace_range(previous..self.cursor, "");
-                self.last_edit = Some((previous..self.cursor, previous..previous));
-                self.cursor = previous;
+                let end = self.cursor;
+                self.replace(previous..end, "", previous)
+                    .expect("validated backward deletion");
+                self.last_edit = Some((previous..end, previous..previous));
                 Some(ComposerEvent::Changed)
             }
             1 => self.move_to(0),
@@ -388,7 +436,8 @@ impl Composer {
         if end == self.cursor {
             return None;
         }
-        self.text.replace_range(self.cursor..end, "");
+        self.replace(self.cursor..end, "", self.cursor)
+            .expect("validated forward deletion");
         self.last_edit = Some((self.cursor..end, self.cursor..self.cursor));
         Some(ComposerEvent::Changed)
     }

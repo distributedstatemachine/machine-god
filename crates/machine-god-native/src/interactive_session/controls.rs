@@ -52,6 +52,10 @@ pub enum NativeInteractiveControl {
     Background {
         command: crate::NativeBackgroundCommand,
     },
+    /// Uses explicitly injected discovery and managed-write authority.
+    Skills {
+        command: crate::NativeSkillsCommand,
+    },
 }
 
 impl fmt::Debug for NativeInteractiveControl {
@@ -76,6 +80,7 @@ pub enum NativeInteractiveControlError {
     Allowlist(crate::NativeAllowlistError),
     Workspace(crate::NativeWorkspaceServiceError),
     Background(crate::NativeBackgroundControlError),
+    Skills(crate::NativeSkillsServiceError),
     Unavailable,
 }
 impl fmt::Debug for NativeInteractiveControlError {
@@ -107,6 +112,7 @@ pub enum NativeInteractiveControlReceipt {
     Allowlist(crate::NativeAllowlistReceipt),
     Workspace(crate::NativeWorkspaceReceipt),
     Background(crate::NativeBackgroundControlReceipt),
+    Skills(crate::NativeSkillsServiceResult),
 }
 impl fmt::Debug for NativeInteractiveControlReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -135,6 +141,7 @@ impl NativeInteractiveControlOutcome {
             }
             Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Background(receipt)) => receipt.failed(),
+            Ok(NativeInteractiveControlReceipt::Skills(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Workspace(receipt)) => !matches!(
                 receipt.reconciliation,
                 crate::NativeWorkspaceReconciliation::CachedBusy
@@ -197,6 +204,11 @@ impl NativeInteractiveSession {
         let runtime = self.current.clone();
         let mut cancellation = None;
         let future = match control {
+            NativeInteractiveControl::Skills { command } => {
+                let (token, future) = self.prepare_skills_control(runtime, command)?;
+                cancellation = Some(token);
+                future
+            }
             NativeInteractiveControl::Background { command } => {
                 let (token, future) = self.prepare_background_control(source.clone(), command)?;
                 cancellation = Some(token);
@@ -267,6 +279,28 @@ impl NativeInteractiveSession {
         });
         self.notify();
         Ok(id)
+    }
+
+    fn prepare_skills_control(
+        &self,
+        runtime: Arc<NativeConversationRuntime>,
+        command: crate::NativeSkillsCommand,
+    ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
+        skills::validate_size(&command)?;
+        let token = CancellationToken::new();
+        let future = skills::execute(
+            runtime,
+            self.host
+                .skills()
+                .ok_or(NativeInteractiveError::Configuration)?,
+            self.host
+                .control_workers()
+                .ok_or(NativeInteractiveError::Configuration)?,
+            self.options.workspace.clone(),
+            command,
+            token.clone(),
+        );
+        Ok((token, future))
     }
 
     fn prepare_background_control(
@@ -446,6 +480,7 @@ async fn execute(
             )
         }
         NativeInteractiveControl::Continue { .. }
+        | NativeInteractiveControl::Skills { .. }
         | NativeInteractiveControl::Background { .. }
         | NativeInteractiveControl::Workspace { .. }
         | NativeInteractiveControl::UndoLast
@@ -455,4 +490,5 @@ async fn execute(
     })
 }
 
+mod skills;
 pub(super) mod undo;

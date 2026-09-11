@@ -95,6 +95,31 @@ impl NativeSkillPicker {
         Ok(())
     }
 
+    /// Focuses an exact observed selection, for example a command-service show
+    /// result, without matching by name or choosing among duplicate locations.
+    /// # Errors
+    /// Rejects closed menus, foreign/stale/filtered selections and exhausted
+    /// revisions without changing the previous frame or acknowledgement.
+    pub fn focus(&mut self, selection: &super::NativeSkillSelection) -> Result<()> {
+        let menu = self.menu.as_mut().ok_or(Error::NotOpen)?;
+        let selected = menu
+            .matches
+            .iter()
+            .position(|index| menu.snapshot.entries()[*index].selection_ref() == selection)
+            .ok_or(Error::NoSelection)?;
+        menu.change()?;
+        menu.selected = selected;
+        Ok(())
+    }
+
+    /// Requires a new acknowledged frame after a host presentation change such
+    /// as resize, without moving the selected row or changing the query/draft.
+    /// # Errors
+    /// Rejects a closed menu or exhausted frame revision.
+    pub fn invalidate_frame(&mut self) -> Result<()> {
+        self.menu.as_mut().ok_or(Error::NotOpen)?.change()
+    }
+
     #[must_use]
     pub fn view(&self) -> Option<NativeSkillPickerView<'_>> {
         let menu = self.menu.as_ref()?;

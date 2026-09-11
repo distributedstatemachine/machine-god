@@ -1110,6 +1110,16 @@ mod background;
 pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
     use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
 
+    match &outcome.result {
+        Ok(NativeInteractiveControlReceipt::Skills(receipt)) => {
+            return super::skills_receipts::render(outcome.id.get(), Ok(receipt));
+        }
+        Err(NativeInteractiveControlError::Skills(error)) => {
+            return super::skills_receipts::render(outcome.id.get(), Err(error));
+        }
+        _ => {}
+    }
+
     if let Ok(NativeInteractiveControlReceipt::Background(receipt)) = &outcome.result {
         return background::render(outcome.id.get(), receipt);
     }
@@ -1192,6 +1202,9 @@ pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Resul
         }
         Ok(NativeInteractiveControlReceipt::Background(_)) => {
             unreachable!("background uses its separately bounded renderer")
+        }
+        Ok(NativeInteractiveControlReceipt::Skills(_)) => {
+            unreachable!("skills uses its separately bounded renderer")
         }
     }
     .map_err(|_| ())?;

@@ -375,6 +375,7 @@ mod skills_managed;
 mod skills_metadata;
 mod skills_picker;
 mod skills_prompt_context;
+mod skills_roots;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod skills_service;
 pub use skills_catalog::{
@@ -416,6 +417,10 @@ pub use skills_picker::{
 };
 pub use skills_prompt_context::{
     NATIVE_SKILL_PROMPT_CONTEXT_KEY, NativeSkillPromptContext, NativeSkillPromptContextError,
+};
+pub use skills_roots::{
+    MAX_NATIVE_SKILL_ROOT_IO_ATTEMPTS, MAX_NATIVE_SKILL_WORKSPACE_LEVELS,
+    NativeSkillDirectoryAuthority, NativeSkillRootsError, compose_native_skill_catalog,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use skills_service::{

@@ -26,6 +26,7 @@ mod recording_lifetime_tests;
 mod recording_process_tests;
 mod resize;
 mod saved_rules;
+mod skills_receipts;
 #[cfg(test)]
 mod terminal_lifetime_tests;
 #[cfg(test)]

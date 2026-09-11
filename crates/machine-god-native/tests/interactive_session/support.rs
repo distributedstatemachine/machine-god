@@ -136,14 +136,22 @@ impl Fixture {
     }
 
     pub fn with_prompter(prompter: Arc<dyn PermissionPrompter>) -> Self {
-        Self::configured(false, prompter)
+        Self::configured(false, false, prompter)
     }
 
     pub fn new_with_workspace() -> Self {
-        Self::configured(true, Arc::new(AllowPrompter))
+        Self::configured(true, false, Arc::new(AllowPrompter))
     }
 
-    fn configured(with_workspace: bool, prompter: Arc<dyn PermissionPrompter>) -> Self {
+    pub fn new_with_skills() -> Self {
+        Self::configured(false, true, Arc::new(AllowPrompter))
+    }
+
+    fn configured(
+        with_workspace: bool,
+        with_skills: bool,
+        prompter: Arc<dyn PermissionPrompter>,
+    ) -> Self {
         let temporary = TemporaryDirectory::new();
         let workspace = temporary.0.join("workspace");
         let state = temporary.0.join("state");
@@ -223,6 +231,9 @@ impl Fixture {
                 Arc::new(super::native::NativeWorkspaceContexts::new()),
             );
         }
+        if with_skills {
+            options = options.with_skills(skills_service(&state_root));
+        }
         let transport = ScriptedTransport::default();
         let host = Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             config, Arc::new(transport.clone()), NetworkTarget {
@@ -262,6 +273,17 @@ impl Fixture {
         fs::create_dir(&path).unwrap();
         PublicationBlock(path)
     }
+}
+
+fn skills_service(state_root: &Path) -> Arc<super::native::NativeSkillsService> {
+    let managed = Arc::new(super::native::NativeManagedSkills::open(state_root, None).unwrap());
+    let catalog = Arc::new(
+        super::native::NativeSkillCatalog::new(vec![managed.catalog_root().unwrap()]).unwrap(),
+    );
+    Arc::new(super::native::NativeSkillsService::new(
+        catalog,
+        Some(managed),
+    ))
 }
 
 pub struct PublicationBlock(PathBuf);

@@ -275,6 +275,7 @@ struct TerminalCompositionSelection {
 /// Construction is inert and does not capture files, open roots, or start work.
 #[derive(Clone)]
 pub struct NativeReferenceHostConversationOptions {
+    skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Arc<FileUndoTracker>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
@@ -288,6 +289,7 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
         Self {
+            skills: None,
             workspace_binding: None,
             undo_tracker,
             terminal: None,
@@ -302,6 +304,14 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn with_terminal(mut self, terminal: NativeReferenceHostTerminalOptions) -> Self {
         self.terminal = Some(terminal);
+        self
+    }
+
+    /// Retains explicit human-invoked skill authority without discovery or writes.
+    /// Composition requires complete terminal options for owned worker cleanup.
+    #[must_use]
+    pub fn with_skills(mut self, skills: Arc<crate::NativeSkillsService>) -> Self {
+        self.skills = Some(skills);
         self
     }
 
@@ -360,6 +370,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 
 #[derive(Default)]
 struct PreparedCompositionOptions {
+    skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
@@ -371,6 +382,7 @@ struct PreparedCompositionOptions {
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
     fn from(options: NativeReferenceHostConversationOptions) -> Self {
         Self {
+            skills: options.skills,
             undo_tracker: Some(options.undo_tracker),
             workspace_binding: options.workspace_binding,
             terminal: options.terminal,
@@ -399,6 +411,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
+    skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     engine: Engine,
     workspace_root: PathBuf,
@@ -643,6 +656,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
+        let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
@@ -676,6 +690,7 @@ impl NativeReferenceHost {
             permissions,
         )
         .map(|mut host| {
+            host.skills = skills;
             host.undo_tracker = undo_tracker;
             host.model_routes = model_routes;
             host.observations = observations;
@@ -1056,6 +1071,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
+        let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
@@ -1083,6 +1099,7 @@ impl NativeReferenceHost {
             permissions,
         )
         .map(|mut host| {
+            host.skills = skills;
             host.undo_tracker = undo_tracker;
             host.model_routes = model_routes;
             host.observations = observations;
@@ -1102,6 +1119,12 @@ impl NativeReferenceHost {
     #[must_use]
     pub fn workspace_root(&self) -> &Path {
         &self.workspace_root
+    }
+
+    /// Returns the exact optional skills allocation without discovery or effects.
+    #[must_use]
+    pub fn skills(&self) -> Option<Arc<crate::NativeSkillsService>> {
+        self.skills.clone()
     }
 
     /// Attaches this host's exact native permission routes before admitting work.
@@ -1456,6 +1479,7 @@ impl NativeReferenceHost {
 
         Ok(Self {
             engine,
+            skills: None,
             workspace_binding: None,
             control_workers,
             workspace_root,
@@ -1967,6 +1991,9 @@ fn validate_prepared_selections(
     loaded_config: &LoadedNativeConfig,
     options: &PreparedCompositionOptions,
 ) -> Result<(), NativeReferenceHostBuildError> {
+    if options.skills.is_some() && options.terminal.is_none() {
+        return Err(terminal_options_error());
+    }
     if options.permissions.is_none() {
         return validate_selections(loaded_config);
     }
@@ -2093,6 +2120,34 @@ fn consume_prepared_composition(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skills_options_are_inert_shared_and_require_owned_terminal_lifecycle() {
+        use super::*;
+        let service = Arc::new(crate::NativeSkillsService::new(
+            Arc::new(crate::NativeSkillCatalog::new(vec![]).unwrap()),
+            None,
+        ));
+        let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+            .with_skills(service.clone());
+        assert!(Arc::ptr_eq(options.skills.as_ref().unwrap(), &service));
+        let prepared: PreparedCompositionOptions = options.clone().into();
+        assert!(Arc::ptr_eq(prepared.skills.as_ref().unwrap(), &service));
+        let config = LoadedNativeConfig::from_file(crate::NativeConfig::default());
+        assert_eq!(
+            validate_prepared_selections(&config, &prepared)
+                .unwrap_err()
+                .kind(),
+            NativeReferenceHostBuildErrorKind::TerminalConfig
+        );
+        let prepared = options
+            .with_terminal(
+                NativeReferenceHostTerminalOptions::new("/unopened-helper".into(), None, vec![])
+                    .unwrap(),
+            )
+            .into();
+        assert!(validate_prepared_selections(&config, &prepared).is_ok());
+    }
+
     #[test]
     fn allowlist_local_source_is_effective_and_never_ignored_without_composition() {
         let config = crate::NativeConfig::default();

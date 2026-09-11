@@ -2,8 +2,8 @@
 
 `NativeReferenceHost` is the maintained example of composing the
 provider-neutral engine with native AI Gateway, persistence, prompt, root, and
-tool implementations. It is a library boundary; the CLI uses it for bounded
-one-shot requests but does not yet provide a full interactive agent UI. Current
+tool implementations. It is a library boundary used by both the one-shot CLI
+and its long-lived interactive session owner. Current
 milestone state is maintained only in the
 [implementation plan](implementation-plan.md#current-delivery-state).
 
@@ -152,6 +152,15 @@ the tools' existing preparation, permission, cancellation, and execution
 contracts; native conversation finalization owns history publication. Composition
 does not collect observations or write session history itself. Constructors
 without this option retain their existing unwrapped tools.
+
+`with_skills(Arc<NativeSkillsService>)` selects explicit human-invoked catalog
+and optional managed-write authority. It requires terminal options so admitted
+commands use the complete host's owned worker scope; missing terminal selection
+fails validation before prepared-root consumption. Both prepared composition
+paths preserve the same supplied service. `skills()` observes that capability
+without discovery or execution. It is not implicitly copied to a replacement
+host or constructed from ambient roots, and it does not widen model-facing
+`skill` or `install_skill` permissions. See [skills CLI](skills-cli.md).
 
 For non-workspace file mutations, the history wrapper captures the trusted
 backend's existing read-only approval ticket when the outer execution future

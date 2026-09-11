@@ -19,6 +19,52 @@ fn executor() -> tokio::runtime::Runtime {
 }
 
 #[test]
+fn skills_commands_use_native_catalog_management_and_exact_receipts() {
+    executor().block_on(async {
+        let fixture = support::Fixture::new_with_skills();
+        let mut driver = driver(&fixture).await;
+        for command in ["/skills create review", "/skills create review --replace"] {
+            driver.command(command, 200);
+            let receipt = control(&mut driver).await;
+            assert!(!receipt.failed());
+            assert!(matches!(
+                &receipt.result,
+                Ok(NativeInteractiveControlReceipt::Skills(
+                    native::NativeSkillsServiceResult::Managed(_)
+                ))
+            ));
+        }
+        for command in ["/skills", "/skills list", "/skills show review"] {
+            driver.command(command, 200);
+            let receipt = control(&mut driver).await;
+            assert!(!receipt.failed());
+            let rendered = super::super::driver::render_control(&receipt).unwrap();
+            assert!(String::from_utf8(rendered).unwrap().contains("review"));
+        }
+        driver.command("/skills path", 200);
+        assert!(matches!(
+            control(&mut driver).await.result,
+            Ok(NativeInteractiveControlReceipt::Skills(
+                native::NativeSkillsServiceResult::Path(_)
+            ))
+        ));
+        let local = fixture.workspace.join("local");
+        std::fs::create_dir(&local).unwrap();
+        std::fs::write(local.join("SKILL.md"), "---\nname: second\n---\nbody").unwrap();
+        for command in [
+            "/skills add ./local",
+            "/skills install ./local --replace",
+            "/skills remove review",
+        ] {
+            driver.command(command, 200);
+            assert!(!control(&mut driver).await.failed());
+        }
+        driver.command("/skills show review", 200);
+        assert!(control(&mut driver).await.failed());
+    });
+}
+
+#[test]
 fn background_commands_use_native_control_and_reject_malformed_targets() {
     executor().block_on(async {
         let fixture = support::Fixture::new_with_workspace();

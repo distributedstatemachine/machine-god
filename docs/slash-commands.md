@@ -1,8 +1,8 @@
 # Native slash-command catalog and routing
 
-The native slash catalog is a pure, allocation-free component. It declares the
-twenty primary commands in the pinned `general`, `session`, `model`, `security`,
-and `workspace` categories and the `/exit` alias. It parses command envelopes,
+The native slash catalog is a pure, allocation-free component. It declares
+commands in the pinned `general`, `session`, `model`, `security`, `workspace`,
+`agents` and `extensions` categories and the `/exit` alias. It parses command envelopes,
 provides completion rows, and searches categorized help. It does not execute
 commands, validate action-specific payloads, own a UI, or claim that the runtime
 behavior of these categories is complete. Delivery state and milestone ownership
@@ -29,6 +29,8 @@ implemented machine-god effects. Category labels use pinned presentation order.
 | Model | `/model`, `/models`, `/fast` | `/model` |
 | Security | `/permissions`, `/allowlist`, `/sandbox` | All three |
 | Workspace | `/workspace` | `/workspace` |
+| Agents | `/background` | `/background` |
+| Extensions | `/skills` | `/skills` |
 
 The payload is an unparsed remainder. For example, `/sandbox vercel`,
 `/workspace add`, and `/permissions revoke nope` have valid command envelopes;
@@ -52,7 +54,7 @@ completion must never stand in for permission persistence or enforcement.
 
 `route_native_slash(input)` returns `NativeSlashRoute`:
 
-- `NotLocal`: no registered token in this five-category catalog. This includes
+- `NotLocal`: no registered token in this catalog. This includes
   ordinary text, unknown or later-category commands, paths, case mismatches,
   and input with leading whitespace.
 - `KnownInvalid { command }`: an exact known token followed by invalid separator
@@ -123,10 +125,10 @@ and yields no prefix for no-argument commands followed by whitespace. It must
 not be confused with the raw parser or used as action validation.
 
 `native_slash_help(query)` returns static specs grouped General, Session, Model,
-Security, Workspace, preserving registry order within each category. Query tokens
+Security, Workspace, Agents, Extensions, preserving registry order within each category. Query tokens
 split on space/tab/CR/LF and use AND semantics. Each token may match any of the
 command, aliases, help grammar, description, or category label through
-ASCII-case-insensitive substring search. Empty queries return all twenty entries.
+ASCII-case-insensitive substring search. Empty queries return all registered entries.
 This is catalog search, not an ANSI rendering or interactive menu implementation.
 
 ## Bounds, redaction, and checks
@@ -140,7 +142,7 @@ valid long payload. This also preserves argument whitespace normalization for a
 long submission containing many spaces before a short argument.
 
 All catalog strings are static, input strings remain borrowed, and the APIs
-allocate nothing. Iterators are fused and return at most twenty rows. Work is
+allocate nothing. Iterators are fused and use fixed registry/argument-table bounds. Work is
 bounded by the fixed registry, fixed argument tables, and input/query ceilings.
 Invocation and iterator Debug output redact payload/query bytes.
 

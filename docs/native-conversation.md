@@ -315,6 +315,18 @@ the host's existing completion observer separately joins all enrolled work.
 Dropping the owner itself abandons its receipt but cannot release an executing
 worker's lifecycle permit. Ambiguous results are never replayed automatically.
 
+`Skills` controls retain the exact host-selected `NativeSkillsService`, captured
+session working directory and a private cancellation token. Synchronous catalog
+and managed effects run only in the host-owned worker, retaining a file-control
+lifecycle permit through actual completion even if the response future is
+dropped. Receipt readiness and worker-thread completion remain separate. Direct
+enum commands are bounded before retention and domain-validated before effects.
+Catalog, managed-path and per-item mutation receipts remain typed; partial,
+rolled-back, unattempted and uncertain batches are failures, never empty success.
+Show does not materialize skill bodies. Recovery IDs survive managed errors.
+Cancellation signals the owned command without dropping its result or inferring
+rollback; controls and shutdown retain the existing receipt-settlement rules.
+
 Accepted controls settle before quiescence, cancellation or advancement of an
 actual turn. In particular, an active-turn permission editor remains live until
 its confirmed save settles; a later transition or shutdown cannot invalidate it

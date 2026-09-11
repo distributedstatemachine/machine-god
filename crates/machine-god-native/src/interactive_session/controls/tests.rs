@@ -41,6 +41,9 @@ mod workspace;
 #[path = "cancellation_tests.rs"]
 mod cancellation;
 
+#[path = "skills_composed_tests.rs"]
+mod skills_composed;
+
 fn preferences(model: &str) -> NativeModelPreferences {
     NativeModelPreferences::new(model, NativeReasoningEffort::default(), false).unwrap()
 }

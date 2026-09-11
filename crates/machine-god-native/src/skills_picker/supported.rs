@@ -75,6 +75,63 @@ fn bound(text: &str, cursor: usize, snapshot: Arc<NativeSkillSnapshot>) -> Nativ
 }
 
 #[test]
+fn exact_focus_distinguishes_duplicates_and_requires_a_fresh_acknowledgement() {
+    let fixture = Fixture::new();
+    fixture.skill("a", "review", "first");
+    fixture.skill("b", "review", "second");
+    let snapshot = fixture.snapshot();
+    let selected = snapshot.entries()[1].selection();
+    let mut picker = NativeSkillPicker::new(String::new(), 0).unwrap();
+    picker.open_menu(snapshot, "review").unwrap();
+    let original = picker.view().unwrap().identity;
+    picker.acknowledge(&original).unwrap();
+    picker.focus(&selected).unwrap();
+    assert_eq!(picker.view().unwrap().selected, Some(1));
+    assert_eq!(
+        picker.choose(&original).unwrap_err(),
+        NativeSkillPickerError::StaleFrame
+    );
+    let current = picker.view().unwrap().identity;
+    assert_eq!(
+        picker.choose(&current).unwrap_err(),
+        NativeSkillPickerError::FrameNotAcknowledged
+    );
+    picker.acknowledge(&current).unwrap();
+    picker.invalidate_frame().unwrap();
+    assert_eq!(picker.view().unwrap().selected, Some(1));
+    assert_eq!(
+        picker.choose(&current).unwrap_err(),
+        NativeSkillPickerError::StaleFrame
+    );
+    assert_eq!(choose(&mut picker).binding.selection(), &selected);
+}
+
+#[test]
+fn foreign_or_filtered_focus_keeps_the_existing_frame_unchanged() {
+    let fixture = Fixture::new();
+    fixture.skill("a", "alpha", "first");
+    fixture.skill("b", "beta", "second");
+    let snapshot = fixture.snapshot();
+    let beta = snapshot.entries()[1].selection();
+    let foreign = fixture.snapshot().entries()[0].selection();
+    let mut picker = NativeSkillPicker::new(String::new(), 0).unwrap();
+    picker.open_menu(snapshot, "alpha").unwrap();
+    let original = picker.view().unwrap().identity;
+    picker.acknowledge(&original).unwrap();
+    for selection in [&beta, &foreign] {
+        assert_eq!(
+            picker.focus(selection),
+            Err(NativeSkillPickerError::NoSelection)
+        );
+        assert_eq!(picker.view().unwrap().identity, original);
+    }
+    assert_eq!(
+        picker.choose(&original).unwrap().binding.selection().name(),
+        "alpha"
+    );
+}
+
+#[test]
 fn exact_ack_required_and_old_frame_cannot_select_after_navigation_or_query() {
     let (_fixture, snapshot) = fixture();
     let mut picker = NativeSkillPicker::new("surrounding text".into(), 0).unwrap();

@@ -29,7 +29,9 @@ their independent results are reported separately. /resume has no arguments.\n\
 Cmd/Super+R opens the all-workspace session picker.\n\
 /allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]\n\
 /workspace [list|add PATH|remove PATH|clear]\n\
-/background [open|logs|stop [terminal-id|last]]\n> ";
+/background [open|logs|stop [terminal-id|last]]\n\
+/skills [list|show NAME|path|create NAME|add SOURCE|install SOURCE|remove NAME]\n\
+Skill create/install replacement requires an explicit outer --replace flag.\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -116,6 +118,12 @@ impl Driver {
             Command::Compact => self.control_command(NativeInteractiveControl::Compact, now_ms),
             Command::Undo => self.control_command(NativeInteractiveControl::UndoLast, now_ms),
             Command::Copy => self.copy_command(),
+            Command::Skills => match payload.parse() {
+                Ok(command) => {
+                    self.control_command(NativeInteractiveControl::Skills { command }, now_ms);
+                }
+                Err(_) => self.note(b"\n[usage: /skills [list|show NAME|path|create NAME|add SOURCE|install SOURCE|remove NAME]]\n> "),
+            },
             Command::Permissions => self.permissions_command(payload),
             Command::Sandbox => self.sandbox_command(payload),
             Command::Model => self.model_command(payload, now_ms),

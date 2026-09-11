@@ -356,6 +356,64 @@ fn complete_terminal_options() -> NativeReferenceHostTerminalOptions {
     .unwrap()
 }
 
+#[test]
+fn skills_composition_retains_exact_service_without_discovery_on_both_paths() {
+    for production in [false, true] {
+        for with_terminal in [false, true] {
+            let temporary = TemporaryDirectory::new("skills-composition");
+            let (prepared, state) = complete_terminal_roots(temporary.path());
+            let managed =
+                Arc::new(machine_god_native::NativeManagedSkills::open(&state, None).unwrap());
+            let catalog = Arc::new(
+                machine_god_native::NativeSkillCatalog::new(vec![managed.catalog_root().unwrap()])
+                    .unwrap(),
+            );
+            let service = Arc::new(machine_god_native::NativeSkillsService::new(
+                catalog,
+                Some(managed),
+            ));
+            let mut options =
+                NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+                    .with_skills(service.clone());
+            if with_terminal {
+                options = options.with_terminal(complete_terminal_options());
+            }
+            let transport = ScriptedTransport::new("NO_NETWORK", Vec::<Vec<u8>>::new());
+            let host = if production {
+                NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation(
+                    built_in_config(),
+                    AiGatewayCredentialEnvironment::new(None, Some("explicit-inert-token".into())),
+                    prepared,
+                    Arc::new(AllowingPrompter::default()),
+                    inert_question_prompter(),
+                    never_deadline(),
+                    options,
+                )
+            } else {
+                NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+                    built_in_config(), Arc::new(transport.clone()), production_gateway_target(), prepared,
+                    Arc::new(AllowingPrompter::default()), inert_question_prompter(), never_deadline(), options,
+                )
+            };
+            assert!(!state.join("skills").exists());
+            assert!(transport.requests().is_empty());
+            if with_terminal {
+                let host = host.unwrap();
+                assert!(Arc::ptr_eq(&host.skills().unwrap(), &service));
+                let completion = host.terminal_shutdown_completion().unwrap();
+                drop(host);
+                completion.wait_on_worker().unwrap();
+            } else {
+                assert_eq!(
+                    build_error(host).kind(),
+                    NativeReferenceHostBuildErrorKind::TerminalConfig
+                );
+                assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
+            }
+        }
+    }
+}
+
 fn undo_mutations() -> [(&'static str, Value); 5] {
     [
         ("write_file", json!({"path":"w.txt","content":"new write"})),

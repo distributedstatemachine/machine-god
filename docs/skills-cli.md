@@ -57,6 +57,30 @@ escape their captured base; absolute links must remain beneath its captured
 authority label. Final `SKILL.md` files are always no-follow regular files.
 Directory-name ordering is deterministic within the supplied root order.
 
+`compose_native_skill_catalog` provides the bounded native expansion adapter.
+The caller supplies retained `NativeSkillDirectoryAuthority` workspace/home
+directories and the manager's unchanged `catalog_root()`. Authority construction
+is inert; composition runs synchronously in an admitted worker. It never reads
+the environment, reopens absolute labels, creates missing skill directories or
+manufactures write authority. Discovery order is:
+
+1. Nearest workspace then each ancestor: `skills`, `.opencode/skills`,
+   `.codex/skills`, `.claude/skills`, `.agents/skills`, `.claw/skills`.
+2. The explicitly supplied native managed root.
+3. Explicit home compatibility: `.fx/skills`, `.config/opencode/skills`,
+   `.codex/skills`, `.claude/skills`, `.agents/skills`, `.claw/skills`.
+
+Workspace traversal stops before the captured home by descriptor identity or
+path label. Otherwise it includes filesystem root, with at most 20 workspace
+levels and 128 charged native stat/open attempts. Exceeding a bound fails without
+a partial catalog. Descriptor-relative parent/name observations must agree with
+captured labels; changed ancestry or an inconsistent home label fails instead of
+silently continuing above it. Canonical labels are therefore expected for
+workspace ancestry. A separately captured alias of the same home inode can stop
+traversal. All compatibility roots are contained and read-only. Managed roots
+must retain Managed/Reject provenance; actual write ownership still requires the
+manager's original directory capability. Unsupported platforms fail without I/O.
+
 Metadata supports a 65,536-byte frontmatter envelope, 256-byte names and
 4,096-byte decoded descriptions, including the pinned quoted and supported
 block-description forms. Unknown metadata is ignored; malformed recognized
@@ -227,6 +251,11 @@ Frames carry opaque draft-owner/revision, menu-owner/revision and catalog
 generation identity. Selection requires acknowledgement of the exact current
 frame. Close or Escape invalidates frames while retaining the draft and valid
 bindings; reset creates a fresh owner and clears bindings even for identical text.
+An exact command-service selection can focus its matching row without resolving
+duplicate names. Successful focus invalidates the previous acknowledgement;
+foreign, changed or filtered-out selections leave the existing frame unchanged.
+Presentation changes such as resize invalidate the frame without changing its
+query, selected row or draft, so an older output acknowledgement cannot select.
 The host must reset bindings on handoff or synchronization failure. A chosen
 insertion has already updated native state: apply its precise edit to the matching
 composer exactly once, without echoing it back as a second edit.

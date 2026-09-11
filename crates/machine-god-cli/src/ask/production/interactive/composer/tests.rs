@@ -2,6 +2,49 @@ use super::*;
 
 type EditReceipt = (Range<usize>, String, usize);
 
+#[test]
+fn external_replacement_is_atomic_and_never_echoed_as_received_input() {
+    let mut editor = Composer::default();
+    observed_feed(&mut editor, "before $s éafter".as_bytes());
+    editor.replace(7..9, "$skill name ", 19).unwrap();
+    assert_eq!(editor.text(), "before $skill name  éafter");
+    assert_eq!(editor.cursor(), 19);
+    let (_, event) = editor.feed_with_edits(b"", ComposerContext::default(), |_, _, _| {
+        panic!("external edit was echoed");
+    });
+    assert!(event.is_none());
+    assert_eq!(observed_feed(&mut editor, b"!"), [(19..19, "!".into(), 20)]);
+}
+
+#[test]
+fn invalid_external_replacements_preserve_draft_cursor_and_partial_input() {
+    let mut editor = Composer::default();
+    observed_feed(&mut editor, "éend".as_bytes());
+    for (range, inserted, cursor) in [
+        (1..2, "x", 2),
+        (0..1, "x", 1),
+        (Range { start: 3, end: 2 }, "x", 2),
+        (0..99, "x", 0),
+        (0..0, "é", 1),
+        (2..2, "x", 1),
+        (2..2, "x", 99),
+        (0..0, "\0", 0),
+    ] {
+        assert!(editor.replace(range, inserted, cursor).is_err());
+        assert_eq!(editor.text(), "éend");
+        assert_eq!(editor.cursor(), 5);
+    }
+    assert!(
+        editor
+            .replace(0..0, &"x".repeat(MAX_COMPOSER_BYTES), 0)
+            .is_err()
+    );
+    assert_eq!(editor.text(), "éend");
+    assert!(observed_feed(&mut editor, &[0xc3]).is_empty());
+    assert!(editor.replace(0..0, "x", 1).is_err());
+    assert_eq!(observed_feed(&mut editor, &[0xa9]), [(5..5, "é".into(), 7)]);
+}
+
 fn observed_feed(editor: &mut Composer, mut bytes: &[u8]) -> Vec<EditReceipt> {
     let mut edits = Vec::new();
     while !bytes.is_empty() {

@@ -28,6 +28,47 @@ use serde_json::{Value, json};
 use support::{Fixture, answer, call};
 
 #[test]
+fn public_skills_control_resolves_local_source_against_captured_workspace() {
+    executor().block_on(async {
+        let fixture = Fixture::new_with_skills();
+        let incoming = fixture.workspace.join("incoming");
+        std::fs::create_dir(&incoming).unwrap();
+        std::fs::write(incoming.join("SKILL.md"), "bounded body").unwrap();
+        let mut owner = fresh(&fixture).await;
+        owner
+            .request_control(
+                native::NativeInteractiveControl::Skills {
+                    command: "install ./incoming".parse().unwrap(),
+                },
+                150,
+            )
+            .unwrap();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                let _ = owner.poll_progress(cx, 150);
+                owner
+                    .take_control_outcome()
+                    .map_or(Poll::Pending, Poll::Ready)
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!outcome.failed());
+        assert!(matches!(
+            outcome.result,
+            Ok(native::NativeInteractiveControlReceipt::Skills(
+                native::NativeSkillsServiceResult::Managed(_)
+            ))
+        ));
+        assert!(fixture.transport.requests().is_empty());
+        shutdown(&mut owner, 190).await;
+        drop(owner);
+        fixture.finish();
+    });
+}
+
+#[test]
 fn public_workspace_control_keeps_additional_authority_across_resume() {
     executor().block_on(async {
         let fixture = Fixture::new_with_workspace();

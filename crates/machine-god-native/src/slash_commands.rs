@@ -27,6 +27,7 @@ pub enum NativeSlashCommand {
     Permissions,
     Allowlist,
     Undo,
+    Skills,
     Copy,
     Compact,
     Fast,
@@ -45,6 +46,7 @@ pub enum NativeSlashCategory {
     Security,
     Workspace,
     Agents,
+    Extensions,
 }
 
 impl NativeSlashCategory {
@@ -58,17 +60,19 @@ impl NativeSlashCategory {
             Self::Security => "Security",
             Self::Workspace => "Workspace",
             Self::Agents => "Agents",
+            Self::Extensions => "Extensions",
         }
     }
 }
 
-const CATEGORIES: [NativeSlashCategory; 6] = [
+const CATEGORIES: [NativeSlashCategory; 7] = [
     NativeSlashCategory::General,
     NativeSlashCategory::Session,
     NativeSlashCategory::Model,
     NativeSlashCategory::Security,
     NativeSlashCategory::Workspace,
     NativeSlashCategory::Agents,
+    NativeSlashCategory::Extensions,
 ];
 
 /// Static catalog metadata, not a declaration that runtime effects are implemented.
@@ -105,7 +109,7 @@ macro_rules! spec {
 }
 
 // Preserve the relative order of the pinned complete registry, not category order.
-static REGISTRY: [NativeSlashSpec; 21] = [
+static REGISTRY: [NativeSlashSpec; 22] = [
     spec!(
         Help,
         "/help",
@@ -247,6 +251,16 @@ static REGISTRY: [NativeSlashSpec; 21] = [
         false
     ),
     spec!(
+        Skills,
+        "/skills",
+        "/skills [list|add|install|show|create|remove|path] [name|url|path]",
+        "browse and manage skills",
+        Extensions,
+        true,
+        false,
+        false
+    ),
+    spec!(
         Copy,
         "/copy",
         "/copy",
@@ -323,7 +337,7 @@ static REGISTRY: [NativeSlashSpec; 21] = [
 
 /// Returns static entries in pinned registry order, without allocation.
 #[must_use]
-pub fn native_slash_registry() -> &'static [NativeSlashSpec; 21] {
+pub fn native_slash_registry() -> &'static [NativeSlashSpec; 22] {
     &REGISTRY
 }
 
@@ -1108,6 +1122,23 @@ mod tests {
     }
 
     #[test]
+    fn skills_routes_native_management_payload_in_extensions_category() {
+        assert_eq!(rows("/skills"), ["/skills"]);
+        assert!(rows("/skills add ").is_empty());
+        let invocation = valid("/skills add npx skills add owner/repo --skill review");
+        assert_eq!(invocation.command, NativeSlashCommand::Skills);
+        assert_eq!(
+            invocation.payload,
+            "add npx skills add owner/repo --skill review"
+        );
+        assert_eq!(
+            invocation.command.spec().category,
+            NativeSlashCategory::Extensions
+        );
+        assert!(!invocation.requires_prompt_credential());
+    }
+
+    #[test]
     fn slash_commands_registry_preserves_complete_pinned_category_scope_and_order() {
         let expected = [
             "/help",
@@ -1124,6 +1155,7 @@ mod tests {
             "/permissions",
             "/allowlist",
             "/undo",
+            "/skills",
             "/copy",
             "/compact",
             "/fast",
@@ -1150,7 +1182,7 @@ mod tests {
                 .iter()
                 .filter(|spec| spec.category == category)
                 .count()),
-            [5, 8, 3, 3, 1, 1]
+            [5, 8, 3, 3, 1, 1, 1]
         );
     }
 
@@ -1536,7 +1568,8 @@ mod tests {
                 "/allowlist",
                 "/sandbox",
                 "/workspace",
-                "/background"
+                "/background",
+                "/skills"
             ]
         );
         let search = |query: &str| {
