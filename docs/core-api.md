@@ -1075,6 +1075,10 @@ the other three values can repeat after a durable reset.
 
 Ordinary implementations return only `ToolOutput`; the source-compatible
 default `Tool::execute_for_turn` wraps that value in `ToolExecution`.
+`ToolExecution::into_output` consumes its complete output without cloning it;
+it discards optional persisted projections and next-round registrations without
+installing registrations or performing external actions. Turn-aware execution
+must retain the complete `ToolExecution` to preserve those effects.
 An explicitly opted-in tool can instead return
 `ToolExecution::with_persisted_output(complete, persisted)`. The trusted native
 implementation must durably publish the complete result under the exact

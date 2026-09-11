@@ -262,7 +262,7 @@ impl McpSubmissionRuntime {
     pub const fn generation(&self) -> u64 {
         self.generation
     }
-    pub(super) fn live(&self) -> Result<()> {
+    pub(crate) fn live(&self) -> Result<()> {
         if self.retired.load(Ordering::Acquire) {
             Err(McpSubmissionError::Unavailable)
         } else {

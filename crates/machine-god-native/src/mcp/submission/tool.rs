@@ -19,7 +19,7 @@ mod headers;
 
 /// Protocol data selected by an admitted peer. Capability advertisements do not
 /// provide a responder, consent, permission, or continuation authority.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct McpToolCallOptions {
     protocol: NegotiatedProtocol,
     request_id: i64,
@@ -233,6 +233,10 @@ impl McpToolRequest {
             wire.push(b'\n');
             let mut copied = invocation.with_wire(wire.into_boxed_slice(), Framing::Ndjson, id);
             copied.tool_reservation = self.tool_reservation;
+            #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+            {
+                copied.tool_options = Some(self.options);
+            }
             return Ok(copied);
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -240,6 +244,7 @@ impl McpToolRequest {
             let head = self.head.ok_or(McpSubmissionError::Invalid)?;
             let mut copied = invocation.with_wire(head.encode(&self.payload)?, Framing::Http, id);
             copied.tool_reservation = self.tool_reservation;
+            copied.tool_options = Some(self.options);
             #[cfg(any(test, feature = "mcp-http"))]
             {
                 copied.http_head = Some(head);

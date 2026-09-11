@@ -118,6 +118,8 @@ struct Data {
     cancellation: CancellationToken,
     reservation: Reservation,
     tool_reservation: Option<McpToolReservation>,
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+    tool_options: Option<McpToolCallOptions>,
     #[cfg(all(
         any(test, feature = "mcp-http"),
         any(target_os = "linux", target_os = "macos")
@@ -296,6 +298,8 @@ impl McpSubmissionRegistry {
                 framing,
                 rpc_id,
                 tool_reservation,
+                #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+                tool_options,
                 #[cfg(all(
                     any(test, feature = "mcp-http"),
                     any(target_os = "linux", target_os = "macos")
@@ -338,6 +342,8 @@ impl McpSubmissionRegistry {
                     framing,
                     rpc_id,
                     tool_reservation,
+                    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+                    tool_options,
                     #[cfg(all(
                         any(test, feature = "mcp-http"),
                         any(target_os = "linux", target_os = "macos")
@@ -552,6 +558,8 @@ impl CopiedInvocation {
             framing,
             rpc_id,
             tool_reservation: None,
+            #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+            tool_options: None,
             #[cfg(all(
                 any(test, feature = "mcp-http"),
                 any(target_os = "linux", target_os = "macos")
@@ -570,6 +578,8 @@ struct CopiedRequest {
     framing: Framing,
     rpc_id: RpcId,
     tool_reservation: Option<McpToolReservation>,
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+    tool_options: Option<McpToolCallOptions>,
     #[cfg(all(
         any(test, feature = "mcp-http"),
         any(target_os = "linux", target_os = "macos")
@@ -689,6 +699,10 @@ pub struct McpSubmission {
     attempted: bool,
 }
 impl McpSubmission {
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+    pub(crate) fn tool_options(&self) -> Option<McpToolCallOptions> {
+        self.ready.data.tool_options
+    }
     /// Exact immutable head retained by typed preparation, not reconstructed
     /// from arguments or current mutable connection configuration.
     #[cfg(all(

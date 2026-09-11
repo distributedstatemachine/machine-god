@@ -79,6 +79,25 @@ fn prepare(
 }
 
 #[test]
+fn typed_options_survive_preparation_admission_and_claim() {
+    let (fixture, schema) = fixture(r#"{"type":"object"}"#);
+    let request = fixture.request("call");
+    let selected = options(ProtocolVersion::Modern, TransportKind::Stdio)
+        .with_progress_token(87)
+        .with_elicitation(true, true);
+    let prepared = prepare(
+        &fixture,
+        &request,
+        project(&fixture, &schema, &request, selected).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(prepared.data.tool_options, Some(selected));
+    fixture.admission("call", prepared).admit().unwrap();
+    let submission = block_on(fixture.claim("call", CancellationToken::new())).unwrap();
+    assert_eq!(submission.tool_options(), Some(selected));
+}
+
+#[test]
 fn typed_peer_reservation_survives_each_admission_stage_and_releases_on_drop() {
     for stage in 0..6 {
         let (mut fixture, schema) = fixture(r#"{"type":"object"}"#);

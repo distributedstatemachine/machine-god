@@ -9,6 +9,8 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 #[cfg(test)]
+mod execution_tests;
+#[cfg(test)]
 mod permission_wrapper_tests;
 
 /// Model-visible description and JSON Schema input contract for a tool.
@@ -326,6 +328,14 @@ impl ToolExecution {
     #[must_use]
     pub fn tool_output(&self) -> &ToolOutput {
         &self.output
+    }
+
+    /// Consumes the complete output without cloning it. Optional persisted
+    /// projections and next-round registrations are discarded, not installed.
+    /// Hosts using turn effects should preserve the complete execution instead.
+    #[must_use]
+    pub fn into_output(self) -> ToolOutput {
+        self.output
     }
 
     /// Carries a complete result and its already-durable bounded reference.
