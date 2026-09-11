@@ -1111,6 +1111,7 @@ fn prepare_terminal_process_tree(
         }),
     )?;
     let descendants = derive_signal_descendants(&snapshot, target.group, target.root_identity)?;
+    let session_scope = cleanup.captured.session_scope;
     let mut capture = LinuxTerminalPinCapture {
         group: target.group,
         pinned: &mut cleanup.pinned,
@@ -1121,7 +1122,7 @@ fn prepare_terminal_process_tree(
     let members = linux_scope_members_with(
         authority,
         target.group,
-        true,
+        session_scope,
         |pid, directory, parsed, budget| {
             require_cleanup_leader(target.group)?;
             capture.observe(pid, directory, parsed, budget)
@@ -1377,9 +1378,12 @@ impl Error for BackgroundProcessError {}
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct ChildReapPermit {
     reaper: Arc<ChildReaper>,
-    // A private tmux server's namespace must outlive unresolved child cleanup.
+    // Native transaction resources must outlive unresolved child cleanup.
     keepalive: Option<Box<dyn Send>>,
-    // Only tmux owners request a kill after a recoverable observation failure.
+    // A strictly retained gated helper cannot release resources on ECHILD.
+    positive_reap_only: bool,
+    wait_authority_lost: bool,
+    // Tmux and strictly retained helpers request a kill after recoverable errors.
     // Existing ordinary and inventory quarantine entries remain observation-only.
     kill_pending: bool,
     // Metadata follows the existing permit into quarantine and is discharged
@@ -1514,6 +1518,11 @@ fn run_child_reaper(reaper: &ChildReaper) {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn reap_quarantined_direct(child: &mut Child, permit: &mut ChildReapPermit) -> bool {
+    if permit.wait_authority_lost {
+        // Authority loss is permanent, not a retryable process observation.
+        // Preserve the lease/ticket without querying or signaling a reused PID.
+        return false;
+    }
     #[cfg(test)]
     if permit
         .deferred_reap
@@ -1523,6 +1532,10 @@ fn reap_quarantined_direct(child: &mut Child, permit: &mut ChildReapPermit) -> b
         return false;
     }
     match try_wait_child(child) {
+        Err(ChildTryWaitError::LostAuthority) if permit.positive_reap_only => {
+            permit.wait_authority_lost = true;
+            false
+        }
         Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority) => {
             mark_inventory_reaped(permit);
             true
@@ -1558,6 +1571,8 @@ fn reserve_child_reap_authority_for(
     Ok(ChildReapPermit {
         reaper,
         keepalive: None,
+        positive_reap_only: false,
+        wait_authority_lost: false,
         kill_pending: false,
         shutdown: crate::NativeOwnedWorkerScope::retain_current_cleanup(),
         #[cfg(target_os = "macos")]
@@ -2590,6 +2605,15 @@ pub(crate) struct TerminalChildGuard {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TerminalChildGuard {
+    /// Retain effect-owner resources before the trusted, gated helper starts.
+    /// The helper cannot start user work until ownership is transferred.
+    pub(crate) fn retain_until_reaped(&mut self, keepalive: Box<dyn Send>) {
+        let permit = self.reap_permit.as_mut().expect("reserved helper permit");
+        assert!(permit.keepalive.is_none(), "one retained resource bundle");
+        permit.keepalive = Some(keepalive);
+        permit.positive_reap_only = true;
+    }
+
     pub(crate) fn reserve_for_helper(
         cancellation: &CancellationToken,
         helper: &crate::terminal_helper::TerminalPtyHelper,
@@ -2654,7 +2678,22 @@ impl TerminalChildGuard {
             .ok_or_else(invariant_error)
     }
 
-    pub(crate) fn into_session(mut self) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
+    pub(crate) fn into_session(self) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
+        self.into_cleanup_scope(OwnedCleanupScope::Session)
+    }
+
+    /// The helper has acknowledged readiness after creating its private session,
+    /// but user argv remain gated. Restrict cleanup discovery to its own group.
+    pub(crate) fn into_original_group(
+        self,
+    ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
+        self.into_cleanup_scope(OwnedCleanupScope::OriginalGroup)
+    }
+
+    fn into_cleanup_scope(
+        mut self,
+        scope: OwnedCleanupScope,
+    ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
         let pid = NonZeroU32::new(self.child.as_ref().ok_or_else(invariant_error)?.id())
             .ok_or_else(invariant_error)?;
         let group = rustix::process::Pid::from_raw(
@@ -2662,7 +2701,8 @@ impl TerminalChildGuard {
         )
         .ok_or_else(invariant_error)?;
         if rustix::process::getpgid(Some(group)) != Ok(group)
-            || rustix::process::getsid(Some(group)) != Ok(group)
+            || (matches!(scope, OwnedCleanupScope::Session)
+                && rustix::process::getsid(Some(group)) != Ok(group))
         {
             return Err(invariant_error());
         }
@@ -2673,7 +2713,7 @@ impl TerminalChildGuard {
         #[cfg(target_os = "macos")]
         let controller = BackgroundProcessSignalController::hidden(group);
         Ok(OwnedBackgroundProcess {
-            terminal_cleanup: Some(TerminalCleanup::new()),
+            terminal_cleanup: Some(TerminalCleanup::with_scope(scope)),
             terminal_exit: None,
             terminal_quarantined: false,
             child: self.child.take(),
@@ -2692,9 +2732,39 @@ impl TerminalChildGuard {
 impl Drop for TerminalChildGuard {
     fn drop(&mut self) {
         if self.child.is_some() {
-            let _ = terminate_and_reap_or_quarantine(&mut self.child, &mut self.reap_permit);
+            if self
+                .reap_permit
+                .as_ref()
+                .is_some_and(|permit| permit.positive_reap_only)
+            {
+                terminate_retained_helper(&mut self.child, &mut self.reap_permit);
+            } else {
+                let _ = terminate_and_reap_or_quarantine(&mut self.child, &mut self.reap_permit);
+            }
         }
     }
+}
+
+/// Before COMMIT the trusted helper has no user descendants. Reuse exact-child
+/// quarantine, but only positive reap can discharge this transaction's lease.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn terminate_retained_helper(child: &mut Option<Child>, permit: &mut Option<ChildReapPermit>) {
+    let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
+    let mut observation = ObservationBackoff::retry();
+    if let Some(permit) = permit.as_mut() {
+        permit.kill_pending = true;
+    }
+    while let (Some(retained), Some(charge)) = (child.as_mut(), permit.as_mut()) {
+        if reap_quarantined_direct(retained, charge) {
+            discharge_reaped_child(child, permit);
+            return;
+        }
+        if charge.wait_authority_lost || Instant::now() >= deadline {
+            break;
+        }
+        observation.sleep_until_and_advance(deadline);
+    }
+    let _ = quarantine_owned_child(child, permit);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2719,6 +2789,13 @@ struct TerminalCleanup {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+enum OwnedCleanupScope {
+    Session,
+    OriginalGroup,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum TerminalCleanupPhase {
     Uncaptured,
@@ -2729,9 +2806,14 @@ enum TerminalCleanupPhase {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TerminalCleanup {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::with_scope(OwnedCleanupScope::Session)
+    }
+
+    fn with_scope(scope: OwnedCleanupScope) -> Self {
         let mut captured = CapturedMemberUnion::new();
-        captured.session_scope = true;
+        captured.session_scope = matches!(scope, OwnedCleanupScope::Session);
         Self {
             captured,
             #[cfg(target_os = "linux")]
@@ -2876,6 +2958,7 @@ impl TerminalCleanup {
         #[cfg(target_os = "linux")]
         {
             let pinned = &mut self.pinned;
+            let session_scope = self.captured.session_scope;
             require_original_group_quiescent_with(
                 group,
                 authority,
@@ -2891,7 +2974,7 @@ impl TerminalCleanup {
                     linux_scope_members_with(
                         authority,
                         group,
-                        true,
+                        session_scope,
                         |pid, directory, parsed, budget| {
                             capture.observe(pid, directory, parsed, budget)
                         },
@@ -2922,10 +3005,16 @@ fn macos_terminal_scope_members(
     group: rustix::process::Pid,
     captured: &mut CapturedMemberUnion,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
-    macos_scope_members_with(authority.inventory.as_ref(), group, true, |member, _| {
-        require_cleanup_leader(group)?;
-        captured.retain(vec![member])
-    })
+    macos_authenticated_scope_members_with(
+        authority.inventory.as_ref(),
+        group,
+        captured.session_scope,
+        true,
+        |member, _| {
+            require_cleanup_leader(group)?;
+            captured.retain(vec![member])
+        },
+    )
 }
 
 /// Commit one positively authenticated process before any subsequent fallible
@@ -6149,6 +6238,24 @@ fn macos_scope_members_with(
     inventory: Option<&crate::process_inventory_helper::PreparedProcessInventory>,
     group: rustix::process::Pid,
     session_scope: bool,
+    observe: impl FnMut(
+        CapturedGroupMember,
+        Option<machine_god_terminal_sys::ProcessIdentity>,
+    ) -> Result<(), BackgroundProcessError>,
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
+    macos_authenticated_scope_members_with(inventory, group, session_scope, session_scope, observe)
+}
+
+#[cfg(target_os = "macos")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "The bounded collection and identity sandwich share one deadline and publish authenticated prefixes."
+)]
+fn macos_authenticated_scope_members_with(
+    inventory: Option<&crate::process_inventory_helper::PreparedProcessInventory>,
+    group: rustix::process::Pid,
+    session_scope: bool,
+    authenticate: bool,
     mut observe: impl FnMut(
         CapturedGroupMember,
         Option<machine_god_terminal_sys::ProcessIdentity>,
@@ -6167,7 +6274,7 @@ fn macos_scope_members_with(
     ) {
         return Err(cleanup_error());
     }
-    let inventory = inventory.filter(|_| session_scope);
+    let inventory = inventory.filter(|_| authenticate);
     let helper_deadline = inventory.map(|_| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
     let (bytes, deadline) =
         if let Some(crate::process_inventory_helper::PreparedProcessInventory::Service(lease)) =
@@ -6277,12 +6384,19 @@ fn macos_scope_members_with(
         // Darwin hides getsid for zombies before ps removes their row. The
         // exclusive, unreaped direct child already pins the leader identity.
         let mut identity = None;
-        if session_scope && pid != group {
+        if authenticate && pid != group {
             let raw = NonZeroU32::new(pid.as_raw_nonzero().get().cast_unsigned())
                 .ok_or_else(cleanup_error)?;
             identity = macos_session_member_handle(
                 group,
-                || rustix::process::getsid(Some(pid)).map_err(std::io::Error::from),
+                || {
+                    if session_scope {
+                        rustix::process::getsid(Some(pid))
+                    } else {
+                        rustix::process::getpgid(Some(pid))
+                    }
+                    .map_err(std::io::Error::from)
+                },
                 || {
                     machine_god_terminal_sys::ProcessIdentity::capture(raw)
                         .map(|identity| (identity.unique_id(), identity))
@@ -9133,6 +9247,174 @@ mod process_regression_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn retained_helper_drop_preserves_lease_until_deferred_positive_reap() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        struct Resume(Arc<AtomicBool>);
+        impl Drop for Resume {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let mut guard = TerminalChildGuard::reserve(&CancellationToken::new()).unwrap();
+        let released = Arc::new(AtomicBool::new(false));
+        let deferred = Arc::new(AtomicBool::new(true));
+        let resume = Resume(Arc::clone(&deferred));
+        guard.retain_until_reaped(Box::new(Lease(Arc::clone(&released))));
+        guard.reap_permit.as_mut().unwrap().deferred_reap = Some(deferred);
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("30")
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        guard.spawn(&mut command).unwrap();
+        drop(guard);
+        assert!(
+            !released.load(Ordering::Acquire),
+            "failed observation must retain the lease"
+        );
+        drop(resume);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !released.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < deadline,
+                "deferred helper must positively reap"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn retained_helper_lost_wait_authority_never_retries_a_numeric_pid() {
+        struct ClearFailure;
+        impl Drop for ClearFailure {
+            fn drop(&mut self) {
+                TRY_WAIT_FAILURE_PID.store(0, Ordering::Release);
+                TRY_WAIT_FAILURES.store(0, Ordering::Release);
+                TRY_WAIT_ERRNO.store(0, Ordering::Release);
+            }
+        }
+        let _lock = GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _clear = ClearFailure;
+        let mut child = Command::new("/usr/bin/true")
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        // The fixture positively reaps first, so synthetic authority loss cannot
+        // leave a real process or permanent quarantine obligation behind.
+        child.wait().unwrap();
+        let pid = NonZeroU32::new(child.id()).unwrap();
+        let mut permit = reserve_child_reap_authority().unwrap();
+        permit.positive_reap_only = true;
+        permit.kill_pending = true;
+        inject_failures(&TRY_WAIT_FAILURE_PID, &TRY_WAIT_FAILURES, pid, 2);
+        TRY_WAIT_ERRNO.store(libc::ECHILD, Ordering::Release);
+        assert!(!reap_quarantined_direct(&mut child, &mut permit));
+        assert!(permit.wait_authority_lost);
+        assert_eq!(TRY_WAIT_FAILURES.load(Ordering::Acquire), 1);
+        assert!(!reap_quarantined_direct(&mut child, &mut permit));
+        assert_eq!(
+            TRY_WAIT_FAILURES.load(Ordering::Acquire),
+            1,
+            "lost authority must not query or signal again"
+        );
+        assert!(permit.kill_pending);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn original_group_cleanup_retains_lease_through_failed_proof_and_quarantine() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        struct ClearFailure;
+        impl Drop for ClearFailure {
+            fn drop(&mut self) {
+                GROUP_SNAPSHOT_FAILURES.store(0, Ordering::Release);
+            }
+        }
+        let _lock = GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let helper =
+            crate::terminal_helper::TerminalPtyHelper::new("/not-launched".into(), Vec::new())
+                .unwrap()
+                .with_test_inventory_helper();
+        let mut guard = TerminalChildGuard::reserve_for_helper(
+            &CancellationToken::new(),
+            &helper,
+            Instant::now() + Duration::from_secs(5),
+            &[],
+        )
+        .unwrap();
+        let released = Arc::new(AtomicBool::new(false));
+        guard.retain_until_reaped(Box::new(Lease(Arc::clone(&released))));
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("30")
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0);
+        let pid = guard.spawn(&mut command).unwrap();
+        let mut owned = guard.into_original_group().unwrap();
+        assert!(
+            !owned
+                .terminal_cleanup
+                .as_ref()
+                .unwrap()
+                .captured
+                .session_scope
+        );
+        inject_failures(
+            &GROUP_SNAPSHOT_FAILURE_GROUP,
+            &GROUP_SNAPSHOT_FAILURES,
+            pid,
+            usize::MAX,
+        );
+        let clear = ClearFailure;
+        assert!(owned.terminal_close(true, |_| {}).is_err());
+        assert!(!released.load(Ordering::Acquire));
+        assert!(owned.child.is_some() && owned.reap_permit.is_some());
+        drop(owned);
+        assert!(
+            !released.load(Ordering::Acquire),
+            "deferred group proof must retain the lease"
+        );
+        drop(clear);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !released.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < deadline,
+                "reaper must settle the owned group"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pid = rustix::process::Pid::from_raw(i32::try_from(pid.get()).unwrap()).unwrap();
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        );
+    }
 
     #[cfg(target_os = "macos")]
     fn macos_capture_read(fd: impl AsFd, bytes: &mut [u8], timeout: Duration) -> Result<(), ()> {

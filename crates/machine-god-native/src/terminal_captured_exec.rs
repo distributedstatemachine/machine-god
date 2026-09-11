@@ -482,10 +482,87 @@ fn run(
     } else {
         (program, arguments)
     };
+    let mut before_commit = || {
+        if let Some(sandbox) = shell.sandbox() {
+            match sandbox.revalidate(deadline, cancellation) {
+                Ok(()) => {}
+                Err(_) if stopped(cancellation, stop) => {
+                    return Err(TerminalCapturedExecError::Cancelled);
+                }
+                Err(_) if Instant::now() >= deadline => return Ok(false),
+                Err(_) => return Err(TerminalCapturedExecError::Process),
+            }
+        }
+        Ok(true)
+    };
+    run_argv(CapturedArgv {
+        helper,
+        program: &program,
+        arguments: &arguments,
+        environment,
+        cwd,
+        deadline,
+        started,
+        output_limit,
+        cancellation,
+        stop,
+        keepalive: None,
+        before_commit: &mut before_commit,
+        observe: &mut || Ok(()),
+    })
+}
+
+/// Explicit argv on an already collected effect worker. A keepalive selects
+/// persistent original-group cleanup and follows its permit into quarantine.
+pub(crate) struct CapturedArgv<'a> {
+    pub(crate) helper: &'a TerminalPtyHelper,
+    pub(crate) program: &'a str,
+    pub(crate) arguments: &'a [String],
+    pub(crate) environment: &'a ValidatedBackgroundEnvironment,
+    pub(crate) cwd: OwnedFd,
+    pub(crate) deadline: Instant,
+    pub(crate) started: Instant,
+    pub(crate) output_limit: usize,
+    pub(crate) cancellation: &'a CancellationToken,
+    pub(crate) stop: &'a [&'a CancellationToken],
+    pub(crate) keepalive: Option<Box<dyn Send>>,
+    pub(crate) before_commit: &'a mut dyn FnMut() -> Result<bool, TerminalCapturedExecError>,
+    pub(crate) observe: &'a mut dyn FnMut() -> Result<(), TerminalCapturedExecError>,
+}
+
+pub(crate) fn execute_argv_on_worker(
+    request: CapturedArgv<'_>,
+) -> Result<TerminalExecStatus, TerminalCapturedExecError> {
+    run_argv(request).map(|outcome| outcome.status)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "The existing gated launch, exec receipt, bounded capture and cleanup stay in one ownership sequence."
+)]
+fn run_argv(request: CapturedArgv<'_>) -> Result<CapturedOutcome, TerminalCapturedExecError> {
+    let CapturedArgv {
+        helper,
+        program,
+        arguments,
+        environment,
+        cwd,
+        deadline,
+        started,
+        output_limit,
+        cancellation,
+        stop,
+        keepalive,
+        before_commit,
+        observe,
+    } = request;
+    if stopped(cancellation, stop) {
+        return Err(TerminalCapturedExecError::Cancelled);
+    }
     validate_pty_directory(&cwd).map_err(|_| TerminalCapturedExecError::Invalid)?;
     let frame = LaunchFrame::encode(
-        &program,
-        &arguments,
+        program,
+        arguments,
         environment,
         TerminalPtyDimensions {
             rows: 1,
@@ -517,6 +594,10 @@ fn run(
             Err(_) if Instant::now() >= deadline => return Ok(empty_timeout(started)),
             Err(_) => return Err(TerminalCapturedExecError::Process),
         };
+    let original_group = keepalive.is_some();
+    if let Some(keepalive) = keepalive {
+        guard.retain_until_reaped(keepalive);
+    }
     let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
         Ok(stamp) => stamp,
         Err(error) if error.kind == TerminalHelperErrorKind::Timeout => {
@@ -579,9 +660,12 @@ fn run(
         };
     }
     let mut process = ProcessGuard {
-        process: guard
-            .into_session()
-            .map_err(|_| TerminalCapturedExecError::Process)?,
+        process: if original_group {
+            guard.into_original_group()
+        } else {
+            guard.into_session()
+        }
+        .map_err(|_| TerminalCapturedExecError::Process)?,
         closed: false,
     };
     process
@@ -591,15 +675,8 @@ fn run(
     if stopped(cancellation, stop) {
         return Err(TerminalCapturedExecError::Cancelled);
     }
-    if let Some(sandbox) = shell.sandbox() {
-        match sandbox.revalidate(deadline, cancellation) {
-            Ok(()) => {}
-            Err(_) if stopped(cancellation, stop) => {
-                return Err(TerminalCapturedExecError::Cancelled);
-            }
-            Err(_) if Instant::now() >= deadline => return Ok(empty_timeout(started)),
-            Err(_) => return Err(TerminalCapturedExecError::Process),
-        }
+    if !before_commit()? {
+        return Ok(empty_timeout(started));
     }
     if stopped(cancellation, stop) {
         return Err(TerminalCapturedExecError::Cancelled);
@@ -638,6 +715,7 @@ fn run(
         if stopped(cancellation, stop) {
             return Err(TerminalCapturedExecError::Cancelled);
         }
+        observe()?;
         // Alternating fixed read attempts prevent either producer starving the
         // other stream or cancellation/deadline observation.
         drain_once(&stdout, &mut stdout_capture, &mut total, output_limit)?;
@@ -961,6 +1039,63 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn direct_argv_retains_renamed_cwd_and_never_releases_work_before_commit() {
+        struct Lease(Arc<AtomicUsize>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Release);
+            }
+        }
+        let fixture = Fixture::new(Duration::from_secs(10));
+        let original = fixture.root.join("original");
+        let renamed = fixture.root.join("renamed");
+        let replacement = fixture.root.join("replacement");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::create_dir(&replacement).unwrap();
+        let cwd = std::fs::File::open(&original).unwrap();
+        std::fs::rename(&original, &renamed).unwrap();
+        std::os::unix::fs::symlink(&replacement, &original).unwrap();
+        let environment = ValidatedBackgroundEnvironment::new(Vec::new()).unwrap();
+        let cancellation = CancellationToken::new();
+        let released = Arc::new(AtomicUsize::new(0));
+        let literal = "literal;$(touch ignored)";
+        let args = vec!["--".into(), literal.into()];
+        for commit in [false, true] {
+            let started = Instant::now();
+            let result = execute_argv_on_worker(CapturedArgv {
+                helper: &fixture.executor.helper,
+                program: "/usr/bin/touch",
+                arguments: &args,
+                environment: &environment,
+                cwd: rustix::io::fcntl_dupfd_cloexec(&cwd, 3).unwrap(),
+                deadline: started + Duration::from_secs(10),
+                started,
+                output_limit: 65536,
+                cancellation: &cancellation,
+                stop: &[],
+                keepalive: Some(Box::new(Lease(Arc::clone(&released)))),
+                before_commit: &mut || {
+                    if commit {
+                        Ok(true)
+                    } else {
+                        Err(TerminalCapturedExecError::Process)
+                    }
+                },
+                observe: &mut || Ok(()),
+            });
+            if commit {
+                assert_eq!(result.unwrap(), TerminalExecStatus::Exited { exit_code: 0 });
+            } else {
+                assert_eq!(result.unwrap_err(), TerminalCapturedExecError::Process);
+            }
+            assert_eq!(released.load(Ordering::Acquire), usize::from(commit) + 1);
+            assert_eq!(renamed.join(literal).exists(), commit);
+            assert!(!renamed.join("ignored").exists());
+            assert_eq!(std::fs::read_dir(&replacement).unwrap().count(), 0);
+        }
+    }
 
     fn framed_leader_pid(bytes: &[u8]) -> Option<rustix::process::Pid> {
         let digits = bytes.strip_suffix(b"\n")?;

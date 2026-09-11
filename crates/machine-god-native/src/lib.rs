@@ -369,6 +369,8 @@ mod session_store;
 mod skill;
 mod skills_catalog;
 mod skills_commands;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod skills_git_runner;
 mod skills_invocation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod skills_managed;
@@ -392,6 +394,8 @@ pub use skills_commands::{
     MAX_NATIVE_SKILLS_COMMAND_BYTES, MAX_NATIVE_SKILLS_SELECTOR_BYTES, NativeSkillsCommand,
     NativeSkillsCommandError,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use skills_git_runner::SystemNativeSkillGitRunner;
 pub use skills_invocation::{
     MAX_NATIVE_SKILL_INVOCATION_PROMPT_BYTES, MAX_NATIVE_SKILL_INVOCATION_SELECTION_BYTES,
     MAX_NATIVE_SKILL_INVOCATION_SELECTIONS, NativeSkillInvocationError, NativeSkillInvocationPlan,

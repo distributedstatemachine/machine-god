@@ -169,6 +169,27 @@ must retain its directory lease through actual owned-process cleanup, including
 deferred cleanup after an error. The production adapter is a separate composed
 native capability; the storage API does not execute a package manager or shell.
 
+`SystemNativeSkillGitRunner` is the Linux/macOS production adapter. Construction
+validates an explicitly selected absolute Git executable, captured-exec helper
+and allowlisted environment without starting a process. Execution uses direct
+arguments, shallow single-branch cloning, no tags or recursive submodules,
+disabled hooks/templates and only HTTP, HTTPS or SSH transport. System/global
+Git configuration and terminal credential prompting are disabled. The selected
+environment may retain ordinary home, locale, agent-socket, certificate and proxy
+settings; arbitrary Git or loader configuration is rejected and never logged.
+
+The existing helper READY/COMMIT protocol binds the retained working directory
+and cleanup lease before Git can run. Cleanup retains the original process group
+and positively observed members through actual reaping, including deferred
+cleanup; it does not claim ownership of descendants that escaped before any
+observation. Explicit macOS inventory uses the bounded authenticated helper.
+Before COMMIT, loss of direct-child wait authority permanently stops numeric-PID
+signaling and observation and retains the bounded admission ticket and directory
+lease. That unresolved ownership is not reported as successful cleanup.
+Clone-size checks run initially, finally and at bounded polling intervals, with
+16,384 entries, depth 32 and two million charged traversal steps. The size limit
+remains a rejection threshold, not a filesystem quota.
+
 Already admitted prompt text uses the checkpoint-bound continuation contract in
 [native conversation](native-conversation.md#checkpoint-bound-skill-context).
 
