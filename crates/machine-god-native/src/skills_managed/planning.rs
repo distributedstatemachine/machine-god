@@ -274,6 +274,7 @@ pub(super) fn prepare_create(
     tree.entries.push(fs::Entry {
         path: "SKILL.md".to_owned(),
         identity: fs::Identity(0, 0),
+        mode: rustix::fs::Mode::from_raw_mode(0o600),
         bytes: Some(content.into_bytes().into()),
     });
     tree.entries.sort_by(|a, b| a.path.cmp(&b.path));

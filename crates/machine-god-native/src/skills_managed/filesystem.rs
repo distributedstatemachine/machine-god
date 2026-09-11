@@ -166,17 +166,29 @@ impl<'a> Budget<'a> {
 pub(super) struct Entry {
     pub path: String,
     pub identity: Identity,
+    pub mode: Mode,
     pub bytes: Option<std::sync::Arc<[u8]>>,
+}
+impl Entry {
+    fn publication_mode(&self) -> Mode {
+        if self.bytes.is_some() {
+            Mode::from_raw_mode(0o600) | (self.mode & Mode::from_raw_mode(0o111))
+        } else {
+            Mode::from_raw_mode(0o700)
+        }
+    }
 }
 #[derive(Clone)]
 pub(super) struct Tree {
     pub root: Identity,
+    pub root_mode: Mode,
     pub entries: Vec<Entry>,
 }
 impl Tree {
     pub fn empty(root: Identity) -> Self {
         Self {
             root,
+            root_mode: Mode::from_raw_mode(0o700),
             entries: Vec::new(),
         }
     }
@@ -191,11 +203,13 @@ impl Tree {
         let mut hash = Sha256::new();
         hash.update(self.root.0.to_le_bytes());
         hash.update(self.root.1.to_le_bytes());
+        hash.update(u64::from(self.root_mode.as_raw_mode()).to_le_bytes());
         for entry in &self.entries {
             hash.update((entry.path.len() as u64).to_le_bytes());
             hash.update(entry.path.as_bytes());
             hash.update(entry.identity.0.to_le_bytes());
             hash.update(entry.identity.1.to_le_bytes());
+            hash.update(u64::from(entry.mode.as_raw_mode()).to_le_bytes());
             hash.update([u8::from(entry.bytes.is_some())]);
             if let Some(bytes) = &entry.bytes {
                 hash.update((bytes.len() as u64).to_le_bytes());
@@ -204,13 +218,14 @@ impl Tree {
         }
         hash.finalize().into()
     }
-    pub fn same_content(&self, other: &Self) -> bool {
-        self.entries.len() == other.entries.len()
-            && self
-                .entries
-                .iter()
-                .zip(&other.entries)
-                .all(|(a, b)| a.path == b.path && a.bytes == b.bytes)
+    /// Compare planned source bytes with deliberately private published modes.
+    /// Exact revisions use `fingerprint`, including the unnormalized modes.
+    pub fn matches_publication(&self, other: &Self) -> bool {
+        other.root_mode == Mode::from_raw_mode(0o700)
+            && self.entries.len() == other.entries.len()
+            && self.entries.iter().zip(&other.entries).all(|(a, b)| {
+                a.path == b.path && a.bytes == b.bytes && a.publication_mode() == b.mode
+            })
     }
     pub fn subset(&self, prefix: &str) -> Result<Self, Error> {
         if prefix.is_empty() {
@@ -220,11 +235,11 @@ impl Tree {
             .entries
             .iter()
             .find(|entry| entry.path == prefix && entry.bytes.is_none())
-            .ok_or(Error::Changed)?
-            .identity;
+            .ok_or(Error::Changed)?;
         let prefix = format!("{prefix}/");
         Ok(Self {
-            root,
+            root: root.identity,
+            root_mode: root.mode,
             entries: self
                 .entries
                 .iter()
@@ -232,6 +247,7 @@ impl Tree {
                     entry.path.strip_prefix(&prefix).map(|path| Entry {
                         path: path.to_owned(),
                         identity: entry.identity,
+                        mode: entry.mode,
                         bytes: entry.bytes.clone(),
                     })
                 })
@@ -246,8 +262,13 @@ pub(super) fn read_tree(
     budget: &mut Budget<'_>,
 ) -> Result<Tree, Error> {
     budget.charge()?;
-    let mut tree = Tree::empty(identity(root)?);
-    read_directory(root, "", 0, skip_git, &mut tree.entries, budget)?;
+    let before = rustix::fs::fstat(root).map_err(|_| Error::Unavailable)?;
+    let mut tree = Tree {
+        root: Identity(i128::from(before.st_dev), i128::from(before.st_ino)),
+        root_mode: Mode::from_raw_mode(before.st_mode),
+        entries: Vec::new(),
+    };
+    read_directory(root, "", 0, skip_git, &mut tree.entries, budget, &before)?;
     tree.entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(tree)
 }
@@ -329,12 +350,12 @@ fn read_directory(
     skip_git: bool,
     output: &mut Vec<Entry>,
     budget: &mut Budget<'_>,
+    initial: &rustix::fs::Stat,
 ) -> Result<(), Error> {
     if depth > 32 {
         return Err(Error::ResourceLimit);
     }
     budget.charge()?;
-    let before = rustix::fs::fstat(directory).map_err(|_| Error::Unavailable)?;
     for name in names(directory, budget)? {
         if skip_git && name.starts_with(".git") {
             continue;
@@ -365,15 +386,17 @@ fn read_directory(
                 output.push(Entry {
                     path: path.clone(),
                     identity: entry_identity,
+                    mode: Mode::from_raw_mode(before.st_mode),
                     bytes: None,
                 });
-                read_directory(&file, &path, depth + 1, skip_git, output, budget)?;
+                read_directory(&file, &path, depth + 1, skip_git, output, budget, &before)?;
             }
             FileType::RegularFile => {
                 let bytes = read_file(&file, &before, budget)?;
                 output.push(Entry {
                     path,
                     identity: entry_identity,
+                    mode: Mode::from_raw_mode(before.st_mode),
                     bytes: Some(bytes.into()),
                 });
             }
@@ -384,10 +407,11 @@ fn read_directory(
     }
     budget.charge()?;
     let after = rustix::fs::fstat(directory).map_err(|_| Error::Unavailable)?;
-    if before.st_mtime != after.st_mtime
-        || before.st_mtime_nsec != after.st_mtime_nsec
-        || before.st_ctime != after.st_ctime
-        || before.st_ctime_nsec != after.st_ctime_nsec
+    if initial.st_mode != after.st_mode
+        || initial.st_mtime != after.st_mtime
+        || initial.st_mtime_nsec != after.st_mtime_nsec
+        || initial.st_ctime != after.st_ctime
+        || initial.st_ctime_nsec != after.st_ctime_nsec
     {
         return Err(Error::Changed);
     }
@@ -419,6 +443,7 @@ fn read_file(
     budget.charge()?;
     let after = rustix::fs::fstat(file).map_err(|_| Error::Unavailable)?;
     if bytes.len() != length
+        || before.st_mode != after.st_mode
         || before.st_size != after.st_size
         || before.st_mtime != after.st_mtime
         || before.st_mtime_nsec != after.st_mtime_nsec
@@ -431,6 +456,7 @@ fn read_file(
 }
 
 pub(super) fn write_tree(root: &File, tree: &Tree, budget: &mut Budget<'_>) -> Result<(), Error> {
+    set_mode(root, Mode::from_raw_mode(0o700), budget)?;
     for entry in &tree.entries {
         let (parent, name) = entry.path.rsplit_once('/').unwrap_or(("", &entry.path));
         budget.charge()?;
@@ -456,10 +482,12 @@ pub(super) fn write_tree(root: &File, tree: &Tree, budget: &mut Budget<'_>) -> R
                     pending = &pending[written..];
                 }
             }
+            set_mode(&file, entry.publication_mode(), budget)?;
             budget.charge()?;
             file.sync_all().map_err(|_| Error::Unavailable)?;
         } else {
-            create_directory(&directory, name)?;
+            let child = create_directory(&directory, name)?;
+            set_mode(&child, entry.publication_mode(), budget)?;
         }
     }
     for entry in tree
@@ -475,6 +503,11 @@ pub(super) fn write_tree(root: &File, tree: &Tree, budget: &mut Budget<'_>) -> R
     }
     budget.charge()?;
     root.sync_all().map_err(|_| Error::Unavailable)
+}
+
+fn set_mode(file: &File, mode: Mode, budget: &mut Budget<'_>) -> Result<(), Error> {
+    budget.charge()?;
+    rustix::fs::fchmod(file, mode).map_err(|_| Error::Unavailable)
 }
 
 pub(super) fn cleanup(parent: &File, name: &str, retained: &File) -> Result<(), Error> {

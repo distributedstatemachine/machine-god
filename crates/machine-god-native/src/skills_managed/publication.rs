@@ -449,7 +449,7 @@ fn prepare_transaction(
         let directory = fs::create_directory(&transaction.directory, "staged")?;
         fs::write_tree(&directory, &item.tree, &mut budget)?;
         let observed = fs::read_tree(&directory, false, &mut Budget::new(cancellation))?;
-        if !item.tree.same_content(&observed) {
+        if !item.tree.matches_publication(&observed) {
             return Err(Kind::Changed);
         }
         Some(observed)

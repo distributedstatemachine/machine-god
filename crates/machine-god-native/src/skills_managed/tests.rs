@@ -2,6 +2,233 @@ use super::*;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod resource_modes {
+    use super::{Fixture, fs};
+    use crate::skills_managed::{
+        NativeManagedSkills, NativeSkillGitRequest, NativeSkillGitRunner, NativeSkillInstallSource,
+        NativeSkillItemOutcome, NativeSkillManagedError, NativeSkillManagedErrorKind,
+        NativeSkillReplacementConsent, filesystem, publication,
+    };
+    use machine_god_core::CancellationToken;
+    use std::{os::unix::fs::PermissionsExt, sync::Arc};
+
+    fn set(fixture: &Fixture, path: &str, mode: u32) {
+        fs::set_permissions(fixture.path.join(path), fs::Permissions::from_mode(mode)).unwrap();
+    }
+    fn mode(fixture: &Fixture, path: &str) -> u32 {
+        fs::metadata(fixture.path.join(path))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777
+    }
+
+    #[test]
+    fn local_install_preserves_only_execute_bits_and_keeps_files_and_directories_private() {
+        let fixture = Fixture::new();
+        fixture.write("source/review/SKILL.md", "body");
+        let modes = [0o644, 0o755, 0o740, 0o605, 0o4777, 0o2770, 0o1700, 0o6600];
+        for (index, original) in modes.iter().copied().enumerate() {
+            let path = format!("source/review/scripts/resource-{index}");
+            fixture.write(&path, "#!/bin/sh\nexit 0\n");
+            set(&fixture, &path, original);
+            assert_eq!(mode(&fixture, &path), original);
+        }
+        set(&fixture, "source/review", 0o777);
+        set(&fixture, "source/review/scripts", 0o2775);
+        let owner = fixture.manager();
+        let token = CancellationToken::new();
+        let plan = owner
+            .prepare_install(&fixture.source(), &fixture.path, &token)
+            .unwrap();
+        let receipt = owner
+            .commit(plan, &NativeSkillReplacementConsent::NoReplace, &token)
+            .unwrap();
+        assert_eq!(receipt.items[0].outcome, NativeSkillItemOutcome::Installed);
+        for (index, original) in modes.iter().copied().enumerate() {
+            let destination = format!("state/skills/review/scripts/resource-{index}");
+            assert_eq!(mode(&fixture, &destination), 0o600 | (original & 0o111));
+            assert_eq!(
+                mode(&fixture, &format!("source/review/scripts/resource-{index}")),
+                original
+            );
+            assert_eq!(
+                fs::read(fixture.path.join(destination)).unwrap(),
+                b"#!/bin/sh\nexit 0\n"
+            );
+        }
+        assert_eq!(mode(&fixture, "state/skills/review"), 0o700);
+        assert_eq!(mode(&fixture, "state/skills/review/scripts"), 0o700);
+        assert_eq!(mode(&fixture, "state/skills/review/SKILL.md"), 0o600);
+    }
+
+    #[derive(Debug)]
+    struct ExecutableGit;
+    impl NativeSkillGitRunner for ExecutableGit {
+        fn clone_repository(
+            &self,
+            request: NativeSkillGitRequest,
+            _: &CancellationToken,
+        ) -> Result<(), NativeSkillManagedError> {
+            fs::write(request.directory_path.join("SKILL.md"), "from Git").unwrap();
+            let script = request.directory_path.join("run.sh");
+            fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+            Ok(())
+        }
+    }
+    #[test]
+    fn immutable_git_plan_retains_executable_resources_after_clone_cleanup() {
+        let fixture = Fixture::new();
+        let owner =
+            NativeManagedSkills::open(&fixture.path.join("state"), Some(Arc::new(ExecutableGit)))
+                .unwrap();
+        let token = CancellationToken::new();
+        let source = NativeSkillInstallSource::parse("owner/repo", None).unwrap();
+        let plan = owner
+            .prepare_install(&source, &fixture.path, &token)
+            .unwrap();
+        assert_eq!(fs::read_dir(fixture.path.join("state")).unwrap().count(), 0);
+        let receipt = owner
+            .commit(plan, &NativeSkillReplacementConsent::NoReplace, &token)
+            .unwrap();
+        assert_eq!(receipt.items[0].outcome, NativeSkillItemOutcome::Installed);
+        assert_eq!(mode(&fixture, "state/skills/repo/run.sh"), 0o711);
+        assert_eq!(
+            fs::read(fixture.path.join("state/skills/repo/run.sh")).unwrap(),
+            b"#!/bin/sh\nexit 0\n"
+        );
+    }
+
+    #[test]
+    fn create_replacement_preserves_executable_siblings_and_resets_generated_markdown_mode() {
+        let fixture = Fixture::new();
+        fixture.write("state/skills/review/SKILL.md", "old");
+        fixture.write("state/skills/review/scripts/run.sh", "resource");
+        set(&fixture, "state/skills/review/SKILL.md", 0o755);
+        set(&fixture, "state/skills/review/scripts/run.sh", 0o4755);
+        let owner = fixture.manager();
+        let token = CancellationToken::new();
+        let plan = owner.prepare_create("review", &token).unwrap();
+        let consent = NativeSkillReplacementConsent::ExactDestinations(plan.replacements());
+        let receipt = owner.commit(plan, &consent, &token).unwrap();
+        assert_eq!(receipt.items[0].outcome, NativeSkillItemOutcome::Replaced);
+        assert_eq!(mode(&fixture, "state/skills/review/SKILL.md"), 0o600);
+        assert_eq!(mode(&fixture, "state/skills/review/scripts/run.sh"), 0o711);
+        assert_eq!(mode(&fixture, "state/skills/review/scripts"), 0o700);
+        assert_eq!(
+            fs::read(fixture.path.join("state/skills/review/scripts/run.sh")).unwrap(),
+            b"resource"
+        );
+    }
+
+    #[test]
+    fn destination_chmod_invalidates_exact_consent_even_when_normalized_mode_is_unchanged() {
+        for (path, before, changed) in [
+            ("state/skills/review/run.sh", 0o755, 0o644),
+            ("state/skills/review/run.sh", 0o644, 0o640),
+            ("state/skills/review/run.sh", 0o755, 0o4755),
+            ("state/skills/review", 0o755, 0o700),
+            ("state/skills/review/assets", 0o755, 0o700),
+        ] {
+            let fixture = Fixture::new();
+            fixture.write("state/skills/review/SKILL.md", "old");
+            fixture.write("state/skills/review/run.sh", "resource");
+            fixture.write("state/skills/review/assets/item", "data");
+            set(&fixture, path, before);
+            let owner = fixture.manager();
+            let token = CancellationToken::new();
+            let plan = owner.prepare_create("review", &token).unwrap();
+            let consent = NativeSkillReplacementConsent::ExactDestinations(plan.replacements());
+            set(&fixture, path, changed);
+            assert_eq!(
+                owner.commit(plan, &consent, &token).unwrap_err().kind,
+                NativeSkillManagedErrorKind::Changed
+            );
+            assert_eq!(mode(&fixture, path), changed);
+            assert_eq!(
+                fs::read(fixture.path.join("state/skills/review/SKILL.md")).unwrap(),
+                b"old"
+            );
+        }
+    }
+
+    #[test]
+    fn existing_local_source_revalidation_detects_mode_changes_without_new_reads() {
+        let fixture = Fixture::new();
+        fixture.write("source/review/SKILL.md", "body");
+        fixture.write("source/review/run.sh", "resource");
+        set(&fixture, "source/review/run.sh", 0o755);
+        let owner = fixture.manager();
+        let token = CancellationToken::new();
+        let plan = owner
+            .prepare_install(&fixture.source(), &fixture.path, &token)
+            .unwrap();
+        set(&fixture, "source/review/run.sh", 0o644);
+        assert_eq!(
+            owner
+                .commit(plan, &NativeSkillReplacementConsent::NoReplace, &token)
+                .unwrap_err()
+                .kind,
+            NativeSkillManagedErrorKind::Changed
+        );
+        assert!(!fixture.path.join("state/skills").exists());
+    }
+
+    #[test]
+    fn rollback_restores_original_modes_without_normalizing_existing_resources() {
+        let fixture = Fixture::new();
+        fixture.write("state/skills/review/SKILL.md", "old");
+        fixture.write("state/skills/review/run.sh", "resource");
+        set(&fixture, "state/skills/review", 0o750);
+        set(&fixture, "state/skills/review/run.sh", 0o4755);
+        let owner = fixture.manager();
+        let token = CancellationToken::new();
+        let plan = owner.prepare_create("review", &token).unwrap();
+        let consent = NativeSkillReplacementConsent::ExactDestinations(plan.replacements());
+        publication::inject_fault(publication::InjectedFault::Publish);
+        let receipt = owner.commit(plan, &consent, &token).unwrap();
+        assert_eq!(receipt.items[0].outcome, NativeSkillItemOutcome::RolledBack);
+        assert_eq!(mode(&fixture, "state/skills/review"), 0o750);
+        assert_eq!(mode(&fixture, "state/skills/review/run.sh"), 0o4755);
+        assert_eq!(
+            fs::read(fixture.path.join("state/skills/review/run.sh")).unwrap(),
+            b"resource"
+        );
+        assert!(receipt.items[0].recovery_id.is_none());
+    }
+
+    #[test]
+    fn staged_normalization_and_exact_fingerprints_both_check_modes() {
+        let fixture = Fixture::new();
+        fixture.write("source/run.sh", "resource");
+        set(&fixture, "source/run.sh", 0o755);
+        let source = filesystem::open_absolute_directory(&fixture.path.join("source")).unwrap();
+        let token = CancellationToken::new();
+        let expected =
+            filesystem::read_tree(&source, false, &mut filesystem::Budget::new(&token)).unwrap();
+        let staged = filesystem::open_absolute_directory(&fixture.path.join("state")).unwrap();
+        filesystem::write_tree(&staged, &expected, &mut filesystem::Budget::new(&token)).unwrap();
+        let original =
+            filesystem::read_tree(&staged, false, &mut filesystem::Budget::new(&token)).unwrap();
+        assert!(expected.matches_publication(&original));
+        for (path, changed) in [
+            ("state/run.sh", 0o600),
+            ("state/run.sh", 0o755),
+            ("state", 0o750),
+        ] {
+            set(&fixture, path, changed);
+            let altered =
+                filesystem::read_tree(&staged, false, &mut filesystem::Budget::new(&token))
+                    .unwrap();
+            assert!(!expected.matches_publication(&altered));
+            assert_ne!(original.fingerprint(), altered.fingerprint());
+            set(&fixture, "state/run.sh", 0o711);
+            set(&fixture, "state", 0o700);
+        }
+    }
+}
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 struct Fixture {
     path: PathBuf,
