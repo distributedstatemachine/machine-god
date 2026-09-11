@@ -1,7 +1,7 @@
 use super::{
     Menu, NativeSkillBinding, NativeSkillFrameIdentity, NativeSkillInlineQuery, NativeSkillPicker,
     NativeSkillPickerError as Error, NativeSkillPickerInsertion, NativeSkillPickerMode as Mode,
-    NativeSkillPickerView, NativeSkillSnapshot, Result, edit,
+    NativeSkillPickerView, NativeSkillSnapshot, Result, edit, query::AsciiQuery,
 };
 use crate::skills_catalog::{MAX_NATIVE_SKILL_QUERY_BYTES, MAX_NATIVE_SKILL_QUERY_ROWS};
 use std::{ops::Range, sync::Arc};
@@ -307,7 +307,9 @@ impl Menu {
 
     fn filter(&mut self) {
         self.matches.clear();
-        let query = self.query.trim().as_bytes();
+        // Preprocess once per filter, not once per field or candidate. KMP
+        // keeps repetitive, maximum-sized queries linear in scanned bytes.
+        let query = AsciiQuery::new(self.query.trim().as_bytes());
         // Discovery caps the complete catalog at 1024 candidates. Keep only
         // indices, never clone per-entry metadata or stop at the first window.
         self.matches
@@ -317,22 +319,15 @@ impl Menu {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, entry)| {
-                        (contains(entry.metadata.name.as_bytes(), query)
-                            || contains(entry.metadata.description.as_bytes(), query)
+                        (query.contains(entry.metadata.name.as_bytes())
+                            || query.contains(entry.metadata.description.as_bytes())
                             || entry
                                 .location()
                                 .to_str()
-                                .is_some_and(|path| contains(path.as_bytes(), query)))
+                                .is_some_and(|path| query.contains(path.as_bytes())))
                         .then_some(index)
                     }),
             );
         self.selected = 0;
     }
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    needle.is_empty()
-        || haystack
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(needle))
 }

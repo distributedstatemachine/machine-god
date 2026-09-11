@@ -119,6 +119,20 @@ impl SkillsUi {
         self.drawn = None;
         self.acknowledged = None;
     }
+
+    fn observe_cursor(
+        &mut self,
+        cursor: usize,
+    ) -> Result<(), machine_god_native::NativeSkillPickerError> {
+        // Actual edit receipts already update the native cursor and filter.
+        // Only a distinct cursor-only event needs another native transition.
+        if cursor == self.picker.cursor() {
+            Ok(())
+        } else {
+            self.picker
+                .move_cursor(&self.picker.draft_identity().clone(), cursor)
+        }
+    }
 }
 
 impl Driver {
@@ -229,9 +243,7 @@ impl Driver {
                 let result = if matches!(binding, InputBinding::Skills { query: true, .. }) {
                     skills.picker.query_menu(text)
                 } else if text == skills.picker.draft() {
-                    skills
-                        .picker
-                        .move_cursor(&skills.picker.draft_identity().clone(), cursor)
+                    skills.observe_cursor(cursor)
                 } else {
                     self.reset_skills();
                     return true;

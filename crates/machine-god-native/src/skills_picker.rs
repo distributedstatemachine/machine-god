@@ -20,6 +20,8 @@ use crate::{
 mod edit;
 #[path = "skills_picker/menu.rs"]
 mod menu;
+#[path = "skills_picker/query.rs"]
+mod query;
 #[cfg(test)]
 #[path = "skills_picker/tests.rs"]
 mod tests;

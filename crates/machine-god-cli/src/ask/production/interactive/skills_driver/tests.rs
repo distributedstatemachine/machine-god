@@ -156,3 +156,27 @@ fn menu_query_edits_never_replace_original_native_draft() {
     assert_eq!(skills.picker.cursor(), 7);
     assert!(skills.picker.bindings().is_empty());
 }
+
+#[test]
+fn observed_edit_cursor_does_not_refilter_or_advance_the_frame_twice() {
+    let mut skills = SkillsUi::new(Some(snapshot()));
+    skills.reset("$d", 2);
+    skills
+        .picker
+        .open_inline(skills.snapshot.clone().unwrap())
+        .unwrap();
+    let binding = skills.binding();
+    skills.edit(&binding, 2..2, "u", 3).unwrap();
+    let after_edit = skills.picker.view().unwrap().identity;
+    skills.acknowledge(&shown(&skills, true));
+    skills.observe_cursor(3).unwrap();
+    assert_eq!(skills.picker.view().unwrap().identity, after_edit);
+    assert!(selectable(&skills.binding()));
+
+    // Real cursor movement still changes the query and revokes the old frame.
+    skills.observe_cursor(2).unwrap();
+    assert_ne!(skills.picker.view().unwrap().identity, after_edit);
+    assert_eq!(skills.picker.view().unwrap().query, "d");
+    assert!(!selectable(&skills.binding()));
+    assert!(skills.picker.choose(&after_edit).is_err());
+}

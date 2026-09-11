@@ -61,6 +61,42 @@ fn fixture() -> (Fixture, Arc<NativeSkillSnapshot>) {
     (fixture, snapshot)
 }
 
+#[test]
+fn filter_preserves_ascii_fields_catalog_order_and_frame_acknowledgement() {
+    let fixture = Fixture::new();
+    fixture.skill("a", "ReView", "ordinary");
+    fixture.skill("b", "other", "prefix REVIEW suffix");
+    fixture.skill("c-REVIEW", "third", "ordinary");
+    fixture.skill("d", "Réview", "ordinary");
+    let snapshot = fixture.snapshot();
+    let mut picker = NativeSkillPicker::new(String::new(), 0).unwrap();
+    picker
+        .open_menu(snapshot.clone(), "\t review \u{2003}")
+        .unwrap();
+    let view = picker.view().unwrap();
+    assert_eq!(view.total_matches, 3);
+    for (row, expected) in view.rows.iter().zip(&snapshot.entries()[..3]) {
+        assert_eq!(row.selection_ref(), expected.selection_ref());
+    }
+    let old = view.identity;
+    picker.acknowledge(&old).unwrap();
+    picker.query_menu("réview").unwrap();
+    assert_eq!(picker.view().unwrap().total_matches, 1);
+    assert_eq!(picker.view().unwrap().rows[0].metadata.name, "Réview");
+    assert_eq!(
+        picker.choose(&old).unwrap_err(),
+        NativeSkillPickerError::StaleFrame
+    );
+    let current = picker.view().unwrap().identity;
+    assert_eq!(
+        picker.choose(&current).unwrap_err(),
+        NativeSkillPickerError::FrameNotAcknowledged
+    );
+    picker.query_menu("").unwrap();
+    assert_eq!(picker.view().unwrap().total_matches, 4);
+    assert_eq!(picker.view().unwrap().selected, Some(0));
+}
+
 fn choose(picker: &mut NativeSkillPicker) -> NativeSkillPickerInsertion {
     let frame = picker.view().unwrap().identity;
     picker.acknowledge(&frame).unwrap();
