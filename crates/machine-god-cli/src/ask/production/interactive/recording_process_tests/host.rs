@@ -14,8 +14,9 @@ use machine_god_native::{
     NativeConversationObservations, NativeEnvironment, NativeInteractiveInputHelper,
     NativeInteractiveInputSource, NativeInteractivePromptBridge, NativeInteractiveTerminal,
     NativeModelCatalogCache, NativeReferenceHost, NativeReferenceHostConversationOptions,
-    NativeReferenceHostTerminalOptions, NativeRootSelection, NativeWorkspaceContexts,
-    PreparedNativeRoots, TokioWebSearchDeadline, load_native_config,
+    NativeReferenceHostTerminalOptions, NativeRootSelection, NativeSkillSnapshot,
+    NativeSkillsService, NativeWorkspaceContexts, PreparedNativeRoots, TokioWebSearchDeadline,
+    TokioWebSearchRuntime, load_native_config,
 };
 use std::{fs::File, net::SocketAddr, os::fd::AsFd, path::PathBuf, sync::Arc};
 
@@ -86,7 +87,8 @@ fn prepare(
     control: &AskSignalControlSender,
 ) -> Result<PreparedConversationHost, ()> {
     control.activate_turn()?;
-    let environment = NativeEnvironment::from_process();
+    let terminal_environment: Vec<_> = std::env::vars_os().collect();
+    let environment = super::super::super::skills_startup::environment(&terminal_environment);
     let root_selection = NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
     let prepared_roots = PreparedNativeRoots::prepare(root_selection.clone()).map_err(|_| ())?;
     let workspace = prepared_roots.workspace_root().to_owned();
@@ -129,19 +131,21 @@ fn prepare(
         None,
         &crate::workspace::launch::LaunchWorkspaceOptions::EMPTY,
     )?;
-    let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+    let prepared = prepare_skills(
+        &runtime,
+        prepared_roots,
+        environment.clone(),
+        terminal_environment,
+    )?;
+    let mut options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
         .with_workspace(authority, Arc::new(NativeWorkspaceContexts::new()))
         .with_model_routes(Arc::clone(&model_routes))
         .with_observations(Arc::clone(&observations))
-        .with_terminal(
-            NativeReferenceHostTerminalOptions::new(
-                helper(),
-                Some("/bin/bash".into()),
-                std::env::vars_os().collect(),
-            )
-            .map_err(|_| ())?,
-        )
+        .with_terminal(prepared.terminal)
         .with_permissions(super::super::super::capture_permission_options());
+    if let Some(service) = prepared.service {
+        options = options.with_skills(service);
+    }
     let host =
         NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             load_native_config(&environment).map_err(|_| ())?,
@@ -151,7 +155,7 @@ fn prepare(
                 host: address.ip().to_string(),
                 port: Some(address.port()),
             },
-            prepared_roots,
+            prepared.roots,
             bridge.clone(),
             bridge,
             Arc::new(deadline),
@@ -168,6 +172,54 @@ fn prepare(
         catalog,
         catalog_cache: cache,
         user_config: None,
-        skills_snapshot: None,
+        skills_snapshot: prepared.snapshot,
+    })
+}
+
+struct PreparedSkills {
+    roots: PreparedNativeRoots,
+    terminal: NativeReferenceHostTerminalOptions,
+    service: Option<Arc<NativeSkillsService>>,
+    snapshot: Option<Arc<NativeSkillSnapshot>>,
+}
+
+fn prepare_skills(
+    runtime: &TokioWebSearchRuntime,
+    roots: PreparedNativeRoots,
+    environment: NativeEnvironment,
+    values: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+) -> Result<PreparedSkills, ()> {
+    let enabled = match values
+        .iter()
+        .find(|(name, _)| name == "RECORDING_TEST_SKILLS")
+        .map(|(_, value)| value.to_str())
+    {
+        None => false,
+        Some(Some("1")) => true,
+        _ => return Err(()),
+    };
+    let terminal =
+        NativeReferenceHostTerminalOptions::new(helper(), Some("/bin/bash".into()), values)
+            .map_err(|_| ())?;
+    if !enabled {
+        return Ok(PreparedSkills {
+            roots,
+            terminal,
+            service: None,
+            snapshot: None,
+        });
+    }
+    let prepared = super::super::super::skills_startup::prepare(
+        runtime,
+        roots,
+        environment,
+        terminal.clone(),
+        true,
+    )?;
+    Ok(PreparedSkills {
+        roots: prepared.roots,
+        terminal,
+        service: Some(prepared.service),
+        snapshot: prepared.snapshot,
     })
 }

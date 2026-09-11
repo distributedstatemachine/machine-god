@@ -4,7 +4,7 @@ use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::JoinHandle,
@@ -14,6 +14,7 @@ use std::{
 pub(super) struct Gateway {
     pub address: SocketAddr,
     pub inference: Arc<AtomicUsize>,
+    bodies: Arc<Mutex<Vec<Vec<u8>>>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<io::Result<()>>>,
 }
@@ -27,18 +28,23 @@ impl Gateway {
         let inference = Arc::new(AtomicUsize::new(0));
         let stopped = Arc::clone(&stop);
         let requests = Arc::clone(&inference);
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&bodies);
         let worker = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(30);
             let mut count = 0;
             while !stopped.load(Ordering::Acquire) {
-                if Instant::now() >= deadline || count > 16 {
+                if Instant::now() >= deadline {
                     return Err(io::ErrorKind::TimedOut.into());
                 }
                 match listener.accept() {
                     Ok((mut connection, peer)) => {
                         assert!(peer.ip().is_loopback());
+                        if count >= 16 {
+                            return Err(io::ErrorKind::InvalidData.into());
+                        }
                         count += 1;
-                        serve(&mut connection, &requests)?;
+                        serve(&mut connection, &requests, &captured)?;
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(2));
@@ -52,9 +58,19 @@ impl Gateway {
         Self {
             address,
             inference,
+            bodies,
             stop,
             worker: Some(worker),
         }
+    }
+
+    pub fn requests(&self) -> Vec<serde_json::Value> {
+        self.bodies
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|body| serde_json::from_slice(body).unwrap())
+            .collect()
     }
 
     pub fn finish(mut self) {
@@ -72,7 +88,11 @@ impl Drop for Gateway {
     }
 }
 
-fn serve(connection: &mut TcpStream, inference: &AtomicUsize) -> io::Result<()> {
+fn serve(
+    connection: &mut TcpStream,
+    inference: &AtomicUsize,
+    bodies: &Mutex<Vec<Vec<u8>>>,
+) -> io::Result<()> {
     connection.set_read_timeout(Some(Duration::from_millis(100)))?;
     connection.set_write_timeout(Some(Duration::from_secs(1)))?;
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -118,6 +138,13 @@ fn serve(connection: &mut TcpStream, inference: &AtomicUsize) -> io::Result<()> 
         let _: serde_json::Value =
             serde_json::from_slice(&request[header_end..header_end + body_len])
                 .map_err(|_| io::ErrorKind::InvalidData)?;
+        {
+            let mut bodies = bodies.lock().unwrap();
+            if bodies.len() >= 16 {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+            bodies.push(request[header_end..header_end + body_len].to_vec());
+        }
         inference.fetch_add(1, Ordering::Release);
         (
             "text/event-stream",

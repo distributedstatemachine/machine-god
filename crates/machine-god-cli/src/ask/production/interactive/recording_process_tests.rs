@@ -3,6 +3,7 @@
 mod gateway;
 mod host;
 mod resume;
+mod skills;
 mod support;
 
 use gateway::Gateway;
