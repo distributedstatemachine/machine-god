@@ -64,14 +64,23 @@ impl McpSubmissionRuntimeBinding {
             authentication: authentication.into(),
         })
     }
-    pub(super) fn tool_name(&self) -> &ToolName {
+    pub(crate) fn tool_name(&self) -> &ToolName {
         &self.tool
     }
-    pub(super) fn remote_tool(&self) -> &str {
+    pub(crate) fn remote_tool(&self) -> &str {
         &self.remote_tool
     }
-    pub(super) fn schema_bytes(&self) -> &[u8] {
+    pub(crate) fn schema_bytes(&self) -> &[u8] {
         &self.schema
+    }
+    pub(crate) fn server(&self) -> &str {
+        &self.server
+    }
+    pub(crate) fn configuration_bytes(&self) -> &[u8] {
+        &self.configuration
+    }
+    pub(crate) fn authentication_bytes(&self) -> &[u8] {
+        &self.authentication
     }
 }
 

@@ -73,6 +73,7 @@ pub struct McpToolRequest {
     arguments: Box<[u8]>,
     payload: Box<[u8]>,
     options: McpToolCallOptions,
+    tool_reservation: Option<super::McpToolReservation>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     head: Option<Arc<super::McpSubmissionHttpHead>>,
 }
@@ -147,6 +148,7 @@ impl McpToolRequest {
             arguments,
             payload,
             options,
+            tool_reservation: None,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             head: None,
         })
@@ -158,6 +160,34 @@ impl McpToolRequest {
     #[must_use]
     pub fn schema(&self) -> &McpSchema {
         &self.schema
+    }
+
+    /// Exact canonical invocation evidence, not the HTTP header projection.
+    pub(crate) fn arguments_json(&self) -> &str {
+        std::str::from_utf8(&self.arguments).expect("JSON serialization is UTF-8")
+    }
+
+    pub(crate) fn binding(&self) -> &super::McpSubmissionRuntimeBinding {
+        &self.runtime.binding
+    }
+
+    pub(crate) fn revalidate(&self) -> Result<()> {
+        self.runtime.live()
+    }
+
+    /// Retains the owning peer's exact unsent-ID allocation through permission
+    /// and writer submission. Dropping it permits that peer to reclaim only
+    /// the abandoned allocation; it does not authorize execution.
+    /// # Errors
+    /// Rejects foreign IDs or a repeated attachment, without replacing a lease.
+    pub fn with_reservation(mut self, reservation: super::McpToolReservation) -> Result<Self> {
+        if self.tool_reservation.is_some()
+            || reservation.rpc_id() != &RpcId::Integer(self.options.request_id)
+        {
+            return Err(McpSubmissionError::Invalid);
+        }
+        self.tool_reservation = Some(reservation);
+        Ok(self)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -193,12 +223,16 @@ impl McpToolRequest {
         if self.options.protocol.transport == TransportKind::Stdio {
             let mut wire = self.payload.into_vec();
             wire.push(b'\n');
-            return Ok(invocation.with_wire(wire.into_boxed_slice(), Framing::Ndjson, id));
+            let mut copied = invocation.with_wire(wire.into_boxed_slice(), Framing::Ndjson, id);
+            copied.tool_reservation = self.tool_reservation;
+            return Ok(copied);
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let head = self.head.ok_or(McpSubmissionError::Invalid)?;
-            Ok(invocation.with_wire(head.encode(&self.payload)?, Framing::Http, id))
+            let mut copied = invocation.with_wire(head.encode(&self.payload)?, Framing::Http, id);
+            copied.tool_reservation = self.tool_reservation;
+            Ok(copied)
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         Err(McpSubmissionError::Invalid)

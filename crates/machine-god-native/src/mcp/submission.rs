@@ -27,7 +27,10 @@ use serde_json::Value;
 use super::protocol::{RpcId, RpcKind, WireLimits, parse_envelope};
 use crate::NativePermissionExecutionProof;
 
+mod reservation;
 mod runtime;
+pub(crate) use reservation::McpPendingToolReservation;
+pub use reservation::McpToolReservation;
 pub use runtime::{McpSubmissionRuntime, McpSubmissionRuntimeBinding, McpSubmissionRuntimeOwner};
 mod tool;
 pub use tool::{McpToolCallOptions, McpToolRequest};
@@ -113,6 +116,7 @@ struct Data {
     runtime: Arc<McpSubmissionRuntime>,
     cancellation: CancellationToken,
     reservation: Reservation,
+    tool_reservation: Option<McpToolReservation>,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Framing {
@@ -285,6 +289,7 @@ impl McpSubmissionRegistry {
                 wire,
                 framing,
                 rpc_id,
+                tool_reservation,
             } = copied?;
             let generation = {
                 let mut state = registry
@@ -321,6 +326,7 @@ impl McpSubmissionRegistry {
                     wire,
                     framing,
                     rpc_id,
+                    tool_reservation,
                     runtime,
                     cancellation,
                     reservation: Reservation {
@@ -529,6 +535,7 @@ impl CopiedInvocation {
             wire,
             framing,
             rpc_id,
+            tool_reservation: None,
         }
     }
 }
@@ -541,6 +548,7 @@ struct CopiedRequest {
     wire: Box<[u8]>,
     framing: Framing,
     rpc_id: RpcId,
+    tool_reservation: Option<McpToolReservation>,
 }
 
 /// Reserved exact request, not yet executable. Drop releases only its own
@@ -549,6 +557,30 @@ pub struct PreparedMcpSubmission {
     data: Data,
 }
 impl PreparedMcpSubmission {
+    /// Rechecks the retained exact reservation without granting execution.
+    pub(crate) fn revalidate(&self) -> Result<()> {
+        check(&self.data.cancellation)?;
+        self.data.runtime.live()?;
+        let registry = self
+            .data
+            .reservation
+            .registry
+            .upgrade()
+            .ok_or(McpSubmissionError::Unavailable)?;
+        registry.live()?;
+        let state = registry
+            .state
+            .lock()
+            .map_err(|_| McpSubmissionError::Unavailable)?;
+        if matches!(state.slots.get(&self.data.reservation.call), Some(Slot::Reserved { generation, request })
+            if *generation == self.data.reservation.generation && request == &self.data.permission.id)
+        {
+            Ok(())
+        } else {
+            Err(McpSubmissionError::Denied)
+        }
+    }
+
     /// Binds a concrete native policy proof without publishing a ready route.
     /// Core must consume the resulting admission; there is no no-proof variant.
     #[must_use]
@@ -621,6 +653,10 @@ pub struct McpSubmission {
     attempted: bool,
 }
 impl McpSubmission {
+    pub(crate) fn tool_reservation(&self) -> Option<&McpToolReservation> {
+        self.ready.data.tool_reservation.as_ref()
+    }
+
     fn checkpoint(&self) -> Result<()> {
         check(&self.cancellation)?;
         check(&self.ready.data.cancellation)?;
