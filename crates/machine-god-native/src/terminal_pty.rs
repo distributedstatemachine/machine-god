@@ -1933,12 +1933,40 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
+    fn publish_escape_ready(directory: &Path, pid: u32, before_publish: impl FnOnce()) {
+        // The parent treats existence as readiness, so the PID must be complete
+        // before the ready name becomes visible in this private fixture directory.
+        let pending = directory.join("escape.ready.pending");
+        std::fs::write(&pending, pid.to_string()).unwrap();
+        before_publish();
+        std::fs::rename(pending, directory.join("escape.ready")).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn escape_ready_publishes_only_the_complete_pid() {
+        let directory = Directory::new();
+        let pid = std::process::id();
+        let ready = directory.0.join("escape.ready");
+        let pending = directory.0.join("escape.ready.pending");
+        let mut observed_before_publish = false;
+        publish_escape_ready(&directory.0, pid, || {
+            observed_before_publish = true;
+            assert!(!ready.exists(), "unpublished PID must not signal readiness");
+            assert_eq!(std::fs::read_to_string(&pending).unwrap(), pid.to_string());
+        });
+        assert!(observed_before_publish);
+        assert!(!pending.exists());
+        assert_eq!(std::fs::read_to_string(ready).unwrap(), pid.to_string());
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
     fn cleanup_escape_child_entry() {
         if std::env::var_os("MACHINE_GOD_TERMINAL_ESCAPE_FIXTURE").is_none() {
             return;
         }
-        std::fs::write("escape.ready", std::process::id().to_string()).unwrap();
+        publish_escape_ready(Path::new("."), std::process::id(), || {});
         let deadline = Instant::now() + Duration::from_secs(10);
         while !Path::new("escape.go").exists() {
             assert!(Instant::now() < deadline);
