@@ -21,6 +21,9 @@ use machine_god_native::{
 };
 use serde_json::{Value, json};
 
+#[path = "ai_gateway/user_parts.rs"]
+mod user_parts;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RecordedRequest {
     headers: Vec<(String, String)>,

@@ -1,11 +1,10 @@
 # Injected-transport AI Gateway provider
 
-This page is the normative contract for the sixth bounded Milestone 03 slice.
-It adds an executor-neutral `AiGatewayProvider` codec to
-`machine-god-native`, behind an explicitly injected `AiGatewayTransport`. The
-current CLI does not construct this generation provider or make generation
-requests. Its delivered `models [--json]` command uses the separate
-bounded catalog provider documented in [`models-cli.md`](models-cli.md).
+This page defines the executor-neutral `AiGatewayProvider` codec in
+`machine-god-native`, behind an explicitly injected `AiGatewayTransport`.
+The [native reference host](native-reference-host.md) composes this generation
+provider for CLI conversation requests. The `models [--json]` command uses the
+separate bounded catalog provider documented in [`models-cli.md`](models-cli.md).
 The separate optional [`ai-gateway-http` transport](ai-gateway-http.md) is one
 possible native injection; custom transports remain supported. The separate
 [`native credential discovery`](ai-gateway-credentials.md) can
@@ -186,7 +185,9 @@ inside the ordinary exact encoded-body byte limit and confer no extra capacity.
 
 The accepted provider-neutral transcript projection is intentionally narrow:
 
-- each system or user message contains exactly one text block;
+- each system message contains exactly one text block;
+- each user message contains 1–64 text blocks, preserved in order as separate
+  Gateway text parts without concatenation or normalization;
 - an assistant message contains an optional single leading text block followed
   by one or more complete tool-call blocks, or just its single text block;
   core's empty assistant completion is also accepted and projected as one empty
@@ -211,6 +212,16 @@ Cheap message, tool, selected-model, and per-role content-count checks run while
 the iterative request guard is still armed and before any JSON traversal.
 Traversal then checks cancellation at every metadata value, tool, message,
 content block, and JSON node.
+
+The user-part limit is fixed and independent of tool-call limits. It supports
+the separate caller-selected advisory block used by [skill invocation](skills-cli.md)
+without changing canonical user text, message roles or permission provenance.
+Every user part charges its UTF-8 text bytes and fixed text-part envelope against
+one request-wide lower bound on the configured encoded-body budget before the
+part is retained. Final bounded serialization counts all escaping, separators
+and outer fields exactly; additional parts confer no additional byte capacity.
+Single-part user messages keep their existing wire representation. Empty user
+content and non-text user blocks remain invalid.
 
 ### Conditional large-result projection
 
@@ -348,6 +359,7 @@ changing a total.
 | response records | 8,192 |
 | request messages | 4,096 |
 | request tool specifications | 1,024 |
+| text parts per user message (fixed) | 64 |
 | simultaneously reconstructed streamed tool inputs | 64 |
 | final response tool calls | 64 |
 | historical or response arguments per tool call | 64 KiB (65,536 bytes) |

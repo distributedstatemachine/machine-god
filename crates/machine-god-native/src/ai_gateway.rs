@@ -37,6 +37,8 @@ pub const AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION: &str = "4";
 /// Reserved shallow metadata entry for explicit, turn-pinned Gateway controls.
 pub const AI_GATEWAY_INFERENCE_OPTIONS_KEY: &str = "machine_god.ai_gateway_inference_options";
 
+const MAX_USER_TEXT_PARTS: usize = 64;
+
 /// Effective native Gateway controls, without model inference or catalog lookup.
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AiGatewayInferenceOptions {
@@ -644,7 +646,8 @@ fn validate_request_envelope(
     for message in &request.messages {
         check_cancel(cancellation)?;
         let valid_count = match message.role {
-            Role::System | Role::User | Role::Tool => message.content.len() == 1,
+            Role::System | Role::Tool => message.content.len() == 1,
+            Role::User => (1..=MAX_USER_TEXT_PARTS).contains(&message.content.len()),
             Role::Assistant => message.content.len() <= limits.max_tool_calls.saturating_add(1),
             _ => false,
         };
@@ -853,6 +856,7 @@ fn build_prompt(
     let mut prepared_results = prepare_tool_result_values(&messages, projection, budgets)?;
     let mut prompt = Vec::with_capacity(messages.len());
     let mut pending: BTreeMap<ToolCallId, ToolName> = BTreeMap::new();
+    let mut user_text_remaining = projection.limits.max_request_bytes;
     for message in messages {
         check_cancel(projection.cancellation)?;
         if !pending.is_empty() && message.role != Role::Tool {
@@ -863,12 +867,11 @@ fn build_prompt(
                 role: "system",
                 content: GatewayContent::System(exact_text(message.content)?),
             },
-            Role::User => GatewayMessage {
-                role: "user",
-                content: GatewayContent::Parts(vec![GatewayPart::Text {
-                    text: exact_text(message.content)?,
-                }]),
-            },
+            Role::User => user_message(
+                message.content,
+                &mut user_text_remaining,
+                projection.cancellation,
+            )?,
             Role::Assistant => {
                 let mut parts = Vec::new();
                 let mut saw_call = false;
@@ -967,9 +970,17 @@ fn prepare_tool_result_values<'message>(
             return Err(invalid_request("gateway_invalid_history"));
         }
         match message.role {
-            Role::System | Role::User => {
+            Role::System => {
                 if !matches!(message.content.as_slice(), [ContentBlock::Text { .. }]) {
                     return Err(invalid_request("gateway_invalid_history"));
+                }
+            }
+            Role::User => {
+                for block in &message.content {
+                    check_cancel(projection.cancellation)?;
+                    if !matches!(block, ContentBlock::Text { .. }) {
+                        return Err(invalid_request("gateway_invalid_history"));
+                    }
                 }
             }
             Role::Assistant => {
@@ -1210,6 +1221,37 @@ mod prompt_allocation_tests {
         assert_eq!(error.code, "gateway_invalid_history");
         assert_eq!(transport.calls.load(Ordering::Relaxed), 0);
     }
+}
+
+fn user_message(
+    content: Vec<ContentBlock>,
+    remaining: &mut usize,
+    cancellation: &CancellationToken,
+) -> Result<GatewayMessage, ProviderError> {
+    if !(1..=MAX_USER_TEXT_PARTS).contains(&content.len()) {
+        return Err(invalid_request("gateway_invalid_history"));
+    }
+    let mut parts = Vec::with_capacity(content.len());
+    for block in content {
+        check_cancel(cancellation)?;
+        let ContentBlock::Text { text } = block else {
+            return Err(invalid_request("gateway_invalid_history"));
+        };
+        // All user parts share this encoded-body lower bound. The final bounded
+        // serializer additionally charges escaping, separators and outer fields.
+        let bytes = text
+            .len()
+            .checked_add(br#"{"type":"text","text":""}"#.len())
+            .ok_or_else(|| invalid_request("gateway_request_byte_limit"))?;
+        *remaining = remaining
+            .checked_sub(bytes)
+            .ok_or_else(|| invalid_request("gateway_request_byte_limit"))?;
+        parts.push(GatewayPart::Text { text });
+    }
+    Ok(GatewayMessage {
+        role: "user",
+        content: GatewayContent::Parts(parts),
+    })
 }
 
 fn exact_text(content: Vec<ContentBlock>) -> Result<String, ProviderError> {
