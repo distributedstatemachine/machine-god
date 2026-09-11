@@ -63,6 +63,9 @@ pub(super) async fn build(
     if failure.is_none() {
         failure = control::check(&startup.clock, &guards, deadline).err();
     }
+    if failure.is_none() && startup.clock.now() < startup.catalog_epoch {
+        failure = Some(Error::Invalid);
+    }
     let mut retained = 0usize;
     for (configuration, receipt) in startup.configuration.servers().iter().zip(&mut receipts) {
         if failure.is_some() {
@@ -205,6 +208,7 @@ async fn server(
             configuration: identity,
             authentication,
             catalogs,
+            catalog_epoch: startup.catalog_epoch,
             peer,
             operation_timeout: Duration::from_millis(u64::from(
                 configuration.operation_timeout_ms(),
@@ -310,7 +314,7 @@ async fn tools(
         max_item_bytes: maximum.min(McpCatalogLimits::default().max_item_bytes),
         ..McpCatalogLimits::default()
     };
-    let epoch = startup.clock.now();
+    let epoch = startup.catalog_epoch;
     let fetch = async {
         match peer {
             NativeMcpOwnedPeer::Stdio(peer) => peer

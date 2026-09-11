@@ -67,6 +67,15 @@ Publication swaps the complete all-server candidate. Every old executable bindin
 is marked invalid before the new catalog becomes visible. Wakers, peer cancellation
 and old owners are released after the publication lock. A foreign candidate or
 exhausted retirement budget leaves the previous usable publication unchanged.
+Every server's retained generation guards are checked again under the publication
+lock, before retiring old bindings. Revocation after preparation rejects the
+replacement without changing the active runtime, including feature-only servers
+with no executable tools. These checks observe tokens, not an injected callback.
+
+Each candidate retains its explicitly selected monotonic catalog timestamp origin.
+`catalog_epoch(server)` exposes that origin without reading a clock or deciding
+freshness. Published server ownership preserves it, so relative fetched/expiry
+milliseconds need not be compared against an unrelated origin during refresh.
 
 Catalog and permission routes require the actual registered native turn, not just
 matching textual IDs or an `mcp_` prefix. Discovery does not pin an empty catalog.

@@ -153,6 +153,12 @@ impl NativeMcpRuntime {
         if state.closed {
             return Err(NativeMcpRuntimeError::Unavailable);
         }
+        // Preparation is not activation: selected authority may have been
+        // revoked while the private candidate was waiting for publication.
+        candidate.check()?;
+        for server in &candidate.servers {
+            server.check_authority()?;
+        }
         let previous_count = state.active.as_ref().map_or(0, |value| value.servers.len());
         if state.retired.len() + state.completions.len() + previous_count
             > self.limits.max_retired_servers

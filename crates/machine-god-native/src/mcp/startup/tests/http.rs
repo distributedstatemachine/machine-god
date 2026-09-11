@@ -100,7 +100,12 @@ fn discover(tools: bool) -> Vec<u8> {
 fn actual_http_startup_pages_tools_exactly_and_keeps_feature_catalogs_lazy() {
     run(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let startup = NativeMcpStartup::new(http_options(listener.local_addr().unwrap())).unwrap();
+        let mut selected = http_options(listener.local_addr().unwrap());
+        let epoch = Instant::now()
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap();
+        selected.catalog_epoch = epoch;
+        let startup = NativeMcpStartup::new(selected).unwrap();
         let server = async {
             let first = reply(&listener, &discover(true)).await;
             assert!(String::from_utf8_lossy(&first).contains("x-selected: static-secret"));
@@ -126,7 +131,9 @@ fn actual_http_startup_pages_tools_exactly_and_keeps_feature_catalogs_lazy() {
             Duration::from_millis(u64::from(u32::MAX))
         );
         assert_eq!(batch.servers()[0].catalogs.len(), 1);
+        assert_eq!(batch.servers()[0].catalog_epoch, epoch);
         let catalog = &batch.servers()[0].catalogs[0];
+        assert!(catalog.fetched_at_ms() >= 3_600_000);
         assert_eq!(catalog.descriptors().len(), 2);
         assert_eq!(catalog.version(), ProtocolVersion::Modern);
         let crate::mcp::catalog::McpDescriptor::Tool(first) = &catalog.descriptors()[0] else {

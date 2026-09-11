@@ -13,6 +13,8 @@ pub mod context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod endpoint;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod execution;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod feature;
 pub mod headers;
 #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
@@ -36,6 +38,8 @@ pub mod runtime;
 pub mod schema;
 
 pub mod sse;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod startup;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod stdio;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

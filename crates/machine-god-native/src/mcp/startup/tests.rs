@@ -36,6 +36,7 @@ fn options(configuration: &str) -> NativeMcpStartupOptions {
         stdio: None,
         workers: NativeOwnedWorkerScope::new(),
         clock: Arc::new(Clock::default()),
+        catalog_epoch: Instant::now(),
         owner_cancellation: CancellationToken::new(),
         configuration_cancellation: CancellationToken::new(),
         #[cfg(feature = "mcp-http")]
@@ -87,6 +88,21 @@ fn construction_and_unpolled_build_do_not_read_clock_or_admit_workers() {
     assert!(startup.cleanup_observations().is_empty());
     workers.close();
     assert!(completion.is_complete());
+}
+
+#[test]
+fn a_future_catalog_origin_rejects_even_an_empty_build_before_effects() {
+    let mut selected = options(r#"{"mcp":{}}"#);
+    selected.catalog_epoch = Instant::now() + Duration::from_secs(3600);
+    let startup = NativeMcpStartup::new(selected).unwrap();
+    let batch = block_on(startup.build(
+        NativeMcpStartupPhase::All,
+        CancellationToken::new(),
+        deadline(),
+    ));
+    assert_eq!(batch.receipt.failure, Some(NativeMcpStartupError::Invalid));
+    assert!(batch.servers().is_empty());
+    assert!(startup.cleanup_observations().is_empty());
 }
 
 #[test]

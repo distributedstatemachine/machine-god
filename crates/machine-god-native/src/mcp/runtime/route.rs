@@ -27,6 +27,7 @@ use std::{
 
 pub(super) struct ServerRoute {
     pub name: Arc<str>,
+    pub catalog_epoch: Instant,
     pub protocol: NegotiatedProtocol,
     pub peer: Mutex<NativeMcpOwnedPeer>,
     pub cancellation: CancellationToken,

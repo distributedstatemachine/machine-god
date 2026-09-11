@@ -12,8 +12,10 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+mod execution;
 mod fixture;
 mod lifecycle;
+mod publication;
 pub(super) mod script;
 use fixture::*;
 
@@ -70,6 +72,7 @@ fn feature_only_server_does_not_require_an_unadvertised_tools_catalog() {
                 configuration: Arc::from(&b"configuration"[..]),
                 authentication: Arc::from(&b"credential"[..]),
                 catalogs: vec![catalog],
+                catalog_epoch: Instant::now(),
                 peer: NativeMcpOwnedPeer::Script(peer),
                 operation_timeout: std::time::Duration::from_secs(120),
                 authority_cancellations: Arc::from([]),
@@ -195,6 +198,7 @@ fn candidate(
                 configuration: Arc::from(&b"configuration"[..]),
                 authentication: Arc::from(&b"credential"[..]),
                 catalogs: vec![catalog],
+                catalog_epoch: Instant::now(),
                 peer: NativeMcpOwnedPeer::Script(script::ScriptPeer::new(writes)),
                 operation_timeout: std::time::Duration::from_secs(120),
                 authority_cancellations: Arc::from([]),

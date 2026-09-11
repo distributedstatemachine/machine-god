@@ -40,6 +40,9 @@ pub struct NativeMcpStartupOptions {
     pub stdio: Option<Arc<NativeMcpStdioStartup>>,
     pub workers: NativeOwnedWorkerScope,
     pub clock: Arc<dyn NativeMcpRuntimeClock>,
+    /// Shared origin for relative timestamps in all fetched catalogs.
+    /// Must not be later than this clock at the first build poll.
+    pub catalog_epoch: Instant,
     pub owner_cancellation: CancellationToken,
     pub configuration_cancellation: CancellationToken,
     #[cfg(feature = "mcp-http")]
@@ -83,6 +86,7 @@ pub struct NativeMcpStartup {
     stdio: Option<Arc<NativeMcpStdioStartup>>,
     workers: NativeOwnedWorkerScope,
     clock: Arc<control::Clock>,
+    catalog_epoch: Instant,
     owner: CancellationToken,
     configuration_generation: CancellationToken,
     #[cfg(feature = "mcp-http")]
@@ -115,6 +119,7 @@ impl NativeMcpStartup {
             stdio: options.stdio,
             workers: options.workers,
             clock: Arc::new(control::Clock(options.clock)),
+            catalog_epoch: options.catalog_epoch,
             owner: options.owner_cancellation,
             configuration_generation: options.configuration_cancellation,
             #[cfg(feature = "mcp-http")]

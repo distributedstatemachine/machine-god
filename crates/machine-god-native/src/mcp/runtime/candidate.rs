@@ -30,6 +30,8 @@ pub struct NativeMcpServerCandidate {
     pub configuration: Arc<[u8]>,
     pub authentication: Arc<[u8]>,
     pub catalogs: Vec<McpDescriptorCatalog>,
+    /// Explicit monotonic origin for every relative catalog timestamp.
+    pub catalog_epoch: std::time::Instant,
     pub peer: NativeMcpOwnedPeer,
     /// Exact configured operation timeout, independent of other servers.
     pub operation_timeout: std::time::Duration,
@@ -96,6 +98,17 @@ impl NativeMcpRuntimeCandidate {
     pub fn retained_byte_charge(&self) -> usize {
         self.publication.retained_bytes
     }
+
+    /// Returns the selected server's catalog timestamp origin, not a freshness
+    /// decision or an observation of the current clock.
+    #[must_use]
+    pub fn catalog_epoch(&self, server: &str) -> Option<std::time::Instant> {
+        self.publication
+            .servers
+            .iter()
+            .find(|route| route.name.as_ref() == server)
+            .map(|route| route.catalog_epoch)
+    }
 }
 impl NativeMcpRuntime {
     /// Builds all descriptors, bindings and executable registrations privately.
@@ -132,6 +145,7 @@ impl NativeMcpRuntime {
             )?;
             let route = Arc::new(ServerRoute {
                 name: server.server,
+                catalog_epoch: server.catalog_epoch,
                 protocol: peer.protocol(),
                 peer: futures_util::lock::Mutex::new(peer),
                 cancellation: CancellationToken::new(),

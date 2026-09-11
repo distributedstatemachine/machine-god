@@ -7,6 +7,10 @@ executes application tools. The host selects worker ownership, clocks, complete
 captured environment, stdio launch authority, network/TLS authority, authentication
 source, configuration generation, peer lifetime and aggregate byte budget.
 Construction and creation of an unpolled build perform no ambient acquisition.
+The caller also supplies `catalog_epoch`, a shared monotonic timestamp origin.
+All catalog pages use that same origin and carry it into server candidates;
+timestamps are not silently rebased to each fetch. A future origin is rejected
+on the first build poll, including an empty configuration, before transport work.
 
 ## Phase and acceptance
 
