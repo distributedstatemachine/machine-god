@@ -3349,6 +3349,14 @@ impl TurnHandle {
     pub fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
     }
+
+    /// Observes this exact turn's cancellation without polling its event stream.
+    /// The returned owned future registers only when polled and deregisters on
+    /// drop. It signals cancellation, not successful turn completion or cleanup.
+    #[must_use]
+    pub fn cancelled(&self) -> crate::Cancelled {
+        self.cancellation.cancelled()
+    }
 }
 
 /// Ordered asynchronous events for one session turn.

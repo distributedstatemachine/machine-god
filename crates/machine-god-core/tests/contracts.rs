@@ -2346,6 +2346,113 @@ impl Wake for TurnWakeCounter {
     }
 }
 
+#[test]
+fn turn_handle_cancelled_observer_wakes_only_its_current_poller() {
+    let session = engine_with(PendingProvider)
+        .create_test_session(SessionId::new("handle-cancelled-observer").unwrap());
+    let turn = prompt(&session, "run");
+    let handle = turn.handle();
+    let mut observer = Box::pin(handle.cancelled());
+    let old = Arc::new(TurnWakeCounter::default());
+    let current = Arc::new(TurnWakeCounter::default());
+    let old_waker = Waker::from(old.clone());
+    let current_waker = Waker::from(current.clone());
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&old_waker))
+            .is_pending()
+    );
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&current_waker))
+            .is_pending()
+    );
+    assert!(handle.cancel());
+    assert_eq!(old.0.load(Ordering::Relaxed), 0);
+    assert_eq!(current.0.load(Ordering::Relaxed), 1);
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&current_waker))
+            .is_ready()
+    );
+    assert!(!handle.cancel());
+    assert_eq!(current.0.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn turn_handle_cancelled_observer_drop_detaches_without_cancelling() {
+    let session = engine_with(PendingProvider)
+        .create_test_session(SessionId::new("handle-cancelled-drop").unwrap());
+    let turn = prompt(&session, "run");
+    let handle = turn.handle();
+    let discarded = Arc::new(TurnWakeCounter::default());
+    let discarded_waker = Waker::from(discarded.clone());
+    let mut observer = Box::pin(handle.cancelled());
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&discarded_waker))
+            .is_pending()
+    );
+    drop(observer);
+    assert!(!handle.is_cancelled());
+    let retained = Arc::new(TurnWakeCounter::default());
+    let retained_waker = Waker::from(retained.clone());
+    let mut observer = Box::pin(handle.cancelled());
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&retained_waker))
+            .is_pending()
+    );
+    drop(turn);
+    assert_eq!(discarded.0.load(Ordering::Relaxed), 0);
+    assert_eq!(retained.0.load(Ordering::Relaxed), 1);
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&retained_waker))
+            .is_ready()
+    );
+}
+
+#[test]
+fn turn_handle_cancelled_observer_does_not_report_normal_completion() {
+    let session = engine_with(StaticProvider::completed())
+        .create_test_session(SessionId::new("handle-cancelled-completed").unwrap());
+    let mut turn = prompt(&session, "run");
+    let handle = turn.handle();
+    let wake_counter = Arc::new(TurnWakeCounter::default());
+    let waker = Waker::from(wake_counter.clone());
+    let mut observer = Box::pin(handle.cancelled());
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    while futures_executor::block_on(turn.next()).is_some() {}
+    drop(turn);
+    assert!(!handle.is_cancelled());
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert!(handle.cancel());
+    assert!(
+        observer
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_ready()
+    );
+}
+
 #[derive(Debug, Default)]
 struct CompletionGate {
     ready: AtomicBool,
