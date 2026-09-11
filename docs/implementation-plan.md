@@ -21,16 +21,16 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `61`
-- Delivered main: `fe7a793c60840526cb5ca6e706d1a81cb9a577dc`
-- Main CI: `34534157308` (`GREEN`)
-- Main Benchmark evidence: `34534157220` (`GREEN`)
+- Delivered slices: `62`
+- Delivered main: `431030b930c0c6bcc51c899a66c1fcb97a92e701`
+- Main CI: `34581407701` (`GREEN`)
+- Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
-- Active phase: `M05 skills exact-main acceptance; complete MCP CLI implementation`
-- Next gate: `exact-main CI and artifact-producing Benchmark for merged skills 431030b9; MCP component checks`
+- Active phase: `M05 complete MCP CLI implementation`
+- Next gate: `integrated MCP component checks, then owned transports, persistence and CLI composition`
 <!-- canonical-live-status:end -->
 
-The complete terminal, combined CLI and background CLI are delivered features.
+The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
 The latest behavior commit passes the full Rust 1.94.1 local gate, three fresh
 independent reviews with zero actionable findings, and both feature and main
 CI/Benchmark gates. Native Linux
@@ -42,8 +42,9 @@ do not increment the count or replace the canonical behavior evidence.
 
 Detailed candidate, failure, remediation and review history is retained in the
 [terminal review](reviews/m03-terminal-full-review-01.md),
-[combined CLI review](reviews/m03-cli-full-review-01.md), and
-[background CLI review](reviews/m05-background-cli-review-01.md).
+[combined CLI review](reviews/m03-cli-full-review-01.md),
+[background CLI review](reviews/m05-background-cli-review-01.md), and
+[skills CLI review](reviews/m05-skills-cli-review-01.md).
 This compact plan does not repeat that history.
 
 ### Delivered terminal acceptance boundary
@@ -255,6 +256,7 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 59 | Complete terminal actions, PTY/tmux sessions, durable history/screens, monitors, archives and owned cleanup | [terminal](terminal.md), [host](native-reference-host.md) | [review](reviews/m03-terminal-full-review-01.md) | `229cf94` |
 | 60 | Complete combined CLI, interactive conversation, permissions, workspace authority, session lifecycle, history/undo and recording | [CLI](cli.md), [host](native-reference-host.md) | [review](reviews/m03-cli-full-review-01.md) | `1a142174` |
 | 61 | Complete interactive background list/stop/open/logs, owned terminal control and unified read-only histories | [background CLI](background-cli.md), [host](native-reference-host.md) | [review](reviews/m05-background-cli-review-01.md) | `fe7a793c` |
+| 62 | Complete skills commands, local/Git management, inline picking and prompt-bound invocation/context | [skills CLI](skills-cli.md) | [review](reviews/m05-skills-cli-review-01.md) | `431030b9` |
 
 The exact delivered-main record is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
@@ -312,74 +314,44 @@ All validation/review worktrees are removed and evidence is retained. Earlier
 intermittent terminal failures remain recorded without an unsupported cause or
 source-fix claim in the [review history](reviews/m05-background-cli-review-01.md).
 
-## Merged skills CLI boundary; exact-main acceptance pending
+## Delivered skills CLI boundary
 
-Continue CLI work from merged `main`. Import components remain parked on
-`agent/m61-fx-session-import` at `5e77b1b4`; do not merge that unfinished feature.
 The complete skills CLI is one feature, not separately delivered parser,
-catalog, installer or picker fragments. Its integrated boundary includes:
+catalog, installer or picker fragments. It includes:
 
-- Implement `/skills` and `/skills list`, `show`, `path`, `create`, `add`/`install`,
-  and `remove`, plus inline `$` query/picker selection and exact per-prompt skill
-  invocation. Include local sources, Git URLs/shorthand, filtered/multi-skill
-  installs, replacement and removal; do not reduce installation to local-only
-  no-overwrite behavior. Pasted `npx`/`bunx` forms are parsed, never executed.
-- Native owns explicitly admitted workspace/ancestor, managed and home
-  compatibility roots, ordered discovery, metadata, diagnostics and duplicate
-  locations. Other products' skill roots remain read-only. Capture native
-  environment inputs once; core gains no ambient filesystem or environment
-  access. Existing model `skill`/`install_skill` contracts and permissions do not
-  widen merely because human-invoked CLI management is added.
-- Preserve pinned bounded frontmatter behavior: 64 KiB header, 256-byte name,
-  4 KiB description, supported quoted/block descriptions, basename fallback
-  only without frontmatter, and diagnostics for malformed recognized fields.
-  Bound aggregate discovery, file reads, traversal, entries, rendered output,
-  installation bytes, Git execution and cleanup. Incomplete discovery must not
-  imply that a name is globally unambiguous.
-- Preserve affirmative leading invocation forms and exact picker bindings.
-  Automatic matching must not choose an arbitrary duplicate location or invoke
-  quoted, negated or incidental mentions. Revalidate exact selection/revision
-  before materializing content; metadata and skill text confer no tool grants.
-- Managed publication uses explicit destination authority, deterministic source
-  selection and collision handling, bounded staging/locks, replacement consent,
-  rollback and per-item receipts. Preserve recovery state after uncertain
-  publication/rollback; retain Git/worker ownership through cancellation and
-  cleanup. No package-manager execution, shell interpolation or mutation of fx
-  roots follows from pasted installation syntax.
-- Inline picking preserves the draft, cursor and surrounding text. Bind the
-  selected location to the exact token span and observed frame/catalog/runtime
-  generation; edits, Escape, stale acknowledgements, handoff and reset cannot
-  silently transfer that binding to another prompt.
-- Queue selections with their exact prompt and charge them to queue limits.
-  Materialize after FIFO admission under the captured turn scope, outside
-  runtime locks. Provider-only skill context must preserve canonical user text
-  and permission provenance, obey limits on every round, and not accumulate.
-  Persist only bounded inert context needed for an interrupted continuation;
-  continuation reuses admitted bytes instead of rescanning changed sources.
-  New prompts and finalization cannot leak an earlier turn's skill context.
-- Exercise every command and complete launch path through deterministic native
-  fixtures and the fresh release CLI: discovery/metadata ambiguity, source and
-  destination races, replacement/rollback faults, cancellation, queue ordering,
-  stale picker frames, continuation/restart and provider projection limits.
+- `/skills` list/show/path/create/add/install/remove, local and Git sources,
+  filtered multi-skill installs, replacement consent, removal and owned receipts.
+  Pasted package-manager forms are parsed, never executed; fx roots stay read-only.
+- Explicit native discovery roots, bounded frontmatter and ancestor traversal,
+  duplicate diagnostics, exact revision-bound selection and selected-resource
+  exclusions. Metadata and skill text grant no tool authority.
+- Inline `$` picking bound to the exact draft span and observed generations,
+  with stale acknowledgements, edits, cancellation and handoff handled explicitly.
+- FIFO prompt-bound invocation, bounded provider-only context, preserved canonical
+  user text and permission provenance, and inert checkpoint continuation bytes.
+- Descriptor-bound publication, source revalidation, rollback/uncertainty receipts,
+  bounded Git execution and retained cleanup ownership.
 
-Candidate `431030b930c0c6bcc51c899a66c1fcb97a92e701` passed the complete local
-gate after one unchanged macOS runtime retry; the original intermittent
-child-reaping timeout is retained without a cause or source-fix claim. Three
-new independent R5 reviewers reported zero findings. Exact feature CI
-`34578473915` and Benchmark `34578474071` passed with both required unexpired
-artifacts, and `main` was fast-forwarded and pushed. Exact-main gates remain
-required before incrementing the delivered count or replacing canonical behavior
-evidence. All completed repair/review worktrees are removed. The clean Linux
-validation tree is retained only for final bounded documentation validation.
+The accepted behavior passed the complete local gate, three newly spawned R5
+review tracks with zero findings, and exact feature/main CI and artifact-producing
+Benchmark gates. Both exact-main artifacts are retained and unexpired. Main was
+advanced by fast-forward without force. The initial intermittent macOS reaping
+timeout and one unchanged passing retry remain recorded without a cause or
+source-fix claim. All completed skills worktrees are removed; external evidence
+and caches are retained. This is regression acceptance, not an M07 performance
+claim.
+
 The [skills CLI contract](skills-cli.md) owns durable behavior and the
 [skills CLI review](reviews/m05-skills-cli-review-01.md) retains detailed evidence.
+Import components remain parked on `agent/m61-fx-session-import` at `5e77b1b4`;
+do not merge that unfinished feature.
 
 ## Active complete feature: production MCP and CLI
 
-Build one complete production MCP feature, including `/mcp`, on the new branch
-while the immutable merged skills commit completes its main gates. MCP component
-commits are not deliveries; do not push an accepted-feature claim before its
-own full local gate, three fresh review tracks and exact remote gates.
+Build one complete production MCP feature, including `/mcp`, from accepted
+`main`. MCP component commits are not deliveries; do not push an accepted-feature
+claim before its own full local gate, three fresh review tracks and exact remote
+gates.
 
 - Complete `/mcp` summary/list/path/add/remove/reload, resource
   list/templates/read/complete, prompt list/get/complete, auth with explicit
