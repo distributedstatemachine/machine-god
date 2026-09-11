@@ -72,7 +72,7 @@ pub enum McpStdioReadEnd {
     CleanEof,
     /// EOF was observed with an unterminated frame.
     IncompleteEof,
-    /// A bounded discovery-timeout snapshot observed WouldBlock with no frame
+    /// A bounded discovery-timeout snapshot observed `WouldBlock` with no frame
     /// or partial input. This is a cutoff observation, not an EOF guarantee.
     DiscoveryTimeoutQuiescent,
     /// No clean EOF proof: unread bytes may still contain a response.
