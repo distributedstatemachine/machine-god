@@ -148,7 +148,16 @@ while IFS= read -r line; do :; done
     assert_eq!(peer.reserve_tool_id(), Err(McpPeerError::Capacity));
     peer.discard_tool_id();
     assert_eq!(peer.reserve_tool_id().unwrap(), RpcId::Integer(5));
+    peer.discard_tool_id();
+    let lease = peer.reserve_tool().unwrap();
+    assert_eq!(lease.rpc_id(), &RpcId::Integer(6));
+    assert!(peer.reserve_tool().is_err());
+    drop(lease);
+    let lease = peer.reserve_tool().unwrap();
+    assert_eq!(lease.rpc_id(), &RpcId::Integer(7));
     peer.close();
+    drop(lease);
+    assert!(peer.reserve_tool().is_err());
 }
 
 #[test]

@@ -1,10 +1,13 @@
 //! Weak exact-conversation routing; lookup data cannot register or authorize work.
 
-use super::submission::{McpSubmissionRegistry, McpSubmissionTurnRegistration};
+use super::submission::McpSubmissionRegistry;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+use super::submission::McpSubmissionTurnRegistration;
 use machine_god_core::{
-    BoxFuture, PermissionRequest, Session, SessionId, SessionIncarnationId, ToolContext, Turn,
-    TurnId,
+    BoxFuture, PermissionRequest, SessionId, SessionIncarnationId, ToolContext, TurnId,
 };
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+use machine_god_core::{Session, Turn};
 use std::{
     fmt,
     sync::{
@@ -46,6 +49,7 @@ impl NativeMcpContexts {
         Self::default()
     }
 
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     pub(crate) fn register(&self, session: &Session) -> Result<Arc<McpContextSession>> {
         let id = session.id();
         let incarnation = session.incarnation_id();
@@ -107,6 +111,7 @@ impl NativeMcpContexts {
     /// snapshot is already unavailable. Its registration remains exclusive
     /// until the actual owner drops it. No registry destructor runs under a
     /// router/session lock.
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     pub(crate) fn close_turn(
         &self,
         id: &SessionId,
@@ -186,6 +191,7 @@ impl Drop for NativeMcpContexts {
 #[derive(Default)]
 struct Active {
     route: Option<Weak<McpContextTurn>>,
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     last: Option<TurnId>,
 }
 
@@ -197,6 +203,7 @@ pub(crate) struct McpContextSession {
     routes: Weak<Routes>,
 }
 impl McpContextSession {
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     pub(crate) fn begin(
         self: &Arc<Self>,
         session: &Session,
@@ -292,11 +299,13 @@ impl McpContextTurn {
 }
 
 /// Native turn owner; snapshots retain no copy of this registration.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 pub(crate) struct McpContextRegistration {
     owner: Arc<McpContextSession>,
     state: Arc<McpContextTurn>,
     registration: Option<McpSubmissionTurnRegistration>,
 }
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 impl Drop for McpContextRegistration {
     fn drop(&mut self) {
         {

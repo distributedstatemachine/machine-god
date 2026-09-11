@@ -254,6 +254,28 @@ impl Fixture {
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn ready_http_with_id(&self, call: &str, head: &McpSubmissionHttpHead, id: RpcId) {
+        self.admission(call, self.prepare_http_with_id(call, head, id))
+            .admit()
+            .unwrap();
+    }
+    #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
+    pub(crate) fn ready_http_with_reservation(
+        &self,
+        call: &str,
+        head: &McpSubmissionHttpHead,
+        lease: McpToolReservation,
+    ) {
+        let mut prepared = self.prepare_http_with_id(call, head, lease.rpc_id().clone());
+        prepared.data.tool_reservation = Some(lease);
+        self.admission(call, prepared).admit().unwrap();
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn prepare_http_with_id(
+        &self,
+        call: &str,
+        head: &McpSubmissionHttpHead,
+        id: RpcId,
+    ) -> PreparedMcpSubmission {
         let request = self.request(call);
         let Capability::Tool {
             name,
@@ -270,7 +292,7 @@ impl Fixture {
             RpcId::Null => panic!("tool fixture requires a request ID"),
         };
         let wire = serde_json::to_vec(&wire).unwrap();
-        let prepared = block_on(self.registry.prepare_http(
+        block_on(self.registry.prepare_http(
             &request,
             PermissionInvocation {
                 tool_name: name,
@@ -282,8 +304,7 @@ impl Fixture {
             &wire,
             CancellationToken::new(),
         ))
-        .unwrap();
-        self.admission(call, prepared).admit().unwrap();
+        .unwrap()
     }
     pub(crate) fn claim(
         &self,

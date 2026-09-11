@@ -68,19 +68,27 @@ Each `McpToolMetadata` entry owns:
 
 - one unique valid dynamic-tool `name` using the core `ToolName` grammar;
 - one nonempty server alias of at most 128 ASCII bytes;
-- one source description of at most 8,192 UTF-8 bytes;
-- at most 32 nonempty tags, each at most 128 UTF-8 bytes; and
-- at most 65,536 UTF-8 bytes of private schema-derived or instruction-derived
+- one source description of at most 65,536 UTF-8 bytes;
+- at most 32 nonempty tags, each at most 256 UTF-8 bytes; and
+- at most 524,288 UTF-8 bytes of private schema-derived or instruction-derived
   search text.
 
 Tags are ASCII-lowercased and stable-deduplicated. Input string and collection
 capacity is normalized before retention, so caller-reserved excess capacity
 cannot escape the catalog bound. The private search text is included in
 matching but has no public accessor and is never projected. A
-snapshot rejects duplicate names, more than 1,024 entries, checked-arithmetic
-failure, or more than 8 MiB of retained owned string bytes, including its
+snapshot rejects duplicate names, more than 131,072 entries (64 configured
+servers times 2,048 tools), checked-arithmetic failure, or more than 64 MiB of
+retained owned string/specification bytes, including its
 private lowercased search haystacks. Construction is atomic and does not skip,
 rename, or partially retain invalid entries.
+
+These admission capacities retain full pinned descriptions, 256 KiB input
+schemas and remote-name tags. A selected serialized specification may occupy
+up to 1 MiB, including JSON escaping; private search text has its own 512 KiB
+bound. They do not increase model-visible search result limits or matching-work
+budgets. Descriptor admission and snapshot construction retain independent
+aggregate budgets, and production publication must complete both atomically.
 
 The injected catalog is a trusted composition boundary, not authority granted
 by the model. Its implementation may eventually own bounded MCP discovery, but

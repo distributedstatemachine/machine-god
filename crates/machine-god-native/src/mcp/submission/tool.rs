@@ -163,14 +163,17 @@ impl McpToolRequest {
     }
 
     /// Exact canonical invocation evidence, not the HTTP header projection.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn arguments_json(&self) -> &str {
         std::str::from_utf8(&self.arguments).expect("JSON serialization is UTF-8")
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn binding(&self) -> &super::McpSubmissionRuntimeBinding {
         &self.runtime.binding
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn revalidate(&self) -> Result<()> {
         self.runtime.live()
     }

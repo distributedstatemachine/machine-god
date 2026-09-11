@@ -18,6 +18,18 @@ struct Operation<'a> {
     peer: &'a mut McpHttpPeer,
     settled: bool,
 }
+impl<'a> Operation<'a> {
+    fn begin(peer: &'a mut McpHttpPeer) -> Self {
+        // Limits bound one caller-driven operation, not the useful lifetime of
+        // a server that has already released earlier event/reconnect state.
+        peer.operation_events = 0;
+        peer.listener_reconnects = 0;
+        Self {
+            peer,
+            settled: false,
+        }
+    }
+}
 impl Drop for Operation<'_> {
     fn drop(&mut self) {
         if !self.settled {
@@ -80,7 +92,10 @@ pub(super) async fn call(
     deadline: Instant,
 ) -> Result<McpHttpPeerFrame> {
     peer.check(deadline)?;
-    if peer.reserved.as_ref() != Some(submission.rpc_id()) {
+    if !peer
+        .reserved
+        .matches(submission.rpc_id(), submission.tool_reservation())
+    {
         return Err(McpHttpPeerError::Correlation);
     }
     let runtime = peer
@@ -90,11 +105,11 @@ pub(super) async fn call(
         .cloned()
         .ok_or(McpHttpPeerError::Invalid)?;
     validate_projected_head(peer, &projected)?;
-    let id = peer.reserved.take().ok_or(McpHttpPeerError::Correlation)?;
-    let mut operation = Operation {
-        peer,
-        settled: false,
-    };
+    let id = peer
+        .reserved
+        .take(submission.rpc_id(), submission.tool_reservation())
+        .ok_or(McpHttpPeerError::Correlation)?;
+    let mut operation = Operation::begin(peer);
     let mut cancelled = submission.cancelled_owned();
     let connection = operation.peer.connection(projected, deadline)?;
     let observation = connection.observation();
@@ -215,10 +230,7 @@ pub(super) async fn catalog(
     {
         return Err(McpHttpPeerError::Invalid);
     }
-    let mut operation = Operation {
-        peer,
-        settled: false,
-    };
+    let mut operation = Operation::begin(peer);
     let peer = &mut *operation.peer;
     let mut builder = McpCatalogBuilder::new(kind, peer.protocol.version, limits)
         .map_err(|_| McpHttpPeerError::Limit)?;
@@ -292,10 +304,7 @@ pub(super) async fn start_listener(peer: &mut McpHttpPeer, deadline: Instant) ->
     if peer.protocol.transport == TransportKind::LegacySse {
         return Err(McpHttpPeerError::Closed);
     }
-    let mut operation = Operation {
-        peer,
-        settled: false,
-    };
+    let mut operation = Operation::begin(peer);
     let result = open_listener(operation.peer, deadline).await;
     operation.settled =
         result.is_ok() || matches!(result, Err(McpHttpPeerError::ListenerUnsupported));
@@ -314,10 +323,7 @@ pub(super) async fn next_notification(
     if peer.listener.is_none() {
         return Err(McpHttpPeerError::ListenerUnsupported);
     }
-    let mut operation = Operation {
-        peer,
-        settled: false,
-    };
+    let mut operation = Operation::begin(peer);
     loop {
         let peer = &mut *operation.peer;
         let read = peer.listener.as_mut().ok_or(McpHttpPeerError::Closed)?;
@@ -344,8 +350,8 @@ pub(super) async fn next_notification(
 }
 
 pub(super) fn charge_event(peer: &mut McpHttpPeer) -> Result<()> {
-    peer.observed_events += 1;
-    if peer.observed_events > 4096 {
+    peer.operation_events += 1;
+    if peer.operation_events > 4096 {
         return Err(McpHttpPeerError::Limit);
     }
     Ok(())

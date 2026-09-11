@@ -73,12 +73,15 @@ impl McpSubmissionRuntimeBinding {
     pub(crate) fn schema_bytes(&self) -> &[u8] {
         &self.schema
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn server(&self) -> &str {
         &self.server
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn configuration_bytes(&self) -> &[u8] {
         &self.configuration
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn authentication_bytes(&self) -> &[u8] {
         &self.authentication
     }

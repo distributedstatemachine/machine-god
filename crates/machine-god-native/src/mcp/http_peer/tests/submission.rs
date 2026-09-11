@@ -2,6 +2,81 @@ use super::*;
 use crate::mcp::submission::tests::Fixture;
 
 #[test]
+fn abandoned_leases_release_unsent_slots_and_cannot_discard_replacements() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let selected = options(
+            listener.local_addr().unwrap(),
+            TransportKind::StreamableHttp,
+        );
+        let server = async {
+            legacy_start(&listener, "2025-11-25", "leased-session").await;
+            let request = accept_reply(
+                &listener,
+                200,
+                JSON,
+                &success(7, serde_json::json!({"content":[]})),
+            )
+            .await;
+            let split = memchr::memmem::find(&request, b"\r\n\r\n").unwrap() + 4;
+            let body = machine_god_core::json::from_slice(&request[split..]).unwrap();
+            assert_eq!(body["id"], 7);
+            assert_eq!(body["method"], "tools/call");
+        };
+        let client = async {
+            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
+                .await
+                .unwrap();
+            let fixture = Fixture::new();
+            peer.admit_runtimes(vec![fixture.runtime.clone()]).unwrap();
+            let abandoned = peer.reserve_tool().unwrap();
+            assert_eq!(abandoned.rpc_id(), &RpcId::Integer(3));
+            assert!(peer.reserve_tool().is_err());
+            drop(abandoned);
+            let head = Arc::new(peer.request_head().unwrap());
+            let unsubmitted = peer.reserve_tool().unwrap();
+            assert_eq!(unsubmitted.rpc_id(), &RpcId::Integer(4));
+            fixture.ready_http_with_reservation("unsubmitted", &head, unsubmitted);
+            assert!(peer.reserve_tool().is_err());
+            let claimed = fixture
+                .claim("unsubmitted", CancellationToken::new())
+                .await
+                .unwrap();
+            assert!(peer.reserve_tool().is_err());
+            drop(claimed);
+            let stale = peer.reserve_tool().unwrap();
+            assert_eq!(stale.rpc_id(), &RpcId::Integer(5));
+            peer.discard_tool_id();
+            assert_eq!(peer.reserve_tool_id().unwrap(), RpcId::Integer(6));
+            drop(stale);
+            assert!(peer.reserve_tool().is_err());
+            peer.discard_tool_id();
+            let actual = peer.reserve_tool().unwrap();
+            assert_eq!(actual.rpc_id(), &RpcId::Integer(7));
+            fixture.ready_http_with_id("no-marker", &head, actual.rpc_id().clone());
+            let forged = fixture
+                .claim("no-marker", CancellationToken::new())
+                .await
+                .unwrap();
+            assert!(matches!(
+                peer.call(forged, head.clone(), deadline()).await,
+                Err(McpHttpPeerError::Correlation)
+            ));
+            assert!(peer.reserve_tool().is_err());
+            fixture.ready_http_with_reservation("actual", &head, actual);
+            let submission = fixture
+                .claim("actual", CancellationToken::new())
+                .await
+                .unwrap();
+            let response = peer.call(submission, head, deadline()).await.unwrap();
+            assert_eq!(response.envelope().id(), Some(&RpcId::Integer(7)));
+            assert!(peer.reserve_tool().is_ok());
+        };
+        join(client, server).await;
+    });
+}
+
+#[test]
 fn allocated_tool_id_and_exact_native_proof_reach_owned_http_writer() {
     executor().block_on(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();

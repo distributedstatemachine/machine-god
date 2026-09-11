@@ -64,6 +64,14 @@ An observed legacy cancellation/deadline after submission permits one best-effor
 cancelled notification within 100 ms while the peer owner remains live. It does
 not prove remote cancellation. Abandoned futures spawn no notification worker.
 
+`reserve_tool` returns a non-clone reservation for the typed request to own
+through permission and submission. Its weak peer slot becomes reclaimable when
+an unsent request is dropped or denied. The final call checks allocation identity
+as well as its wire ID, so a stale owner cannot release another call's slot and
+a raw request with the same number cannot consume a leased reservation.
+Destruction performs no callbacks or network work. The manual `reserve_tool_id`
+API remains available with explicit discard; neither form reuses consumed IDs.
+
 Typed catalog controls return raw candidates, not executable publication.
 Notifications/progress remain bounded untrusted envelopes. Modern server
 requests fail as at the pin; legacy request-stream server requests receive a
@@ -72,14 +80,17 @@ elicitation/continuation replies remain a separate runtime boundary.
 
 ## Bounds and cleanup
 
-Peer lifetime is at most 24 hours, with shorter operation deadlines. IDs use
+Peer lifetime is explicitly host-selected, independently of the connector's
+24-hour maximum for one exchange; each operation still has a finite deadline. IDs use
 positive signed-64-bit integers and fail on exhaustion. Limits are 2,048 runtime
 allocations, eight live exchange observations, one listener, 64 queued events
-totaling 1 MiB, and 4,096 admitted events per peer. Each response operation
+totaling 1 MiB, and 4,096 admitted events per caller operation. Each response stream
 processes at most 1,024 events; JSON frames are at most 8 MiB. Connector/SSE
 byte, line and depth limits apply independently; one stream has a 64 MiB body
 budget. Requests allow at most eight GET resumptions and listeners 32 reconnects
-over their lifetime, bounding aggregate reopened streams. Retry delays are
+per caller operation, bounding reopened streams without exhausting a healthy
+peer's lifetime through prior completed work. Queue retention does not reset
+between operations. Retry delays are
 capped at 60 seconds and cursors at 4 KiB. Authentication challenges retain at
 most eight fields totaling 16 KiB for separately authorized handling.
 

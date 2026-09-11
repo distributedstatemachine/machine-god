@@ -114,6 +114,58 @@ fn injected_clock_controls_peer_connector_write_and_response_deadlines() {
 }
 
 #[test]
+fn completed_operations_do_not_exhaust_event_or_owner_lifetime_budgets() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let mut selected = options(
+            listener.local_addr().unwrap(),
+            TransportKind::StreamableHttp,
+        );
+        selected.lifetime_deadline = Instant::now() + Duration::from_secs(7 * 24 * 60 * 60);
+        let server = async {
+            accept_reply(&listener, 200, JSON, &modern(1)).await;
+            accept_reply(
+                &listener,
+                200,
+                JSON,
+                &success(2, serde_json::json!({"tools":[]})),
+            )
+            .await;
+        };
+        let client = async {
+            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
+                .await
+                .unwrap();
+            for _ in 0..4096 {
+                routing::charge_event(&mut peer).unwrap();
+            }
+            assert!(matches!(
+                routing::charge_event(&mut peer),
+                Err(McpHttpPeerError::Limit)
+            ));
+            peer.listener_reconnects = 32;
+            let notification = br#"{"jsonrpc":"2.0","method":"notifications/progress"}"#;
+            peer.retain(McpHttpPeerFrame::parse(notification.as_slice().into()).unwrap())
+                .unwrap();
+            peer.catalog(
+                McpCatalogKind::Tools,
+                McpCatalogLimits::default(),
+                Instant::now(),
+                deadline(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(peer.operation_events, 0);
+            assert_eq!(peer.listener_reconnects, 0);
+            assert_eq!(peer.take_notification().unwrap().bytes(), notification);
+            routing::charge_event(&mut peer).unwrap();
+            assert!(!peer.completion().is_complete());
+        };
+        join(client, server).await;
+    });
+}
+
+#[test]
 fn unsupported_listener_preserves_peer_but_expired_session_retires_it() {
     executor().block_on(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();

@@ -1,6 +1,6 @@
 use super::routing::{bounded, exchange, request};
 use super::{
-    Arc, CancellationToken, Completion, Duration, Instant, McpHttpControl, McpHttpPeer,
+    Arc, CancellationToken, Completion, Instant, McpHttpControl, McpHttpPeer,
     McpHttpPeerCompletion, McpHttpPeerError, McpHttpPeerOptions, McpPeerCapabilities,
     McpSubmissionHttpHead, NegotiatedProtocol, ProtocolVersion, Result, TransportKind, VecDeque,
     head, stream,
@@ -11,12 +11,7 @@ use crate::mcp::{
 };
 
 fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result<McpHttpPeer> {
-    if options.transport == TransportKind::Stdio
-        || options
-            .lifetime_deadline
-            .saturating_duration_since(options.clock.now())
-            > Duration::from_secs(24 * 60 * 60)
-    {
+    if options.transport == TransportKind::Stdio {
         return Err(McpHttpPeerError::Invalid);
     }
     let transport = options.transport;
@@ -39,11 +34,11 @@ fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result
         listener_resume: stream::Resume::default(),
         listener_reconnects: 0,
         next_id: Some(1),
-        reserved: None,
+        reserved: super::McpPendingToolReservation::default(),
         runtimes: Vec::new(),
         notifications: VecDeque::new(),
         notification_bytes: 0,
-        observed_events: 0,
+        operation_events: 0,
         closed: false,
     })
 }

@@ -392,33 +392,37 @@ projections, SSE framing, profile persistence, raw catalog assembly and one-shot
 submission. Native profile management and thin `/mcp` startup/dispatch/receipts
 are composed, but configuration saves explicitly do not activate a runtime.
 Owned stdio peers now drive negotiation, correlated requests, raw catalogs and
-bounded timeout snapshots. The CLI build also includes the owned HTTP/TLS
-connector, exact proof-bearing writes and bounded streaming responses.
+bounded timeout snapshots. Owned HTTP peers compose modern/legacy negotiation,
+exact proof-bearing HTTP/TLS writes, SSE/session/listener routing and cleanup.
+Exact JSON values now survive provider, permission and history codecs without
+rounding or treating literal private-looking keys as scalar values. Complete
+tool/resource/template/prompt descriptors and deterministic named candidates are
+admitted separately from runtime publication and execution authority.
+Schema/index/pattern storage is now charged against independent retained-memory
+and catalog budgets; exhausted optional pattern caches still evaluate on demand.
 
 Admitted schemas now back typed tool requests, modern/legacy client metadata,
 progress-token selection and modern HTTP argument headers. These projections
 retain the existing one-shot permission/writer boundary; raw preparation remains
 strict. Catalog page and stdio runtime capacities match the pinned per-server
 tool/resource/prompt cardinalities without removing independent byte limits.
-
-Earlier transport component `69fb2d73` passed 246 MCP tests, 458 CLI tests,
-strict workspace Clippy, doctests and fresh-release macOS fixtures. Its separate
-minimal-feature lint probe retained 54 parent-identical dead-code diagnostics;
-that extra probe was not green. Detailed command evidence remains with the
-component's historical plan revision. Completed worktrees are removed; evidence
-and caches remain. These are internal regression checks, not feature delivery.
+Search/select retain complete admitted descriptions and schemas under separate
+catalog/model-spec budgets. Peer-minted request reservations now travel through
+permission and submission; abandoning unsent work releases only its own slot.
+Native permission preparation now composes exact builtin/MCP routing, required
+schema review, per-turn workspace evidence and credential-free reusable keys.
+Proof and request ownership remain checked through core admission and writing.
 
 Exact conversation/turn routing is also integrated into both CLI setup paths.
-Commit `1990eec5` passes 65 focused non-process tests, strict workspace
-all-target/all-feature Clippy, formatting and workspace doctests on Rust 1.94.1.
-The composed-host test exercises actual turn enrollment and finalization; the
-completed routing worktree is removed. These remain component checks, without
-a new release/platform/full-feature/remote gate or delivery claim.
+Earlier component checks remain in historical plan revisions and retained
+evidence. The extra minimal-feature lint probe retained parent-identical
+diagnostics. Completed worktrees are removed after integration; evidence and
+caches remain. Internal checks do not establish a full-feature, platform,
+adversarial or remote delivery gate.
 
 These components do not constitute a delivered runtime. Remaining composition
-must own admitted DNS, HTTP/SSE negotiation and session/listener lifecycle,
-typed feature/control authority, input/continuation custody,
-lossless end-to-end provider/permission JSON projection, atomic
+must own native startup/DNS, peers through reload/finalization,
+typed feature/control authority, input/continuation custody, atomic
 catalog publication, authentication and CLI activation/finalization. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.

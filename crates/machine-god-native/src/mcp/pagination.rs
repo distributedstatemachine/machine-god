@@ -282,7 +282,14 @@ impl McpCatalogBuilder {
             bytes,
             WireLimits {
                 max_frame_bytes: self.limits.max_response_bytes - state.response_bytes,
-                max_depth: 64,
+                // Pinned common feature envelopes count root depth as zero;
+                // the wire visitor counts it as one. Tools retain the schema
+                // transport ceiling instead of the common feature ceiling.
+                max_depth: if self.kind == McpCatalogKind::Tools {
+                    64
+                } else {
+                    33
+                },
                 max_nodes: self.limits.max_nodes - state.nodes,
             },
         )

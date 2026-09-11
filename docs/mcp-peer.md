@@ -51,6 +51,16 @@ reservations consume their IDs permanently. No request is automatically replayed
 Successful writing is not remote execution success; returned responses remain
 untrusted data requiring method-specific result handling.
 
+Production preparation uses `reserve_tool` and moves its non-clone reservation
+into `McpToolRequest::with_reservation`. The peer retains only a weak allocation
+observer. Dropping an unprepared request, unpolled preparation, denied admission
+or unsubmitted claimed value makes the unsent slot available again, without I/O
+or reusing its ID. A call must retain that exact allocation; matching the number
+alone is insufficient. Dropping a stale reservation cannot clear a replacement.
+The older `reserve_tool_id` interface remains explicitly manually discarded and
+does not accept another peer's lease. Already attempted calls retain the existing
+no-replay and connection-cleanup rules.
+
 The peer polls stdout while a request write is still pending, preventing ordinary
 bidirectional pipe backpressure from stalling correlation. Unsupported server
 requests receive the fixed method-not-found response, with at most seven queued

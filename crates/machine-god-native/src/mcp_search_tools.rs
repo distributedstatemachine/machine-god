@@ -25,23 +25,23 @@ pub const MAX_MCP_SEARCH_QUERY_BYTES: usize = 4 * 1024;
 /// Maximum searchable tokens accepted in one query.
 pub const MAX_MCP_SEARCH_QUERY_TOKENS: usize = 64;
 /// Maximum entries in one immutable catalog snapshot.
-pub const MAX_MCP_TOOL_CATALOG_ENTRIES: usize = 1_024;
+pub const MAX_MCP_TOOL_CATALOG_ENTRIES: usize = 64 * 2_048;
 /// Maximum aggregate retained metadata and private search-text bytes.
-pub const MAX_MCP_TOOL_CATALOG_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_MCP_TOOL_CATALOG_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum UTF-8 bytes in one configured server identity.
 pub const MAX_MCP_TOOL_SERVER_BYTES: usize = 128;
 /// Maximum UTF-8 bytes accepted in one source description.
-pub const MAX_MCP_TOOL_DESCRIPTION_BYTES: usize = 8 * 1024;
+pub const MAX_MCP_TOOL_DESCRIPTION_BYTES: usize = 64 * 1024;
 /// Maximum UTF-8 bytes from one description projected to the model.
 pub const MAX_MCP_SEARCH_DESCRIPTION_BYTES: usize = 1_024;
 /// Maximum private schema-derived search bytes retained for one tool.
-pub const MAX_MCP_TOOL_SEARCH_TEXT_BYTES: usize = 64 * 1024;
+pub const MAX_MCP_TOOL_SEARCH_TEXT_BYTES: usize = 512 * 1024;
 /// Maximum tags retained for one tool.
 pub const MAX_MCP_TOOL_TAGS: usize = 32;
 /// Maximum UTF-8 bytes retained in one tag.
-pub const MAX_MCP_TOOL_TAG_BYTES: usize = 128;
+pub const MAX_MCP_TOOL_TAG_BYTES: usize = 256;
 /// Maximum serialized provider-visible specification retained for selection.
-pub const MAX_MCP_SELECTED_TOOL_SPEC_BYTES: usize = 64 * 1024;
+pub const MAX_MCP_SELECTED_TOOL_SPEC_BYTES: usize = 1024 * 1024;
 /// Maximum JSON container depth admitted in one executable MCP input schema.
 pub const MAX_MCP_TOOL_SCHEMA_DEPTH: usize = 64;
 /// Maximum JSON nodes admitted in one executable MCP input schema.
@@ -1039,6 +1039,87 @@ mod tests {
     use machine_god_core::{SessionId, SessionIncarnationId, ToolCallId, TurnId};
 
     use super::*;
+
+    struct MetadataOnlyTool(ToolSpec);
+    impl Tool for MetadataOnlyTool {
+        fn spec(&self) -> ToolSpec {
+            self.0.clone()
+        }
+        fn execute(
+            &self,
+            _: ToolContext,
+            _: Value,
+            _: CancellationToken,
+        ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+            Box::pin(async { panic!("metadata admission cannot execute a tool") })
+        }
+    }
+
+    #[test]
+    fn full_pinned_descriptor_survives_executable_search_snapshot_projection() {
+        let mut schema = json!({"type":"object","description":""});
+        let overhead = serde_json::to_vec(&schema).unwrap().len();
+        schema["description"] = Value::String("s".repeat(256 * 1024 - overhead));
+        let schema_json = serde_json::to_string(&schema).unwrap();
+        assert_eq!(schema_json.len(), 256 * 1024);
+        crate::mcp::schema::McpSchema::parse(
+            schema_json.as_bytes(),
+            crate::mcp::schema::McpSchemaLimits::default(),
+        )
+        .unwrap();
+        let description = "\0".repeat(64 * 1024);
+        let spec = ToolSpec {
+            name: ToolName::new("mcp_server_full").unwrap(),
+            description: description.clone(),
+            input_schema: schema,
+        };
+        let serialized = serde_json::to_vec(&spec).unwrap();
+        assert!(serialized.len() > 640 * 1024);
+        let metadata = McpToolMetadata::new(
+            "mcp_server_full",
+            "server",
+            description,
+            "s".repeat(512 * 1024),
+            vec!["t".repeat(256)],
+        )
+        .unwrap()
+        .with_tool(MetadataOnlyTool(spec))
+        .unwrap();
+        let snapshot = McpToolCatalogSnapshot::new(vec![metadata]).unwrap();
+        let selected = &snapshot.tools[0];
+        assert_eq!(selected.description().len(), 64 * 1024);
+        assert_eq!(selected.tags()[0].len(), 256);
+        assert_eq!(
+            serde_json::to_vec(selected.executable().unwrap().spec()).unwrap(),
+            serialized
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_byte_limit_remains_independent_of_entry_limit() {
+        let mut tools = Vec::new();
+        let mut charged = 0;
+        loop {
+            let next = McpToolMetadata::new(
+                format!("mcp_server_{}", tools.len()),
+                "server",
+                "d",
+                "x".repeat(MAX_MCP_TOOL_SEARCH_TEXT_BYTES),
+                vec![],
+            )
+            .unwrap();
+            charged += next.retained_bytes;
+            tools.push(next);
+            if charged > MAX_MCP_TOOL_CATALOG_BYTES {
+                break;
+            }
+        }
+        assert!(tools.len() < MAX_MCP_TOOL_CATALOG_ENTRIES);
+        assert_eq!(
+            McpToolCatalogSnapshot::new(tools).unwrap_err().kind(),
+            McpToolCatalogBuildErrorKind::ResourceLimit
+        );
+    }
 
     #[test]
     fn exact_json_executable_projection_preserves_schema_and_serialized_budget() {

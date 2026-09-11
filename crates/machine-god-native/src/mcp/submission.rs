@@ -29,6 +29,7 @@ use crate::NativePermissionExecutionProof;
 
 mod reservation;
 mod runtime;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 pub(crate) use reservation::McpPendingToolReservation;
 pub use reservation::McpToolReservation;
 pub use runtime::{McpSubmissionRuntime, McpSubmissionRuntimeBinding, McpSubmissionRuntimeOwner};
@@ -558,6 +559,7 @@ pub struct PreparedMcpSubmission {
 }
 impl PreparedMcpSubmission {
     /// Rechecks the retained exact reservation without granting execution.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn revalidate(&self) -> Result<()> {
         check(&self.data.cancellation)?;
         self.data.runtime.live()?;
@@ -610,6 +612,15 @@ impl PermissionExecutionAdmission for McpSubmissionAdmission {
 }
 impl McpSubmissionAdmission {
     fn publish(self) -> Result<()> {
+        if self
+            .ready
+            .data
+            .tool_reservation
+            .as_ref()
+            .is_some_and(|lease| lease.rpc_id() != &self.ready.data.rpc_id)
+        {
+            return Err(McpSubmissionError::Denied);
+        }
         let registry = self
             .ready
             .data
@@ -653,6 +664,7 @@ pub struct McpSubmission {
     attempted: bool,
 }
 impl McpSubmission {
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     pub(crate) fn tool_reservation(&self) -> Option<&McpToolReservation> {
         self.ready.data.tool_reservation.as_ref()
     }

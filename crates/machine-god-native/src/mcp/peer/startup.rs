@@ -40,7 +40,7 @@ pub(super) async fn connect(
         timer,
         cancellation,
         next_id: Some(1),
-        reserved: None,
+        reserved: super::McpPendingToolReservation::default(),
         notifications: VecDeque::new(),
         notification_bytes: 0,
         closed: false,

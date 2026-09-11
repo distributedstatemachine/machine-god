@@ -1260,7 +1260,7 @@ mod parser_budget_tests {
         let value = machine_god_core::json::from_str("9007199254740993.0").unwrap();
         assert_eq!(
             super::integer_value(value).unwrap(),
-            serde_json::json!(9007199254740992_u64)
+            serde_json::json!(9_007_199_254_740_992_u64)
         );
     }
 

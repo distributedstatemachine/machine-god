@@ -41,7 +41,10 @@ authorize cross-owner or cross-generation publication.
 Default limits are also hard maxima; callers may lower them but cannot select
 zero: 64 pages, 4,096 items, 16 MiB cumulative response bytes, 8 MiB cumulative
 retained item JSON plus identity bytes, 4 KiB per cursor, and 262,144 cumulative
-JSON nodes/keys. Wire depth is 64. Cursors additionally occupy at most 64 bounded
+JSON nodes/keys. Tools retain wire depth 64 (root counted as one).
+Resource/template/prompt envelopes use the pinned common feature depth 32 with
+root counted as zero, including ignored envelope metadata. This corresponds to
+33 in the wire visitor. Cursors additionally occupy at most 64 bounded
 entries plus one next-cursor copy. The builder additionally caps the selected
 family at the pinned 2,048 tools or 4,096 resources/templates/prompts; callers'
 lower item limits still apply. Tool/prompt identity lengths are 256 bytes;

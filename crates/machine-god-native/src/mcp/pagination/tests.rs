@@ -447,6 +447,37 @@ fn default_catalogs_admit_exact_pinned_family_cardinalities() {
 }
 
 #[test]
+fn common_feature_envelope_depth_counts_ignored_metadata_and_root_offset() {
+    for kind in [
+        McpCatalogKind::Tools,
+        McpCatalogKind::Resources,
+        McpCatalogKind::ResourceTemplates,
+        McpCatalogKind::Prompts,
+    ] {
+        for deepest in [32, 33] {
+            let mut builder = builder(kind, ProtocolVersion::Modern);
+            // Envelope root is pinned depth0, this metadata value starts at1.
+            let mut metadata = json!(0);
+            for _ in 1..deepest {
+                metadata = json!([metadata]);
+            }
+            let bytes = serde_json::to_vec(
+                &json!({"jsonrpc":"2.0","id":1,"result":{kind.field():[]},"ignored":metadata}),
+            )
+            .unwrap();
+            let accepted = kind == McpCatalogKind::Tools || deepest == 32;
+            assert_eq!(
+                builder
+                    .append_response(&bytes, &RpcId::Integer(1), None, 0)
+                    .is_ok(),
+                accepted
+            );
+            assert_eq!(builder.finish().is_ok(), accepted);
+        }
+    }
+}
+
+#[test]
 fn debug_and_errors_never_expose_cursors_or_catalog_data() {
     let mut b = builder(McpCatalogKind::Tools, ProtocolVersion::Modern);
     append(

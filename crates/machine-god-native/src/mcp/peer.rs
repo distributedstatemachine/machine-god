@@ -10,7 +10,9 @@ use machine_god_core::{BoxFuture, CancellationToken};
 use super::pagination::{McpCatalogKind, McpCatalogLimits, McpRawCatalog};
 use super::protocol::{NegotiatedProtocol, NegotiationFailure, RpcEnvelope, RpcId};
 use super::stdio::{McpStdioConnection, McpStdioError, McpStdioLaunch};
-use super::submission::{McpSubmission, McpSubmissionRuntime};
+use super::submission::{
+    McpPendingToolReservation, McpSubmission, McpSubmissionRuntime, McpToolReservation,
+};
 use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
 
 mod capabilities;
@@ -78,7 +80,7 @@ pub struct McpStdioPeer {
     timer: Arc<dyn McpPeerTimer>,
     cancellation: CancellationToken,
     next_id: Option<i64>,
-    reserved: Option<RpcId>,
+    reserved: McpPendingToolReservation,
     notifications: VecDeque<RpcEnvelope>,
     notification_bytes: usize,
     closed: bool,
@@ -133,6 +135,7 @@ impl McpStdioPeer {
     /// Retires the connection; its completion still includes deferred reap.
     pub fn close(&mut self) {
         self.closed = true;
+        self.reserved = McpPendingToolReservation::default();
         self.connection.close();
     }
     /// Registers exact executable allocations without granting permission.
@@ -150,12 +153,24 @@ impl McpStdioPeer {
     pub fn reserve_tool_id(&mut self) -> Result<RpcId> {
         self.check_available()?;
         let id = self.allocate()?;
-        self.reserved = Some(id.clone());
+        self.reserved = McpPendingToolReservation::manual(id.clone());
         Ok(id)
+    }
+    /// Reserves an application ID whose ownership moves through the typed
+    /// permission request. Abandonment releases the unsent slot without I/O.
+    ///
+    /// # Errors
+    /// Rejects a live reservation, closed peer or integer exhaustion.
+    pub fn reserve_tool(&mut self) -> Result<McpToolReservation> {
+        self.check_available()?;
+        let id = self.allocate()?;
+        let (pending, lease) = McpPendingToolReservation::leased(id);
+        self.reserved = pending;
+        Ok(lease)
     }
     /// Discards an unsent reservation, without making its ID reusable.
     pub fn discard_tool_id(&mut self) {
-        self.reserved = None;
+        self.reserved = McpPendingToolReservation::default();
     }
     /// Sends the exact reserved proof-bearing request once and correlates its
     /// response. Any abandoned polled request closes the connection.
@@ -197,7 +212,7 @@ impl McpStdioPeer {
         if self.closed || self.cancellation.is_cancelled() {
             return Err(McpPeerError::Closed);
         }
-        if self.reserved.is_some() {
+        if self.reserved.is_live() {
             return Err(McpPeerError::Capacity);
         }
         Ok(())

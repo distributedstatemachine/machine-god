@@ -214,10 +214,13 @@ pub(super) async fn call(
     deadline: Instant,
 ) -> Result<RpcEnvelope> {
     check(&peer.cancellation, deadline)?;
-    if peer.closed || peer.reserved.as_ref() != Some(submission.rpc_id()) {
+    if peer.closed {
         return Err(McpPeerError::Correlation);
     }
-    let id = peer.reserved.take().ok_or(McpPeerError::Correlation)?;
+    let id = peer
+        .reserved
+        .take(submission.rpc_id(), submission.tool_reservation())
+        .ok_or(McpPeerError::Correlation)?;
     peer.closed = true;
     let frame = exchange(
         Exchange {

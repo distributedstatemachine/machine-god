@@ -55,13 +55,14 @@ An entry may remain metadata-only for search. It is selectable only after the
 host attaches one `Tool` whose captured `ToolSpec.name` exactly equals the
 admitted dynamic name. The input schema must have an object root, at most 64
 container levels and 4,096 JSON nodes, and the complete serialized selected
-`ToolSpec` must fit 64 KiB. Its retained bytes count against the existing 8 MiB
+`ToolSpec` must fit 1 MiB. This admits a full pinned 256 KiB schema and 64 KiB
+description, including JSON-escaped descriptions. Its retained bytes count against the 64 MiB
 snapshot budget. Name/schema/executor therefore travel as one immutable
 descriptor; private search text can never be interpreted as an executable
 schema.
 
 A ready snapshot is scanned for case-sensitive byte equality across at most
-1,024 entries. Cancellation is checked between entries. A metadata-only match
+131,072 entries. Cancellation is checked between entries. A metadata-only match
 and an absent or hidden name use the same fixed not-found failure.
 
 A discovering snapshot returns a bounded retry result and installs nothing:

@@ -12,7 +12,10 @@ use super::{
         NegotiatedProtocol, NegotiationFailure, ProtocolVersion, RpcEnvelope, RpcId, RpcKind,
         TransportKind, WireLimits,
     },
-    submission::{McpSubmission, McpSubmissionHttpHead, McpSubmissionRuntime},
+    submission::{
+        McpPendingToolReservation, McpSubmission, McpSubmissionHttpHead, McpSubmissionRuntime,
+        McpToolReservation,
+    },
 };
 use machine_god_core::{BoxFuture, CancellationToken};
 use std::{
@@ -160,11 +163,11 @@ pub struct McpHttpPeer {
     listener_resume: stream::Resume,
     listener_reconnects: usize,
     next_id: Option<i64>,
-    reserved: Option<RpcId>,
+    reserved: McpPendingToolReservation,
     runtimes: Vec<Arc<McpSubmissionRuntime>>,
     notifications: VecDeque<McpHttpPeerFrame>,
     notification_bytes: usize,
-    observed_events: usize,
+    operation_events: usize,
     closed: bool,
 }
 impl McpHttpPeer {
@@ -194,7 +197,7 @@ impl McpHttpPeer {
     /// Stops local streams and invalidates reservations; does not issue DELETE.
     pub fn close(&mut self) {
         self.closed = true;
-        self.reserved = None;
+        self.reserved = McpPendingToolReservation::default();
         self.listener.take();
         self.runtimes.clear();
         self.notifications.clear();
@@ -228,11 +231,22 @@ impl McpHttpPeer {
     pub fn reserve_tool_id(&mut self) -> Result<RpcId> {
         self.available()?;
         let id = self.allocate()?;
-        self.reserved = Some(id.clone());
+        self.reserved = McpPendingToolReservation::manual(id.clone());
         Ok(id)
     }
+    /// Reserves an application ID whose ownership moves through the typed
+    /// permission request. Abandonment releases the unsent slot without I/O.
+    /// # Errors
+    /// Rejects a live reservation, retirement or integer exhaustion.
+    pub fn reserve_tool(&mut self) -> Result<McpToolReservation> {
+        self.available()?;
+        let id = self.allocate()?;
+        let (pending, lease) = McpPendingToolReservation::leased(id);
+        self.reserved = pending;
+        Ok(lease)
+    }
     pub fn discard_tool_id(&mut self) {
-        self.reserved = None;
+        self.reserved = McpPendingToolReservation::default();
     }
     /// Selected immutable base head for typed pre-permission projection.
     /// # Errors
@@ -297,7 +311,7 @@ impl McpHttpPeer {
     }
     fn available(&self) -> Result<()> {
         self.check(self.options.lifetime_deadline)?;
-        if self.reserved.is_some() {
+        if self.reserved.is_live() {
             return Err(McpHttpPeerError::Limit);
         }
         Ok(())

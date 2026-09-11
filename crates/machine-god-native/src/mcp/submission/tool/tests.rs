@@ -79,6 +79,94 @@ fn prepare(
 }
 
 #[test]
+fn typed_peer_reservation_survives_each_admission_stage_and_releases_on_drop() {
+    for stage in 0..6 {
+        let (mut fixture, schema) = fixture(r#"{"type":"object"}"#);
+        let request = fixture.request("call");
+        let (pending, lease) = McpPendingToolReservation::leased(RpcId::Integer(42));
+        let projection = project(
+            &fixture,
+            &schema,
+            &request,
+            options(ProtocolVersion::Modern, TransportKind::Stdio),
+        )
+        .unwrap()
+        .with_reservation(lease)
+        .unwrap();
+        assert!(pending.is_live());
+        if stage == 0 {
+            drop(projection);
+        } else {
+            let future = fixture.registry.prepare_tool(
+                &request,
+                invocation(&request),
+                projection,
+                CancellationToken::new(),
+            );
+            assert!(pending.is_live());
+            if stage == 1 {
+                drop(future);
+            } else {
+                let prepared = block_on(future).unwrap();
+                assert!(pending.is_live());
+                if stage == 2 {
+                    drop(prepared);
+                } else {
+                    let admission = fixture.admission("call", prepared);
+                    assert!(pending.is_live());
+                    if stage == 3 {
+                        drop(admission);
+                    } else {
+                        admission.admit().unwrap();
+                        assert!(pending.is_live());
+                        if stage == 4 {
+                            let submission =
+                                block_on(fixture.claim("call", CancellationToken::new())).unwrap();
+                            assert!(
+                                pending.matches(submission.rpc_id(), submission.tool_reservation())
+                            );
+                            drop(submission);
+                        } else {
+                            fixture.close();
+                        }
+                    }
+                }
+            }
+        }
+        assert!(!pending.is_live(), "reservation retained at stage {stage}");
+    }
+}
+
+#[test]
+fn peer_reservation_attachment_rejects_wrong_id_and_replacement() {
+    let (fixture, schema) = fixture(r#"{"type":"object"}"#);
+    let request = fixture.request("call");
+    let project = || {
+        project(
+            &fixture,
+            &schema,
+            &request,
+            options(ProtocolVersion::Modern, TransportKind::Stdio),
+        )
+        .unwrap()
+    };
+    let (wrong_pending, wrong) = McpPendingToolReservation::leased(RpcId::Integer(43));
+    assert!(project().with_reservation(wrong).is_err());
+    assert!(!wrong_pending.is_live());
+    let (pending, lease) = McpPendingToolReservation::leased(RpcId::Integer(42));
+    let (other_pending, other) = McpPendingToolReservation::leased(RpcId::Integer(42));
+    assert!(
+        project()
+            .with_reservation(lease)
+            .unwrap()
+            .with_reservation(other)
+            .is_err()
+    );
+    assert!(!pending.is_live());
+    assert!(!other_pending.is_live());
+}
+
+#[test]
 fn modern_and_legacy_envelopes_use_only_selected_metadata() {
     let (fixture, schema) = fixture(r#"{"type":"object"}"#);
     for (index, version) in [
@@ -334,6 +422,34 @@ fn nested_optional_header_null_is_not_omitted_by_top_level_fallback() {
         ),
         Err(McpSubmissionError::Invalid)
     ));
+}
+
+#[test]
+fn exact_numeric_and_literal_private_keys_survive_permission_and_wire_projection() {
+    let (fixture, schema) = fixture(r#"{"type":"object"}"#);
+    let source = r#"{"$serde_json::private::Number":"literal","$serde_json::private::RawValue":"null","big":9007199254740993.0001,"zero":-0,"huge":1E+400,"tiny":1e-400}"#;
+    let value = machine_god_core::json::from_str(source).unwrap();
+    let mut request = fixture.request("call");
+    arguments(&mut request, value.clone());
+    let projection = project(
+        &fixture,
+        &schema,
+        &request,
+        options(ProtocolVersion::Modern, TransportKind::Stdio),
+    )
+    .unwrap();
+    let prepared = prepare(&fixture, &request, projection).unwrap();
+    let envelope = machine_god_core::json::from_slice(&prepared.data.wire).unwrap();
+    let projected = &envelope["params"]["arguments"];
+    assert_eq!(
+        serde_json::to_string(projected).unwrap(),
+        serde_json::to_string(&value).unwrap()
+    );
+    assert_eq!(projected["zero"].to_string(), "-0");
+    assert_eq!(projected["huge"].to_string(), "1E+400");
+    assert_eq!(projected["big"].to_string(), "9007199254740993.0001");
+    assert_eq!(projected["$serde_json::private::Number"], "literal");
+    assert_eq!(projected["$serde_json::private::RawValue"], "null");
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
