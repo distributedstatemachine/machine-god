@@ -853,6 +853,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hickory-proto",
  "hickory-resolver",
+ "httparse",
  "hyper",
  "libc",
  "machine-god-core",
@@ -869,6 +870,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "tokio-rustls",
  "url",
  "webpki-root-certs",
 ]
