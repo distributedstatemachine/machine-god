@@ -67,6 +67,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [profile persistence](mcp-persistence.md), [catalog page assembly](mcp-pagination.md),
   [resolved remote headers](mcp-headers.md), [owned stdio](mcp-stdio.md), and
   [tool submission](mcp-submission.md).
+- Human MCP profile operations: [native management](mcp-management.md) and
+  [interactive CLI management](mcp-cli-management.md).
 - Foreground one-off delegation: [subagent](subagent.md).
 - Host-owned background execution and durable history production:
   [background supervisor](background-supervisor.md).

@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `combined transport/component regression gate, then production runtime and CLI composition before the complete feature gate`
+- Next gate: `combined native profile-management and CLI regression gate, then production runtime composition before the complete feature gate`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -391,11 +391,15 @@ endpoint validation, seven human feature-request projections, SSE framing,
 shared profile-file transactions/MCP persistence and one-shot tool submission
 are integrated. Bounded raw catalog page assembly, resolved remote headers,
 proof-bearing exact HTTP plaintext writes and owned stdio connections are now
-integrated too; their focused tests and strict native Clippy passed before
-integration. The combined replacement component gate is pending. The earlier
-gate at `3fdf6248` passed workspace-wide strict
-Clippy, 131 MCP unit tests, 42 shared/settings unit tests, the seven selected
+integrated too. The combined gate at `c9189be9` passed workspace-wide strict
+Clippy, 203 MCP unit tests, 42 shared/settings unit tests, 28 process-helper
+regressions (plus two existing ignored helper entrypoints), the seven selected
 integration suites (including the subprocess fixture), and native doctests.
+Its process fixtures used a fresh debug helper after all builds finished.
+Native profile-management controls and thin `/mcp` startup/dispatch/receipts
+are being integrated next. Their combined check is pending; configuration saves
+explicitly do not activate a runtime. This remains internal feature work, not
+a new delivery or the complete release/platform/adversarial gate.
 Core's exact-turn cancellation
 observer passed the complete core tests, explicit doctests and strict Clippy.
 All completed component worktrees are removed; evidence and build caches remain.
