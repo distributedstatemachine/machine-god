@@ -7,8 +7,8 @@ mod accounting;
 mod admit;
 mod evaluate;
 mod json;
-mod number;
-mod pattern;
+pub(crate) mod number;
+pub(crate) mod pattern;
 mod resolver;
 #[cfg(test)]
 mod tests;

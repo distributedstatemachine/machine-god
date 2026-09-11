@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use super::{McpSchemaError, McpSchemaLimits, Result};
 
 #[derive(Debug)]
-pub(super) struct Number {
+pub(crate) struct Number {
     pub negative: bool,
     digits: Vec<u8>,
     exponent: i64,

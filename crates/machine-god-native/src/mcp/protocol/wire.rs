@@ -278,6 +278,12 @@ impl fmt::Debug for RpcEnvelope {
 }
 
 impl RpcEnvelope {
+    /// Move the already admitted exact JSON value without copying or granting
+    /// any operation, transport or continuation authority.
+    #[must_use]
+    pub fn into_value(self) -> Value {
+        self.value
+    }
     /// Validated envelope kind.
     #[must_use]
     pub const fn kind(&self) -> RpcKind {
@@ -354,11 +360,7 @@ impl RpcEnvelope {
 /// # Errors
 /// Returns only redacted byte/JSON/envelope errors; never echoes remote input.
 pub fn parse_envelope(bytes: &[u8], limits: WireLimits) -> Result<RpcEnvelope, WireError> {
-    let limits = limits.validate()?;
-    if bytes.len() > limits.max_frame_bytes {
-        return Err(WireError::FrameTooLarge);
-    }
-    let value = super::json::parse(bytes, limits)?;
+    let value = super::parse_json(bytes, limits)?;
     let object = value.as_object().ok_or(WireError::InvalidEnvelope)?;
     if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return Err(WireError::InvalidEnvelope);

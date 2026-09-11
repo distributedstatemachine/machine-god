@@ -6,7 +6,7 @@ mod parse;
 mod unicode_letter;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PatternError {
+pub(crate) enum PatternError {
     Unsupported,
     Limit,
 }
@@ -68,7 +68,7 @@ struct Instruction {
     next: usize,
     alternate: usize,
 }
-pub(super) struct Pattern {
+pub(crate) struct Pattern {
     instructions: Vec<Instruction>,
     classes: Vec<Class>,
     start: usize,

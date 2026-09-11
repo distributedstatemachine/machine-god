@@ -11,6 +11,15 @@ mod negotiation;
 mod wire;
 
 pub use client_metadata::McpClientMetadata;
+
+/// Shared strict admission for bounded non-envelope protocol payloads.
+pub(crate) fn parse_json(bytes: &[u8], limits: WireLimits) -> Result<serde_json::Value, WireError> {
+    let limits = limits.validate()?;
+    if bytes.len() > limits.max_frame_bytes {
+        return Err(WireError::FrameTooLarge);
+    }
+    json::parse(bytes, limits)
+}
 pub use negotiation::{
     HttpDiscoveryStatus, NegotiatedProtocol, Negotiation, NegotiationAction, NegotiationFailure,
     ProtocolVersion, TransportKind,
