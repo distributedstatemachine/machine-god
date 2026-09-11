@@ -188,6 +188,66 @@ fn skills_add_and_install_require_explicit_replacement_and_preserve_source() {
 }
 
 #[test]
+fn skills_install_discovers_github_ancestor_but_excludes_git_resources() {
+    let fixture = Fixture::new();
+    let source = fixture.path("source-repository");
+    let (original, full_text) = skill(
+        &source,
+        ".github/skills/review",
+        "review",
+        "Nested repository skill",
+        "REPOSITORY REVIEW BODY",
+    );
+    let skill_root = original.parent().unwrap();
+    fs::create_dir(skill_root.join("resources")).unwrap();
+    fs::write(
+        skill_root.join("resources/checklist.txt"),
+        b"Review checklist",
+    )
+    .unwrap();
+    fs::write(skill_root.join(".gitignore"), b"private-resource").unwrap();
+    fs::create_dir(skill_root.join(".github")).unwrap();
+    fs::write(
+        skill_root.join(".github/workflow.yml"),
+        b"excluded resource",
+    )
+    .unwrap();
+
+    let gateway = Gateway::new();
+    let mut terminal = start(&fixture, &gateway);
+    command(
+        &mut terminal,
+        &format!("/skills install {}", source.display()),
+    );
+    terminal.wait_for(b"review: Installed");
+    let destination = fixture.state.join("machine-god/skills/review");
+    refreshed(&mut terminal, Some(&destination.join("SKILL.md")));
+    assert_eq!(
+        bounded_file(&destination.join("SKILL.md")),
+        full_text.as_bytes()
+    );
+    assert_eq!(
+        bounded_file(&destination.join("resources/checklist.txt")),
+        b"Review checklist"
+    );
+    assert!(!destination.join(".gitignore").exists());
+    assert!(!destination.join(".github").exists());
+    assert_eq!(bounded_file(&original), full_text.as_bytes());
+    assert_eq!(
+        bounded_file(&skill_root.join(".gitignore")),
+        b"private-resource"
+    );
+    assert_eq!(
+        bounded_file(&skill_root.join(".github/workflow.yml")),
+        b"excluded resource"
+    );
+    finish(&mut terminal);
+    assert_eq!(terminal.finish().0.code(), Some(0));
+    assert_eq!(gateway.inference.load(Ordering::Acquire), 0);
+    gateway.finish();
+}
+
+#[test]
 fn skills_affirmative_first_prompt_uses_initial_catalog_and_next_prompt_has_no_skill_leakage() {
     let fixture = Fixture::new();
     let (_, full_text) = skill(
