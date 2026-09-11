@@ -373,6 +373,13 @@ component behavior without claiming that the full CLI is already available.
 All components feed one complete local gate and
 three fresh independent adversarial reviews; retain the same delivery workflow.
 
+The native command service, managed Git runner, startup root composition,
+FIFO invocation, checkpoint context and CLI command receipts are integrated.
+Focused startup/queue and routing checks pass; these component checks do not
+replace the full feature gate. Remaining integration is the interactive picker,
+initial-snapshot consumption, refresh and input-generation handling, followed by
+composed launch/PTY scenarios and the complete local/review/remote gates.
+
 ## Parked complete-feature scope: fx session import
 
 Retain M04 foreign-session import as one complete feature on its own branch

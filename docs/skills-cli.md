@@ -340,3 +340,15 @@ display data and visibly reports incomplete discovery. Draft and selection bound
 match invocation planning (256 KiB, 16 selections and 64 KiB retained selection
 text); failing edits are atomic. The picker performs no discovery, materialization,
 permission granting or filesystem effects.
+
+The CLI menu projection is separately effect-free. It returns one escaped,
+64 KiB-bounded frame with at most 128 physical rows, 480 projected bytes per
+line, an exact frame identity and a selectable-visibility flag. The viewport
+follows the selected absolute row within the native window. Each entry has a
+name/description preview and a separate basename/location preview; the footer
+states that previews may be clipped. Row numbers distinguish observed entries
+without claiming lossless display of long locations. Incomplete-discovery
+warnings take priority over ordinary content. Terminals narrower than 16 columns
+or shorter than five rows (six with a warning) display a resize notice and cannot
+acknowledge a selectable frame. Output height counts actual lines below the
+anchor and no trailing newline is emitted.
