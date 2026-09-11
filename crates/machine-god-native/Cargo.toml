@@ -42,6 +42,7 @@ futures-executor = "0.3.31"
 futures-util = "0.3.31"
 machine-god-core.workspace = true
 memchr.workspace = true
+num-bigint = { version = "=0.4.6", default-features = false, features = ["std"] }
 rustc_apfloat.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
