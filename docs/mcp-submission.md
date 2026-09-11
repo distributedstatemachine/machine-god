@@ -16,6 +16,12 @@ native turn owner, which must retain exactly one registry for that scope and
 drop the registration on turn closure. This low-level registration is trusted
 composition, not a model-callable operation or a permission grant.
 
+Conversation composition can explicitly retire the registry even while a turn
+guard remains retained. Retirement is idempotent and invalidates routes before
+waking waiters. Its owned cancellation observer watches both native scope
+retirement and the original core turn, retains no session/registry/proof, and
+registers wakers only when polled. It cannot revive or authorize a submission.
+
 `prepare` and `prepare_http` accept only an exact existing `Capability::Tool`: its tool, call and
 canonical arguments must match the supplied `PermissionInvocation`, and its
 session/incarnation/turn must match the registry. The existing bounded,

@@ -162,7 +162,7 @@ pub struct McpSubmissionTurnRegistration {
 }
 impl Drop for McpSubmissionTurnRegistration {
     fn drop(&mut self) {
-        self.registry.close();
+        self.registry.retire();
     }
 }
 
@@ -197,6 +197,11 @@ impl McpSubmissionRegistry {
     }
 
     fn live(&self) -> Result<()> {
+        self.revalidate()
+    }
+
+    /// Observes scope liveness without granting permission or retaining its owner.
+    pub(crate) fn revalidate(&self) -> Result<()> {
         if !self.open.load(Ordering::Acquire) || self.handle.is_cancelled() {
             Err(McpSubmissionError::Cancelled)
         } else {
@@ -204,7 +209,8 @@ impl McpSubmissionRegistry {
         }
     }
 
-    fn close(&self) {
+    /// Invalidates retained turn routes when their conversation owner retires.
+    pub(crate) fn retire(&self) {
         self.open.store(false, Ordering::Release);
         let removed = {
             let mut state = self
@@ -215,6 +221,25 @@ impl McpSubmissionRegistry {
         };
         self.cancellation.cancel();
         drop(removed);
+    }
+
+    /// Owns only cancellation observations, not a session, registry or proof.
+    /// Construction is inert; registering wakers requires polling the future.
+    pub(crate) fn cancelled_owned(&self) -> impl Future<Output = ()> + Send + use<> {
+        let scope = self.cancellation.cancelled();
+        let turn = self.handle.cancelled();
+        async move {
+            let mut scope = std::pin::pin!(scope);
+            let mut turn = std::pin::pin!(turn);
+            poll_fn(|cx| {
+                if scope.as_mut().poll(cx).is_ready() || turn.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+        }
     }
 
     /// Bounded copying/validation happens at construction; reservation happens
@@ -595,20 +620,17 @@ impl McpSubmission {
     pub(crate) fn cancelled_owned(&self) -> BoxFuture<'static, ()> {
         let execution = self.cancellation.cancelled();
         let preparation = self.ready.data.cancellation.cancelled();
-        let turn = self.registry.cancellation.cancelled();
-        let core_turn = self.registry.handle.cancelled();
+        let turn = self.registry.cancelled_owned();
         let runtime = self.ready.data.runtime.cancellation.cancelled();
         Box::pin(async move {
             let mut execution = std::pin::pin!(execution);
             let mut preparation = std::pin::pin!(preparation);
             let mut turn = std::pin::pin!(turn);
-            let mut core_turn = std::pin::pin!(core_turn);
             let mut runtime = std::pin::pin!(runtime);
             poll_fn(|cx| {
                 if execution.as_mut().poll(cx).is_ready()
                     || preparation.as_mut().poll(cx).is_ready()
                     || turn.as_mut().poll(cx).is_ready()
-                    || core_turn.as_mut().poll(cx).is_ready()
                     || runtime.as_mut().poll(cx).is_ready()
                 {
                     Poll::Ready(())

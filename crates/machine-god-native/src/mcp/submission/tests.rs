@@ -804,6 +804,62 @@ impl Wake for Counter {
 }
 
 #[test]
+fn registry_observer_does_not_retain_registry_and_observes_both_closures() {
+    for core_turn in [false, true] {
+        let fixture = Fixture::new();
+        let weak = Arc::downgrade(&fixture.registry);
+        let count = Arc::strong_count(&fixture.registry);
+        let mut waiting = std::pin::pin!(fixture.registry.cancelled_owned());
+        assert_eq!(Arc::strong_count(&fixture.registry), count);
+        let counter = Arc::new(Counter(AtomicUsize::new(0)));
+        let waker = Waker::from(counter.clone());
+        assert!(
+            waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        assert!(fixture.registry.revalidate().is_ok());
+        if core_turn {
+            assert!(fixture.turn.handle().cancel());
+        } else {
+            fixture.registry.retire();
+            fixture.registry.retire();
+        }
+        assert_eq!(
+            fixture.registry.revalidate(),
+            Err(McpSubmissionError::Cancelled)
+        );
+        assert!(counter.0.load(Ordering::SeqCst) > 0);
+        drop(fixture);
+        assert!(weak.upgrade().is_none());
+        assert!(
+            waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_ready()
+        );
+    }
+}
+
+#[test]
+fn unpolled_registry_observer_sees_retirement_with_retained_registration() {
+    let fixture = Fixture::new();
+    fixture.ready("call");
+    let mut waiting = std::pin::pin!(fixture.registry.cancelled_owned());
+    fixture.registry.retire();
+    assert!(fixture.registration.is_some());
+    assert!(fixture.registry.state.lock().unwrap().slots.is_empty());
+    assert!(
+        waiting
+            .as_mut()
+            .poll(&mut Context::from_waker(&noop_waker()))
+            .is_ready()
+    );
+    assert!(block_on(fixture.claim("call", CancellationToken::new())).is_err());
+}
+
+#[test]
 fn owned_response_cancellation_survives_consumed_submission() {
     for source in 0..5 {
         let mut fixture = Fixture::new();
