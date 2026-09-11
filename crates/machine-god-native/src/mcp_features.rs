@@ -1166,16 +1166,46 @@ fn validate_annotations(value: &Value) -> Result<(), ToolError> {
             return Err(resource_limit());
         }
     }
-    if let Some(priority) = annotations.get("priority") {
-        let priority = priority.as_f64().ok_or_else(resource_limit)?;
-        if !(0.0..=1.0).contains(&priority) {
-            return Err(resource_limit());
-        }
+    if let Some(priority) = annotations.get("priority")
+        && !priority.as_number().is_some_and(valid_priority)
+    {
+        return Err(resource_limit());
     }
     if let Some(last_modified) = annotations.get("lastModified") {
         validate_string(last_modified, MAX_MCP_FEATURE_TITLE_BYTES, false)?;
     }
     Ok(())
+}
+
+fn valid_priority(number: &serde_json::Number) -> bool {
+    if machine_god_core::json::number_is_zero(number) {
+        return true;
+    }
+    let text = number.as_str();
+    if text.starts_with('-') {
+        return false;
+    }
+    let (mantissa, exponent) = text.split_once(['e', 'E']).unwrap_or((text, "0"));
+    let Ok(exponent) = exponent.parse::<i64>() else {
+        // A JSON exponent has no fractional part. Overflow therefore places
+        // every nonzero mantissa strictly above one or strictly below it.
+        return exponent.starts_with('-');
+    };
+    let integer_digits = mantissa.find('.').unwrap_or(mantissa.len());
+    let leading_zeroes = mantissa
+        .bytes()
+        .filter(|byte| *byte != b'.')
+        .take_while(|byte| *byte == b'0')
+        .count();
+    let order = i128::from(exponent) + integer_digits as i128 - leading_zeroes as i128 - 1;
+    if order != 0 {
+        return order < 0;
+    }
+    let mut significant = mantissa
+        .bytes()
+        .filter(|byte| *byte != b'.')
+        .skip(leading_zeroes);
+    significant.next() == Some(b'1') && significant.all(|byte| byte == b'0')
 }
 
 fn validate_icons(value: &Value) -> Result<(), ToolError> {
@@ -1546,6 +1576,47 @@ fn drop_json_iterative(value: Value) {
 #[cfg(test)]
 mod drop_tests {
     use super::*;
+
+    #[test]
+    fn priorities_use_exact_closed_unit_interval() {
+        for token in [
+            "0",
+            "-0",
+            "1",
+            "1.000000000000000000",
+            "1e-400",
+            "10e-1",
+            "0.1e1",
+            "1e-999999999999999999999999",
+        ] {
+            assert!(
+                valid_priority(
+                    machine_god_core::json::from_str(token)
+                        .unwrap()
+                        .as_number()
+                        .unwrap()
+                ),
+                "{token}"
+            );
+        }
+        for token in [
+            "-1e-400",
+            "1.00000000000000000001",
+            "10e0",
+            "1e400",
+            "1e999999999999999999999999",
+        ] {
+            assert!(
+                !valid_priority(
+                    machine_god_core::json::from_str(token)
+                        .unwrap()
+                        .as_number()
+                        .unwrap()
+                ),
+                "{token}"
+            );
+        }
+    }
 
     #[test]
     fn wide_iterative_drop_uses_depth_sized_scratch() {

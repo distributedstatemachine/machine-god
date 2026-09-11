@@ -1040,6 +1040,42 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn exact_json_executable_projection_preserves_schema_and_serialized_budget() {
+        struct ExactTool(ToolSpec);
+        impl Tool for ExactTool {
+            fn spec(&self) -> ToolSpec {
+                self.0.clone()
+            }
+            fn execute(
+                &self,
+                _: ToolContext,
+                _: Value,
+                _: CancellationToken,
+            ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+                Box::pin(async { panic!("catalog projection must not execute a tool") })
+            }
+        }
+        let schema = machine_god_core::json::from_str(r#"{"type":"object","minimum":9007199254740993.0001,"maximum":1e400,"multipleOf":1e-400,"const":{"zero":-0,"$serde_json::private::Number":"literal","$serde_json::private::RawValue":"null"}}"#).unwrap();
+        let spec = ToolSpec {
+            name: ToolName::new("mcp.exact").unwrap(),
+            description: "Exact schema".into(),
+            input_schema: schema,
+        };
+        let bytes = serde_json::to_vec(&spec).unwrap();
+        assert_eq!(serialized_value_size(&spec, bytes.len()), Some(bytes.len()));
+        assert_eq!(serialized_value_size(&spec, bytes.len() - 1), None);
+        let metadata = McpToolMetadata::new("mcp.exact", "server", "Exact schema", "exact", vec![])
+            .unwrap()
+            .with_tool(ExactTool(spec.clone()))
+            .unwrap();
+        assert_eq!(metadata.executable().unwrap().spec(), &spec);
+        assert_eq!(
+            serde_json::to_vec(metadata.executable().unwrap().spec()).unwrap(),
+            bytes
+        );
+    }
+
     #[derive(Clone)]
     struct StaticCatalog {
         snapshots: Arc<AtomicUsize>,

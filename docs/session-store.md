@@ -122,6 +122,13 @@ arbitrary embedded JSON values use `serde_json`'s ordinary last-value-wins map
 semantics; they are not typed-schema duplicates. Revision zero and
 `next_turn_sequence` zero are not accepted from a stored file.
 
+Embedded schemas, arguments, outputs and metadata preserve exact decimal
+numbers, including integers beyond binary-float precision, large/tiny exponents
+and signed zero. Literal serde-private-looking object keys remain ordinary data.
+The canonical writer, stored typed decoder and streaming summary admission agree
+on valid numeric syntax; numeric tokens still consume one logical JSON value,
+and existing file-byte, depth and node limits continue to apply.
+
 `MAX_FILE_SESSION_BYTES` is exactly `8_651_165`. It includes the v1 envelope
 and is sufficient for every `SessionRecord` that obeys all default
 `EngineLimits`, including the default 8 MiB serialized-transcript and 256 KiB

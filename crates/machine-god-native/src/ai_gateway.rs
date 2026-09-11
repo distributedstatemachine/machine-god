@@ -1543,7 +1543,7 @@ fn canonical_arguments(value: &Value, max_bytes: usize) -> Result<Vec<u8>, Provi
                 }
             }
             Value::Number(number)
-                if number.is_f64() && number.as_f64().is_some_and(|value| value == 0.0) =>
+                if number.is_f64() && machine_god_core::json::number_is_zero(number) =>
             {
                 *number = serde_json::Number::from_f64(0.0).expect("zero is finite");
             }
@@ -1623,11 +1623,15 @@ impl<'de> DeserializeSeed<'de> for StrictValueSeed<'_> {
             .filter(|nodes| *nodes <= self.max_nodes)
             .ok_or_else(|| D::Error::custom("JSON node limit exceeded"))?;
         self.nodes.set(nodes);
-        deserializer.deserialize_any(StrictValueVisitor {
-            depth: self.depth,
-            nodes: self.nodes,
-            max_nodes: self.max_nodes,
-        })
+        machine_god_core::json::visit(
+            deserializer,
+            StrictValueVisitor {
+                depth: self.depth,
+                nodes: self.nodes,
+                max_nodes: self.max_nodes,
+            },
+            Value::Number,
+        )
     }
 }
 
@@ -1727,6 +1731,7 @@ impl<'de> Visitor<'de> for StrictValueVisitor<'_> {
 }
 
 pub(crate) fn parse_strict_json(text: &str, max_nodes: usize) -> Result<Value, serde_json::Error> {
+    machine_god_core::json::check_container_depth(text.as_bytes(), MAX_SAFE_JSON_DEPTH)?;
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let nodes = Cell::new(0);
     let value = StrictValueSeed {
@@ -2610,6 +2615,33 @@ impl GatewayEventStream {
 #[cfg(test)]
 #[path = "ai_gateway_complete_input_tests.rs"]
 mod complete_input_tests;
+
+#[cfg(test)]
+mod exact_json_tests {
+    use super::*;
+
+    #[test]
+    fn scalar_accounting_and_reconciliation_never_round_tiny_arguments() {
+        for token in ["9007199254740993.0001", "1e400", "1e-400", "-0"] {
+            assert_eq!(parse_strict_json(token, 1).unwrap().to_string(), token);
+            assert!(parse_strict_json(token, 0).is_err());
+        }
+        let tiny = parse_strict_json(r#"{"value":1e-400}"#, 2).unwrap();
+        let zero = parse_strict_json(r#"{"value":0.0}"#, 2).unwrap();
+        assert_ne!(
+            canonical_arguments(&tiny, 1024).unwrap(),
+            canonical_arguments(&zero, 1024).unwrap()
+        );
+        let negative_zero = parse_strict_json(r#"{"value":-0.0}"#, 2).unwrap();
+        assert_eq!(
+            canonical_arguments(&negative_zero, 1024).unwrap(),
+            canonical_arguments(&zero, 1024).unwrap()
+        );
+        let literal = parse_strict_json(r#"{"$serde_json::private::Number":"1","nested":{"$serde_json::private::RawValue":"null"}}"#, 4).unwrap();
+        assert!(literal.is_object());
+        assert!(literal["nested"].is_object());
+    }
+}
 
 fn reject_provider_execution(object: &serde_json::Map<String, Value>) -> Result<(), ProviderError> {
     if object

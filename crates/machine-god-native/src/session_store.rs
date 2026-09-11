@@ -2369,7 +2369,7 @@ fn read_stored_record_controlled(
         }
     }
     check_scan(control)?;
-    let decoded = serde_json::from_slice::<ObjectOnly<StoredEnvelope>>(&bytes);
+    let decoded = decode_stored_envelope(&bytes);
     check_scan(control)?;
     let ObjectOnly(envelope) = decoded.map_err(|_| corrupt())?;
     if envelope.schema_version != FILE_SESSION_SCHEMA_VERSION {
@@ -2629,6 +2629,14 @@ struct StoredEnvelope {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn decode_stored_envelope(bytes: &[u8]) -> Result<ObjectOnly<StoredEnvelope>, serde_json::Error> {
+    // The deepest arbitrary value has seven typed-envelope parents. Keep
+    // RawValue's syntax scan bounded before it can allocate nesting scratch.
+    machine_god_core::json::check_container_depth(bytes, MAX_STORED_JSON_DEPTH + 7)?;
+    serde_json::from_slice(bytes)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredRecord {
@@ -2637,6 +2645,7 @@ struct StoredRecord {
     revision: SessionRevision,
     next_turn_sequence: u64,
     messages: Vec<ObjectOnly<StoredMessage>>,
+    #[serde(deserialize_with = "machine_god_core::json::deserialize_map")]
     metadata: BTreeMap<String, Value>,
 }
 
@@ -2649,8 +2658,6 @@ struct StoredMessage {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum StoredContentBlock {
     Text {
         text: String,
@@ -2668,11 +2675,42 @@ enum StoredContentBlock {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'de> Deserialize<'de> for StoredContentBlock {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case", deny_unknown_fields)]
+        enum Payload {
+            Text {
+                text: String,
+            },
+            Json {
+                #[serde(deserialize_with = "machine_god_core::json::deserialize")]
+                value: Value,
+            },
+            ToolCall {
+                call: ObjectOnly<StoredToolCall>,
+            },
+            ToolResult {
+                call_id: ToolCallId,
+                output: ObjectOnly<StoredToolOutput>,
+            },
+        }
+        Ok(match machine_god_core::json::deserialize_tagged(decoder)? {
+            Payload::Text { text } => Self::Text { text },
+            Payload::Json { value } => Self::Json { value },
+            Payload::ToolCall { call } => Self::ToolCall { call },
+            Payload::ToolResult { call_id, output } => Self::ToolResult { call_id, output },
+        })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredToolCall {
     id: ToolCallId,
     name: ToolName,
+    #[serde(deserialize_with = "machine_god_core::json::deserialize")]
     arguments: Value,
 }
 
@@ -2680,6 +2718,7 @@ struct StoredToolCall {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredToolOutput {
+    #[serde(deserialize_with = "machine_god_core::json::deserialize")]
     content: Value,
     is_error: bool,
 }
@@ -3084,6 +3123,39 @@ mod tests {
     };
 
     static NEXT_LISTING_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn exact_json_history_roundtrip_preserves_numbers_and_private_keys() {
+        let value = machine_god_core::json::from_str(r#"{"n":9007199254740993.00001,"large":1e400,"tiny":1e-400,"zero":-0,"$serde_json::private::Number":"1","raw":{"$serde_json::private::RawValue":"null"}}"#).unwrap();
+        let call_id = ToolCallId::new("call-1").unwrap();
+        let mut record = SessionRecord::empty(
+            SessionId::new("exact").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        record.metadata.insert("exact".into(), value.clone());
+        record.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Json {
+                    value: value.clone(),
+                },
+                ContentBlock::ToolCall {
+                    call: ToolCall {
+                        id: call_id.clone(),
+                        name: ToolName::new("mcp.exact").unwrap(),
+                        arguments: value.clone(),
+                    },
+                },
+                ContentBlock::ToolResult {
+                    call_id,
+                    output: ToolOutput::success(value),
+                },
+            ],
+        });
+        let bytes = serialize_record(&record).unwrap();
+        let super::ObjectOnly(envelope) = super::decode_stored_envelope(&bytes).unwrap();
+        assert_eq!(SessionRecord::from(envelope.record.0), record);
+    }
 
     #[test]
     fn completed_operation_releases_lock_even_if_its_descriptor_was_duplicated() {

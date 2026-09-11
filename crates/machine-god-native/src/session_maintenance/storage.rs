@@ -1,8 +1,9 @@
 //! Private store operations share its exact descriptor, lock namespace and codec.
 use super::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionScanControl, FileSessionStore, MAX_FILE_SESSION_BYTES,
-    ObjectOnly, SessionNames, StoredEnvelope, create_new_temp, ensure_listing_root_is_linked,
-    ensure_regular, open_lock, probe_data, serialize_record, validate_record_json,
+    ObjectOnly, SessionNames, create_new_temp, decode_stored_envelope,
+    ensure_listing_root_is_linked, ensure_regular, open_lock, probe_data, serialize_record,
+    validate_record_json,
 };
 use crate::session_maintenance::{
     NativeSessionMaintenanceError as Error, NativeSessionMigration, NativeSessionRecovery,
@@ -131,8 +132,7 @@ fn migrate_metadata(record: &mut SessionRecord) -> Result<bool, Error> {
 
 fn decode(bytes: &[u8], id: &SessionId) -> Result<SessionRecord, Error> {
     recovery::check_duplicate_keys(bytes)?;
-    let ObjectOnly(envelope) =
-        serde_json::from_slice::<ObjectOnly<StoredEnvelope>>(bytes).map_err(|_| Error::Corrupt)?;
+    let ObjectOnly(envelope) = decode_stored_envelope(bytes).map_err(|_| Error::Corrupt)?;
     if envelope.schema_version != FILE_SESSION_SCHEMA_VERSION {
         return Err(Error::UnsupportedVersion);
     }

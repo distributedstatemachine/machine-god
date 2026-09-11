@@ -7,6 +7,7 @@ mod engine;
 mod error;
 mod event;
 mod id;
+pub mod json;
 mod json_bounds;
 mod model;
 mod model_catalog;

@@ -50,14 +50,16 @@ pub enum ProcessInput {
     Pipe,
 }
 
+crate::json::tagged! {
 /// An explicit capability that a host may authorize or deny.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Capability {
     Tool {
         name: ToolName,
         call_id: ToolCallId,
+        #[serde(deserialize_with = "crate::json::deserialize")]
         arguments: Value,
     },
     Filesystem {
@@ -96,8 +98,10 @@ pub enum Capability {
     },
     Custom {
         name: String,
+        #[serde(deserialize_with = "crate::json::deserialize")]
         details: Value,
     },
+}
 }
 
 /// Host-facing risk hint. The handler remains the authority.

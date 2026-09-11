@@ -530,6 +530,30 @@ mod tests {
     use super::*;
     use serde_json::{Map, Number, json};
 
+    #[test]
+    fn exact_numeric_lexemes_survive_compact_output_and_its_byte_limit() {
+        let output = ToolOutput::success(machine_god_core::json::from_str(r#"{"n":9007199254740993.0001,"large":1e400,"tiny":1e-400,"zero":-0,"$serde_json::private::Number":"literal"}"#).unwrap());
+        let expected = serde_json::to_vec(&output).unwrap();
+        let mut bytes = Vec::new();
+        serialize_tool_output_compact(
+            &output,
+            &mut bytes,
+            limits(expected.len()),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            serialize_tool_output_compact(
+                &output,
+                &mut bytes,
+                limits(expected.len() - 1),
+                &CancellationToken::new()
+            ),
+            Err(CompactToolOutputError::OutputLimit)
+        );
+    }
+
     fn limits(max_output_bytes: usize) -> CompactToolOutputLimits {
         CompactToolOutputLimits {
             output_bytes: max_output_bytes,

@@ -4,8 +4,9 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+crate::json::tagged! {
 /// Lifecycle payload carried by an [`EngineEvent`].
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TurnEvent {
@@ -37,6 +38,7 @@ pub enum TurnEvent {
         message: String,
         retryable: bool,
     },
+}
 }
 
 /// One ordered event from a turn.

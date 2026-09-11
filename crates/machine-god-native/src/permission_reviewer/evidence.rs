@@ -142,7 +142,7 @@ fn selected_call(review: Review<'_>) -> Result<&ToolCall, Error> {
 pub(super) fn body(review: Review<'_>) -> Result<Vec<u8>, Error> {
     let call = selected_call(review)?;
     validate_tree(&call.arguments)?;
-    // Validate bounded exact input before json! can clone its tree. Duplicate-key
+    // Validate bounded exact input before cloning its tree. Duplicate-key
     // validation occurred at the core's prepared invocation boundary.
     let arguments = encode(&call.arguments)?;
     if !call.arguments.is_object() {
@@ -185,10 +185,10 @@ pub(super) fn body(review: Review<'_>) -> Result<Vec<u8>, Error> {
     if instruction.len() > CAP {
         return Err(Error::InvalidInput);
     }
-    let payload = json!({
+    let mut payload = json!({
         "prompt":[
             {"role":"user","content":[{"type":"text","text":review.trusted_root_context.projection()}]},
-            {"role":"assistant","content":[{"type":"tool-call","toolCallId":call.id.as_str(),"toolName":call.name.as_str(),"input":call.arguments}]},
+            {"role":"assistant","content":[{"type":"tool-call","toolCallId":call.id.as_str(),"toolName":call.name.as_str(),"input":null}]},
             {"role":"tool","content":[{"type":"tool-result","toolCallId":call.id.as_str(),"toolName":call.name.as_str(),"output":{"type":"text","value":"Tool call has not executed; it is pending permission review."}}]},
             {"role":"system","content":instruction}
         ],
@@ -202,6 +202,10 @@ pub(super) fn body(review: Review<'_>) -> Result<Vec<u8>, Error> {
             },"required":["risk","authorization","decision","rationale"],"additionalProperties":false}}],
         "toolChoice":{"type":"required"},"maxOutputTokens":2048
     });
+    // json! converts arbitrary Values through serde_json::to_value, which
+    // normalizes integer negative zero. Exact reviewed input is inserted as
+    // an owned tree; schema/argument evidence above remains its original text.
+    payload["prompt"][1]["content"][0]["input"] = call.arguments.clone();
     encode(&payload)
 }
 

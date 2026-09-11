@@ -495,16 +495,22 @@ impl<'de> DeserializeSeed<'de> for UniqueValueSeed<'_> {
         if self.depth > MAX_ARGUMENT_DEPTH {
             return Err(serde::de::Error::custom(TerminalActionParseError));
         }
-        deserializer.deserialize_any(Visitor {
-            remaining: self.remaining,
-            depth: self.depth,
-        })
+        machine_god_core::json::visit(
+            deserializer,
+            Visitor {
+                remaining: self.remaining,
+                depth: self.depth,
+            },
+            |number| UniqueValue(Value::Number(number)),
+        )
     }
 }
 
 fn composite(value: &Value) -> ParseResult<Value> {
     let value = match value {
         Value::String(value) => {
+            machine_god_core::json::check_container_depth(value.as_bytes(), MAX_ARGUMENT_DEPTH + 1)
+                .map_err(|_| TerminalActionParseError)?;
             serde_json::from_str::<UniqueValue>(value)
                 .map_err(|_| TerminalActionParseError)?
                 .0
@@ -1004,7 +1010,8 @@ fn integer_value(value: Value) -> ParseResult<Value> {
             if !number.is_finite() {
                 return Err(TerminalActionParseError);
             }
-            integer_spelling(&value.to_string())?
+            let rounded = serde_json::Number::from_f64(number).ok_or(TerminalActionParseError)?;
+            integer_spelling(&rounded.to_string())?
         }
         _ => return Err(TerminalActionParseError),
     };
@@ -1247,6 +1254,15 @@ fn start_request(
 #[cfg(test)]
 mod parser_budget_tests {
     use super::{DeserializeSeed, UniqueValueSeed};
+
+    #[test]
+    fn exact_json_retains_terminal_specific_pinned_integer_coercion() {
+        let value = machine_god_core::json::from_str("9007199254740993.0").unwrap();
+        assert_eq!(
+            super::integer_value(value).unwrap(),
+            serde_json::json!(9007199254740992_u64)
+        );
+    }
 
     #[test]
     fn public_schema_covers_every_action_and_null_inactive_field() {

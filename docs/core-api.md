@@ -242,6 +242,18 @@ provider arguments and tool outputs each receive their own complete budget.
 Traversal stops after visiting the configured limit plus one and never queues
 unvisited siblings.
 
+JSON schemas, arguments, outputs and metadata retain arbitrary-precision decimal
+numbers, including large/tiny exponents and signed zero, without a binary-float
+round trip. The effect-free `machine_god_core::json` module provides source-aware
+decoding and conversion helpers. Literal object keys named
+`$serde_json::private::Number` or `$serde_json::private::RawValue` remain ordinary
+keys. Core's typed JSON fields preserve their existing last-value-wins duplicate
+semantics; explicit boundary parsers retain their own duplicate, depth, node and
+byte policies. Internally tagged history, event and capability decoding avoids
+serde's intermediate representation so nested values retain the same contract.
+Use these helpers or explicit `Value`/`Map` construction for exact values;
+`serde_json::to_value` and `json!` can normalize integer negative zero.
+
 Engine construction, session admission, tool values and subagent envelopes share
 private core JSON validation, serialized-size counting and iterative cleanup
 mechanics. Each consumer retains its own limits, ownership checkpoints and

@@ -309,6 +309,15 @@ must be complete, and no more than the configured number of calls may be
 accumulated. Only the validated final ID, name, and arguments are emitted to
 core; start, delta, and end records never expose a partial call.
 
+Tool schemas, canonical history arguments/results and response inputs preserve
+exact decimal numbers and literal serde-private-looking object keys. Large and
+tiny exponents do not overflow or underflow through binary floats. A numeric
+token counts as one JSON value, with no synthetic object/key nodes; existing
+byte, depth, duplicate-key and aggregate-node limits still apply. Signed-zero
+reconciliation recognizes mathematical zero only and never rewrites a tiny
+nonzero value to zero. Permission-review packets retain the same exact argument
+tree and original schema evidence, including schema-required Auto checks.
+
 The decoder rejects unmatched, conflicting, duplicate, or unfinished tool input
 state, and rejects late input for an unresolved state. Bounded delta/end records
 that arrive after an authoritative exact-ID final are ignored through the

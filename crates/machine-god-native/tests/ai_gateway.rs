@@ -682,6 +682,57 @@ fn request_encoding_matches_the_pinned_gateway_shape() {
 }
 
 #[test]
+fn exact_json_schema_history_and_response_survive_the_gateway_pipeline() {
+    let text = r#"{"n":9007199254740993.00001,"large":1e400,"tiny":1e-400,"zero":-0,"$serde_json::private::Number":"literal","raw":{"$serde_json::private::RawValue":"null"}}"#;
+    let value = machine_god_core::json::from_str(text).unwrap();
+    let response = format!(
+        "data: {{\"type\":\"tool-call\",\"toolCallId\":\"call-2\",\"toolName\":\"mcp.exact\",\"input\":{text}}}\n\n{}",
+        finish("tool-calls")
+    );
+    let transport = ScriptedTransport::new([bytes(response)]);
+    let provider = provider(&transport);
+    let call = ToolCall {
+        id: ToolCallId::new("call-1").unwrap(),
+        name: ToolName::new("mcp.exact").unwrap(),
+        arguments: value.clone(),
+    };
+    let mut model_request = request(vec![
+        Message::text(Role::User, "check"),
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolCall { call: call.clone() }],
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: call.id,
+                output: ToolOutput::success(value.clone()),
+            }],
+        },
+        Message::text(Role::User, "continue"),
+    ]);
+    model_request.tools.push(ToolSpec {
+        name: call.name,
+        description: "Exact JSON".into(),
+        input_schema: value.clone(),
+    });
+    let stream = start(&provider, model_request, CancellationToken::new()).unwrap();
+    let events = futures_executor::block_on(stream.collect::<Vec<_>>());
+    assert!(matches!(&events[0], Ok(ModelEvent::ToolCall { call }) if call.arguments == value));
+    let requests = transport.requests();
+    let body = machine_god_core::json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(body["tools"][0]["inputSchema"], value);
+    assert_eq!(body["prompt"][1]["content"][0]["input"], value);
+    let output = body["prompt"][2]["content"][0]["output"]["value"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        machine_god_core::json::from_str(output).unwrap()["content"],
+        value
+    );
+}
+
+#[test]
 fn unsupported_optional_inference_fields_are_ignored_and_omitted() {
     let transport = ScriptedTransport::new([bytes(finish("stop"))]);
     let provider = provider(&transport);

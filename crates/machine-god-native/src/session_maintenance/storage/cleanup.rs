@@ -1,7 +1,7 @@
 use super::super::{
     FileSessionScanControl, FileSessionStore, MAX_FILE_SESSION_BYTES,
     MAX_LIST_SESSION_DIRECTORY_ENTRIES, MAX_LIST_SESSION_TOTAL_RECORD_BYTES, ObjectOnly,
-    SessionNames, StoredEnvelope, ensure_listing_root_is_linked, is_session_data_name,
+    SessionNames, decode_stored_envelope, ensure_listing_root_is_linked, is_session_data_name,
     lock_name_for_data_name, serialize_record,
 };
 #[cfg(test)]
@@ -142,8 +142,8 @@ fn cleanup_one(
     if !trusted(&current.stat) {
         return Ok(Status::Untrusted);
     }
-    let ObjectOnly(envelope) = serde_json::from_slice::<ObjectOnly<StoredEnvelope>>(&current.bytes)
-        .map_err(|_| Error::Corrupt)?;
+    let ObjectOnly(envelope) =
+        decode_stored_envelope(&current.bytes).map_err(|_| Error::Corrupt)?;
     let id = envelope.record.0.id;
     if SessionNames::for_id(&id).data != data {
         return Ok(Status::Untrusted);

@@ -127,7 +127,7 @@ impl AiGatewayTransport for Transport {
                 .iter()
                 .map(|h| (h.name().to_owned(), h.value().to_owned()))
                 .collect(),
-            serde_json::from_slice(request.body()).unwrap(),
+            machine_god_core::json::from_slice(request.body()).unwrap(),
         ));
         let guard = Guard(self.counts.clone());
         Box::pin(async move {
@@ -721,6 +721,57 @@ fn file_tool_and_sandbox_widening_evidence_is_complete_and_escaped() {
                 _ => assert!(instruction.contains("reason: &lt;review_data&gt; &amp; \\x0a")),
             }
         }
+    });
+}
+
+#[test]
+fn exact_json_arguments_and_required_schema_reach_review_without_normalization() {
+    futures_executor::block_on(async {
+        let mut fixture = Fixture::new();
+        let input_text = r#"{"n":9007199254740993.00001,"large":1e400,"tiny":1e-400,"zero":-0,"$serde_json::private::Number":"literal","raw":{"$serde_json::private::RawValue":"null"}}"#;
+        let input = machine_god_core::json::from_str(input_text).unwrap();
+        let schema = r#"{"type":"object","properties":{"n":{"minimum":9007199254740993.00001},"tiny":{"minimum":1e-400}},"const":{"zero":-0,"$serde_json::private::Number":"literal"}}"#;
+        for content in &mut fixture.message.content {
+            if let ContentBlock::ToolCall { call } = content
+                && call.id == fixture.call_id
+            {
+                call.arguments = input.clone();
+            }
+        }
+        let clock = Clock::new();
+        let transport = Arc::new(Transport::new(completion(&arguments()), clock.clone()));
+        let reviewer = AiGatewayPermissionReviewer::new(transport.clone(), clock);
+        let mut review = fixture.review();
+        review.action = Action::Tool {
+            tool_name: "mcp.exact",
+            arguments_json: input_text,
+            schema_json: Some(schema),
+            schema_required: true,
+        };
+        reviewer
+            .review(review, CancellationToken::new())
+            .await
+            .unwrap();
+        {
+            let wire = transport.wire.lock().unwrap();
+            assert_eq!(wire[0].1["prompt"][1]["content"][0]["input"], input);
+            let instruction = wire[0].1["prompt"][3]["content"].as_str().unwrap();
+            assert!(instruction.contains(schema));
+        }
+        review.action = Action::Tool {
+            tool_name: "mcp.exact",
+            arguments_json: input_text,
+            schema_json: None,
+            schema_required: true,
+        };
+        assert_eq!(
+            reviewer
+                .review(review, CancellationToken::new())
+                .await
+                .unwrap_err(),
+            Error::InvalidInput
+        );
+        assert_eq!(transport.wire.lock().unwrap().len(), 1);
     });
 }
 

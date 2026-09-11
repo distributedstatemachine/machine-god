@@ -155,8 +155,10 @@ are exactly `user` or `assistant`; content kinds are exactly `text`, `image`,
 `type` field. Prompt argument names within one advertised prompt are unique.
 Text, image, audio, resource-link, and embedded-resource records must contain
 their pinned kind-specific fields; blobs and image/audio data use valid
-standard base64. Annotations have only admitted audience/priority forms,
-metadata is object-valued, and resource-link icons, sizes, themes, and numeric
+standard base64. Annotations have only admitted audience/priority forms;
+priority is compared against the exact closed interval zero through one, without
+rounding a slightly excessive value or a tiny negative value into that interval.
+Metadata is object-valued, and resource-link icons, sizes, themes, and numeric
 sizes retain their pinned bounds.
 
 All resource, prompt, annotation, metadata, message, and completion content is

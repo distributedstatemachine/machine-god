@@ -1347,6 +1347,8 @@ pub(crate) mod supported {
     }
 
     fn validate_json_shape(bytes: &[u8]) -> Result<(), NativeBackgroundInspectionError> {
+        machine_god_core::json::check_container_depth(bytes, MAX_BACKGROUND_JSON_DEPTH)
+            .map_err(|_| corrupt())?;
         let context = JsonShapeContext {
             nodes: std::cell::Cell::new(0),
         };
@@ -1398,7 +1400,7 @@ pub(crate) mod supported {
             D: serde::Deserializer<'de>,
         {
             self.context.consume_node()?;
-            deserializer.deserialize_any(JsonShapeVisitor { seed: self })
+            machine_god_core::json::visit(deserializer, JsonShapeVisitor { seed: self }, |_| ())
         }
     }
 

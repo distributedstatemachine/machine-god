@@ -236,7 +236,7 @@ fn duplicate_keys_at_every_depth_escaped_aliases_and_trailing_bytes_reject() {
         r#"{"jsonrpc":"2.0","id":1,"result":[{"a":1,"a":2}]}"#,
         r#"{"jsonrpc":"2.0","id":1,"result":{}} {}"#,
         r#"{"jsonrpc":"2.0","id":1,"result":"secret"} trailing-secret"#,
-        r#"{"jsonrpc":"2.0","id":1,"result":1e999}"#,
+        r#"{"jsonrpc":"2.0","id":1,"result":1e+}"#,
     ] {
         assert_eq!(
             parse_envelope(text.as_bytes(), WireLimits::default()).unwrap_err(),

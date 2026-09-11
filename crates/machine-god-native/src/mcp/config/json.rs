@@ -24,6 +24,7 @@ pub(super) fn decode_ordered(bytes: &[u8]) -> Result<(Value, Vec<String>), McpCo
     if bytes.len() > MAX_CONFIG_BYTES {
         return Err(McpConfigError::Limit);
     }
+    machine_god_core::json::check_container_depth(bytes, 9).map_err(|_| McpConfigError::Limit)?;
     let mut budget = Budget::default();
     let mut de = serde_json::Deserializer::from_slice(bytes);
     let result = Seed {
@@ -54,7 +55,7 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
             self.budget.exceeded = true;
             return Err(D::Error::custom("MCP JSON limit"));
         }
-        de.deserialize_any(self)
+        machine_god_core::json::visit(de, self, Value::Number)
     }
 }
 impl<'de> Visitor<'de> for Seed<'_> {
@@ -162,4 +163,28 @@ pub(super) fn encode(value: &impl Serialize) -> Result<Vec<u8>, McpConfigError> 
     let mut writer = Bounded(Vec::new());
     serde_json::to_writer(&mut writer, value).map_err(|_| McpConfigError::Limit)?;
     Ok(writer.0.into_boxed_slice().into_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_numbers_do_not_create_phantom_servers_or_consume_depth() {
+        let text = br#"{"mcpServers":{"z":1e400,"a":1e-400,"$serde_json::private::Number":-0}}"#;
+        let (value, order) = decode_ordered(text).unwrap();
+        assert_eq!(order, ["z", "a", "$serde_json::private::Number"]);
+        assert_eq!(value["mcpServers"]["z"].to_string(), "1e400");
+        assert_eq!(value["mcpServers"]["a"].to_string(), "1e-400");
+        assert_eq!(
+            value["mcpServers"]["$serde_json::private::Number"].to_string(),
+            "-0"
+        );
+        assert!(
+            decode(
+                br#"{"x":{"$serde_json::private::RawValue":1,"$serde_json::private::RawValue":2}}"#
+            )
+            .is_err()
+        );
+    }
 }

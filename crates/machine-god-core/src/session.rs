@@ -52,6 +52,7 @@ pub struct SessionRecord {
     #[serde(default = "initial_turn_sequence")]
     pub next_turn_sequence: u64,
     pub messages: Vec<Message>,
+    #[serde(deserialize_with = "crate::json::deserialize_map")]
     pub metadata: BTreeMap<String, Value>,
 }
 

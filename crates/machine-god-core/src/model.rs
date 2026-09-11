@@ -20,8 +20,9 @@ pub enum Role {
     Tool,
 }
 
+crate::json::tagged! {
 /// Provider-neutral message content.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ContentBlock {
@@ -29,6 +30,7 @@ pub enum ContentBlock {
         text: String,
     },
     Json {
+        #[serde(deserialize_with = "crate::json::deserialize")]
         value: Value,
     },
     ToolCall {
@@ -38,6 +40,7 @@ pub enum ContentBlock {
         call_id: crate::ToolCallId,
         output: crate::ToolOutput,
     },
+}
 }
 
 /// A provider-neutral conversation message.
@@ -64,6 +67,7 @@ pub struct InferenceOptions {
     pub model: Option<String>,
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    #[serde(deserialize_with = "crate::json::deserialize_map")]
     pub metadata: BTreeMap<String, Value>,
 }
 
@@ -99,8 +103,9 @@ pub struct TokenUsage {
     pub cached_input_tokens: u64,
 }
 
+crate::json::tagged! {
 /// One ordered item from a model response stream.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ModelEvent {
@@ -109,6 +114,7 @@ pub enum ModelEvent {
     ToolCall { call: ToolCall },
     Usage { usage: TokenUsage },
     Stop { reason: StopReason },
+}
 }
 
 /// A sendable stream returned by a model provider.

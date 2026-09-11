@@ -8,6 +8,8 @@ use serde_json::{Map, Number, Value};
 use super::wire::{WireError, WireLimits};
 
 pub(super) fn parse(bytes: &[u8], limits: WireLimits) -> Result<Value, WireError> {
+    machine_god_core::json::check_container_depth(bytes, limits.max_depth)
+        .map_err(|_| WireError::InvalidJson)?;
     let mut remaining = limits.max_nodes;
     let mut decoder = serde_json::Deserializer::from_slice(bytes);
     let value = Seed {
@@ -49,7 +51,7 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
     type Value = Value;
     fn deserialize<D: de::Deserializer<'de>>(mut self, decoder: D) -> Result<Value, D::Error> {
         self.charge()?;
-        decoder.deserialize_any(self)
+        machine_god_core::json::visit(decoder, self, Value::Number)
     }
 }
 
@@ -115,5 +117,51 @@ impl<'de> DeserializeSeed<'de> for KeySeed<'_> {
         }
         *self.remaining -= 1;
         serde::Deserialize::deserialize(decoder)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_numbers_are_scalar_nodes_and_literal_private_keys_are_objects() {
+        for token in ["9007199254740993.00000001", "1e400", "1e-400", "-0"] {
+            let limits = WireLimits {
+                max_depth: 1,
+                max_nodes: 1,
+                ..WireLimits::default()
+            };
+            assert_eq!(parse(token.as_bytes(), limits).unwrap().to_string(), token);
+            let text = format!("{{\"$serde_json::private::Number\":{token}}}");
+            let limits = WireLimits {
+                max_depth: 2,
+                max_nodes: 3,
+                ..limits
+            };
+            let value = parse(text.as_bytes(), limits).unwrap();
+            assert!(value.is_object());
+            assert_eq!(value.to_string(), text);
+            assert!(
+                parse(
+                    text.as_bytes(),
+                    WireLimits {
+                        max_nodes: 2,
+                        ..limits
+                    }
+                )
+                .is_err()
+            );
+            assert!(
+                parse(
+                    text.as_bytes(),
+                    WireLimits {
+                        max_depth: 1,
+                        ..limits
+                    }
+                )
+                .is_err()
+            );
+        }
     }
 }

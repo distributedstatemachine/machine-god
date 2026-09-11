@@ -61,6 +61,11 @@ pub(super) fn check_duplicate_keys(bytes: &[u8]) -> Result<(), Error> {
             de.deserialize_any(UniqueVisitor)
         }
     }
+    machine_god_core::json::check_container_depth(
+        bytes,
+        crate::session_store::MAX_STORED_JSON_DEPTH + 7,
+    )
+    .map_err(|_| Error::Corrupt)?;
     match serde_json::from_slice::<Unique>(bytes) {
         Ok(_) => Ok(()),
         Err(error) if error.is_eof() => Ok(()),
@@ -163,6 +168,11 @@ impl<'de> Visitor<'de> for Record<'_> {
         f.write_str("canonical native record")
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        #[derive(Deserialize)]
+        struct Metadata(
+            #[serde(deserialize_with = "machine_god_core::json::deserialize_map")]
+            BTreeMap<String, Value>,
+        );
         key(&mut map, "id")?;
         self.0.id = Some(map.next_value()?);
         key(&mut map, "incarnation_id")?;
@@ -176,7 +186,8 @@ impl<'de> Visitor<'de> for Record<'_> {
         map.next_value_seed(Messages(&mut self.0.messages))?;
         self.0.metadata_started = true;
         key(&mut map, "metadata")?;
-        map.next_value::<BTreeMap<String, Value>>()?;
+        let Metadata(metadata) = map.next_value()?;
+        drop(metadata);
         if map.next_key::<String>()?.is_some() {
             return Err(de::Error::custom("extra record key"));
         }

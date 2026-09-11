@@ -16,6 +16,7 @@ mod permission_wrapper_tests;
 pub struct ToolSpec {
     pub name: ToolName,
     pub description: String,
+    #[serde(deserialize_with = "crate::json::deserialize")]
     pub input_schema: Value,
 }
 
@@ -24,6 +25,7 @@ pub struct ToolSpec {
 pub struct ToolCall {
     pub id: ToolCallId,
     pub name: ToolName,
+    #[serde(deserialize_with = "crate::json::deserialize")]
     pub arguments: Value,
 }
 
@@ -216,6 +218,7 @@ impl Drop for PreparedToolCall {
 /// Provider-neutral tool output.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ToolOutput {
+    #[serde(deserialize_with = "crate::json::deserialize")]
     pub content: Value,
     pub is_error: bool,
 }
