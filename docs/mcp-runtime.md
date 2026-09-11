@@ -122,6 +122,9 @@ admission, atomic catalog construction and live-generation checks. Selected
 tools use the ordinary preparation and permission pipeline described in
 [MCP selection](mcp-select-tool.md). Resources and prompts retain the exact
 identity and untrusted-result rules in [MCP features](mcp-features.md).
+[Catalog page assembly](mcp-pagination.md) provides a complete raw candidate,
+with exact cursor correlation, identity uniqueness and earliest-page expiry;
+schema admission and live-generation publication remain separate.
 
 No negotiation method accepts an ordinary tool call for replay. A transport
 must retain final permission proof through asynchronous queue waits and request
