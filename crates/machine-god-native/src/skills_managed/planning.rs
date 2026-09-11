@@ -8,6 +8,7 @@ use super::{
 };
 use crate::skills_metadata::parse_skill_metadata;
 use machine_god_core::CancellationToken;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::{
     fs::File,
@@ -57,13 +58,8 @@ pub(super) fn prepare_install(
             (directory, Some(lease))
         }
         NativeSkillSourceKind::Local => {
-            let path = Path::new(&source.source);
-            let directory = if path.is_absolute() {
-                fs::open_absolute_directory(path)?
-            } else {
-                // Parent-relative spelling is resolved once as explicitly selected source authority.
-                fs::open_absolute_directory(&cwd.join(path))?
-            };
+            let path = selected_local_path(Path::new(&source.source), cwd)?;
+            let directory = fs::open_absolute_directory(&path)?;
             (Arc::new(directory), None)
         }
     };
@@ -111,12 +107,7 @@ pub(super) fn source_root_name(
         source::validate_destination(name)?;
         return Ok(name.to_owned());
     }
-    let supplied = Path::new(&source.source);
-    let selected = if supplied.is_absolute() {
-        supplied.to_owned()
-    } else {
-        cwd.join(supplied)
-    };
+    let selected = selected_local_path(Path::new(&source.source), cwd)?;
     let mut normalized = PathBuf::new();
     for component in selected.components() {
         if component == std::path::Component::ParentDir {
@@ -131,6 +122,30 @@ pub(super) fn source_root_name(
         .ok_or(Kind::InvalidName)?;
     source::validate_destination(name)?;
     Ok(name.to_owned())
+}
+
+fn selected_local_path<'a>(supplied: &'a Path, cwd: &Path) -> Result<Cow<'a, Path>, Kind> {
+    let supplied_len = supplied.as_os_str().len();
+    if supplied_len > 4096 {
+        return Err(Kind::InvalidSource);
+    }
+    if supplied.is_absolute() {
+        return Ok(Cow::Borrowed(supplied));
+    }
+    let cwd_bytes = cwd.as_os_str().as_encoded_bytes();
+    let separator = usize::from(!cwd_bytes.is_empty() && !cwd_bytes.ends_with(b"/"));
+    if cwd_bytes.len() > 4096
+        || cwd_bytes
+            .len()
+            .checked_add(separator)
+            .and_then(|length| length.checked_add(supplied_len))
+            .is_none_or(|length| length > 4096)
+    {
+        return Err(Kind::InvalidSource);
+    }
+    // Bound the original spelling before joining or normalizing dot/parent components.
+    // Only a relative local source uses the explicitly supplied working directory.
+    Ok(Cow::Owned(cwd.join(supplied)))
 }
 
 fn prepare_from_directory(

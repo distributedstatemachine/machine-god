@@ -2,6 +2,9 @@ use super::*;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[path = "path_tests.rs"]
+mod path_tests;
+
 mod resource_modes {
     use super::{Fixture, fs};
     use crate::skills_managed::{
