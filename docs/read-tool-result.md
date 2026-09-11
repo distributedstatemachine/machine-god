@@ -60,13 +60,33 @@ cannot be read through its old handle.
 
 ## Explicit native archives
 
-`NativeToolResultArchiveAdapter` implements the terminal's injected result
-publisher and can be shared with `ReadToolResultTool::with_archive`. Its
+`NativeToolResultArchiveAdapter` exposes generic inherent `publish` and
+`publish_arguments` operations and can be shared with
+`ReadToolResultTool::with_archive`. The terminal's injected publisher traits
+delegate to these same operations with their existing terminal-specific limits.
+Its
 constructor is inert; publication and paging run through the existing owned
 worker collector, with at most two operations or unconsumed receipts per shared
 adapter. Dropping a submitted future does not detach the worker or abandon its
-storage ownership. Publication failure after an executed terminal action is
+storage ownership. Publication failure after an executed tool action is
 not advertised as permission to repeat that action.
+
+Every generic call selects explicit per-operation limits, without changing the
+shared adapter or another tool's policy. `NativeToolResultArchiveLimits` bounds
+the complete compact `ToolOutput` bytes and its content's JSON nodes.
+`NativeToolArgumentsArchiveLimits` bounds the original compact argument bytes
+and nodes; the archive adds its fixed 29-byte successful output envelope. Limits
+must be nonzero, nodes cannot exceed the archive's hard source-byte ceiling,
+and complete wrapped bytes must fit that ceiling. Invalid policies are rejected
+before worker admission. The existing fixed JSON depth bound remains unchanged.
+For example, a host with a 4 MiB + 16 KiB content ceiling reserves another 29
+bytes for complete result serialization; a 64 KiB / 4,096-node input policy
+still measures the original arguments, not that wrapper. Terminal delegates
+retain their original, independent byte and node budgets.
+
+Publication preserves exact JSON number spellings and literal private-looking
+object keys. It moves the original complete result into `ToolExecution` without
+cloning its content; only the durable projection is replaced by a reference.
 
 Complete outputs of at most 64 KiB remain inline and create no archive files.
 Larger outputs are compactly serialized and durably published before core
@@ -103,8 +123,9 @@ The ordinary UTF-8 range result below is unchanged. Native archive injection is
 an explicit composition API; it does not itself replace the reference host's
 legacy terminal registration or its argument-admission policy.
 
-The same archive adapter also implements pre-execution terminal input
-publication. Complete arguments are stored as the `content` of a successful
+The same archive adapter also implements the pre-execution terminal input
+publisher through its generic `publish_arguments` operation. Complete arguments
+are stored as the `content` of a successful
 `ToolOutput` envelope, so the existing page shape reconstructs them losslessly.
 Small inputs remain inline. Larger inputs receive a `tool_arguments_archive`
 reference in the original assistant tool call; publication honours cancellation
@@ -113,6 +134,8 @@ from a prior assistant `terminal` call with the matching original call ID,
 session and incarnation. Input references share the existing bounded scan and
 archive budgets. They are historical data, not executable tool arguments;
 resuming a session does not automatically hydrate or execute them.
+The generic publication API does not broaden the reader's accepted assistant
+tool names or automatically register any new tool with the host.
 
 ## Range result
 

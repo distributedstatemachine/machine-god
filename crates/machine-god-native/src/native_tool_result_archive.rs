@@ -1,4 +1,4 @@
-//! Owned-worker binding for terminal result publication and historical paging.
+//! Owned-worker binding for tool publication and historical paging.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use crate::owned_worker::{
@@ -16,7 +16,8 @@ use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputLimits, serialize_tool_output_compact_with_scratch,
 };
 use crate::tool_result_archive::{
-    ArchivedToolResult, ToolResultArchive, ToolResultArchiveError, ToolResultArchivePage,
+    ArchivedToolResult, TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES, ToolResultArchive,
+    ToolResultArchiveError, ToolResultArchivePage,
 };
 use machine_god_core::{
     BoxFuture, CancellationToken, MAX_SAFE_JSON_DEPTH, ToolContext, ToolError, ToolErrorKind,
@@ -31,6 +32,26 @@ const INLINE_BYTES: usize = 64 * 1024;
 const REFERENCE_BYTES: usize = 16 * 1024;
 const PREVIEW_BYTES: usize = 1024;
 const ACTIVE_OPERATIONS: usize = 2;
+const ARGUMENT_ENVELOPE_BYTES: usize = 29;
+
+/// Per-publication bounds for a complete serialized `ToolOutput`.
+/// Neither limit may be zero or exceed the archive's hard source-byte ceiling.
+/// JSON nodes count the output's content, excluding its fixed wrapper.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeToolResultArchiveLimits {
+    pub compact_bytes: usize,
+    pub json_nodes: usize,
+}
+
+/// Per-publication bounds for the original compact JSON arguments.
+/// The archive adds its fixed 29-byte successful `ToolOutput` wrapper; that
+/// complete source must fit the archive's hard byte ceiling. JSON nodes count
+/// only the original arguments. Neither limit may be zero or exceed that ceiling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeToolArgumentsArchiveLimits {
+    pub compact_bytes: usize,
+    pub json_nodes: usize,
+}
 
 /// One shared, bounded native binding for both full-result publication and reads.
 /// Construction retains explicit archive authority but performs no I/O or spawn.
@@ -162,20 +183,27 @@ impl NativeToolResultArchiveAdapter {
     }
 }
 
-impl TerminalActionResultPublisher for NativeToolResultArchiveAdapter {
-    fn publish(
+impl NativeToolResultArchiveAdapter {
+    /// Publishes a complete owned result, retaining it unchanged for the current
+    /// execution and substituting only its durable projection when archived.
+    /// Construction is inert. Once polled, completed-result publication has no
+    /// cancellation boundary that could authorize repeating the tool's effects.
+    #[must_use]
+    pub fn publish(
         &self,
         context: ToolContext,
         output: ToolOutput,
+        limits: NativeToolResultArchiveLimits,
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
         let archive = Arc::clone(&self.archive);
         let active = Arc::clone(&self.active);
         let workers = self.workers.clone();
         let output = OutputOwner(Some(output));
         Box::pin(async move {
+            let limits = publication_limits(limits.compact_bytes, limits.json_nodes, false)?;
             let permit = Self::acquire(active, false)?;
             let receipt = run_owned(workers, move || {
-                let result = publish_owned(&archive, &context, output);
+                let result = publish_owned(&archive, &context, output, limits);
                 Receipt {
                     result,
                     _permit: permit,
@@ -186,14 +214,17 @@ impl TerminalActionResultPublisher for NativeToolResultArchiveAdapter {
             receipt.result
         })
     }
-}
-
-impl TerminalActionInputPublisher for NativeToolResultArchiveAdapter {
-    fn publish_arguments(
+    /// Publishes arguments only when their wrapped archive source exceeds the
+    /// inline threshold. Limits apply to the original arguments, not the wrapper.
+    /// Cancellation is observed before and throughout owned publication; merely
+    /// constructing or dropping the future does not acquire worker authority.
+    #[must_use]
+    pub fn publish_arguments(
         &self,
         context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
+        limits: NativeToolArgumentsArchiveLimits,
     ) -> BoxFuture<'_, Result<Option<Value>, ToolError>> {
         let archive = Arc::clone(&self.archive);
         let active = Arc::clone(&self.active);
@@ -202,11 +233,22 @@ impl TerminalActionInputPublisher for NativeToolResultArchiveAdapter {
         let input = OutputOwner(Some(ToolOutput::success(arguments)));
         Box::pin(async move {
             check_input_cancellation(&cancellation)?;
+            let bytes = limits
+                .compact_bytes
+                .checked_add(ARGUMENT_ENVELOPE_BYTES)
+                .filter(|_| limits.compact_bytes != 0)
+                .ok_or_else(|| archive_error(ToolResultArchiveError::Invalid, true))?;
+            let limits = publication_limits(bytes, limits.json_nodes, true)?;
             let permit = Self::acquire(active, true)?;
             let worker_cancellation = cancellation.clone();
             let receipt = run_owned(workers, move || {
-                let result =
-                    publish_arguments_owned(&archive, &context, &input, &worker_cancellation);
+                let result = publish_arguments_owned(
+                    &archive,
+                    &context,
+                    &input,
+                    &worker_cancellation,
+                    limits,
+                );
                 Receipt {
                     result,
                     _permit: permit,
@@ -218,6 +260,61 @@ impl TerminalActionInputPublisher for NativeToolResultArchiveAdapter {
             receipt.result
         })
     }
+}
+
+impl TerminalActionResultPublisher for NativeToolResultArchiveAdapter {
+    fn publish(
+        &self,
+        context: ToolContext,
+        output: ToolOutput,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        Self::publish(
+            self,
+            context,
+            output,
+            NativeToolResultArchiveLimits {
+                compact_bytes: MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES,
+                json_nodes: MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES,
+            },
+        )
+    }
+}
+
+impl TerminalActionInputPublisher for NativeToolResultArchiveAdapter {
+    fn publish_arguments(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<Option<Value>, ToolError>> {
+        Self::publish_arguments(
+            self,
+            context,
+            arguments,
+            cancellation,
+            NativeToolArgumentsArchiveLimits {
+                compact_bytes: MAX_TERMINAL_ACTION_ARGUMENT_BYTES,
+                json_nodes: MAX_TERMINAL_ACTION_ARGUMENT_NODES,
+            },
+        )
+    }
+}
+
+fn publication_limits(
+    output_bytes: usize,
+    json_nodes: usize,
+    read: bool,
+) -> Result<CompactToolOutputLimits, ToolError> {
+    if !(1..=TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES).contains(&output_bytes)
+        || !(1..=TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES).contains(&json_nodes)
+    {
+        return Err(archive_error(ToolResultArchiveError::Invalid, read));
+    }
+    Ok(CompactToolOutputLimits {
+        output_bytes,
+        json_depth: MAX_SAFE_JSON_DEPTH,
+        json_nodes,
+    })
 }
 
 fn run_owned<T: Send + 'static>(
@@ -243,6 +340,7 @@ fn publish_arguments_owned(
     context: &ToolContext,
     input: &OutputOwner,
     cancellation: &CancellationToken,
+    limits: CompactToolOutputLimits,
 ) -> Result<Option<Value>, ToolError> {
     check_input_cancellation(cancellation)?;
     // Use the same ToolOutput source envelope as result paging. The archived
@@ -252,11 +350,7 @@ fn publish_arguments_owned(
         input.get(),
         &mut compact,
         &mut CompactJsonScratch::new(),
-        CompactToolOutputLimits {
-            output_bytes: MAX_TERMINAL_ACTION_ARGUMENT_BYTES + 29,
-            json_depth: MAX_SAFE_JSON_DEPTH,
-            json_nodes: MAX_TERMINAL_ACTION_ARGUMENT_NODES,
-        },
+        limits,
         cancellation,
     )
     .map_err(|_| {
@@ -300,13 +394,17 @@ fn publish_owned(
     archive: &ToolResultArchive,
     context: &ToolContext,
     output: OutputOwner,
+    limits: CompactToolOutputLimits,
 ) -> Result<ToolExecution, ToolError> {
     let mut compact = Vec::new();
-    serialize(
+    serialize_tool_output_compact_with_scratch(
         output.get(),
         &mut compact,
-        MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES,
-    )?;
+        &mut CompactJsonScratch::new(),
+        limits,
+        &CancellationToken::new(),
+    )
+    .map_err(|_| archive_error(ToolResultArchiveError::Invalid, false))?;
     if compact.len() <= INLINE_BYTES {
         return Ok(ToolExecution::output(output.take()));
     }
@@ -483,8 +581,17 @@ mod tests {
     fn construction_unpolled_publication_and_small_results_do_not_create_archive_files() {
         let directory = Directory::new();
         let adapter = directory.adapter();
-        drop(adapter.publish(context(), ToolOutput::success("x".repeat(90 * 1024))));
-        let execution = block_on(adapter.publish(context(), ToolOutput::success("small"))).unwrap();
+        drop(TerminalActionResultPublisher::publish(
+            adapter.as_ref(),
+            context(),
+            ToolOutput::success("x".repeat(90 * 1024)),
+        ));
+        let execution = block_on(TerminalActionResultPublisher::publish(
+            adapter.as_ref(),
+            context(),
+            ToolOutput::success("small"),
+        ))
+        .unwrap();
         assert!(execution.persisted_output().is_none());
         assert_eq!(execution.tool_output().content, "small");
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
@@ -500,8 +607,11 @@ mod tests {
         let adapter = Arc::try_unwrap(directory.adapter())
             .unwrap()
             .with_worker_scope(scope.clone());
-        let mut publication =
-            adapter.publish(context(), ToolOutput::success("x".repeat(90 * 1024)));
+        let mut publication = TerminalActionResultPublisher::publish(
+            &adapter,
+            context(),
+            ToolOutput::success("x".repeat(90 * 1024)),
+        );
         let mut poll_context = Context::from_waker(std::task::Waker::noop());
         assert!(matches!(
             publication.as_mut().poll(&mut poll_context),
@@ -520,19 +630,291 @@ mod tests {
         let execution = block_on(publication).unwrap();
         assert!(execution.persisted_output().is_some());
         assert_eq!(adapter.active.load(Ordering::Acquire), 0);
-        assert!(block_on(adapter.publish(context(), ToolOutput::success("late"))).is_err());
+        assert!(
+            block_on(TerminalActionResultPublisher::publish(
+                &adapter,
+                context(),
+                ToolOutput::success("late")
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn generic_result_preserves_exact_json_ownership_and_durable_projection() {
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        let mut content = machine_god_core::json::from_str(
+            r#"{"n":9007199254740993.0001,"large":1e400,"tiny":1e-400,"zero":-0,"private":{"$serde_json::private::Number":"literal"}}"#,
+        )
+        .unwrap();
+        content["text"] = Value::String("x".repeat(90 * 1024));
+        let allocation = content["text"].as_str().unwrap().as_ptr() as usize;
+        let output = ToolOutput {
+            content,
+            is_error: true,
+        };
+        let source = serde_json::to_string(&output).unwrap();
+        let execution = block_on(adapter.publish(
+            context(),
+            output,
+            NativeToolResultArchiveLimits {
+                compact_bytes: 4 * 1024 * 1024 + 16 * 1024 + 29,
+                json_nodes: 262_144 + 64,
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            execution.tool_output().content["text"]
+                .as_str()
+                .unwrap()
+                .as_ptr() as usize,
+            allocation
+        );
+        assert_eq!(
+            serde_json::to_string(execution.tool_output()).unwrap(),
+            source
+        );
+        assert!(execution.next_round_tool().is_none());
+        let persisted = execution.persisted_output().unwrap();
+        assert!(persisted.is_error);
+        assert!(serde_json::to_vec(persisted).unwrap().len() < REFERENCE_BYTES);
+        let archived = reference(&execution);
+        assert_eq!(archived.source_context, context());
+        let tool = reader(Arc::clone(&adapter), persisted.clone(), context().call_id);
+        let mut recovered = String::new();
+        while recovered.len() < source.len() {
+            let page = block_on(tool.execute(
+                context(),
+                json!({"handle":archived.handle.as_str(),"start_byte":recovered.len()+1,"byte_count":16*1024}),
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            recovered.push_str(page.content["serialized_tool_output"].as_str().unwrap());
+        }
+        assert_eq!(recovered, source);
+        for spelling in [
+            "9007199254740993.0001",
+            "1e400",
+            "1e-400",
+            "-0",
+            "$serde_json::private::Number",
+        ] {
+            assert!(recovered.contains(spelling));
+        }
+    }
+
+    #[test]
+    fn generic_input_counts_original_bytes_and_nodes_separately_from_wrapper() {
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        let limits = NativeToolArgumentsArchiveLimits {
+            compact_bytes: INLINE_BYTES,
+            json_nodes: 4096,
+        };
+        let mut arguments = machine_god_core::json::from_str(
+            r#"{"n":9007199254740993.0001,"private":{"$serde_json::private::Number":"literal"},"text":""}"#,
+        ).unwrap();
+        let padding = INLINE_BYTES - serde_json::to_vec(&arguments).unwrap().len();
+        arguments["text"] = Value::String("x".repeat(padding));
+        let source = serde_json::to_string(&ToolOutput::success(arguments.clone())).unwrap();
+        assert_eq!(source.len(), INLINE_BYTES + ARGUMENT_ENVELOPE_BYTES);
+        let stored = block_on(adapter.publish_arguments(
+            context(),
+            arguments,
+            CancellationToken::new(),
+            limits,
+        ))
+        .unwrap()
+        .unwrap();
+        let ArchivedArgumentsReference::ToolArgumentsArchive { archive, .. } =
+            serde_json::from_value(stored).unwrap();
+        let mut recovered = String::new();
+        while recovered.len() < source.len() {
+            let page = block_on(adapter.read(
+                context(),
+                archive.clone(),
+                recovered.len() + 1,
+                16 * 1024,
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            recovered.push_str(page.content["serialized_tool_output"].as_str().unwrap());
+        }
+        assert_eq!(recovered, source);
+        for arguments in [
+            Value::String("x".repeat(INLINE_BYTES - 1)),
+            json!(vec![0; 4096]),
+        ] {
+            assert_eq!(
+                block_on(adapter.publish_arguments(
+                    context(),
+                    arguments,
+                    CancellationToken::new(),
+                    limits
+                ))
+                .unwrap_err()
+                .kind,
+                ToolErrorKind::InvalidInput
+            );
+        }
+        assert!(
+            block_on(adapter.publish_arguments(
+                context(),
+                json!(vec![0; 4095]),
+                CancellationToken::new(),
+                limits
+            ))
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn generic_limits_reject_before_worker_admission_and_cancellation_still_wins() {
+        use futures_util::FutureExt;
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        // A full operation budget would return Busy if invalid limits reached
+        // admission. Ready completion proves no owned worker was submitted.
+        adapter.active.store(ACTIVE_OPERATIONS, Ordering::Release);
+        for (bytes, nodes) in [(0, 1), (1, 0), (usize::MAX, 1), (1, usize::MAX)] {
+            let result = adapter
+                .publish(
+                    context(),
+                    ToolOutput::success("small"),
+                    NativeToolResultArchiveLimits {
+                        compact_bytes: bytes,
+                        json_nodes: nodes,
+                    },
+                )
+                .now_or_never()
+                .unwrap();
+            assert_eq!(result.err().unwrap().kind, ToolErrorKind::Execution);
+            let result = adapter
+                .publish_arguments(
+                    context(),
+                    Value::Null,
+                    CancellationToken::new(),
+                    NativeToolArgumentsArchiveLimits {
+                        compact_bytes: bytes,
+                        json_nodes: nodes,
+                    },
+                )
+                .now_or_never()
+                .unwrap();
+            assert_eq!(result.unwrap_err().kind, ToolErrorKind::InvalidInput);
+        }
+        let result = adapter
+            .publish_arguments(
+                context(),
+                Value::Null,
+                CancellationToken::new(),
+                NativeToolArgumentsArchiveLimits {
+                    compact_bytes: TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES,
+                    json_nodes: 1,
+                },
+            )
+            .now_or_never()
+            .unwrap();
+        assert_eq!(result.unwrap_err().kind, ToolErrorKind::InvalidInput);
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let result = adapter
+            .publish_arguments(
+                context(),
+                Value::Null,
+                cancellation,
+                NativeToolArgumentsArchiveLimits {
+                    compact_bytes: 0,
+                    json_nodes: 0,
+                },
+            )
+            .now_or_never()
+            .unwrap();
+        assert_eq!(result.unwrap_err().kind, ToolErrorKind::Cancelled);
+        adapter.active.store(0, Ordering::Release);
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn generic_result_enforces_exact_complete_byte_and_content_node_bounds() {
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        let output = ToolOutput::success(json!([0, 1]));
+        let bytes = serde_json::to_vec(&output).unwrap().len();
+        for (maximum, nodes) in [(bytes - 1, 3), (bytes, 2)] {
+            assert!(
+                block_on(adapter.publish(
+                    context(),
+                    output.clone(),
+                    NativeToolResultArchiveLimits {
+                        compact_bytes: maximum,
+                        json_nodes: nodes
+                    }
+                ))
+                .is_err()
+            );
+        }
+        let execution = block_on(adapter.publish(
+            context(),
+            output.clone(),
+            NativeToolResultArchiveLimits {
+                compact_bytes: bytes,
+                json_nodes: 3,
+            },
+        ))
+        .unwrap();
+        assert_eq!(execution.tool_output(), &output);
+        assert!(execution.persisted_output().is_none());
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn generic_unpolled_deep_values_are_inert_and_destroyed_iteratively() {
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        let mut value = Value::Null;
+        for _ in 0..10_000 {
+            value = Value::Array(vec![value]);
+        }
+        drop(adapter.publish(
+            context(),
+            ToolOutput::success(value),
+            NativeToolResultArchiveLimits {
+                compact_bytes: 1,
+                json_nodes: 1,
+            },
+        ));
+        let mut value = Value::Null;
+        for _ in 0..10_000 {
+            value = Value::Array(vec![value]);
+        }
+        drop(adapter.publish_arguments(
+            context(),
+            value,
+            CancellationToken::new(),
+            NativeToolArgumentsArchiveLimits {
+                compact_bytes: 1,
+                json_nodes: 1,
+            },
+        ));
+        assert_eq!(adapter.active.load(Ordering::Acquire), 0);
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
     }
 
     #[test]
     fn input_publication_is_inert_cancellable_and_keeps_small_arguments_inline() {
         let directory = Directory::new();
         let adapter = directory.adapter();
-        drop(adapter.publish_arguments(
+        drop(TerminalActionInputPublisher::publish_arguments(
+            adapter.as_ref(),
             context(),
             json!({"command":"x".repeat(90 * 1024)}),
             CancellationToken::new(),
         ));
-        let small = block_on(adapter.publish_arguments(
+        let small = block_on(TerminalActionInputPublisher::publish_arguments(
+            adapter.as_ref(),
             context(),
             json!({"action":"list"}),
             CancellationToken::new(),
@@ -542,7 +924,8 @@ mod tests {
         let cancellation = CancellationToken::new();
         cancellation.cancel();
         assert_eq!(
-            block_on(adapter.publish_arguments(
+            block_on(TerminalActionInputPublisher::publish_arguments(
+                adapter.as_ref(),
                 context(),
                 json!({"command":"x".repeat(90 * 1024)}),
                 cancellation
@@ -553,9 +936,14 @@ mod tests {
         );
         let oversized = Value::String("x".repeat(MAX_TERMINAL_ACTION_ARGUMENT_BYTES));
         assert_eq!(
-            block_on(adapter.publish_arguments(context(), oversized, CancellationToken::new()))
-                .unwrap_err()
-                .kind,
+            block_on(TerminalActionInputPublisher::publish_arguments(
+                adapter.as_ref(),
+                context(),
+                oversized,
+                CancellationToken::new()
+            ))
+            .unwrap_err()
+            .kind,
             ToolErrorKind::InvalidInput
         );
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
@@ -567,10 +955,14 @@ mod tests {
         let adapter = directory.adapter();
         let arguments = json!({"command":format!("{}🦀", "x".repeat(90 * 1024))});
         let source = serde_json::to_string(&ToolOutput::success(arguments.clone())).unwrap();
-        let reference =
-            block_on(adapter.publish_arguments(context(), arguments, CancellationToken::new()))
-                .unwrap()
-                .unwrap();
+        let reference = block_on(TerminalActionInputPublisher::publish_arguments(
+            adapter.as_ref(),
+            context(),
+            arguments,
+            CancellationToken::new(),
+        ))
+        .unwrap()
+        .unwrap();
         assert!(serde_json::to_vec(&reference).unwrap().len() < REFERENCE_BYTES);
         let ArchivedArgumentsReference::ToolArgumentsArchive { archive, .. } =
             serde_json::from_value(reference.clone()).unwrap();
@@ -772,7 +1164,12 @@ mod tests {
             is_error: true,
         };
         let source = serde_json::to_string(&output).unwrap();
-        let execution = block_on(adapter.publish(context(), output.clone())).unwrap();
+        let execution = block_on(TerminalActionResultPublisher::publish(
+            adapter.as_ref(),
+            context(),
+            output.clone(),
+        ))
+        .unwrap();
         assert_eq!(execution.tool_output(), &output);
         let archived = reference(&execution);
         assert_eq!(archived.source_total_bytes, source.len());
@@ -810,9 +1207,12 @@ mod tests {
     fn archive_reader_requires_enabled_capability_and_matching_durable_call_and_owner() {
         let directory = Directory::new();
         let adapter = directory.adapter();
-        let execution =
-            block_on(adapter.publish(context(), ToolOutput::success("x".repeat(90 * 1024))))
-                .unwrap();
+        let execution = block_on(TerminalActionResultPublisher::publish(
+            adapter.as_ref(),
+            context(),
+            ToolOutput::success("x".repeat(90 * 1024)),
+        ))
+        .unwrap();
         let archived = reference(&execution);
         let args = json!({"handle":archived.handle.as_str(),"start_byte":70 * 1024});
         let disabled =
@@ -872,9 +1272,12 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
         std::fs::write(directory.0.join("archive-lock-v1"), b"unexpected").unwrap();
-        let error =
-            block_on(adapter.publish(context(), ToolOutput::success("x".repeat(90 * 1024))))
-                .unwrap_err();
+        let error = block_on(TerminalActionResultPublisher::publish(
+            adapter.as_ref(),
+            context(),
+            ToolOutput::success("x".repeat(90 * 1024)),
+        ))
+        .unwrap_err();
         assert!(
             !error.retryable,
             "committed action publication cannot authorize resubmission"
