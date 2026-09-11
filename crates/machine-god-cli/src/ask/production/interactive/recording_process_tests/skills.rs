@@ -209,17 +209,25 @@ fn affirmative_first_prompt_uses_initial_catalog_and_next_prompt_has_no_skill_le
     command(&mut terminal, "A separate ordinary question");
     terminal.wait_for(b"local fixture answer");
     terminal.wait_for(b"[turn completed]\n> ");
+    let slash_prompt = "/review check another change";
+    command(&mut terminal, slash_prompt);
+    terminal.wait_for(b"local fixture answer");
+    terminal.wait_for(b"[turn completed]\n> ");
     finish(&mut terminal);
     assert_eq!(terminal.finish().0.code(), Some(0));
     let requests = gateway.requests();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     assert!(!requests[1].to_string().contains("FULL AUTOMATIC BODY"));
     assert!(
         !requests[1]
             .to_string()
             .contains("Caller-selected external context")
     );
-    assert_canonical(&saved(&fixture), &[prompt, "A separate ordinary question"]);
+    assert_advisory(&requests[2], slash_prompt, &full_text);
+    assert_canonical(
+        &saved(&fixture),
+        &[prompt, "A separate ordinary question", slash_prompt],
+    );
     gateway.finish();
 }
 
