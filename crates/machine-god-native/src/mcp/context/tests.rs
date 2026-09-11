@@ -476,7 +476,7 @@ fn registration_cannot_reenroll_same_core_turn_after_guard_drop() {
         .unwrap()
         .unwrap();
     let owner = contexts.register(&session).unwrap();
-    let turn = block_on(session.prompt("actual core turn".into())).unwrap();
+    let turn = block_on(session.prompt("actual core turn")).unwrap();
     let registration = owner.begin(&session, &turn).unwrap();
     assert!(matches!(
         owner.begin(&session, &turn),

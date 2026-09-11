@@ -62,7 +62,7 @@ fn failed_later_permission_enrollment_unwinds_mcp_registration_before_returning(
             .unwrap()
             .begin(
                 &conversation.session,
-                &block_on(conversation.session.prompt("fresh".into())).unwrap()
+                &block_on(conversation.session.prompt("fresh")).unwrap()
             )
             .is_ok()
     );
