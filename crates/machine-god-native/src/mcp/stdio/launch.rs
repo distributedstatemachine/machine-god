@@ -5,7 +5,7 @@ use super::{
 use crate::background_process::ValidatedBackgroundEnvironment;
 use crate::terminal_captured_exec::{GatedArgv, GatedProcess, launch_gated_argv};
 use crate::terminal_helper::TerminalPtyHelper;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
@@ -22,12 +22,13 @@ const MAX_STARTUP: Duration = Duration::from_secs(300);
 /// are the complete selected target environment, not an ambient overlay. PATH is
 /// captured separately by the host; relative entries resolve against retained cwd.
 /// The helper must be the explicitly selected trusted executable/entrypoint.
+#[derive(Clone)]
 pub struct McpStdioLaunch {
-    helper: TerminalPtyHelper,
-    command: String,
-    arguments: Vec<String>,
+    helper: Arc<TerminalPtyHelper>,
+    command: Arc<str>,
+    arguments: Arc<[String]>,
     environment: ValidatedBackgroundEnvironment,
-    search_path: Option<String>,
+    search_path: Option<Arc<OsStr>>,
     cwd: Arc<File>,
     limits: WireLimits,
 }
@@ -39,7 +40,7 @@ impl fmt::Debug for McpStdioLaunch {
 impl McpStdioLaunch {
     #[cfg(test)]
     pub(super) fn with_test_helper(mut self, helper: TerminalPtyHelper) -> Self {
-        self.helper = helper;
+        self.helper = Arc::new(helper);
         self
     }
     /// Builds bounded launch data only. The helper arguments select the existing
@@ -62,24 +63,39 @@ impl McpStdioLaunch {
         cwd: Arc<File>,
         limits: WireLimits,
     ) -> Result<Self> {
-        if command.is_empty()
-            || command.len() > 4096
-            || command.contains('\0')
-            || search_path.as_ref().is_some_and(|path| {
-                path.len() > MAX_PATH_BYTES
-                    || path.contains('\0')
-                    || path.split(':').count() > MAX_PATH_ENTRIES
-            })
-        {
-            return Err(McpStdioError::Invalid);
-        }
-        // The existing codec's absolute-program rule is applied after lookup.
-        crate::terminal_helper::validate_program_arguments("/mcp", &arguments)
-            .map_err(|_| McpStdioError::Invalid)?;
+        let limits = validate_inputs(
+            &command,
+            &arguments,
+            search_path.as_deref().map(OsStr::new),
+            limits,
+        )?;
         let helper = TerminalPtyHelper::new(helper_program, helper_arguments)
             .map_err(|_| McpStdioError::Invalid)?;
         let environment =
             ValidatedBackgroundEnvironment::new(environment).map_err(|_| McpStdioError::Invalid)?;
+        Ok(Self {
+            helper: Arc::new(helper),
+            command: command.into(),
+            arguments: arguments.into(),
+            environment,
+            search_path: search_path.map(|path| Arc::from(OsString::from(path))),
+            cwd,
+            limits,
+        })
+    }
+
+    /// Shared immutable startup authority; validation remains here and worker-only
+    /// executable/cwd acquisition remains unchanged. Cloning retains all allocations.
+    pub(crate) fn from_validated(
+        helper: Arc<TerminalPtyHelper>,
+        command: Arc<str>,
+        arguments: Arc<[String]>,
+        environment: ValidatedBackgroundEnvironment,
+        search_path: Option<Arc<OsStr>>,
+        cwd: Arc<File>,
+        limits: WireLimits,
+    ) -> Result<Self> {
+        let limits = validate_inputs(&command, &arguments, search_path.as_deref(), limits)?;
         Ok(Self {
             helper,
             command,
@@ -87,8 +103,54 @@ impl McpStdioLaunch {
             environment,
             search_path,
             cwd,
-            limits: limits.validate().map_err(|_| McpStdioError::Invalid)?,
+            limits,
         })
+    }
+
+    pub(crate) fn admit_search_path(path: &OsStr) -> Result<()> {
+        let bytes = path.as_bytes();
+        if bytes.len() > MAX_PATH_BYTES
+            || bytes.contains(&0)
+            || bytes.split(|byte| *byte == b':').count() > MAX_PATH_ENTRIES
+        {
+            Err(McpStdioError::Invalid)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.helper, &other.helper)
+            && Arc::ptr_eq(&self.command, &other.command)
+            && Arc::ptr_eq(&self.arguments, &other.arguments)
+            && Arc::ptr_eq(&self.cwd, &other.cwd)
+            && self.environment.shares_storage_with(&other.environment)
+            && match (&self.search_path, &other.search_path) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_helper_for_test(&self) -> &Arc<TerminalPtyHelper> {
+        &self.helper
+    }
+
+    #[cfg(test)]
+    pub(crate) fn environment_for_test(&self) -> &ValidatedBackgroundEnvironment {
+        &self.environment
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cwd_for_test(&self) -> &Arc<File> {
+        &self.cwd
+    }
+
+    #[cfg(test)]
+    pub(crate) fn argv_for_test(&self) -> (&str, &[String]) {
+        (&self.command, &self.arguments)
     }
 
     /// Injects the explicit shared macOS inventory service, without starting it.
@@ -105,7 +167,12 @@ impl McpStdioLaunch {
             program, arguments,
         )
         .map_err(|_| McpStdioError::Invalid)?;
-        self.helper = self.helper.with_inventory_helper(inventory);
+        self.helper = Arc::new(
+            self.helper
+                .as_ref()
+                .clone()
+                .with_inventory_helper(inventory),
+        );
         Ok(self)
     }
 
@@ -238,7 +305,7 @@ impl McpStdioLaunch {
         shared: &Shared,
     ) -> Result<String> {
         let cwd = cwd_lookup_path(&self.cwd)?;
-        let command = Path::new(&self.command);
+        let command = Path::new(self.command.as_ref());
         if command.is_absolute() || self.command.contains('/') {
             let result = executable(if command.is_absolute() {
                 command.to_path_buf()
@@ -249,10 +316,10 @@ impl McpStdioLaunch {
             return result;
         }
         let path = self.search_path.as_deref().ok_or(McpStdioError::Invalid)?;
-        for entry in path.split(':') {
+        for entry in path.as_bytes().split(|byte| *byte == b':') {
             check_start(deadline, cancellation)?;
             shared.check()?;
-            let entry = Path::new(entry);
+            let entry = Path::new(OsStr::from_bytes(entry));
             let candidate = if entry.is_absolute() {
                 entry.join(command)
             } else {
@@ -266,6 +333,24 @@ impl McpStdioLaunch {
         }
         Err(McpStdioError::Process)
     }
+}
+
+fn validate_inputs(
+    command: &str,
+    arguments: &[String],
+    search_path: Option<&OsStr>,
+    limits: WireLimits,
+) -> Result<WireLimits> {
+    if command.is_empty() || command.len() > 4096 || command.contains('\0') {
+        return Err(McpStdioError::Invalid);
+    }
+    if let Some(path) = search_path {
+        McpStdioLaunch::admit_search_path(path)?;
+    }
+    // The existing codec's absolute-program rule is applied only after lookup.
+    crate::terminal_helper::validate_program_arguments("/mcp", arguments)
+        .map_err(|_| McpStdioError::Invalid)?;
+    limits.validate().map_err(|_| McpStdioError::Invalid)
 }
 
 fn cwd_lookup_path(cwd: &File) -> Result<PathBuf> {
