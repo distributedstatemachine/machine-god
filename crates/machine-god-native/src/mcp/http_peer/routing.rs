@@ -7,19 +7,19 @@ use super::{
 use crate::mcp::{
     http::McpHttpResponse,
     pagination::McpCatalogBuilder,
-    sse::{SseEvent, SseLimits, SseMode},
+    sse::{SseEvent, SseMode},
 };
 use std::task::Poll;
 mod exchange;
 pub(super) use exchange::{exchange, notification};
 
 /// A polled operation abandoned at any await retires its peer and listener.
-struct Operation<'a> {
-    peer: &'a mut McpHttpPeer,
-    settled: bool,
+pub(super) struct Operation<'a> {
+    pub peer: &'a mut McpHttpPeer,
+    pub settled: bool,
 }
 impl<'a> Operation<'a> {
-    fn begin(peer: &'a mut McpHttpPeer) -> Self {
+    pub fn begin(peer: &'a mut McpHttpPeer) -> Self {
         // Limits bound one caller-driven operation, not the useful lifetime of
         // a server that has already released earlier event/reconnect state.
         peer.operation_events = 0;
@@ -32,6 +32,8 @@ impl<'a> Operation<'a> {
 }
 impl Drop for Operation<'_> {
     fn drop(&mut self) {
+        self.peer.response_limits = super::WireLimits::default();
+        self.peer.feature_authority = None;
         if !self.settled {
             self.peer.close();
         }
@@ -291,8 +293,9 @@ pub(super) async fn open_listener(peer: &mut McpHttpPeer, deadline: Instant) -> 
     if response.status != 200 || head::media(&response.headers)? != head::Media::Sse {
         return Err(McpHttpPeerError::Protocol);
     }
-    peer.listener =
-        Some(stream::Reader::new(response.body, SseMode::Legacy, SseLimits::default())?.next());
+    peer.listener = Some(
+        stream::Reader::new(response.body, SseMode::Legacy, stream::listener_limits())?.next(),
+    );
     // Hints are observations of this new stream, not inherited event fields.
     peer.listener_resume = stream::Resume::default();
     Ok(())
@@ -379,7 +382,8 @@ pub(super) fn route_listener(
         peer.listener_resume.commit(event)?;
         return Ok(None);
     }
-    let frame = McpHttpPeerFrame::parse(event.data().as_bytes().into())?;
+    let frame =
+        McpHttpPeerFrame::parse_with_limits(event.data().as_bytes().into(), peer.response_limits)?;
     let result = match frame.envelope.kind() {
         RpcKind::Notification => {
             peer.retain(frame)?;

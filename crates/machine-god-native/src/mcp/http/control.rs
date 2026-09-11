@@ -16,6 +16,20 @@ impl fmt::Debug for McpHttpControl {
     }
 }
 impl McpHttpControl {
+    pub(crate) fn feature(
+        exchange: &crate::mcp::feature::McpFeatureExchange,
+        guard: crate::mcp::control::McpFeatureControlAuthority,
+    ) -> Result<Self> {
+        Ok(Self(Kind::Protocol(
+            McpStdioControl::feature(exchange, guard).map_err(|_| McpHttpError::Cancelled)?,
+        )))
+    }
+    pub(crate) fn feature_guard(&self) -> Option<crate::mcp::control::McpFeatureControlAuthority> {
+        match &self.0 {
+            Kind::Protocol(control) => control.feature_guard(),
+            _ => None,
+        }
+    }
     // Private OAuth lane: only the native auth codec selects destinations and
     // constructs these fixed GET/registration/token/revocation operations.
     pub(crate) fn oauth_metadata() -> Self {

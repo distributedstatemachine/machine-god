@@ -159,6 +159,11 @@ impl McpStdioConnection {
     pub fn completion(&self) -> NativeOwnedWorkerCompletion {
         self.completion.clone()
     }
+    /// Exact immutable launch admission bounds, not execution authority.
+    #[must_use]
+    pub fn wire_limits(&self) -> WireLimits {
+        self.shared.limits
+    }
 
     /// Returns settled evidence only after worker join and retained child cleanup.
     /// Cancellation or a dropped receive never manufactures clean EOF evidence.

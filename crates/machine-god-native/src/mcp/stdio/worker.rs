@@ -62,6 +62,7 @@ struct SocketWriter {
     host: CancellationToken,
     request: CancellationToken,
     deadline: Instant,
+    feature: Option<crate::mcp::control::McpFeatureControlAuthority>,
 }
 impl SocketWriter {
     fn live(&self) -> io::Result<()> {
@@ -69,6 +70,7 @@ impl SocketWriter {
             || self.host.is_cancelled()
             || self.request.is_cancelled()
             || Instant::now() >= self.deadline
+            || self.feature.as_ref().is_some_and(|guard| !guard.is_live())
         {
             Err(io::Error::other("MCP stdio writer stopped"))
         } else {
@@ -137,11 +139,15 @@ impl Active {
                 offset,
                 attempted,
             } => {
+                if !control.is_live() {
+                    return Poll::Ready(Err(McpStdioError::Cancelled));
+                }
                 *attempted = true;
                 if *offset == control.bytes.len() {
                     return Poll::Ready(Ok(()));
                 }
                 match (SocketWriter {
+                    feature: control.feature_guard(),
                     input: input.clone(),
                     connection: self.connection.clone(),
                     host: self.host.clone(),
@@ -239,6 +245,7 @@ fn run_io(
                     write: match queued.payload {
                         Payload::Tool(submission) => {
                             Write::Tool(Box::new(submission.into_writer(SocketWriter {
+                                feature: None,
                                 input: input.clone(),
                                 connection: shared.stop.clone(),
                                 host: cancellation.clone(),
@@ -387,6 +394,7 @@ fn prune(shared: &Shared, cx: &mut Context<'_>) -> Result<()> {
         } else if Instant::now() >= queued.deadline {
             Some(McpStdioError::Deadline)
         } else if matches!(&queued.payload, Payload::Tool(submission) if submission.cancelled().as_mut().poll(cx).is_ready())
+            || matches!(&queued.payload, Payload::Control(control) if !control.is_live())
         {
             Some(McpStdioError::Cancelled)
         } else {

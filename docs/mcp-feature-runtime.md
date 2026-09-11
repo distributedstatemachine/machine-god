@@ -1,4 +1,4 @@
-# Native MCP feature codecs
+# Native MCP feature codecs and owned exchanges
 
 `machine_god_native::mcp::feature` derives bounded protocol data from the existing
 `McpFeatureRequest`, exact server selection, admitted descriptor catalogs and
@@ -7,6 +7,58 @@ not open a connection, publish a generation, reserve a peer ID, grant permission
 obtain consent, create a responder or send a request. Runtime ownership must bind
 them to live configuration, authentication, catalog and turn generations before
 any transport effect and again before publishing results.
+
+## Native-selected transport execution
+
+`McpStdioPeer::feature` and `McpHttpPeer::feature` compose those codecs with an
+owned, serialized connection. They accept the exact typed request, selected
+server/catalogs, opaque `McpFeatureControlAuthority`, explicit lowerable operation
+bounds, timestamp origin and deadline. The peer allocates every nonnegative
+integer ID, including every list page, from its existing never-reused sequence.
+The closed result is either a complete admitted descriptor catalog or a complete
+typed response. No raw arbitrary-method constructor or `tools/call` bypass is
+added. List actions use this guarded feature path, not the startup catalog lane.
+
+Only crate-local native composition can mint control authority. A model operation
+retains its actual routed `NativeMcpTurnContext`; an idle human command instead
+retains an explicit command/host lifetime token, never a fabricated core turn.
+Both retain operation and route-retirement signals and at most eight selected
+authentication/authority guards. Descriptors, metadata advertisements, model text
+and returned data cannot mint this authority. Selecting and retaining the exact
+published server/generation remains the native facade's responsibility.
+The exact publication retirement flag is checked as well as its cancellation
+token: marking retirement under a publication lock cuts off writes before the
+token wakes waiters outside that lock. No callbacks are invoked under that lock.
+
+All signals are observed during waits and again at each actual queued stdio
+write/suffix/completion or HTTP plaintext write/flush above TLS. Model context is
+revalidated at these checkpoints independently of caller-supplied tokens. HTTP
+connect/read lifetimes and any admitted legacy GET resumption retain the same
+guard. Cancelling or dropping a polled exchange closes owned transport state;
+no request or acknowledged prefix is replayed. Malformed result admission also
+retires the exchange. Successful data is rechecked against authority/deadline
+before return; it does not itself publish a generation or authorize continuation.
+
+Modern HTTP derives its exact `Mcp-Method` from the prepared exchange and retains
+the selected endpoint/headers. The pin supplies `Mcp-Name` only for `tools/call`,
+so feature exchanges add neither name nor parameter projection headers. Legacy
+protocol/session header behavior is unchanged. Form and URL advertisements
+default to false; enabling data advertisements does not install a responder.
+
+HTTP feature response parsing uses the explicitly selected codec bounds, up to
+the existing 16 MiB/262,144-node hard limits, then restores ordinary peer bounds.
+Persistent legacy SSE readers retain the full bounded line/data capacity needed
+for later feature calls; actual response limits and independent notification
+budgets still apply. Stdio framing limits are immutable launch authority:
+`wire_limits` exposes them, and insufficient capacity rejects a feature before
+sending. A full-feature launch selects 16 MiB, depth 64 and 262,144 nodes; callers
+may explicitly lower matching codec bounds, but neither side silently widens a
+selected lower limit. Catalog pages still pass through the existing atomic
+assembler and descriptor admission without numeric normalization or truncation.
+
+These methods do not add subscriptions, TTL refresh, browser launch, input
+responders, continuation custody, sampling/roots implementations or a model
+output projection. Those remain separately owned native runtime integrations.
 
 ## Requests and descriptor identity
 

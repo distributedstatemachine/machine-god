@@ -16,6 +16,7 @@ use super::submission::{
 use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
 
 mod capabilities;
+mod feature;
 mod routing;
 mod startup;
 #[cfg(test)]
@@ -65,6 +66,7 @@ pub enum McpPeerError {
     Cancelled,
     Deadline,
     Closed,
+    Feature(super::feature::McpFeatureCodecError),
 }
 impl fmt::Display for McpPeerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -102,6 +104,25 @@ impl fmt::Debug for McpStdioPeer {
     }
 }
 impl McpStdioPeer {
+    /// Executes only the seven typed feature actions against native-selected
+    /// catalogs. IDs are consumed once; failed or abandoned sends are not replayed.
+    /// # Errors
+    /// Rejects invalid identity/data, insufficient wire bounds, expired authority,
+    /// malformed responses, correlation failure, cancellation or deadlines.
+    pub async fn feature(
+        &mut self,
+        request: &crate::McpFeatureRequest,
+        server: &str,
+        catalogs: &[super::catalog::McpDescriptorCatalog],
+        authority: super::control::McpFeatureControlAuthority,
+        options: super::control::McpFeatureOperationOptions,
+        deadline: Instant,
+    ) -> Result<super::control::McpFeatureReply> {
+        feature::execute(
+            self, request, server, catalogs, authority, options, deadline,
+        )
+        .await
+    }
     /// Configured startup with pre-effect completion observation. The returned
     /// deadline also bounds initial tools catalog loading. Modern-to-legacy
     /// fallback receives a fresh timeout; legacy-version retries share it.

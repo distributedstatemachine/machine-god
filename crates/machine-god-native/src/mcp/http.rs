@@ -157,6 +157,9 @@ impl fmt::Debug for McpHttpConnection {
     }
 }
 impl McpHttpConnection {
+    pub(crate) fn guard_feature(&mut self, guard: super::control::McpFeatureControlAuthority) {
+        self.lifetime.guard_feature(guard);
+    }
     /// Selects explicit authority without connecting. HTTPS requires explicit
     /// verified trust; plaintext requires a loopback-only selected destination.
     ///

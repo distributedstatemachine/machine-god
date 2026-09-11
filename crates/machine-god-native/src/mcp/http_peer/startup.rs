@@ -8,7 +8,7 @@ use super::{
 use super::{Duration, McpHttpCompletionObserver};
 use crate::mcp::{
     protocol::{HttpDiscoveryStatus, Negotiation, NegotiationAction},
-    sse::{SseLimits, SseMode},
+    sse::SseMode,
 };
 
 fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result<McpHttpPeer> {
@@ -42,6 +42,8 @@ fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result
         operation_events: 0,
         closed: false,
         configured_timeouts: false,
+        response_limits: super::WireLimits::default(),
+        feature_authority: None,
     })
 }
 
@@ -245,7 +247,7 @@ async fn legacy_endpoint(peer: &mut McpHttpPeer, deadline: Instant) -> Result<()
         return Err(McpHttpPeerError::Protocol);
     }
     let mut reader =
-        stream::Reader::new(response.body, SseMode::Legacy, SseLimits::default())?.next();
+        stream::Reader::new(response.body, SseMode::Legacy, stream::listener_limits())?.next();
     for _ in 0..256 {
         let (next, event) = bounded(
             &mut reader,

@@ -1,8 +1,8 @@
 use super::{
     Arc, BoxFuture, Instant, McpHttpControl, McpHttpError, McpHttpPeer, McpHttpPeerError,
     McpHttpPeerFrame, McpHttpResponse, Poll, ProtocolVersion, Result, RpcId, RpcKind, SseEvent,
-    SseLimits, SseMode, TransportKind, bounded, charge_event, delay, head, reconnect_listener,
-    route_listener, stream,
+    SseMode, TransportKind, bounded, charge_event, delay, head, reconnect_listener, route_listener,
+    stream,
 };
 type Write = BoxFuture<'static, std::result::Result<McpHttpResponse, McpHttpError>>;
 pub(in crate::mcp::http_peer) struct Received {
@@ -61,7 +61,7 @@ pub(in crate::mcp::http_peer) async fn exchange(
         return Err(McpHttpPeerError::Protocol);
     }
     let frame = match media {
-        head::Media::Json => stream::json(response.body, 8 * 1024 * 1024).await?,
+        head::Media::Json => stream::json(response.body, peer.response_limits).await?,
         head::Media::Sse => {
             response_stream(peer, response.body, expected, deadline, !capture_session).await?
         }
@@ -195,7 +195,8 @@ async fn response_stream(
     } else {
         SseMode::Legacy
     };
-    let mut read = stream::Reader::new(body, mode, SseLimits::default())?.next();
+    let limits = stream::response_limits(peer.response_limits);
+    let mut read = stream::Reader::new(body, mode, limits)?.next();
     let mut resume = stream::Resume::default();
     let mut reconnects = 0;
     for _ in 0..1024 {
@@ -249,13 +250,16 @@ async fn response_stream(
             if response.status != 200 || head::media(&response.headers)? != head::Media::Sse {
                 return Err(McpHttpPeerError::Protocol);
             }
-            read = stream::Reader::new(response.body, mode, SseLimits::default())?.next();
+            read = stream::Reader::new(response.body, mode, limits)?.next();
             resume = stream::Resume::default();
             continue;
         };
         charge_event(peer)?;
         if !event.data().is_empty() {
-            let frame = McpHttpPeerFrame::parse(event.data().as_bytes().into())?;
+            let frame = McpHttpPeerFrame::parse_with_limits(
+                event.data().as_bytes().into(),
+                peer.response_limits,
+            )?;
             match frame.envelope.kind() {
                 RpcKind::Success | RpcKind::Error => {
                     frame

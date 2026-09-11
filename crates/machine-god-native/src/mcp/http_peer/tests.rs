@@ -7,6 +7,7 @@ use crate::mcp::{
 use futures_util::future::join;
 use std::net::{Ipv4Addr, SocketAddr};
 
+mod feature;
 mod lifecycle;
 mod observed;
 mod submission;

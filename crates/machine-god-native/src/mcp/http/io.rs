@@ -19,6 +19,9 @@ use std::{
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 
 pub(super) const IO_BYTES: usize = 16 * 1024;
+#[cfg(test)]
+#[path = "io_feature_tests.rs"]
+mod feature_tests;
 #[derive(Default)]
 pub(super) struct Observation {
     pub attempted: AtomicBool,
@@ -37,6 +40,7 @@ pub(super) struct Lifetime {
     deadline: Instant,
     tool: Option<BoxFuture<'static, ()>>,
     clock: Arc<dyn super::McpHttpClock>,
+    feature: Option<crate::mcp::control::McpFeatureControlAuthority>,
 }
 impl Lifetime {
     pub fn new(
@@ -49,10 +53,12 @@ impl Lifetime {
             deadline,
             tool: None,
             clock,
+            feature: None,
         }
     }
     fn check(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if self.cancellation.is_cancelled()
+            || self.feature.as_ref().is_some_and(|guard| !guard.is_live())
             || self
                 .tool
                 .as_mut()
@@ -64,6 +70,10 @@ impl Lifetime {
             return Err(McpHttpError::Deadline);
         }
         Ok(())
+    }
+    pub(super) fn guard_feature(&mut self, guard: crate::mcp::control::McpFeatureControlAuthority) {
+        self.tool = Some(guard.cancelled());
+        self.feature = Some(guard);
     }
     pub async fn wait<T>(&mut self, future: impl Future<Output = Result<T>>) -> Result<T> {
         let mut future = std::pin::pin!(future);
@@ -190,10 +200,14 @@ struct Writer<'a> {
     cancellation: CancellationToken,
     deadline: Instant,
     clock: Arc<dyn super::McpHttpClock>,
+    feature: Option<crate::mcp::control::McpFeatureControlAuthority>,
 }
 impl McpSubmissionWriter for Writer<'_> {
     fn poll_write(&mut self, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
-        if self.cancellation.is_cancelled() || self.clock.now() >= self.deadline {
+        if self.cancellation.is_cancelled()
+            || self.clock.now() >= self.deadline
+            || self.feature.as_ref().is_some_and(|guard| !guard.is_live())
+        {
             return Poll::Ready(Err(io::Error::other("MCP HTTP writer lifetime expired")));
         }
         self.observation.0.attempted.store(true, Ordering::Release);
@@ -207,7 +221,10 @@ impl McpSubmissionWriter for Writer<'_> {
         result
     }
     fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.cancellation.is_cancelled() || self.clock.now() >= self.deadline {
+        if self.cancellation.is_cancelled()
+            || self.clock.now() >= self.deadline
+            || self.feature.as_ref().is_some_and(|guard| !guard.is_live())
+        {
             return Poll::Ready(Err(io::Error::other("MCP HTTP writer lifetime expired")));
         }
         self.observation.0.attempted.store(true, Ordering::Release);
@@ -250,6 +267,7 @@ pub(super) async fn submit(
     let mut stream = connect(&destination, trust, &mut lifetime).await?;
     {
         let writer = Writer {
+            feature: None,
             stream: &mut stream,
             observation: &observation,
             cancellation: lifetime.cancellation.clone(),
@@ -289,6 +307,10 @@ pub(super) async fn control(
     connection: McpHttpConnection,
     control: McpHttpControl,
 ) -> Result<McpHttpResponse> {
+    let feature = control.feature_guard();
+    if feature.as_ref().is_some_and(|guard| !guard.is_live()) {
+        return Err(McpHttpError::Cancelled);
+    }
     let bytes = control.encode(&connection.head)?;
     let McpHttpConnection {
         destination,
@@ -299,8 +321,12 @@ pub(super) async fn control(
         completion,
         ..
     } = connection;
+    if let Some(feature) = feature {
+        lifetime.guard_feature(feature);
+    }
     let mut stream = connect(&destination, trust, &mut lifetime).await?;
     let mut writer = Writer {
+        feature: lifetime.feature.clone(),
         stream: &mut stream,
         observation: &observation,
         cancellation: lifetime.cancellation.clone(),

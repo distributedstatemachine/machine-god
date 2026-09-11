@@ -2,6 +2,130 @@ use super::super::Queued;
 use super::*;
 use crate::mcp::protocol::WireLimits;
 
+fn guarded_control(
+    token: CancellationToken,
+    large: bool,
+    retired: Arc<std::sync::atomic::AtomicBool>,
+) -> McpStdioControl {
+    use crate::mcp::{
+        control::tests::{catalogs, human_selected, request},
+        feature::{McpFeatureCodecLimits, McpFeatureExchange, McpFeatureExchangeOptions},
+        peer::McpPeerCapabilities,
+        protocol::{NegotiatedProtocol, ProtocolVersion, TransportKind, parse_envelope},
+    };
+    let envelope = parse_envelope(br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","capabilities":{"prompts":{}}}}"#, WireLimits::default()).unwrap();
+    let capabilities = McpPeerCapabilities::admit(&envelope, ProtocolVersion::Modern).unwrap();
+    let command = format!(
+        r#"prompt get srv review {{"topic":"{}"}}"#,
+        "x".repeat(if large { 32 * 1024 } else { 1 })
+    );
+    let exchange = McpFeatureExchange::prepare(
+        &request(&command),
+        "srv",
+        &catalogs(),
+        McpFeatureExchangeOptions::new(
+            NegotiatedProtocol {
+                version: ProtocolVersion::Modern,
+                transport: TransportKind::Stdio,
+            },
+            7,
+            capabilities,
+        )
+        .unwrap(),
+        None,
+        McpFeatureCodecLimits::default(),
+    )
+    .unwrap();
+    McpStdioControl::feature(&exchange, human_selected(token, retired)).unwrap()
+}
+
+#[test]
+fn typed_control_cancellation_blocks_initial_write_suffix_and_final_completion() {
+    for case in 0..6 {
+        let stage = case % 3;
+        let token = CancellationToken::new();
+        let retired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let control = guarded_control(token.clone(), stage == 1, retired.clone());
+        let length = control.bytes.len();
+        let (input, output) = UnixStream::pair().unwrap();
+        input.set_nonblocking(true).unwrap();
+        output.set_nonblocking(true).unwrap();
+        let input = Arc::new(input);
+        let mut active = Active {
+            write: Write::Control {
+                control,
+                offset: 0,
+                attempted: false,
+            },
+            deadline: Instant::now() + Duration::from_secs(5),
+            cancel: CancellationToken::new(),
+            connection: CancellationToken::new(),
+            host: CancellationToken::new(),
+            response: Arc::new(Response::new()),
+        };
+        let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+        let mut received = vec![0; READ_BYTES];
+        if stage != 0 {
+            assert!(active.poll(&input, &mut cx).is_pending());
+            let acknowledged = active.receipt(Ok(())).acknowledged_bytes;
+            assert!(acknowledged > 0 && acknowledged <= length.min(READ_BYTES));
+            if stage == 2 {
+                assert_eq!(acknowledged, length);
+            }
+            let mut count = 0;
+            while count < acknowledged {
+                count += rustix::io::read(&output, &mut received[count..acknowledged]).unwrap();
+            }
+        }
+        if case < 3 {
+            token.cancel();
+        } else {
+            retired.store(true, std::sync::atomic::Ordering::Release);
+            assert!(!token.is_cancelled());
+        }
+        assert!(matches!(
+            active.poll(&input, &mut cx),
+            Poll::Ready(Err(McpStdioError::Cancelled))
+        ));
+        assert_eq!(
+            rustix::io::read(&output, &mut received),
+            Err(rustix::io::Errno::AGAIN)
+        );
+    }
+}
+
+#[test]
+fn queued_typed_control_retirement_is_pruned_without_write() {
+    let token = CancellationToken::new();
+    let control = guarded_control(
+        token.clone(),
+        false,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+    let shared = Shared::new(WireLimits::default(), CancellationToken::new());
+    let response = Arc::new(Response::new());
+    {
+        let mut state = shared.state.lock().unwrap();
+        state.admitted = 1;
+        state.queue.push_back(Queued {
+            payload: Payload::Control(control),
+            deadline: Instant::now() + Duration::from_secs(5),
+            cancel: CancellationToken::new(),
+            response: response.clone(),
+        });
+    }
+    token.cancel();
+    prune(
+        &shared,
+        &mut Context::from_waker(futures_util::task::noop_waker_ref()),
+    )
+    .unwrap();
+    assert!(shared.state.lock().unwrap().queue.is_empty());
+    let receipt = futures_executor::block_on(response.wait()).unwrap();
+    assert_eq!(receipt.outcome, Err(McpStdioError::Cancelled));
+    assert!(!receipt.attempted);
+}
+
 #[test]
 fn discovery_timeout_snapshot_distinguishes_quiescence_partial_frames_and_eof() {
     use std::io::Write as _;
@@ -254,6 +378,7 @@ fn proof_revocation_and_final_pipe_stop_prevent_bytes() {
     let stop = CancellationToken::new();
     let input = Arc::new(input);
     let make_writer = || SocketWriter {
+        feature: None,
         input: input.clone(),
         connection: stop.clone(),
         host: CancellationToken::new(),

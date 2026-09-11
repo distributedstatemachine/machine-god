@@ -67,6 +67,13 @@ no-replay and connection-cleanup rules.
 `call_frame` preserves the correlated response's original JSON bytes for
 method-specific result admission; `call` remains the envelope-only convenience API.
 
+The separate typed [`feature`](mcp-feature-runtime.md) method allocates its own
+IDs and executes all seven resource/prompt actions using native-selected live
+authority. Each pagination page is guarded. The raw discovery allowlist remains
+unchanged and cannot carry read/get/completion or tool calls. Immutable launch
+wire bounds must cover the selected feature codec bounds before any send;
+`wire_limits` exposes those bounds without granting execution authority.
+
 The peer polls stdout while a request write is still pending, preventing ordinary
 bidirectional pipe backpressure from stalling correlation. Unsupported server
 requests receive the fixed method-not-found response, with at most seven queued

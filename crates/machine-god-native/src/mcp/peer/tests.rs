@@ -107,6 +107,63 @@ while IFS= read -r line; do :; done
 "#;
 
 #[test]
+fn actual_typed_feature_preserves_raw_result_and_honors_selected_stdio_bounds() {
+    use crate::mcp::control::{
+        McpFeatureOperationOptions, McpFeatureReply,
+        tests::{catalogs, human, request},
+    };
+    let fixture = Fixture::new();
+    let script = r#"
+IFS= read -r line
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"resources":{}}}}'
+IFS= read -r line
+case "$line" in *resources/read*) : ;; *) exit 4 ;; esac
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","contents":[{"uri":"test://fixed","text":"hello"}],"raw":123456789012345678901234567890}}'
+while IFS= read -r line; do :; done
+"#;
+    let (peer, _) = fixture.connect(&[script], Duration::from_secs(2));
+    let mut peer = peer.unwrap();
+    let request = request("resource read srv test://fixed");
+    let catalogs = catalogs();
+    let until = Instant::now() + Duration::from_secs(5);
+    let full = fixture.runtime.block_on(peer.feature(
+        &request,
+        "srv",
+        &catalogs,
+        human(CancellationToken::new()),
+        McpFeatureOperationOptions::new(Instant::now()),
+        until,
+    ));
+    assert!(matches!(full, Err(McpPeerError::Capacity)));
+    assert_eq!(peer.next_id, Some(2));
+    let mut options = McpFeatureOperationOptions::new(Instant::now());
+    options.codec.max_response_bytes = WireLimits::default().max_frame_bytes;
+    options.codec.max_nodes = WireLimits::default().max_nodes;
+    let result = fixture
+        .runtime
+        .block_on(peer.feature(
+            &request,
+            "srv",
+            &catalogs,
+            human(CancellationToken::new()),
+            options,
+            until,
+        ))
+        .unwrap();
+    let McpFeatureReply::Response(result) = result else {
+        panic!()
+    };
+    assert!(
+        result
+            .raw_json()
+            .get()
+            .contains("123456789012345678901234567890")
+    );
+    peer.close();
+    peer.completion().wait_on_worker().unwrap();
+}
+
+#[test]
 fn actual_modern_negotiation_and_lossless_catalog_route_unsolicited_messages() {
     let fixture = Fixture::new();
     let script = r#"

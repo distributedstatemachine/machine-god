@@ -81,6 +81,11 @@ the peer's owned reader future to be `Sync`. This changes no retry, deadline or
 wire-serialization policy and creates no detached task.
 
 Typed catalog controls return raw candidates, not executable publication.
+The separate [`feature`](mcp-feature-runtime.md) method executes all seven typed
+feature actions with native-selected command/turn authority, exact internally
+minted IDs and fixed method headers. It returns complete admitted data, not
+permission, continuation or publication authority. Each write/flush and retained
+connect/read lifetime observes the selected guards, including legacy GET resume.
 Notifications/progress remain bounded untrusted envelopes. Modern server
 requests fail as at the pin; legacy request-stream server requests receive a
 fixed unsupported reply, not consent or continuation authority. Successful
@@ -93,7 +98,11 @@ per-exchange ceiling; each operation still has a finite deadline. IDs use
 positive signed-64-bit integers and fail on exhaustion. Limits are 2,048 runtime
 allocations, eight live exchange observations, one listener, 64 queued events
 totaling 1 MiB, and 4,096 admitted events per caller operation. Each response stream
-processes at most 1,024 events; JSON frames are at most 8 MiB. Connector/SSE
+processes at most 1,024 events; ordinary JSON frames are at most 8 MiB. Typed
+feature operations explicitly select up to 16 MiB and 262,144 nodes, restoring
+ordinary limits when the operation settles or drops. Persistent legacy SSE
+readers allow the existing 16 MiB line/data ceiling for later feature responses,
+without widening independent notification or per-operation admission budgets. Connector/SSE
 byte, line and depth limits apply independently; one stream has a 64 MiB body
 budget. Requests allow at most eight GET resumptions and listeners 32 reconnects
 per caller operation, bounding reopened streams without exhausting a healthy

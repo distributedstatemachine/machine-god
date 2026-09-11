@@ -1,11 +1,13 @@
-//! Native-only startup/discovery authority; never an arbitrary method channel.
+//! Closed startup/discovery and native-selected feature controls.
 use super::super::protocol::{RpcId, RpcKind};
 use super::{McpStdioError, Result, RpcEnvelope, WireLimits, fmt, parse_envelope};
+use crate::mcp::{control::McpFeatureControlAuthority, feature::McpFeatureExchange};
 
-/// Caller owns startup/discovery admission. Application feature calls and tool
-/// calls are deliberately excluded; protocol data cannot create this authority.
+/// Public constructors admit only startup/discovery and fixed replies. Feature
+/// controls require separate native selection; tool calls cannot enter this lane.
 pub struct McpStdioControl {
     pub(super) bytes: Box<[u8]>,
+    guard: Option<McpFeatureControlAuthority>,
 }
 impl fmt::Debug for McpStdioControl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -13,6 +15,25 @@ impl fmt::Debug for McpStdioControl {
     }
 }
 impl McpStdioControl {
+    pub(crate) fn feature(
+        exchange: &McpFeatureExchange,
+        guard: McpFeatureControlAuthority,
+    ) -> Result<Self> {
+        if !guard.is_live() {
+            return Err(McpStdioError::Cancelled);
+        }
+        let mut control = Self::framed(exchange.wire_json().get().as_bytes())?;
+        control.guard = Some(guard);
+        Ok(control)
+    }
+    pub(crate) fn is_live(&self) -> bool {
+        self.guard
+            .as_ref()
+            .is_none_or(McpFeatureControlAuthority::is_live)
+    }
+    pub(crate) fn feature_guard(&self) -> Option<McpFeatureControlAuthority> {
+        self.guard.clone()
+    }
     /// Already admitted control JSON without the stdio delimiter. This is data,
     /// not a generic HTTP method or application-call authorization boundary.
     #[cfg(feature = "mcp-http")]
@@ -97,6 +118,7 @@ impl McpStdioControl {
         framed.push(b'\n');
         Ok(Self {
             bytes: framed.into_boxed_slice(),
+            guard: None,
         })
     }
 }

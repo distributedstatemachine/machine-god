@@ -25,6 +25,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+mod feature;
 mod head;
 mod routing;
 mod startup;
@@ -55,6 +56,7 @@ pub enum McpHttpPeerError {
     Redirect,
     SessionExpired,
     ListenerUnsupported,
+    Feature(super::feature::McpFeatureCodecError),
 }
 impl fmt::Display for McpHttpPeerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -85,8 +87,12 @@ pub struct McpHttpPeerFrame {
     envelope: RpcEnvelope,
 }
 impl McpHttpPeerFrame {
+    #[cfg(test)]
     fn parse(bytes: Box<[u8]>) -> Result<Self> {
-        let envelope = super::protocol::parse_envelope(&bytes, WireLimits::default())
+        Self::parse_with_limits(bytes, WireLimits::default())
+    }
+    fn parse_with_limits(bytes: Box<[u8]>, limits: WireLimits) -> Result<Self> {
+        let envelope = super::protocol::parse_envelope(&bytes, limits)
             .map_err(|_| McpHttpPeerError::Protocol)?;
         Ok(Self { bytes, envelope })
     }
@@ -171,8 +177,28 @@ pub struct McpHttpPeer {
     operation_events: usize,
     closed: bool,
     configured_timeouts: bool,
+    response_limits: WireLimits,
+    feature_authority: Option<super::control::McpFeatureControlAuthority>,
 }
 impl McpHttpPeer {
+    /// Executes a native-selected typed feature request with exact fixed HTTP
+    /// projection and guarded transport writes. No application replay occurs.
+    /// # Errors
+    /// Rejects invalid data, stale authority, failed correlation or transport.
+    pub async fn feature(
+        &mut self,
+        request: &crate::McpFeatureRequest,
+        server: &str,
+        catalogs: &[super::catalog::McpDescriptorCatalog],
+        authority: super::control::McpFeatureControlAuthority,
+        options: super::control::McpFeatureOperationOptions,
+        deadline: Instant,
+    ) -> Result<super::control::McpFeatureReply> {
+        feature::execute(
+            self, request, server, catalogs, authority, options, deadline,
+        )
+        .await
+    }
     /// Configured startup with bounded pre-effect cleanup observation. Returns
     /// the selected attempt deadline for initial tools catalog loading; neither
     /// observation nor successful startup grants application execution authority.
@@ -390,7 +416,7 @@ impl McpHttpPeer {
         } else {
             McpHttpConnection::from_prepared_head
         };
-        let connection = connect(
+        let mut connection = connect(
             self.destination.clone(),
             head,
             self.options.trust.clone(),
@@ -399,6 +425,9 @@ impl McpHttpPeer {
             deadline.min(self.options.lifetime_deadline),
             self.options.clock.clone(),
         )?;
+        if let Some(authority) = &self.feature_authority {
+            connection.guard_feature(authority.clone());
+        }
         let mut exchanges = std::mem::take(
             &mut *self
                 .completion
