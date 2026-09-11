@@ -98,7 +98,7 @@ impl McpSubmissionHttpHead {
         })
     }
 
-    fn encode(&self, payload: &[u8]) -> Result<Box<[u8]>> {
+    pub(crate) fn encode(&self, payload: &[u8]) -> Result<Box<[u8]>> {
         // Every append is charged before allocation. The endpoint and custom
         // fields were validated before ownership; no reparsing or ambient input.
         let mut bytes = Vec::new();
@@ -185,6 +185,15 @@ impl McpSubmissionRegistry {
 }
 
 impl McpSubmission {
+    /// Immutable data for matching the admitted destination before connecting;
+    /// reading these bytes is not permission to submit them.
+    pub(crate) fn http_request_bytes(&self) -> Result<&[u8]> {
+        if self.ready.data.framing != Framing::Http {
+            return Err(McpSubmissionError::Invalid);
+        }
+        Ok(&self.ready.data.wire)
+    }
+
     /// Consumes one HTTP-prepared submission into the dedicated connection's
     /// final plaintext writer wrapper ABOVE TLS. Construction does not poll or
     /// write. `writer` owns the exclusive connection/permit and must not defer
@@ -200,9 +209,7 @@ impl McpSubmission {
         self,
         writer: W,
     ) -> Result<McpSubmissionHttpDriver<W>> {
-        if self.ready.data.framing != Framing::Http {
-            return Err(McpSubmissionError::Invalid);
-        }
+        self.http_request_bytes()?;
         Ok(McpSubmissionHttpDriver {
             guard: WriteGuard::new(self),
             writer,

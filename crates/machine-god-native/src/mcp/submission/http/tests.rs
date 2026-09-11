@@ -61,6 +61,22 @@ fn context() -> Context<'static> {
     Context::from_waker(futures_util::task::noop_waker_ref())
 }
 
+#[test]
+fn connector_observes_exact_http_bytes_without_claiming_write_authority() {
+    let fixture = Fixture::new();
+    fixture.ready_http("http", &head());
+    let submission = block_on(fixture.claim("http", CancellationToken::new())).unwrap();
+    assert_eq!(
+        submission.http_request_bytes().unwrap(),
+        head().encode(&fixture.wire()).unwrap().as_ref()
+    );
+    assert!(!submission.was_attempted());
+    fixture.ready("stdio");
+    let stdio = block_on(fixture.claim("stdio", CancellationToken::new())).unwrap();
+    assert_eq!(stdio.http_request_bytes(), Err(McpSubmissionError::Invalid));
+    assert!(!stdio.was_attempted());
+}
+
 #[derive(Clone, Copy)]
 enum Step {
     Accept(usize),

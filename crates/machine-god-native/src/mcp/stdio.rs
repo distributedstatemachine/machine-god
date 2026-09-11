@@ -72,6 +72,9 @@ pub enum McpStdioReadEnd {
     CleanEof,
     /// EOF was observed with an unterminated frame.
     IncompleteEof,
+    /// A bounded discovery-timeout snapshot observed WouldBlock with no frame
+    /// or partial input. This is a cutoff observation, not an EOF guarantee.
+    DiscoveryTimeoutQuiescent,
     /// No clean EOF proof: unread bytes may still contain a response.
     Unclassified,
 }
@@ -84,6 +87,37 @@ pub struct McpStdioCloseObservation {
     pub read_end: McpStdioReadEnd,
     pub buffered_partial_frame: bool,
     pub unconsumed_complete_frames: usize,
+}
+
+/// One admitted frame with its original JSON bytes. Parsing is an observation,
+/// not permission; callers independently bound retained frames and catalogs.
+pub struct McpStdioFrame {
+    bytes: Box<[u8]>,
+    envelope: RpcEnvelope,
+}
+impl McpStdioFrame {
+    /// Original JSON bytes, without the NDJSON line delimiter.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Bounded parsed envelope for routing, not lossless schema serialization.
+    #[must_use]
+    pub fn envelope(&self) -> &RpcEnvelope {
+        &self.envelope
+    }
+
+    /// Discards the original bytes when only parsed routing data is needed.
+    #[must_use]
+    pub fn into_envelope(self) -> RpcEnvelope {
+        self.envelope
+    }
+}
+impl fmt::Debug for McpStdioFrame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("McpStdioFrame { <redacted> }")
+    }
 }
 
 /// Non-clone connection owner. Drop cancels admission and the owned worker;
@@ -106,6 +140,18 @@ impl McpStdioConnection {
     /// Stops this connection only. The completion observer includes deferred reap.
     pub fn close(&self) {
         self.shared.stop.cancel();
+    }
+
+    /// Freezes new writes and asks the owned worker to classify discovery input
+    /// before cleanup. Only settled `close_observation` can establish quiescence;
+    /// calling this method alone grants no fallback or retry permission.
+    pub fn close_after_discovery_timeout(&self) {
+        let _state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.shared.discovery_timeout.store(true, Ordering::Release);
     }
 
     /// Observation does not extend process authority or keep the connection open.
@@ -211,6 +257,12 @@ impl McpStdioConnection {
                 if let Some(error) = state.closed {
                     return Err(error);
                 }
+                if shared.stop.is_cancelled() {
+                    return Err(McpStdioError::Cancelled);
+                }
+                if shared.discovery_timeout.load(Ordering::Acquire) {
+                    return Err(McpStdioError::Deadline);
+                }
                 if state.admitted >= MAX_MCP_STDIO_WRITES {
                     return Err(McpStdioError::Capacity);
                 }
@@ -234,6 +286,18 @@ impl McpStdioConnection {
     /// Rejects concurrent receivers, malformed frames, EOF and closed connections.
     #[must_use]
     pub fn receive(&self) -> BoxFuture<'static, Result<RpcEnvelope>> {
+        let frame = self.receive_frame();
+        Box::pin(async move { frame.await.map(McpStdioFrame::into_envelope) })
+    }
+
+    /// Receives the same validated envelope together with original bounded JSON
+    /// bytes. Use this for catalog/schema admission without number normalization.
+    /// Shares the single receiving lane and closure rules with `receive`.
+    ///
+    /// # Errors
+    /// Rejects a concurrent receiver, malformed framing/JSON, or a closed queue.
+    #[must_use]
+    pub fn receive_frame(&self) -> BoxFuture<'static, Result<McpStdioFrame>> {
         let shared = self.shared.clone();
         Box::pin(async move {
             struct Receiving(Arc<Shared>);
@@ -262,7 +326,7 @@ impl McpStdioConnection {
                     .map_or(Poll::Pending, |error| Poll::Ready(Err(error)))
             })
             .await?;
-            parse_envelope(&frame, shared.limits).map_err(|_| {
+            let envelope = parse_envelope(&frame, shared.limits).map_err(|_| {
                 {
                     let mut state = shared
                         .state
@@ -273,6 +337,10 @@ impl McpStdioConnection {
                 shared.stop.cancel();
                 shared.finish(McpStdioError::Protocol);
                 McpStdioError::Protocol
+            })?;
+            Ok(McpStdioFrame {
+                bytes: frame.into_boxed_slice(),
+                envelope,
             })
         })
     }
@@ -283,6 +351,7 @@ struct Shared {
     runtimes: Mutex<Box<[Arc<McpSubmissionRuntime>]>>,
     reader: AtomicWaker,
     receiving: AtomicBool,
+    discovery_timeout: AtomicBool,
     stop: CancellationToken,
     limits: WireLimits,
 }
@@ -300,6 +369,7 @@ impl Shared {
             runtimes: Mutex::new(Box::new([])),
             reader: AtomicWaker::new(),
             receiving: AtomicBool::new(false),
+            discovery_timeout: AtomicBool::new(false),
             stop,
             limits,
         }
@@ -307,6 +377,9 @@ impl Shared {
     fn check(&self) -> Result<()> {
         if self.stop.is_cancelled() {
             return Err(McpStdioError::Cancelled);
+        }
+        if self.discovery_timeout.load(Ordering::Acquire) {
+            return Err(McpStdioError::Deadline);
         }
         self.state
             .lock()

@@ -587,12 +587,23 @@ impl McpSubmission {
     /// caller-supplied tokens, including while a queue provides no wakeups.
     #[must_use]
     pub fn cancelled(&self) -> BoxFuture<'_, ()> {
+        self.cancelled_owned()
+    }
+
+    /// Retains cancellation observation through response reads after the writer
+    /// has been consumed. Observers carry no execution or replay authority.
+    pub(crate) fn cancelled_owned(&self) -> BoxFuture<'static, ()> {
+        let execution = self.cancellation.cancelled();
+        let preparation = self.ready.data.cancellation.cancelled();
+        let turn = self.registry.cancellation.cancelled();
+        let core_turn = self.registry.handle.cancelled();
+        let runtime = self.ready.data.runtime.cancellation.cancelled();
         Box::pin(async move {
-            let mut execution = Box::pin(self.cancellation.cancelled());
-            let mut preparation = Box::pin(self.ready.data.cancellation.cancelled());
-            let mut turn = Box::pin(self.registry.cancellation.cancelled());
-            let mut core_turn = Box::pin(self.registry.handle.cancelled());
-            let mut runtime = Box::pin(self.ready.data.runtime.cancellation.cancelled());
+            let mut execution = std::pin::pin!(execution);
+            let mut preparation = std::pin::pin!(preparation);
+            let mut turn = std::pin::pin!(turn);
+            let mut core_turn = std::pin::pin!(core_turn);
+            let mut runtime = std::pin::pin!(runtime);
             poll_fn(|cx| {
                 if execution.as_mut().poll(cx).is_ready()
                     || preparation.as_mut().poll(cx).is_ready()

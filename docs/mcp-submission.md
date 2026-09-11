@@ -51,6 +51,13 @@ must select this head from the pinned runtime's admitted endpoint/authentication
 configuration; a syntactically valid endpoint is not network or credential
 authority.
 
+Native connectors can inspect the exact immutable HTTP request before opening
+the admitted destination; this read-only observation is not a submission grant.
+An owned cancellation observer retains execution, preparation, registered-turn,
+original core-turn and runtime-retirement signals after the submission writer
+is consumed, so response reads remain cancellable. It retains neither a proof
+nor a replayable submission. The borrowed queue observer uses the same path.
+
 Each turn follows `Reserved -> Ready -> Claimed`. The prepared value owns its
 reservation generation. Dropping it or its unconsumed core admission releases
 only that reservation. Binding a concrete proof does not publish a ready route:

@@ -13,6 +13,12 @@ impl fmt::Debug for McpStdioControl {
     }
 }
 impl McpStdioControl {
+    /// Already admitted control JSON without the stdio delimiter. This is data,
+    /// not a generic HTTP method or application-call authorization boundary.
+    pub(crate) fn json_bytes(&self) -> &[u8] {
+        &self.bytes[..self.bytes.len() - 1]
+    }
+
     /// Exact bounded prebuilt JSON, checked against the startup/discovery lane.
     ///
     /// # Errors

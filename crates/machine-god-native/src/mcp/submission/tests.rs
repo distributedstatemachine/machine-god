@@ -245,6 +245,32 @@ impl Fixture {
             .admit()
             .unwrap();
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn ready_http(&self, call: &str, head: &McpSubmissionHttpHead) {
+        let request = self.request(call);
+        let Capability::Tool {
+            name,
+            call_id,
+            arguments,
+        } = &request.capability
+        else {
+            panic!()
+        };
+        let prepared = block_on(self.registry.prepare_http(
+            &request,
+            PermissionInvocation {
+                tool_name: name,
+                call_id,
+                arguments,
+            },
+            self.runtime.clone(),
+            head,
+            &self.wire(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        self.admission(call, prepared).admit().unwrap();
+    }
     pub(crate) fn claim(
         &self,
         call: &str,
@@ -774,6 +800,54 @@ struct Counter(AtomicUsize);
 impl Wake for Counter {
     fn wake(self: Arc<Self>) {
         self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn owned_response_cancellation_survives_consumed_submission() {
+    for source in 0..5 {
+        let mut fixture = Fixture::new();
+        let preparation = CancellationToken::new();
+        fixture
+            .admission("call", fixture.prepare("call", preparation.clone()))
+            .admit()
+            .unwrap();
+        let execution = CancellationToken::new();
+        let submission = block_on(fixture.claim("call", execution.clone())).unwrap();
+        let mut waiting = submission.cancelled_owned();
+        drop(submission);
+        let counter = Arc::new(Counter(AtomicUsize::new(0)));
+        let waker = Waker::from(counter.clone());
+        assert!(
+            waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        match source {
+            0 => {
+                execution.cancel();
+            }
+            1 => {
+                preparation.cancel();
+            }
+            2 => {
+                drop(fixture.registration.take());
+            }
+            3 => {
+                fixture.runtime_owner.retire();
+            }
+            _ => {
+                assert!(fixture.turn.handle().cancel());
+            }
+        }
+        assert!(counter.0.load(Ordering::SeqCst) > 0);
+        assert!(
+            waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_ready()
+        );
     }
 }
 

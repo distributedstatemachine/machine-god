@@ -2,6 +2,38 @@ use super::*;
 mod runtime;
 
 #[test]
+fn received_frame_preserves_original_catalog_json_without_roundtrip() {
+    let scope = NativeOwnedWorkerScope::new();
+    let shared = Arc::new(Shared::new(WireLimits::default(), CancellationToken::new()));
+    let original = br#"{ "jsonrpc":"2.0", "id":7, "result":{"tools":[{"name":"private-tool","inputSchema":{"const":9007199254740993.0}}]} }"#;
+    shared
+        .state
+        .lock()
+        .unwrap()
+        .frames
+        .push_back(original.to_vec());
+    let connection = McpStdioConnection {
+        shared: shared.clone(),
+        completion: scope.completion(),
+    };
+    drop(connection.receive_frame());
+    assert_eq!(shared.state.lock().unwrap().frames.len(), 1);
+    let frame = futures_executor::block_on(connection.receive_frame()).unwrap();
+    assert_eq!(frame.bytes(), original);
+    assert_eq!(
+        frame.envelope().id(),
+        Some(&crate::mcp::protocol::RpcId::Integer(7))
+    );
+    assert!(!format!("{frame:?}").contains("private-tool"));
+    let envelope = frame.into_envelope();
+    assert_eq!(
+        envelope.id(),
+        Some(&crate::mcp::protocol::RpcId::Integer(7))
+    );
+    scope.close();
+}
+
+#[test]
 fn control_lane_rejects_application_calls_and_frame_smuggling() {
     for bytes in [
         br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{}}}"#
@@ -28,6 +60,7 @@ fn startup_discovery_and_lifecycle_have_separate_exact_methods() {
         let bytes = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}"}}"#);
         let frame = McpStdioControl::discovery(bytes.as_bytes()).unwrap();
         assert_eq!(frame.bytes.last(), Some(&b'\n'));
+        assert_eq!(frame.json_bytes(), bytes.as_bytes());
         assert!(McpStdioControl::notification(bytes.as_bytes()).is_err());
     }
     let bytes = br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
@@ -44,6 +77,35 @@ fn response_completion_is_once_even_after_consumption() {
     assert_eq!(futures_executor::block_on(response.wait()), Ok(7));
     response.complete(Err(McpStdioError::Process));
     assert!(response.value.lock().unwrap().is_none());
+}
+
+#[test]
+fn discovery_timeout_freezes_admission_without_inventing_close_evidence() {
+    let scope = NativeOwnedWorkerScope::new();
+    let shared = Arc::new(Shared::new(WireLimits::default(), CancellationToken::new()));
+    let connection = McpStdioConnection {
+        shared: shared.clone(),
+        completion: scope.completion(),
+    };
+    let bytes = br#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#;
+    let waiting = connection.control(
+        McpStdioControl::discovery(bytes).unwrap(),
+        Instant::now() + std::time::Duration::from_secs(1),
+    );
+    connection.close_after_discovery_timeout();
+    assert!(!shared.stop.is_cancelled());
+    assert_eq!(
+        futures_executor::block_on(waiting),
+        Err(McpStdioError::Deadline)
+    );
+    assert_eq!(
+        connection.admit_runtimes(Vec::new()),
+        Err(McpStdioError::Deadline)
+    );
+    assert!(connection.close_observation().is_none());
+    assert_eq!(shared.state.lock().unwrap().admitted, 0);
+    assert!(shared.state.lock().unwrap().read_end.is_none());
+    scope.close();
 }
 
 #[test]

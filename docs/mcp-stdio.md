@@ -79,6 +79,13 @@ Pending writes receive explicit failure receipts, and pending receivers wake on
 closure. Errors and debug representations redact commands, environment, payloads
 and server diagnostics.
 
+`receive_frame` uses the same single receiving lane and returns original bounded
+JSON bytes alongside the validated envelope. Catalog/schema consumers use these
+bytes instead of serializing the parsed tree, preserving exact numeric lexemes
+and vendor fields. A consumed frame retains at most one wire-bounded raw buffer
+in addition to its bounded decoded envelope; callers bound retained frame counts.
+The existing `receive` API discards raw bytes and returns the envelope alone.
+
 `close_observation` returns evidence only after the connection completion settles:
 the terminal reason, observed clean/incomplete EOF or unclassified read end,
 whether a partial decoder buffer remained, and the current count of unconsumed
@@ -86,6 +93,13 @@ complete frames. Decoder emptiness on cancellation is not observed EOF; unread
 kernel/read-tail bytes remain unclassified. Queued complete frames must be drained
 and validated before interpreting close evidence. Malformed queued JSON upgrades
 the terminal reason to protocol failure. This observer makes no fallback decision.
+
+`close_after_discovery_timeout` freezes new write admission and requests an owned
+worker snapshot before cleanup, without manufacturing EOF or cancelling the
+snapshot itself. `DiscoveryTimeoutQuiescent` denotes a distinct bounded-input
+cutoff observation, not EOF. Only settled worker evidence can admit a negotiation
+fallback; requesting the snapshot alone cannot. Explicit connection or host
+cancellation still takes priority.
 
 `admit_runtimes` registers at most 1,024 exact native runtime allocations after
 catalog admission. It grants no permission. `submit` requires a non-clone
