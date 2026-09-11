@@ -51,7 +51,7 @@ impl Drop for RoutingProvider {
 }
 
 struct Fixture {
-    _engine: Engine,
+    engine: Engine,
     conversation: NativeConversation,
     store: InMemorySessionStore,
     provider: ScriptedModelProvider,
@@ -108,7 +108,7 @@ fn fixture(
     let conversation = NativeConversation::from_session(session).unwrap();
     // Keep enrollment separate from provider construction for duplicate tests.
     Fixture {
-        _engine: engine,
+        engine,
         conversation,
         store,
         provider,
@@ -448,7 +448,7 @@ fn retired_owner_drop_cannot_remove_replacement_for_same_real_session() {
     let old_owner = contexts.routes.lock().unwrap()[0].upgrade().unwrap();
     old_owner.retire();
     drop(first);
-    let session = block_on(fixture._engine.load_session(context.session_id.clone()))
+    let session = block_on(fixture.engine.load_session(context.session_id.clone()))
         .unwrap()
         .unwrap();
     let replacement = NativeConversation::from_session(session)
@@ -472,7 +472,7 @@ fn retired_owner_drop_cannot_remove_replacement_for_same_real_session() {
 fn registration_cannot_reenroll_same_core_turn_after_guard_drop() {
     let contexts = Arc::new(NativeMcpContexts::new());
     let fixture = fixture("same-turn", None, SessionStoreScript::default());
-    let session = block_on(fixture._engine.load_session(fixture.conversation.id()))
+    let session = block_on(fixture.engine.load_session(fixture.conversation.id()))
         .unwrap()
         .unwrap();
     let owner = contexts.register(&session).unwrap();
