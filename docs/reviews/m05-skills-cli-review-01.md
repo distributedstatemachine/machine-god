@@ -324,3 +324,51 @@ all-target/all-feature Clippy, formatting and diff checks passed. Evidence is
 retained as `r4-prefix-{expected-red,focused,clippy}.log` under the shared skills
 evidence parent. The clean committed repair worktree was removed after
 integration. Full replacement validation and fresh reviews remain required.
+
+## Independent review round 5 and feature merge
+
+Candidate `431030b930c0c6bcc51c899a66c1fcb97a92e701`, tree
+`d79d914a1281236e2f1cfdc1b16570f19863f2aa`, completed the exact Rust 1.94.1
+replacement gate. Formatting, strict workspace Clippy, fresh locked releases,
+test precompilation, 269 Python tests (14 skips), drift, bounded documentation,
+dependency policy/audit and FreeBSD/WASI checks passed. Unprivileged Linux
+focused/workspace/default-concurrency tests, explicit doctests and official
+release smoke passed before macOS process runtime began.
+
+The first macOS runtime passed 45 focused CLI and 198 native skills tests but
+failed `terminal_pty::tests::explicit_owned_signal_kills_shell_and_final_drain_preserves_bytes`
+during reaping admission: the fixed child probe exceeded its 500 ms observation
+window. Native totals were 2,475 passing, one failed and 12 ignored. Read-only
+diagnosis found no causal source change; one unchanged focused diagnostic
+passed. One unchanged complete runtime retry then passed, including 447 CLI
+and 2,476 native unit tests, integrations, explicit doctests and official
+fresh-release smoke. No deadline, assertion, source or helper changed for that
+retry, and this does not establish the intermittent timeout's cause or repair.
+
+Build and failed-runtime evidence remains in
+`/private/tmp/mg-skills-r4-replacement.6jrrSX`; retry, review and remote-watch
+evidence remains in `/private/tmp/mg-skills-r4-runtime-retry.aLbeFh`. Linux logs
+remain SHA-prefixed under `/private/tmp/mg-skills-cli.jpLoxt/linux-gate-evidence`.
+Verified release SHA-256 values were
+`4e4e8d01d3f63d602bde66a1e0a8771d06c2a7f2e3574bba979620b6ae4b2483`
+(macOS) and `44a7bff0340c2c12f4facbb5a77968a449cdb4eeecf200934b2e5f82986bb421`
+(Linux).
+
+Three newly spawned local reviewers, `skills_review_r5_correctness`,
+`skills_review_r5_lifecycle` and `skills_review_r5_resources`, independently
+inspected the full feature against `909c52ea91a77e0f2ad4d0d9548e33be14f38abb`.
+All reported zero actionable findings and verified exact clean source before
+and after review. The third started after a prior track finished because of
+the host thread limit; all three final reviewers were fresh. These were static
+local reviews, not Bugbot service execution or additional test runs. Reviewers
+received the initial failure and unchanged retry evidence. All completed
+review and repair worktrees were safely removed.
+
+Feature CI `34578473915` and Benchmark `34578474071` succeeded for the exact
+candidate, including both Linux and both macOS architectures. Both expected
+unexpired benchmark artifacts were verified against its SHA: upstream artifact
+`10190873124` and bootstrap artifact `10190728735`. A watch-client HTTP 502 did
+not restart CI; a reconnected watch confirmed success. Main was fast-forwarded
+and pushed from `909c52ea` to this candidate without force. These records do not
+assert later exact-main acceptance or an M07 performance result; the canonical
+implementation plan owns subsequent delivery status.

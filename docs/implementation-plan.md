@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `fe7a793c60840526cb5ca6e706d1a81cb9a577dc`
 - Main CI: `34534157308` (`GREEN`)
 - Main Benchmark evidence: `34534157220` (`GREEN`)
-- Active branch: `agent/m62-skills-cli`
-- Active phase: `M05 complete skills CLI implementation`
-- Next gate: `replacement full gate and three fresh reviews of repaired metadata prefix completion`
+- Active branch: `agent/m63-mcp-cli`
+- Active phase: `M05 skills exact-main acceptance; complete MCP CLI implementation`
+- Next gate: `exact-main CI and artifact-producing Benchmark for merged skills 431030b9; MCP component checks`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -312,12 +312,12 @@ All validation/review worktrees are removed and evidence is retained. Earlier
 intermittent terminal failures remain recorded without an unsupported cause or
 source-fix claim in the [review history](reviews/m05-background-cli-review-01.md).
 
-## Active complete feature: skills CLI
+## Merged skills CLI boundary; exact-main acceptance pending
 
-Continue CLI work from accepted `main`. Import components remain parked on
+Continue CLI work from merged `main`. Import components remain parked on
 `agent/m61-fx-session-import` at `5e77b1b4`; do not merge that unfinished feature.
-Deliver the complete skills CLI as one feature, not separately delivered parser,
-catalog, installer or picker fragments:
+The complete skills CLI is one feature, not separately delivered parser,
+catalog, installer or picker fragments. Its integrated boundary includes:
 
 - Implement `/skills` and `/skills list`, `show`, `path`, `create`, `add`/`install`,
   and `remove`, plus inline `$` query/picker selection and exact per-prompt skill
@@ -362,42 +362,66 @@ catalog, installer or picker fragments:
   destination races, replacement/rollback faults, cancellation, queue ordering,
   stale picker frames, continuation/restart and provider projection limits.
 
-Before workers edit, agree exact shared interfaces, managed location/root
-selection, limits, consent/receipt semantics and continuation representation.
-Use isolated non-overlapping lanes for catalog/metadata, managed installation,
-core context projection and thin CLI/picker components as interfaces permit.
-The coordinator owns native control/host integration, shared exports, composed
-scenarios and behavior documentation, including integration of the core context
-component. The [skills CLI contract](skills-cli.md) records integrated native
-and interactive behavior without claiming delivery acceptance.
-All components feed one complete local gate and
-three fresh independent adversarial reviews; retain the same delivery workflow.
+Candidate `431030b930c0c6bcc51c899a66c1fcb97a92e701` passed the complete local
+gate after one unchanged macOS runtime retry; the original intermittent
+child-reaping timeout is retained without a cause or source-fix claim. Three
+new independent R5 reviewers reported zero findings. Exact feature CI
+`34578473915` and Benchmark `34578474071` passed with both required unexpired
+artifacts, and `main` was fast-forwarded and pushed. Exact-main gates remain
+required before incrementing the delivered count or replacing canonical behavior
+evidence. All completed repair/review worktrees are removed. The clean Linux
+validation tree is retained only for final bounded documentation validation.
+The [skills CLI contract](skills-cli.md) owns durable behavior and the
+[skills CLI review](reviews/m05-skills-cli-review-01.md) retains detailed evidence.
 
-The native command service, managed Git runner, startup root composition,
-FIFO invocation, checkpoint context and CLI command receipts are integrated.
-The interactive picker, initial snapshot, owned refresh, input-generation and
-Gateway multipart projection are integrated. Earlier review repairs preserve
-executable resource modes, validate borrowed filters and paths before copying,
-use linear picker matching, and separate bounded ancestor discovery from
-selected-resource exclusions with shared payloads and exact source revalidation.
-The PID readiness fixture now publishes complete content atomically; this does
-not explain the separately retained historical child-reaping timeouts.
+## Active complete feature: production MCP and CLI
 
-The discovery-repaired candidate passed the complete macOS/Linux gate, including
-45 focused CLI tests, 192 native skills tests and fresh-release smoke. Three
-fresh R4 reviewers reported zero lifecycle/resource findings and one correctness
-finding: a metadata read ending exactly after closing dashes can be mistaken for
-EOF, causing an unchanged skill to fail invocation as stale. The integrated
-completion-only fix requires newline or actual EOF, preserving read/header
-limits, shared parser and error policy. The original failure is reproduced and
-all 36 catalog tests, including six new boundary regressions, and strict native
-lint pass. Repeat the full gate and three fresh reviews. Completed review and
-repair worktrees are removed; Linux validation remains active. No accepted
-candidate has been pushed or merged.
-Historical candidate, gate and finding evidence belongs in the
-[skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
-accepted yet. Linux validation retains its unprivileged environment; macOS and
-Linux process-heavy runtime runs must remain separate.
+Build one complete production MCP feature, including `/mcp`, on the new branch
+while the immutable merged skills commit completes its main gates. MCP component
+commits are not deliveries; do not push an accepted-feature claim before its
+own full local gate, three fresh review tracks and exact remote gates.
+
+- Complete `/mcp` summary/list/path/add/remove/reload, resource
+  list/templates/read/complete, prompt list/get/complete, auth with explicit
+  browser confirmation, and logout with distinct local/remotely revoked receipts.
+- Native owns an explicitly admitted profile MCP configuration and credential
+  store. Do not mutate fx roots or silently widen native schema-v7 settings.
+  Preserve pinned stdio, HTTP and legacy SSE configuration and explicit
+  environment/header/auth selection; constructors acquire no ambient authority.
+- Implement bounded JSON-RPC framing, modern discovery and pinned legacy
+  negotiation for stdio, Streamable HTTP and deprecated HTTP+SSE. Use producer
+  fixtures from the exact upstream pin. Downgrade only on admitted protocol
+  evidence, never malformed success or an ambiguous consequential call.
+- Publish atomic, bounded, paginated tool/resource/prompt catalogs, with stable
+  naming, schema admission, TTL/notification refresh and exact executable
+  generations. Failed reload preserves the previous usable runtime; superseded
+  candidates and retired connections retain bounded cleanup ownership.
+- Reuse core's existing tool capability, prepared invocation and one-shot
+  permission admission. Add native MCP-specific preparation rather than an
+  unknown-tool bypass. Bind server/configuration/schema, exact arguments and
+  live session/incarnation/turn/call; retain the native proof through writer
+  submission. Queue waits cannot bypass later revocation. Never automatically
+  replay a partially submitted consequential request.
+- Add backward-compatible contextual catalog/feature hooks and forward the
+  exact `ToolContext`. Production routing rejects missing/foreign/retired turns;
+  no engine-global current-session fallback or serialized authority tokens.
+- Include OAuth discovery, credential refresh, explicit browser/elicitation
+  consent, bounded continuation custody, progress and owned cancellation.
+  Follow pinned modern input-required and legacy form/URL behavior. Sampling
+  and roots are not implemented at the pin and are not added as new features.
+- Compose startup, commands, model search/select/call, seven feature actions,
+  reload, continuation and finalization through the thin CLI. Test transport
+  fixtures, two-session isolation, stale authority, cancellation, partial writes,
+  failed reload/auth/logout, fresh-release CLI and supported platforms.
+
+Initial isolated lanes own configuration/command parsing, protocol framing and
+negotiation, and contextual catalog/feature forwarding. Their public interfaces
+remain effect-free until explicitly injected runtime ownership is integrated.
+The coordinator owns exports, shared runtime interfaces, host/CLI composition
+and this ledger. Subsequent transport, permission and authentication lanes use
+the agreed typed interfaces with non-overlapping files. Keep runtime/resource
+state native; core remains provider-neutral and effect-free. ACP follows this
+complete feature; pinned `teams` means account/team selection, not subagents.
 
 ## Parked complete-feature scope: fx session import
 
