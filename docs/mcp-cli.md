@@ -121,3 +121,13 @@ network admission. The effect-bearing HTTP authority must use its established
 URI parser and validate origin, DNS, endpoint and OAuth policy before effects.
 The codec does not discover or mutate fx roots, change native settings schema,
 create a profile directory, save credentials or connect to any server.
+
+The [profile store](mcp-persistence.md) separately owns private `mcp.json`
+observation and publication. Its save receipt is not a runtime reload result.
+Profile configuration rejects explicit Authorization headers at the upstream
+pin too. This is distinct from resolved transport headers, where generated
+bearer/OAuth Authorization must be admitted. Runtime resolution must prefer
+active OAuth credentials over the configured bearer environment variable;
+OAuth configuration alone is not an active credential. Missing required header
+environment values and duplicate resolved names are errors, not overwrite or
+fallback instructions.

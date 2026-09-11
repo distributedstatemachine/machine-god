@@ -82,6 +82,10 @@ legacy `2025-11-25` allows the pinned empty priming/poll-close behavior.
 Deprecated SSE endpoint discovery and connection lifecycle remain separate
 transport responsibilities.
 
+[SSE framing](mcp-sse.md) provides the separate bounded Modern/Legacy decoders;
+event IDs and endpoint text remain uncommitted observations until the transport
+validates the owning connection and generation.
+
 ## Runtime integration obligations
 
 ### HTTP endpoint syntax and origin policy
@@ -125,3 +129,10 @@ submission, and must not automatically resubmit a partially written or
 ambiguously completed consequential operation. Session shutdown, reload,
 authentication changes and cancellation require explicit native ownership;
 protocol data cannot grant or reconstruct that ownership.
+
+The [one-shot submission boundary](mcp-submission.md) retains a concrete native
+proof through direct stdio plaintext writes. It does not yet supply an HTTP
+writer, control/feature authority or production permission-preparer routing.
+The [profile store](mcp-persistence.md) owns configuration publication separately
+from runtime activation; callers must preserve save and reload outcomes as
+independent facts.
