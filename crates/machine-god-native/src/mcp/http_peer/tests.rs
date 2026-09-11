@@ -28,6 +28,9 @@ impl McpHttpClock for Clock {
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(5)
 }
+fn require_send<T: Send>(value: T) -> T {
+    value
+}
 fn options(address: SocketAddr, transport: TransportKind) -> McpHttpPeerOptions {
     let url = format!("http://127.0.0.1:{}/mcp", address.port());
     let endpoint = McpEndpoint::parse(&url).unwrap();

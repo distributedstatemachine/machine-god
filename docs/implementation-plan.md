@@ -416,9 +416,9 @@ Proof and request ownership remain checked through core admission and writing.
 Exact conversation/turn routing is integrated into both CLI setup paths. Owned
 OAuth provides discovery, approved callbacks, refresh, private credentials and
 generation-bound logout receipts; runtime/CLI activation remains below.
-Earlier component checks and minimal-feature diagnostics remain in historical
-plan revisions and retained evidence. Completed worktrees are removed after
-integration. Internal checks do not establish a full-feature or remote gate.
+Typed feature/result/input codecs, shared executable bindings and exact HTTP
+heads compose with explicit DNS/TLS and shared inert stdio startup factories.
+Component checks are not full-feature gates; completed clean trees are removed.
 
 These components do not constitute a delivered runtime. Remaining composition
 must own native startup/DNS, peers through reload/finalization,

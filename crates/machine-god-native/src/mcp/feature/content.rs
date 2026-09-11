@@ -5,6 +5,38 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::value::RawValue;
 use std::fmt;
 
+// Pinned tools and resources/prompts intentionally differ on URI/icon bounds,
+// empty required strings and nested resource annotations. Share structure, not
+// an accidentally stricter feature policy for every method.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum Policy {
+    Feature,
+    Tool,
+}
+impl Policy {
+    fn uri_limit(self, limits: McpFeatureCodecLimits) -> usize {
+        if self == Self::Tool {
+            limits.max_content_field_bytes
+        } else {
+            64 * 1024
+        }
+    }
+    fn aggregate_limit(self, limits: McpFeatureCodecLimits) -> usize {
+        if self == Self::Tool {
+            limits.max_response_bytes
+        } else {
+            limits.max_content_bytes
+        }
+    }
+    fn required(self, object: &fields::Object<'_>, key: &str, maximum: usize) -> Result<Box<str>> {
+        if self == Self::Tool {
+            required_allow_empty(object, key, maximum)
+        } else {
+            fields::required(object, key, maximum).map_err(Into::into)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpContentKind {
     Text,
@@ -73,9 +105,9 @@ impl McpContent {
     }
 }
 
-fn optional_metadata(object: &fields::Object<'_>) -> Result<usize> {
+fn optional_metadata(object: &fields::Object<'_>, annotations: bool) -> Result<usize> {
     let mut bytes = 0;
-    if let Some(raw) = object.get("annotations") {
+    if let Some(raw) = object.get("annotations").filter(|_| annotations) {
         fields::annotations(raw, false)?;
         bytes += fields::metadata(raw, 32, true)?.get().len();
     }
@@ -105,14 +137,24 @@ pub(crate) fn resource(
     limits: McpFeatureCodecLimits,
     total_content: &mut usize,
 ) -> Result<McpResourceContent> {
+    resource_with_policy(raw, limits, total_content, Policy::Feature)
+}
+
+fn resource_with_policy(
+    raw: &RawValue,
+    limits: McpFeatureCodecLimits,
+    total_content: &mut usize,
+    policy: Policy,
+) -> Result<McpResourceContent> {
     let limits = limits.validate()?;
     if raw.get().len() > limits.max_response_bytes {
         return Err(Error::Limit);
     }
     let object = fields::object(raw)?;
-    let uri = fields::required(&object, "uri", 64 * 1024)?;
+    let uri = policy.required(&object, "uri", policy.uri_limit(limits))?;
     let mime = fields::optional(&object, "mimeType", 4096)?;
-    let mut bytes = optional_metadata(&object)?;
+    let mut bytes = optional_metadata(&object, policy == Policy::Feature)?;
+    let aggregate_limit = policy.aggregate_limit(limits);
     if object.contains_key("text") == object.contains_key("blob") {
         return Err(Error::InvalidResponse);
     }
@@ -125,14 +167,14 @@ pub(crate) fn resource(
     if !text {
         base64(&data)?;
     }
-    charge(&mut bytes, uri.len(), limits.max_content_bytes)?;
+    charge(&mut bytes, uri.len(), aggregate_limit)?;
     charge(
         &mut bytes,
         mime.as_ref().map_or(0, |mime| mime.len()),
-        limits.max_content_bytes,
+        aggregate_limit,
     )?;
-    charge(&mut bytes, data.len(), limits.max_content_bytes)?;
-    charge(total_content, bytes, limits.max_content_bytes)?;
+    charge(&mut bytes, data.len(), aggregate_limit)?;
+    charge(total_content, bytes, aggregate_limit)?;
     Ok(McpResourceContent {
         raw: raw.to_owned(),
         uri,
@@ -152,12 +194,22 @@ pub(crate) fn admit(
     limits: McpFeatureCodecLimits,
     total_content: &mut usize,
 ) -> Result<McpContent> {
+    admit_with_policy(raw, limits, total_content, Policy::Feature)
+}
+
+/// Tool policy requires its caller to bound the complete result independently.
+pub(crate) fn admit_with_policy(
+    raw: &RawValue,
+    limits: McpFeatureCodecLimits,
+    total_content: &mut usize,
+    policy: Policy,
+) -> Result<McpContent> {
     let limits = limits.validate()?;
     if raw.get().len() > limits.max_response_bytes {
         return Err(Error::Limit);
     }
     let object = fields::object(raw)?;
-    optional_metadata(&object)?;
+    optional_metadata(&object, true)?;
     let kind = match fields::required(&object, "type", 32)?.as_ref() {
         "text" => {
             required_allow_empty(&object, "text", limits.max_content_field_bytes)?;
@@ -165,7 +217,7 @@ pub(crate) fn admit(
         }
         name @ ("image" | "audio") => {
             let data = required_allow_empty(&object, "data", limits.max_content_field_bytes)?;
-            fields::required(&object, "mimeType", 4096)?;
+            policy.required(&object, "mimeType", 4096)?;
             base64(&data)?;
             if name == "image" {
                 McpContentKind::Image
@@ -174,14 +226,18 @@ pub(crate) fn admit(
             }
         }
         "resource_link" => {
-            fields::required(&object, "uri", 64 * 1024)?;
+            policy.required(&object, "uri", policy.uri_limit(limits))?;
             // Content links allow 4096 name bytes, unlike catalog names (256).
-            fields::required(&object, "name", 4096)?;
+            policy.required(&object, "name", 4096)?;
             fields::optional(&object, "title", 4096)?;
             fields::optional(&object, "description", 64 * 1024)?;
             fields::optional(&object, "mimeType", 4096)?;
             if let Some(icons) = object.get("icons") {
-                fields::icons(icons, 64 * 1024)?;
+                if policy == Policy::Tool {
+                    fields::icons_allow_empty(icons, policy.uri_limit(limits))?;
+                } else {
+                    fields::icons(icons, policy.uri_limit(limits))?;
+                }
             }
             if let Some(size) = object.get("size") {
                 fields::size(size.get())?;
@@ -189,10 +245,11 @@ pub(crate) fn admit(
             McpContentKind::ResourceLink
         }
         "resource" => {
-            resource(
+            resource_with_policy(
                 object.get("resource").ok_or(Error::InvalidResponse)?,
                 limits,
                 &mut 0,
+                policy,
             )?;
             McpContentKind::Resource
         }
@@ -200,8 +257,8 @@ pub(crate) fn admit(
     };
     charge(
         total_content,
-        compact_size(raw, limits.max_content_bytes)?,
-        limits.max_content_bytes,
+        compact_size(raw, policy.aggregate_limit(limits))?,
+        policy.aggregate_limit(limits),
     )?;
     Ok(McpContent {
         raw: raw.to_owned(),
@@ -210,6 +267,11 @@ pub(crate) fn admit(
 }
 
 pub(crate) fn compact_size(raw: &RawValue, limit: usize) -> Result<usize> {
+    let value = machine_god_core::json::from_str(raw.get()).map_err(|_| Error::InvalidResponse)?;
+    compact_value_size(&value, limit)
+}
+
+pub(crate) fn compact_value_size(value: &serde_json::Value, limit: usize) -> Result<usize> {
     struct Counter {
         bytes: usize,
         limit: usize,
@@ -226,8 +288,7 @@ pub(crate) fn compact_size(raw: &RawValue, limit: usize) -> Result<usize> {
             Ok(())
         }
     }
-    let value = machine_god_core::json::from_str(raw.get()).map_err(|_| Error::InvalidResponse)?;
     let mut counter = Counter { bytes: 0, limit };
-    serde_json::to_writer(&mut counter, &value).map_err(|_| Error::Limit)?;
+    serde_json::to_writer(&mut counter, value).map_err(|_| Error::Limit)?;
     Ok(counter.bytes)
 }

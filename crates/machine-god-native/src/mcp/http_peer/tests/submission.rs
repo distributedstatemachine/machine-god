@@ -118,8 +118,7 @@ fn independently_prepared_leases_can_be_submitted_out_of_order() {
             assert!(peer.reserve_tool_id().is_err());
             for (name, id) in [("second", 4), ("first", 3)] {
                 let submission = fixture.claim(name, CancellationToken::new()).await.unwrap();
-                let response = peer
-                    .call(submission, head.clone(), deadline())
+                let response = require_send(peer.call(submission, head.clone(), deadline()))
                     .await
                     .unwrap();
                 assert_eq!(response.envelope().id(), Some(&RpcId::Integer(id)));

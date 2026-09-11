@@ -75,6 +75,11 @@ Destruction performs no callbacks or network work. The manual `reserve_tool_id`
 API remains single-exclusive and cannot mix with live owned reservations.
 Explicit discard clears only the manual slot; neither form reuses consumed IDs.
 
+Peer operations retain an exclusive owned lane across listener reconnect delays.
+Their futures can enter the native tool's `Send` execution path without requiring
+the peer's owned reader future to be `Sync`. This changes no retry, deadline or
+wire-serialization policy and creates no detached task.
+
 Typed catalog controls return raw candidates, not executable publication.
 Notifications/progress remain bounded untrusted envelopes. Modern server
 requests fail as at the pin; legacy request-stream server requests receive a

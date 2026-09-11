@@ -316,7 +316,8 @@ impl McpServerConfig {
     pub fn operation_timeout_ms(&self) -> u32 {
         self.operation_timeout_ms
     }
-    /// Explicit environment overrides, without ambient lookup or expansion.
+    /// Explicit child environment, without ambient lookup or expansion.
+    /// A nonempty map replaces the captured environment; an empty map inherits it.
     #[must_use]
     pub fn environment(&self) -> &BTreeMap<Box<str>, Box<str>> {
         &self.environment

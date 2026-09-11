@@ -12,6 +12,8 @@ pub mod config;
 pub mod context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod endpoint;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod feature;
 pub mod headers;
 #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
 pub mod http;
@@ -19,6 +21,9 @@ pub mod http;
 pub mod http_peer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod management;
+pub mod mrtr;
+#[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
+pub mod network;
 pub mod pagination;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod peer;
@@ -31,5 +36,9 @@ pub mod sse;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod stdio;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod stdio_startup;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod store;
 pub mod submission;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod tool_result;

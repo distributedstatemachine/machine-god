@@ -71,13 +71,24 @@ fn depth(raw: &RawValue, current: usize, maximum: usize) -> Result<()> {
     Ok(())
 }
 pub(crate) fn icons(raw: &RawValue, source_limit: usize) -> Result<()> {
+    icons_with_policy(raw, source_limit, true)
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn icons_allow_empty(raw: &RawValue, source_limit: usize) -> Result<()> {
+    icons_with_policy(raw, source_limit, false)
+}
+fn icons_with_policy(raw: &RawValue, source_limit: usize, nonempty: bool) -> Result<()> {
     let icons = array(raw)?;
     if icons.len() > 16 {
         return Err(Error::Limit);
     }
     for raw in icons {
         let icon = object(raw)?;
-        required(&icon, "src", source_limit)?;
+        text(
+            icon.get("src").ok_or(Error::InvalidDescriptor)?,
+            source_limit,
+            nonempty,
+        )?;
         optional(&icon, "mimeType", 4096)?;
         if let Some(raw) = icon.get("sizes") {
             let sizes = array(raw)?;

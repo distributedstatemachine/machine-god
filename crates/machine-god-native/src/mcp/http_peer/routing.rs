@@ -411,7 +411,7 @@ pub(super) async fn reconnect_listener(peer: &mut McpHttpPeer, deadline: Instant
     delay(peer, peer.listener_resume.retry_ms, deadline).await?;
     open_listener(peer, deadline).await
 }
-pub(super) async fn delay(peer: &McpHttpPeer, millis: u32, deadline: Instant) -> Result<()> {
+pub(super) async fn delay(peer: &mut McpHttpPeer, millis: u32, deadline: Instant) -> Result<()> {
     let deadline = deadline.min(peer.options.lifetime_deadline);
     peer.check(deadline)?;
     let wake = peer

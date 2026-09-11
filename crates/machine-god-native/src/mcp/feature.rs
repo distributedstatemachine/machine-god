@@ -39,7 +39,7 @@ impl Default for McpFeatureCodecLimits {
     }
 }
 impl McpFeatureCodecLimits {
-    fn validate(self) -> Result<Self> {
+    pub(crate) fn validate(self) -> Result<Self> {
         let cap = Self::default();
         for (value, maximum) in [
             (self.max_response_bytes, cap.max_response_bytes),
