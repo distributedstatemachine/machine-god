@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `replacement full gate and three fresh reviews of repaired nested skill discovery`
+- Next gate: `repair metadata prefix-boundary completion, then replacement full gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -376,34 +376,23 @@ three fresh independent adversarial reviews; retain the same delivery workflow.
 The native command service, managed Git runner, startup root composition,
 FIFO invocation, checkpoint context and CLI command receipts are integrated.
 The interactive picker, initial snapshot, owned refresh, input-generation and
-Gateway multipart projection are integrated. The complete local gate passed
-on macOS and Linux, including fresh release scenarios. Three independent reviews
-then rejected the candidate with three distinct findings: executable resource
-mode loss, copying an oversized borrowed install filter before validation, and
-quadratic picker query matching. All three repairs and focused regressions are
-integrated from isolated parallel lanes; completed repair worktrees are removed.
-The replacement local gate passed on both platforms. Three fresh R2 reviews
-found one resource-admission issue in two public path APIs; correctness/API and
-lifecycle/platform reported zero actionable findings. Both path-copy repairs and
-allocation regressions are integrated, with focused tests and strict lint green.
-Repeat the complete gate and three fresh reviews on the replacement candidate.
-Completed R2 review and repair worktrees are removed.
-The next candidate passed Linux and build-time gates, but macOS runtime exposed
-three unestablished child-reaping timeouts and, on one unchanged retry, an empty
-PID readiness-file race. The fixture now publishes the complete PID atomically;
-focused regression/lifecycle/PTY tests pass and its worktree is removed. Preserve
-both failures and do not claim this fixture repair explains the separate
-admission timeouts. No deadlines or product semantics were changed.
-The fixture-repaired candidate passed the complete local gate. R3 lifecycle and
-resource reviews reported zero findings; correctness found that copy exclusions
-were applied before nested skill discovery. Separate ancestor discovery from
-selected-resource exclusions while retaining bounds and exact revalidation.
-The discovery repair separates bounded metadata inventory from selected resource
-capture and preserves shared overlapping payloads and exact local revalidation.
-All 53 focused managed tests and strict native lint pass. A composed CLI
-regression reproduced the original `NoMatches`; its integrated green run remains
-part of the replacement gate. Completed R3 review and repair worktrees are
-removed; no accepted candidate has been pushed or merged.
+Gateway multipart projection are integrated. Earlier review repairs preserve
+executable resource modes, validate borrowed filters and paths before copying,
+use linear picker matching, and separate bounded ancestor discovery from
+selected-resource exclusions with shared payloads and exact source revalidation.
+The PID readiness fixture now publishes complete content atomically; this does
+not explain the separately retained historical child-reaping timeouts.
+
+The discovery-repaired candidate passed the complete macOS/Linux gate, including
+45 focused CLI tests, 192 native skills tests and fresh-release smoke. Three
+fresh R4 reviewers reported zero lifecycle/resource findings and one correctness
+finding: a metadata read ending exactly after closing dashes can be mistaken for
+EOF, causing an unchanged skill to fail invocation as stale. Require newline or
+actual EOF before accepting that prefix boundary, preserving existing read and
+header limits. Then repeat the full gate and three fresh reviews. Completed
+review and earlier repair worktrees are removed; the bounded prefix repair and
+Linux validation worktrees remain active. No accepted candidate has been pushed
+or merged.
 Historical candidate, gate and finding evidence belongs in the
 [skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
 accepted yet. Linux validation retains its unprivileged environment; macOS and

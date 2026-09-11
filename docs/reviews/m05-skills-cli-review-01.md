@@ -278,3 +278,34 @@ integrated run and separate fresh-release smoke belong to the replacement gate.
 The `r3-cli-discovery-{build,clippy,red}.log` evidence is retained. Both clean
 committed repair worktrees were removed after integration; these focused results
 do not replace full-feature validation or fresh independent review.
+
+## Independent review round 4
+
+Candidate `b6760d701bdac14507e2c69f5d475378791b3857`, tree
+`b7505273433fc088c9ee3a80d59d82fa6df647b6`, passed the complete replacement
+local macOS/Linux gate. Mac focused CLI (45), native skills (192), workspace
+(447 CLI and 2,470 native passing unit tests, existing ignored fixtures),
+integrations, explicit doctests and official fresh-release smoke passed.
+Formatting, strict Clippy, fresh locked releases, all test precompilation,
+269 Python tests (14 skips), drift, documentation, dependency policy/audit and
+FreeBSD/WASI checks passed. Linux retained its unprivileged environment and
+default runtime concurrency; all builds finished first, and Linux runtime and
+smoke finished before Mac runtime. Exact source and release hashes stayed
+unchanged. Logs remain under `/private/tmp/mg-skills-r3-replacement.WnRwB1` and
+the SHA-prefixed Linux evidence directory. The previously expected-red composed
+CLI regression passed with the integrated discovery backend.
+
+Three newly spawned local reviewers, `skills_review_r4_correctness`,
+`skills_review_r4_lifecycle` and `skills_review_r4_resources`, inspected the full
+feature against parent `909c52ea91a77e0f2ad4d0d9548e33be14f38abb`. They performed
+read-only source/contract/test inspection, not builds, fixtures, remote checks
+or Bugbot service execution. Lifecycle and resources reported zero actionable
+findings. Correctness established one P2:
+
+| Finding | Historical source location | Evidence and required repair |
+| --- | --- | --- |
+| R4-1: non-EOF metadata prefix accepted as complete | `skills_catalog/io.rs:305`, `skills_catalog/discovery.rs:253` | A valid header whose closing dashes end exactly at byte 16,384 is accepted before its following newline is read. Discovery records a different body offset from full materialization, so the unchanged skill fails as `StaleSelection`. Require a complete newline or actual EOF at the prefix boundary without widening header/read bounds. |
+
+The candidate was rejected despite its green local gate and was not pushed or
+merged. All three clean completed review worktrees were removed; retained logs
+remain historical evidence, not a claim that the outstanding finding is fixed.
