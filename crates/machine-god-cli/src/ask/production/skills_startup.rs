@@ -1,5 +1,8 @@
 //! Blocking CLI startup joins native selection and optional initial discovery.
 
+#[cfg(test)]
+mod tests;
+
 use machine_god_core::CancellationToken;
 use machine_god_native::{
     NativeEnvironment, NativeOwnedWorkerScope, NativeReferenceHostTerminalOptions,
