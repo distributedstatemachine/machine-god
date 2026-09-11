@@ -20,6 +20,27 @@ pub(super) struct Tree {
     pub nodes: Vec<Node>,
 }
 impl Tree {
+    pub fn retained_byte_charge(&self) -> Result<usize> {
+        use super::accounting::{add, array, entry};
+        let mut bytes = array::<Node>(self.nodes.capacity())?;
+        for node in &self.nodes {
+            match node {
+                Node::String(text) => add(&mut bytes, text.capacity(), usize::MAX)?,
+                Node::Number(text) => add(&mut bytes, text.len(), usize::MAX)?,
+                Node::Array(items) => {
+                    add(&mut bytes, array::<usize>(items.capacity())?, usize::MAX)?;
+                }
+                Node::Object(items) => {
+                    for key in items.keys() {
+                        add(&mut bytes, entry::<(String, usize)>(), usize::MAX)?;
+                        add(&mut bytes, key.capacity(), usize::MAX)?;
+                    }
+                }
+                Node::Null | Node::Bool(_) => {}
+            }
+        }
+        Ok(bytes)
+    }
     pub fn parse(bytes: &[u8], limits: McpSchemaLimits, schema: bool) -> Result<Self> {
         let error = if schema {
             McpSchemaError::SchemaLimitExceeded

@@ -86,6 +86,23 @@ impl Pattern {
     pub fn states(&self) -> usize {
         self.instructions.len()
     }
+    pub fn retained_byte_charge(&self) -> super::Result<usize> {
+        use super::accounting::{add, array};
+        let mut bytes = array::<Instruction>(self.instructions.capacity())?;
+        add(
+            &mut bytes,
+            array::<Class>(self.classes.capacity())?,
+            usize::MAX,
+        )?;
+        for class in &self.classes {
+            add(
+                &mut bytes,
+                array::<(char, char)>(class.ranges.capacity())?,
+                usize::MAX,
+            )?;
+        }
+        Ok(bytes)
+    }
     pub fn matches(&self, text: &str, steps: &mut usize, limit: usize) -> Result<bool> {
         let mut current = States::new(self.instructions.len());
         let mut next = States::new(self.instructions.len());

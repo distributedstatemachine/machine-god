@@ -168,7 +168,13 @@ impl McpPromptDescriptor {
     }
 }
 
-pub(super) fn parse(kind: McpCatalogKind, identity: &str, raw: &RawValue) -> Result<McpDescriptor> {
+pub(super) fn parse(
+    kind: McpCatalogKind,
+    identity: &str,
+    raw: &RawValue,
+    retained_bytes: &mut usize,
+    byte_limit: usize,
+) -> Result<McpDescriptor> {
     let object = fields::object(raw)?;
     let common = common(kind, raw, &object)?;
     match kind {
@@ -176,11 +182,15 @@ pub(super) fn parse(kind: McpCatalogKind, identity: &str, raw: &RawValue) -> Res
             if common.name.as_ref() != identity {
                 return Err(Error::InvalidDescriptor);
             }
-            let input = schema(object.get("inputSchema").ok_or(Error::InvalidDescriptor)?)?;
+            let input = schema(
+                object.get("inputSchema").ok_or(Error::InvalidDescriptor)?,
+                retained_bytes,
+                byte_limit,
+            )?;
             input.require_object_root().map_err(Error::Schema)?;
             let output = object
                 .get("outputSchema")
-                .map(|raw| schema(raw))
+                .map(|raw| schema(raw, retained_bytes, byte_limit))
                 .transpose()?;
             Ok(McpDescriptor::Tool(McpToolDescriptor(Arc::new(Tool {
                 common,
@@ -251,8 +261,19 @@ pub(super) fn parse(kind: McpCatalogKind, identity: &str, raw: &RawValue) -> Res
         }
     }
 }
-fn schema(raw: &RawValue) -> Result<McpSchema> {
-    McpSchema::parse(raw.get().as_bytes(), McpSchemaLimits::default()).map_err(Error::Schema)
+fn schema(raw: &RawValue, retained_bytes: &mut usize, byte_limit: usize) -> Result<McpSchema> {
+    let remaining = byte_limit
+        .checked_sub(*retained_bytes)
+        .filter(|bytes| *bytes > 0)
+        .ok_or(Error::Limit)?;
+    let defaults = McpSchemaLimits::default();
+    let limits = McpSchemaLimits {
+        max_retained_bytes: remaining.min(defaults.max_retained_bytes),
+        ..defaults
+    };
+    let schema = McpSchema::parse(raw.get().as_bytes(), limits).map_err(Error::Schema)?;
+    super::charge(retained_bytes, schema.retained_byte_charge(), byte_limit)?;
+    Ok(schema)
 }
 fn common(kind: McpCatalogKind, raw: &RawValue, object: &fields::Object<'_>) -> Result<Common> {
     let tool = kind == McpCatalogKind::Tools;

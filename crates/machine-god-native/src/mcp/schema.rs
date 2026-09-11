@@ -3,6 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+mod accounting;
 mod admit;
 mod evaluate;
 mod json;
@@ -28,6 +29,10 @@ pub struct McpSchemaLimits {
     pub max_pattern_states: usize,
     pub max_pattern_repeat: usize,
     pub max_pattern_steps: usize,
+    pub max_reference_bytes: usize,
+    pub max_pattern_cache_bytes: usize,
+    pub max_cached_pattern_states: usize,
+    pub max_retained_bytes: usize,
 }
 impl Default for McpSchemaLimits {
     fn default() -> Self {
@@ -45,6 +50,10 @@ impl Default for McpSchemaLimits {
             max_pattern_states: 2048,
             max_pattern_repeat: 1024,
             max_pattern_steps: 200_000,
+            max_reference_bytes: 1024 * 1024,
+            max_pattern_cache_bytes: 256 * 1024,
+            max_cached_pattern_states: 2048,
+            max_retained_bytes: 4 * 1024 * 1024,
         }
     }
 }
@@ -67,6 +76,13 @@ impl McpSchemaLimits {
             (self.max_pattern_states, cap.max_pattern_states),
             (self.max_pattern_repeat, cap.max_pattern_repeat),
             (self.max_pattern_steps, cap.max_pattern_steps),
+            (self.max_reference_bytes, cap.max_reference_bytes),
+            (self.max_pattern_cache_bytes, cap.max_pattern_cache_bytes),
+            (
+                self.max_cached_pattern_states,
+                cap.max_cached_pattern_states,
+            ),
+            (self.max_retained_bytes, cap.max_retained_bytes),
         ] {
             if value == 0 || value > maximum {
                 return Err(McpSchemaError::InvalidLimits);
@@ -165,6 +181,7 @@ struct Admitted {
     dialect: McpSchemaDialect,
     assessment: McpSchemaAssessment,
     limits: McpSchemaLimits,
+    retained_bytes: usize,
 }
 impl fmt::Debug for McpSchema {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -181,9 +198,37 @@ impl McpSchema {
     pub fn parse(bytes: &[u8], limits: McpSchemaLimits) -> Result<Self> {
         let limits = limits.validate()?;
         let tree = json::Tree::parse(bytes, limits, true)?;
+        let mut retained_bytes = size_of::<Admitted>() + 2 * size_of::<usize>();
+        accounting::add(&mut retained_bytes, bytes.len(), limits.max_retained_bytes)?;
+        accounting::add(
+            &mut retained_bytes,
+            tree.retained_byte_charge()?,
+            limits.max_retained_bytes,
+        )?;
         let dialect = admit::dialect(&tree, 0)?;
-        let resolver = resolver::Resolver::new(&tree, dialect, limits)?;
-        let (assessment, patterns) = admit::scan(&tree, &resolver, dialect, limits)?;
+        let resolver = resolver::Resolver::new(
+            &tree,
+            dialect,
+            limits,
+            limits.max_retained_bytes - retained_bytes,
+        )?;
+        accounting::add(
+            &mut retained_bytes,
+            resolver.retained_byte_charge(),
+            limits.max_retained_bytes,
+        )?;
+        let (assessment, patterns, pattern_bytes) = admit::scan(
+            &tree,
+            &resolver,
+            dialect,
+            limits,
+            limits.max_retained_bytes - retained_bytes,
+        )?;
+        accounting::add(
+            &mut retained_bytes,
+            pattern_bytes,
+            limits.max_retained_bytes,
+        )?;
         let raw = std::str::from_utf8(bytes)
             .map_err(|_| McpSchemaError::InvalidJson)?
             .into();
@@ -195,6 +240,7 @@ impl McpSchema {
             dialect,
             assessment,
             limits,
+            retained_bytes,
         })))
     }
     /// Requires the exact MCP input-schema root spelling `"type":"object"`.
@@ -216,6 +262,12 @@ impl McpSchema {
     #[must_use]
     pub fn raw_json(&self) -> &str {
         &self.0.raw
+    }
+    /// Conservative retained raw/tree/index/pattern allocation charge. Clones
+    /// share this storage; this is a budgeting contract, not heap telemetry.
+    #[must_use]
+    pub fn retained_byte_charge(&self) -> usize {
+        self.0.retained_bytes
     }
     #[must_use]
     pub fn assessment(&self) -> McpSchemaAssessment {

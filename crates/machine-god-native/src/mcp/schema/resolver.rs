@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::admit::children;
 use super::json::{Node, Tree};
@@ -7,16 +8,18 @@ use super::{McpSchemaDialect as Dialect, McpSchemaError as Error, McpSchemaLimit
 mod uri;
 
 pub(super) struct Resource {
-    uri: String,
+    uri: Arc<str>,
     root: usize,
 }
 pub(super) struct Resolver {
     resources: Vec<Resource>,
-    by_uri: BTreeMap<String, usize>,
+    by_uri: BTreeMap<Arc<str>, usize>,
     by_node: BTreeMap<usize, usize>,
     anchors: BTreeMap<(usize, String), (usize, bool)>,
     dialect: Dialect,
     limits: McpSchemaLimits,
+    retained_bytes: usize,
+    byte_limit: usize,
 }
 pub(super) struct Target {
     pub node: usize,
@@ -24,22 +27,27 @@ pub(super) struct Target {
     pub dynamic: Option<String>,
 }
 impl Resolver {
-    pub fn new(tree: &Tree, dialect: Dialect, limits: McpSchemaLimits) -> Result<Self> {
+    pub fn new(
+        tree: &Tree,
+        dialect: Dialect,
+        limits: McpSchemaLimits,
+        remaining: usize,
+    ) -> Result<Self> {
         let root_uri = schema_id(tree, 0, dialect).map_or_else(
             || Ok(String::from("fx-schema:/root")),
             |root_id| identifier("fx-schema:/root", root_id, dialect, limits),
         )?;
         let mut resolver = Self {
-            resources: vec![Resource {
-                uri: root_uri.clone(),
-                root: 0,
-            }],
-            by_uri: BTreeMap::from([(root_uri, 0)]),
-            by_node: BTreeMap::from([(0, 0)]),
+            resources: Vec::new(),
+            by_uri: BTreeMap::new(),
+            by_node: BTreeMap::new(),
             anchors: BTreeMap::new(),
             dialect,
             limits,
+            retained_bytes: 0,
+            byte_limit: limits.max_reference_bytes.min(remaining),
         };
+        resolver.resource(root_uri, 0)?;
         resolver.index(tree, 0, 0, 0)?;
         Ok(resolver)
     }
@@ -65,18 +73,12 @@ impl Resolver {
             )?;
             if !(self.dialect == Dialect::Draft7
                 && plain_identifier(id)
-                && absolute == self.resources[inherited].uri)
+                && absolute == self.resources[inherited].uri.as_ref())
             {
-                if self.by_uri.contains_key(&absolute) {
+                if self.by_uri.contains_key(absolute.as_str()) {
                     return Err(Error::InvalidSchema);
                 }
-                resource = self.resources.len();
-                self.resources.push(Resource {
-                    uri: absolute.clone(),
-                    root: node,
-                });
-                self.by_uri.insert(absolute, resource);
-                self.by_node.insert(node, resource);
+                resource = self.resource(absolute, node)?;
             }
         }
         match self.dialect {
@@ -103,15 +105,44 @@ impl Resolver {
         Ok(())
     }
     fn anchor(&mut self, resource: usize, name: &str, node: usize, dynamic: bool) -> Result<()> {
-        if !valid_anchor(name)
-            || self
-                .anchors
-                .insert((resource, name.into()), (node, dynamic))
-                .is_some()
+        if !valid_anchor(name) {
+            return Err(Error::InvalidSchema);
+        }
+        // Charge before copying the name or allocating the sparse index entry.
+        let mut charge = super::accounting::entry::<((usize, String), (usize, bool))>();
+        super::accounting::add(&mut charge, name.len(), usize::MAX)?;
+        super::accounting::add(&mut self.retained_bytes, charge, self.byte_limit)?;
+        if self
+            .anchors
+            .insert((resource, name.into()), (node, dynamic))
+            .is_some()
         {
             return Err(Error::InvalidSchema);
         }
         Ok(())
+    }
+    fn resource(&mut self, absolute: String, node: usize) -> Result<usize> {
+        use super::accounting::{add, entry};
+        let mut charge = absolute.len();
+        add(&mut charge, 2 * size_of::<usize>(), usize::MAX)?;
+        // Four resource slots per entry conservatively cover Vec growth, even
+        // its first minimum allocation. Both maps share the single URI text.
+        add(&mut charge, 4 * size_of::<Resource>(), usize::MAX)?;
+        add(&mut charge, entry::<(Arc<str>, usize)>(), usize::MAX)?;
+        add(&mut charge, entry::<(usize, usize)>(), usize::MAX)?;
+        add(&mut self.retained_bytes, charge, self.byte_limit)?;
+        let absolute: Arc<str> = absolute.into();
+        let resource = self.resources.len();
+        self.resources.push(Resource {
+            uri: Arc::clone(&absolute),
+            root: node,
+        });
+        self.by_uri.insert(absolute, resource);
+        self.by_node.insert(node, resource);
+        Ok(resource)
+    }
+    pub fn retained_byte_charge(&self) -> usize {
+        self.retained_bytes
     }
     pub fn enter(&self, tree: &Tree, node: usize, inherited: usize) -> Result<usize> {
         let Some(id) = schema_id(tree, node, self.dialect) else {

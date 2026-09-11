@@ -27,7 +27,8 @@ pub(super) fn scan(
     resolver: &Resolver,
     dialect: Dialect,
     limits: McpSchemaLimits,
-) -> Result<(Assessment, BTreeMap<String, Pattern>)> {
+    remaining: usize,
+) -> Result<(Assessment, BTreeMap<String, Pattern>, usize)> {
     let mut context = Scan {
         tree,
         dialect,
@@ -35,6 +36,8 @@ pub(super) fn scan(
         assessment: Assessment::LocallyEvaluable,
         patterns: BTreeMap::new(),
         cached_states: 0,
+        cached_bytes: 0,
+        cache_limit: limits.max_pattern_cache_bytes.min(remaining),
     };
     let mut pending = vec![(0, 0, 0)];
     let mut visited = BTreeSet::new();
@@ -64,7 +67,7 @@ pub(super) fn scan(
             pending.push((child, resource, depth + 1));
         }
     }
-    Ok((context.assessment, context.patterns))
+    Ok((context.assessment, context.patterns, context.cached_bytes))
 }
 struct Scan<'a> {
     tree: &'a Tree,
@@ -73,6 +76,8 @@ struct Scan<'a> {
     assessment: Assessment,
     patterns: BTreeMap<String, Pattern>,
     cached_states: usize,
+    cached_bytes: usize,
+    cache_limit: usize,
 }
 impl Scan<'_> {
     fn schema(&mut self, node: usize) -> Result<()> {
@@ -200,8 +205,22 @@ impl Scan<'_> {
         }
         match Pattern::compile(source, self.limits) {
             Ok(pattern) => {
-                if self.cached_states + pattern.states() <= self.limits.max_pattern_states {
+                let mut bytes = pattern.retained_byte_charge()?;
+                super::accounting::add(&mut bytes, source.len(), usize::MAX)?;
+                super::accounting::add(
+                    &mut bytes,
+                    super::accounting::entry::<(String, Pattern)>(),
+                    usize::MAX,
+                )?;
+                if self.cached_states + pattern.states()
+                    <= self
+                        .limits
+                        .max_pattern_states
+                        .min(self.limits.max_cached_pattern_states)
+                    && bytes <= self.cache_limit - self.cached_bytes
+                {
                     self.cached_states += pattern.states();
+                    self.cached_bytes += bytes;
                     self.patterns.insert(source.into(), pattern);
                 }
             }

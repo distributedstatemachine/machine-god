@@ -347,3 +347,51 @@ fn candidate_bounds_fail_before_publication_and_names_remain_deterministic() {
     assert_eq!(second.len(), 64);
     assert!(second.ends_with("_2"));
 }
+
+#[test]
+fn catalog_and_candidate_charge_schema_indexes_before_retention() {
+    let children = (0..10)
+        .map(|index| format!(r#""s{index}":{{"$id":"s{index}"}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let source = format!(
+        r#"[{{"name":"indexed","inputSchema":{{"type":"object","$id":"https://example.test/{}/","$defs":{{{children}}}}}}}]"#,
+        "a".repeat(4096)
+    );
+    let catalog = tools(&source);
+    let McpDescriptor::Tool(tool) = &catalog.descriptors()[0] else {
+        panic!()
+    };
+    assert!(tool.input_schema().retained_byte_charge() > source.len() * 4);
+    assert!(catalog.retained_byte_charge() > tool.input_schema().retained_byte_charge());
+    assert!(
+        McpDescriptorCatalog::admit(
+            raw(McpCatalogKind::Tools, &source),
+            McpDescriptorLimits {
+                max_catalog_bytes: source.len() * 4 + 1,
+                ..McpDescriptorLimits::default()
+            }
+        )
+        .is_err()
+    );
+    let catalogs = [catalog];
+    let input = || McpCatalogServerInput {
+        server_name: "x",
+        catalogs: &catalogs,
+        tool_policy: McpToolExposurePolicy::Standard,
+    };
+    let old = McpCatalogCandidate::build(&[input()], &[], McpDescriptorLimits::default()).unwrap();
+    assert_eq!(
+        McpCatalogCandidate::build(
+            &[input()],
+            &[],
+            McpDescriptorLimits {
+                max_candidate_bytes: source.len() * 4,
+                ..McpDescriptorLimits::default()
+            }
+        )
+        .unwrap_err(),
+        McpCatalogError::Limit
+    );
+    assert_eq!(old.tools()[0].name(), "mcp_x_indexed");
+}

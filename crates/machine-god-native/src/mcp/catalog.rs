@@ -124,9 +124,8 @@ impl McpDescriptorCatalog {
             return Err(McpCatalogError::Limit);
         }
         let mut retained_bytes = 0;
-        // Charge original JSON, owned extracted fields and schema JSON arenas
-        // conservatively before allocating descriptor copies. Fixed containers
-        // and compiled schema structures have independent count/state bounds.
+        // Preflight raw payloads and extracted text before allocating copies.
+        // Schema arena/index/pattern charges are added during sequential parsing.
         for (_, value) in raw.items() {
             charge(
                 &mut retained_bytes,
@@ -140,7 +139,15 @@ impl McpDescriptorCatalog {
         }
         let descriptors = raw
             .items()
-            .map(|(identity, value)| descriptors::parse(raw.kind(), identity, value))
+            .map(|(identity, value)| {
+                descriptors::parse(
+                    raw.kind(),
+                    identity,
+                    value,
+                    &mut retained_bytes,
+                    limits.max_catalog_bytes,
+                )
+            })
             .collect::<Result<Vec<_>>>()?;
         let admitted = AdmittedCatalog {
             kind: raw.kind(),

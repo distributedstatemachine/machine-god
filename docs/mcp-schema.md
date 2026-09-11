@@ -100,6 +100,36 @@ Callers may lower but not enlarge the following hard defaults:
 | Expanded numerator/denominator digits | 8,192 each |
 | Pattern states / finite repeat count | 2,048 / 1,024 |
 | Aggregate pattern matching steps | 200,000 |
+| Retained reference index charge | 1 MiB |
+| Retained pattern cache bytes / states | 256 KiB / 2,048 |
+| Complete retained schema charge | 4 MiB |
+
+`retained_byte_charge` reports a conservative allocation budget, not allocator
+telemetry. It includes original JSON, arena vector capacities and decoded text,
+sparse object/index map overhead, resolved URI strings, anchor names, and cached
+pattern instruction/class/range capacities. Each map entry is charged as a
+separate sparse node with sixteen key/value/link slots and fixed bookkeeping;
+shared map nodes are deliberately overcounted. Immutable URI text is shared
+between the resource table and URI index rather than copied twice. The synthetic
+root URI is charged independently even when `max_schema_bytes` is only four.
+
+Reference entries are checked against both aggregate reference and remaining
+schema budgets before copying URI/anchor text into retained indexes. One URI
+resolution is transient and bounded by the per-schema byte ceiling (its joined
+path can temporarily combine two bounded inputs); inherited prefixes cannot
+accumulate without aggregate charges. JSON parsing similarly has byte/node/depth
+bounds before its measured arena charge is admitted. These temporary allocations
+do not multiply across retained schemas or parallel detached workers.
+
+Pattern cache charges include sparse map entries, source text, instructions,
+classes and their range arrays, not just instruction count. Cache exhaustion
+skips retention and preserves on-demand compilation. At most one bounded pattern
+is compiled at a time; source scalars/ranges are bounded by schema bytes, syntax
+nodes/classes and expanded instructions by the per-pattern state limit, and
+compilation recursion by the existing grammar/depth bounds. A cache allocation
+is charged before insertion. Reference or mandatory schema-storage exhaustion
+is a hard atomic admission error; cache exhaustion neither rejects a supported
+schema nor changes it to `ServerAuthoritative`.
 
 Equality recursion is charged to evaluation work as well as normal validation.
 Schemas and instances remain untrusted data after validation. Full native
