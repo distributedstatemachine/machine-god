@@ -60,6 +60,7 @@ pub enum NativeConversationRuntimeError {
     InvalidModelPreferences(NativeModelPreferencesError),
     ModelRoute(NativeConversationModelRouteError),
     Conversation(NativeConversationError),
+    Skills(crate::skills_queue::NativeSkillsQueueError),
 }
 
 impl fmt::Display for NativeConversationRuntimeError {
@@ -75,6 +76,7 @@ impl fmt::Display for NativeConversationRuntimeError {
             Self::InvalidModelPreferences(error) => error.fmt(f),
             Self::ModelRoute(error) => error.fmt(f),
             Self::Conversation(error) => error.fmt(f),
+            Self::Skills(error) => error.fmt(f),
         }
     }
 }
@@ -148,6 +150,7 @@ struct QueuedJob {
     input: PendingInput,
     bytes: usize,
     checkpoint: Option<u64>,
+    skills: Option<crate::skills_queue::QueuedSkills>,
 }
 
 type TakenJob = (
@@ -156,6 +159,7 @@ type TakenJob = (
     u64,
     Option<crate::NativePermissionPolicySnapshot>,
     Option<crate::NativeWorkspaceScopeSnapshot>,
+    CancellationToken,
 );
 
 struct RuntimeState {
@@ -169,6 +173,8 @@ struct RuntimeState {
     active: bool,
     active_handle: Option<TurnHandle>,
     active_cancel_dispatched: bool,
+    active_cancel_requested: bool,
+    active_preparation: Option<CancellationToken>,
 }
 
 impl CurrentModel for Mutex<RuntimeState> {
@@ -199,6 +205,25 @@ impl fmt::Debug for NativeConversationRuntime {
 }
 
 impl NativeConversationRuntime {
+    #[cfg(test)]
+    pub(crate) fn set_skill_queue_test_hook(
+        &self,
+        id: NativeQueuedJobId,
+        operation: impl FnOnce(&CancellationToken) + Send + 'static,
+    ) {
+        self.state
+            .lock()
+            .unwrap()
+            .queue
+            .iter_mut()
+            .find(|job| job.id == id)
+            .unwrap()
+            .skills
+            .as_mut()
+            .unwrap()
+            .set_test_hook(operation);
+    }
+
     /// File controls may run during a turn but cannot outlive lifecycle admission.
     #[cfg(feature = "ai-gateway-http")]
     pub(crate) fn acquire_file_control(
@@ -243,6 +268,8 @@ impl NativeConversationRuntime {
                 active: false,
                 active_handle: None,
                 active_cancel_dispatched: false,
+                active_cancel_requested: false,
+                active_preparation: None,
             })),
         })
     }
@@ -309,19 +336,38 @@ impl NativeConversationRuntime {
         &self,
     ) -> Result<NativeRuntimeQuiescence, NativeConversationRuntimeError> {
         let inner = self.lifecycle.begin_quiescence()?;
-        let handle = {
-            let mut state = self.state.lock().expect("runtime state poisoned");
-            cancellation_to_dispatch(&mut state)
-        };
-        if let Some(handle) = handle {
-            let _ = handle.cancel();
-        }
+        let _ = self.request_active_cancel();
         Ok(NativeRuntimeQuiescence {
             inner,
             conversation: Arc::clone(&self.conversation),
             state: Arc::clone(&self.state),
             model_route: self.model_route.clone(),
         })
+    }
+
+    /// Cancels a taken admission or active turn, never an untaken queued job.
+    /// Returns acceptance, not a settled native or persistence receipt.
+    /// # Panics
+    /// Panics if earlier work poisoned runtime state.
+    #[must_use]
+    pub fn request_active_cancel(&self) -> bool {
+        let (token, handle, accepted) = {
+            let mut state = self.state.lock().expect("runtime state poisoned");
+            let accepted = state.active_preparation.is_some() || state.active_handle.is_some();
+            if accepted {
+                state.active_cancel_requested = true;
+            }
+            let token = state.active_preparation.clone();
+            let handle = cancellation_to_dispatch(&mut state);
+            (token, handle, accepted)
+        };
+        if let Some(token) = token {
+            token.cancel();
+        }
+        if let Some(handle) = handle {
+            let _ = handle.cancel();
+        }
+        accepted
     }
 
     /// Process-local policy controls. Taken turns retain their mode snapshot.
@@ -560,7 +606,44 @@ impl NativeConversationRuntime {
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
         let input = PendingInput::new(ConversationInput::Prompt(prompt));
         let bytes = input_bytes(&input)?;
-        self.insert(input, bytes, None)
+        self.insert(input, bytes, None, None)
+    }
+
+    /// Resolves exact invocation selections from an observed snapshot without I/O.
+    /// Materialization happens only after first-polled FIFO admission.
+    /// # Errors
+    /// Rejects stale/foreign selections and existing input/queue/lifecycle bounds.
+    pub fn enqueue_with_skills(
+        &self,
+        prompt: Prompt,
+        catalog: Arc<crate::NativeSkillCatalog>,
+        snapshot: &crate::NativeSkillSnapshot,
+        explicit: &[crate::NativeSkillSelection],
+        workers: crate::NativeOwnedWorkerScope,
+    ) -> Result<crate::skills_queue::NativeQueuedSkillsReceipt, NativeConversationRuntimeError>
+    {
+        let input = PendingInput::new(ConversationInput::Prompt(prompt));
+        let bytes = input_bytes(&input)?;
+        let Some(ConversationInput::Prompt(prompt)) = &input.input else {
+            unreachable!("owned prompt")
+        };
+        let skills = crate::skills_queue::QueuedSkills::resolve(
+            &prompt.text,
+            catalog,
+            snapshot,
+            explicit,
+            workers,
+        )
+        .map_err(NativeConversationRuntimeError::Skills)?;
+        let automatic_matching_incomplete = skills.incomplete();
+        let bytes = bytes
+            .checked_add(skills.retained_bytes())
+            .ok_or(NativeConversationRuntimeError::InputLimit)?;
+        let queued_id = self.insert(input, bytes, None, Some(skills))?;
+        Ok(crate::skills_queue::NativeQueuedSkillsReceipt {
+            queued_id,
+            automatic_matching_incomplete,
+        })
     }
 
     /// Queues explicit continuation only with an idle, empty queue and a valid
@@ -579,7 +662,7 @@ impl NativeConversationRuntime {
             .conversation
             .paused_turn()?
             .ok_or(NativeConversationError::NoCheckpoint)?;
-        self.insert(input, bytes, Some(checkpoint.turn_sequence))
+        self.insert(input, bytes, Some(checkpoint.turn_sequence), None)
     }
 
     fn insert(
@@ -587,6 +670,7 @@ impl NativeConversationRuntime {
         input: PendingInput,
         bytes: usize,
         checkpoint: Option<u64>,
+        skills: Option<crate::skills_queue::QueuedSkills>,
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
         let _permit = self.lifecycle.acquire()?;
         let mut state = self.state.lock().expect("runtime state poisoned");
@@ -610,6 +694,7 @@ impl NativeConversationRuntime {
             input,
             bytes,
             checkpoint,
+            skills,
         });
         state.next_id = next;
         state.bytes += bytes;
@@ -672,7 +757,7 @@ impl NativeConversationRuntime {
     {
         Box::pin(async move {
             let lease = self.acquire_idle(false)?;
-            let Some((job, snapshot, generation, policy, workspace)) =
+            let Some((mut job, snapshot, generation, policy, workspace, cancellation)) =
                 self.take_job(&lease.permit)?
             else {
                 return Ok(None);
@@ -686,6 +771,27 @@ impl NativeConversationRuntime {
             {
                 return Err(NativeConversationError::Conflict.into());
             }
+            if lease.permit.was_quiesced() {
+                cancellation.cancel();
+            }
+            let mut admission = (lease, policy, workspace);
+            if let Some(skills) = job.skills.take() {
+                // Retain the exact policy/workspace observations alongside the
+                // runtime lease even if the admission response is abandoned.
+                let (returned_admission, context) = skills
+                    .materialize(admission, cancellation.clone())
+                    .await
+                    .map_err(NativeConversationRuntimeError::Skills)?;
+                admission = returned_admission;
+                job.input.skill_context =
+                    context.map_err(NativeConversationRuntimeError::Skills)?;
+                if cancellation.is_cancelled() {
+                    return Err(NativeConversationRuntimeError::Skills(
+                        crate::skills_queue::NativeSkillsQueueError::Cancelled,
+                    ));
+                }
+            }
+            let (lease, policy, workspace) = admission;
             // Dropped or failed admission can be publication-uncertain; only a
             // confirmed reservation below restores a saved-generation receipt.
             self.state
@@ -708,7 +814,8 @@ impl NativeConversationRuntime {
                 let mut state = self.state.lock().expect("runtime state poisoned");
                 state.saved_generation = Some(generation);
                 state.active_handle = Some(handle.clone());
-                if lease.permit.was_quiesced() {
+                state.active_preparation = None;
+                if lease.permit.was_quiesced() || state.active_cancel_requested {
                     cancellation_to_dispatch(&mut state)
                 } else {
                     None
@@ -746,14 +853,29 @@ impl NativeConversationRuntime {
             .and_then(|catalog| catalog.details(state.preferences.model()))
             .map_or(&unsupported, |entry| entry.capabilities());
         let snapshot = NativeModelSnapshot::new(&state.preferences, capabilities);
-        let policy = self
-            .conversation
-            .permissions()
-            .map(|owner| owner.snapshot_admitted(permit))
-            .transpose()
-            .map_err(|_| NativeConversationError::Engine)?;
-        let workspace = self.conversation.capture_workspace_scope()?;
-        Ok(Some((job, snapshot, state.generation, policy, workspace)))
+        let captured = (|| {
+            let policy = self
+                .conversation
+                .permissions()
+                .map(|owner| owner.snapshot_admitted(permit))
+                .transpose()
+                .map_err(|_| NativeConversationError::Engine)?;
+            let workspace = self.conversation.capture_workspace_scope()?;
+            Ok::<_, NativeConversationRuntimeError>((policy, workspace))
+        })();
+        let generation = state.generation;
+        let cancellation = CancellationToken::new();
+        state.active_preparation = Some(cancellation.clone());
+        drop(state);
+        let (policy, workspace) = captured?;
+        Ok(Some((
+            job,
+            snapshot,
+            generation,
+            policy,
+            workspace,
+            cancellation,
+        )))
     }
 
     /// Flushes one captured preference generation while idle. Concurrent runtime
@@ -1048,7 +1170,8 @@ impl Drop for RuntimeLease {
             let mut state = self.state.lock().expect("runtime state poisoned");
             state.active = false;
             state.active_cancel_dispatched = false;
-            state.active_handle.take()
+            state.active_cancel_requested = false;
+            (state.active_handle.take(), state.active_preparation.take())
         };
         drop(handle);
     }
@@ -1183,6 +1306,10 @@ impl Write for OptionsBytes {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "skills_queue/runtime_tests.rs"]
+mod skills_queue_tests;
 
 #[cfg(test)]
 mod selection_tests {

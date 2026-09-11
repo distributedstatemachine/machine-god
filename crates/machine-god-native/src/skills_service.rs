@@ -125,6 +125,12 @@ pub struct NativeSkillsService {
     managed: Option<Arc<NativeManagedSkills>>,
 }
 impl NativeSkillsService {
+    /// Borrows the exact retained discovery authority without observations.
+    #[must_use]
+    pub fn catalog(&self) -> &Arc<NativeSkillCatalog> {
+        &self.catalog
+    }
+
     #[must_use]
     pub const fn new(
         catalog: Arc<NativeSkillCatalog>,

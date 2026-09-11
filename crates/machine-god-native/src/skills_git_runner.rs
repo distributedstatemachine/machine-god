@@ -111,7 +111,7 @@ impl SystemNativeSkillGitRunner {
     }
 }
 
-fn allowed_environment_key(key: &std::ffi::OsStr) -> bool {
+pub(crate) fn allowed_environment_key(key: &std::ffi::OsStr) -> bool {
     matches!(
         key.to_str(),
         Some(

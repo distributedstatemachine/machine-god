@@ -74,9 +74,13 @@ pub(super) fn execute(
         output,
         controller,
         |bridge, control| {
-            prepare_conversation_host_with_activation(launch, bridge.clone(), bridge, || {
-                control.activate_turn()
-            })
+            prepare_conversation_host_with_activation(
+                launch,
+                bridge.clone(),
+                bridge,
+                || control.activate_turn(),
+                true,
+            )
         },
         capture_input,
     )
@@ -163,6 +167,7 @@ fn run_interactive(
         observations: _observations,
         catalog_cache: _catalog_cache,
         user_config,
+        skills_snapshot: _skills_snapshot,
     }) = prepare(bridge, control)
     else {
         return super::finish_setup_failure(signals, control);

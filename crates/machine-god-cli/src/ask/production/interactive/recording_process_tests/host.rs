@@ -168,5 +168,6 @@ fn prepare(
         catalog,
         catalog_cache: cache,
         user_config: None,
+        skills_snapshot: None,
     })
 }

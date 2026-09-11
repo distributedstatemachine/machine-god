@@ -339,6 +339,7 @@ mod production {
     mod output;
     mod piped_prompt;
     mod recording_startup;
+    mod skills_startup;
     use output::{OutputAcknowledgement, OutputBridge, OutputWork, serve_output};
     use std::future::{Future, poll_fn};
     use std::pin::Pin;
@@ -353,7 +354,7 @@ mod production {
         AiGatewayCredentialEnvironment, AiGatewayModelCatalogAccessMode,
         AiGatewayModelCatalogHttpTransport, AiGatewayModelCatalogProvider, FileUndoTracker,
         NativeConversation, NativeConversationModelRoutes, NativeConversationObservations,
-        NativeConversationRuntime, NativeConversationRuntimeTurn, NativeEnvironment,
+        NativeConversationRuntime, NativeConversationRuntimeTurn,
         NativeModelCatalog, NativeModelCatalogCache, NativeModelCatalogCacheState,
         NativePermissionContexts, NativeReferenceHost, NativeReferenceHostConversationOptions,
         NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,
@@ -1113,11 +1114,13 @@ mod production {
                             catalog,
                             catalog_cache: _catalog_cache,
                             user_config: _user_config,
+                            skills_snapshot: _skills_snapshot,
                         }) = prepare_conversation_host_with_activation(
                             launch,
                             Arc::new(DenyPermissionPrompter),
                             Arc::new(UnavailableQuestionPrompter),
                             || control.activate_turn(),
+                            false,
                         )
                         else {
                             return finish_setup_failure(signals, &control);
@@ -1167,6 +1170,7 @@ mod production {
         catalog: Option<Arc<NativeModelCatalog>>,
         catalog_cache: Arc<NativeModelCatalogCache>,
         user_config: Option<Arc<machine_god_native::NativeUserConfigStore>>,
+        skills_snapshot: Option<Arc<machine_god_native::NativeSkillSnapshot>>,
     }
 
     /// No acquired worker remains here: preserve any signal latched during
@@ -1190,8 +1194,10 @@ mod production {
         permission_prompter: Arc<dyn PermissionPrompter>,
         question_prompter: Arc<dyn QuestionPrompter>,
         before_host: impl FnOnce() -> Result<(), ()>,
+        discover_skills: bool,
     ) -> Result<PreparedConversationHost, ()> {
-        let environment = NativeEnvironment::from_process();
+        let captured_environment: Vec<_> = std::env::vars_os().collect();
+        let environment = skills_startup::environment(&captured_environment);
         let user_config = machine_god_native::inspect_native_status(&environment)
             .config_file_path()
             .and_then(std::path::Path::parent)
@@ -1205,7 +1211,8 @@ mod production {
             NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
         let prepared_roots =
             PreparedNativeRoots::prepare(root_selection.clone()).map_err(|_| ())?;
-        let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
+        let terminal_options =
+            capture_terminal_options(prepared_roots.workspace_root(), captured_environment)?;
         let workspace = prepared_roots.workspace_root().to_owned();
         let state_path = prepared_roots.state_root().to_owned();
         let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
@@ -1232,12 +1239,24 @@ mod production {
         before_host()?;
         let authority =
             prepare_launch_workspace(&runtime, root_selection, user_config.clone(), launch)?;
+        let skills_startup::Prepared {
+            roots: prepared_roots,
+            service: skills,
+            snapshot: skills_snapshot,
+        } = skills_startup::prepare(
+            &runtime,
+            prepared_roots,
+            environment,
+            terminal_options.clone(),
+            discover_skills,
+        )?;
         let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
             .with_workspace(
                 authority,
                 Arc::new(machine_god_native::NativeWorkspaceContexts::new()),
             )
             .with_terminal(terminal_options)
+            .with_skills(skills)
             .with_model_routes(model_routes.clone())
             .with_observations(Arc::clone(&observations))
             .with_permissions(capture_permission_options());
@@ -1262,6 +1281,7 @@ mod production {
             catalog,
             catalog_cache: cache,
             user_config,
+            skills_snapshot,
         })
     }
 
@@ -1359,9 +1379,9 @@ mod production {
     /// trusted CLI that implements all private terminal helper modes.
     fn capture_terminal_options(
         workspace: &std::path::Path,
+        environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
     ) -> Result<NativeReferenceHostTerminalOptions, ()> {
         use std::os::unix::fs::PermissionsExt;
-        let environment: Vec<_> = std::env::vars_os().collect();
         let shell = TerminalShell::for_current_user(None, None).map_err(|_| ())?;
         let helper = std::env::current_exe().map_err(|_| ())?;
         let tmux = environment

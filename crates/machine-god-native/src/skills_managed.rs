@@ -196,6 +196,21 @@ impl fmt::Debug for NativeManagedSkills {
     }
 }
 impl NativeManagedSkills {
+    /// Internal composition from already validated retained state authority.
+    /// Labels remain reporting data; this constructor performs no I/O.
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn from_retained_root(
+        root: Arc<File>,
+        root_path: PathBuf,
+        git: Option<Arc<dyn NativeSkillGitRunner>>,
+    ) -> Self {
+        Self {
+            root,
+            root_path,
+            git,
+        }
+    }
+
     /// Reports the configured native managed location without inspecting or creating it.
     #[must_use]
     pub fn managed_path(&self) -> PathBuf {

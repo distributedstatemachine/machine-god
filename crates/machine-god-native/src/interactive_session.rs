@@ -368,6 +368,13 @@ impl NativeInteractiveSession {
     pub fn runtime(&self) -> &Arc<NativeConversationRuntime> {
         &self.current
     }
+    /// Returns this exact host's explicit catalog allocation without discovery.
+    #[must_use]
+    pub fn skills_catalog(&self) -> Option<Arc<crate::NativeSkillCatalog>> {
+        self.host
+            .skills()
+            .map(|service| Arc::clone(service.catalog()))
+    }
     /// # Errors
     /// Rejects transition/shutdown admission and native queue bounds.
     pub fn enqueue(&mut self, prompt: Prompt) -> Result<NativeQueuedJobId, NativeInteractiveError> {
@@ -380,6 +387,45 @@ impl NativeInteractiveSession {
         let id = self.current.enqueue(prompt)?;
         self.notify();
         Ok(id)
+    }
+
+    /// Queues this exact prompt and observed skill choices without source reads.
+    /// # Errors
+    /// Rejects missing explicit skill authority, transitions and native bounds.
+    pub fn enqueue_with_skills(
+        &mut self,
+        prompt: Prompt,
+        snapshot: &crate::NativeSkillSnapshot,
+        explicit: &[crate::NativeSkillSelection],
+    ) -> Result<crate::skills_queue::NativeQueuedSkillsReceipt, NativeInteractiveError> {
+        use crate::conversation::{ConversationInput, PendingInput};
+        let mut input = PendingInput::new(ConversationInput::Prompt(prompt));
+        if self.closed || self.shutting_down {
+            return Err(NativeInteractiveError::Closed);
+        }
+        if self.transition.is_some() || self.pending.is_some() {
+            return Err(NativeInteractiveError::Busy);
+        }
+        let service = self
+            .host
+            .skills()
+            .ok_or(NativeInteractiveError::Configuration)?;
+        let workers = self
+            .host
+            .control_workers()
+            .ok_or(NativeInteractiveError::Configuration)?;
+        let Some(ConversationInput::Prompt(prompt)) = input.input.take() else {
+            unreachable!("owned prompt")
+        };
+        let receipt = self.current.enqueue_with_skills(
+            prompt,
+            Arc::clone(service.catalog()),
+            snapshot,
+            explicit,
+            workers,
+        )?;
+        self.notify();
+        Ok(receipt)
     }
     /// Last request wins before terminal commit starts. Started preparation is
     /// still driven to its result, including a superseded publication receipt.

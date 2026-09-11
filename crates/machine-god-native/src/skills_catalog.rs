@@ -216,11 +216,7 @@ impl NativeSkillCatalog {
     ) -> Result<NativeSkillMaterialized> {
         check(cancellation)?;
         supported()?;
-        if !self
-            .roots
-            .iter()
-            .any(|root| Arc::ptr_eq(root, &selection.root))
-        {
+        if !self.owns_selection(selection) {
             return Err(NativeSkillCatalogError::WrongAuthority);
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -231,6 +227,14 @@ impl NativeSkillCatalog {
         {
             Err(NativeSkillCatalogError::UnsupportedPlatform)
         }
+    }
+
+    /// Checks retained root capability identity without observing the filesystem.
+    #[must_use]
+    pub fn owns_selection(&self, selection: &NativeSkillSelection) -> bool {
+        self.roots
+            .iter()
+            .any(|root| Arc::ptr_eq(root, &selection.root))
     }
 }
 

@@ -429,6 +429,21 @@ impl PreparedNativeRoots {
     }
 
     #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn try_clone_skills_workspace(&self) -> io::Result<OwnedFd> {
+        self.workspace.descriptor().try_clone()
+    }
+
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn try_clone_skills_state(&self) -> io::Result<OwnedFd> {
+        self.session_store.try_clone_root_descriptor()
+    }
+
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn canonical_workspace_root(&self) -> &Path {
+        self.workspace.canonical_path()
+    }
+
+    #[cfg(feature = "ai-gateway-http")]
     pub(crate) fn into_parts(
         self,
     ) -> Result<(crate::workspace::WorkspaceTools, FileSessionStore), WorkspaceRootError> {

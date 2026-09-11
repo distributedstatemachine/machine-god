@@ -377,9 +377,16 @@ mod skills_managed;
 mod skills_metadata;
 mod skills_picker;
 mod skills_prompt_context;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod skills_queue;
 mod skills_roots;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod skills_service;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+mod skills_startup;
 pub use skills_catalog::{
     MAX_NATIVE_SKILL_CANDIDATES, MAX_NATIVE_SKILL_DIAGNOSTICS, MAX_NATIVE_SKILL_DIRECTORY_BYTES,
     MAX_NATIVE_SKILL_DISCOVERY_BYTES, MAX_NATIVE_SKILL_IO_ATTEMPTS, MAX_NATIVE_SKILL_LINK_HOPS,
@@ -422,6 +429,8 @@ pub use skills_picker::{
 pub use skills_prompt_context::{
     NATIVE_SKILL_PROMPT_CONTEXT_KEY, NativeSkillPromptContext, NativeSkillPromptContextError,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use skills_queue::{NativeQueuedSkillsReceipt, NativeSkillsQueueError};
 pub use skills_roots::{
     MAX_NATIVE_SKILL_ROOT_IO_ATTEMPTS, MAX_NATIVE_SKILL_WORKSPACE_LEVELS,
     NativeSkillDirectoryAuthority, NativeSkillRootsError, compose_native_skill_catalog,
@@ -430,6 +439,14 @@ pub use skills_roots::{
 pub use skills_service::{
     NativeSkillsCatalogView, NativeSkillsNotice, NativeSkillsService, NativeSkillsServiceError,
     NativeSkillsServiceResult,
+};
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+pub use skills_startup::{
+    MAX_NATIVE_SKILLS_STARTUP_IO_ATTEMPTS, MAX_NATIVE_SKILLS_STARTUP_PATH_BYTES,
+    MAX_NATIVE_SKILLS_STARTUP_PATH_ENTRIES, NativeSkillsStartupError, prepare_native_skills,
 };
 mod slash_commands;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

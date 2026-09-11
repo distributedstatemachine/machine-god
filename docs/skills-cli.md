@@ -81,6 +81,35 @@ traversal. All compatibility roots are contained and read-only. Managed roots
 must retain Managed/Reject provenance; actual write ownership still requires the
 manager's original directory capability. Unsupported platforms fail without I/O.
 
+### Composed startup
+
+`prepare_native_skills` consumes prepared roots, the captured native environment,
+terminal-helper options, an owned worker scope and cancellation. Its future is
+inert until polled. One worker duplicates the already retained workspace/state
+descriptors, expands roots and selects optional Git authority. It returns the
+original prepared roots and a service whose catalog and manager share the same
+managed capability. It performs no discovery, namespace creation, process launch
+or network request. Renaming the state directory does not redirect management
+to a replacement path; inconsistent workspace ancestry remains an error.
+
+Absent HOME selects no home roots. A supplied empty, relative, non-Unicode or
+unavailable HOME is an error, not permission to search broader ancestors. Only
+that explicit home path is opened and identity-checked. PATH is bounded to
+16 KiB and 64 absolute entries; empty or relative entries are rejected. Missing
+PATH or Git leaves local management available and remote Git unavailable.
+Startup charges at most 128 selection I/O attempts, separately from bounded root
+expansion. Individual native calls are not preempted. Dropping a polled startup
+future cancels its private worker token, not the caller's token; scope completion
+still retains the worker. Caller cancellation wakes the future and requests
+private-operation cancellation.
+
+The CLI captures environment values once for native roots, terminal selection
+and Git selection. After signals enter the owned-setup phase, it prepares skills
+on a temporary scope which it closes and joins before acquiring the full host.
+Interactive preparation separately discovers the initial snapshot on that scope,
+preserving incomplete-discovery diagnostics; one-shot preparation skips this
+discovery. Startup failure or panic cannot abandon its admitted worker.
+
 Metadata supports a 65,536-byte frontmatter envelope, 256-byte names and
 4,096-byte decoded descriptions, including the pinned quoted and supported
 block-description forms. Unknown metadata is ignored; malformed recognized
@@ -252,6 +281,30 @@ Prompts are limited to 256 KiB, explicit and resulting selections to 16, and
 aggregate retained selection text to 64 KiB. Incoming count/bytes are checked
 before deduplication. Result bounds are checked before selection cloning;
 failure is atomic. Materialized prompt context has its own independent limits.
+
+### FIFO admission and materialization
+
+`NativeConversationRuntime::enqueue_with_skills` resolves the exact prompt,
+snapshot and explicit selections without effects. It checks each selection
+against the originating catalog capability before retaining the bounded plan;
+the snapshot itself is not retained in the queue. Selection bytes count with
+prompt bytes against the existing 4 MiB queue budget. The interactive facade
+obtains the service's catalog and host worker scope, returning a queued identifier
+and the incomplete-matching flag. Missing skills authority fails without retaining
+input; ordinary `enqueue` remains a separate API.
+
+After FIFO admission, materialization runs outside the runtime mutex on an owned
+worker. The exact runtime lease, captured policy and workspace travel with that
+worker until reads finish, even when admission or its response is dropped.
+Selections are revalidated and read in order; failure never rematches a name,
+silently omits a skill or falls back to an empty context. Full text, names,
+locations and advisory separators must all fit the 65,536-byte context budget.
+Context remains provider-only and cannot change canonical user text or grants.
+
+Cancellation can be retained before the first admission poll or before a core
+turn handle exists. Worker and core cancellation are invoked outside runtime
+locks; later handle publication still receives an earlier request. Continuation
+uses its saved inert context without a fresh invocation plan or catalog scan.
 
 ## Effect-free picker and draft identity
 

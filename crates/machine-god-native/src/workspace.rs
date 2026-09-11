@@ -142,6 +142,11 @@ impl WorkspaceRoot {
     pub(crate) const fn descriptor(&self) -> &OwnedFd {
         &self.descriptor
     }
+
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
 }
 
 #[cfg(all(test, feature = "ai-gateway-http"))]

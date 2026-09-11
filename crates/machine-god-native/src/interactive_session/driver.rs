@@ -43,20 +43,13 @@ impl NativeInteractiveSession {
             if !draining && self.control_outcome.is_some() && !self.current.status().active {
                 return Poll::Ready(());
             }
-            if let Some(admission) = &mut self.admission {
-                match admission.as_mut().poll(cx) {
-                    Poll::Pending => return self.readiness(),
-                    Poll::Ready(result) => {
-                        self.admission.take();
-                        match result {
-                            Ok(turn) => self.turn = turn,
-                            Err(error) => {
-                                self.fail_turn(error.into());
-                                return Poll::Ready(());
-                            }
-                        }
-                    }
+            match self.poll_retained_admission(cx) {
+                Poll::Pending => return self.readiness(),
+                Poll::Ready(Err(error)) => {
+                    self.fail_turn(error.into());
+                    return Poll::Ready(());
                 }
+                Poll::Ready(Ok(())) => {}
             }
             self.dispatch_requested_cancel();
             if let Some(turn) = &mut self.turn {
@@ -120,6 +113,39 @@ impl NativeInteractiveSession {
         cx.waker().wake_by_ref();
         self.readiness()
     }
+    fn poll_retained_admission(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), crate::NativeConversationRuntimeError>> {
+        let Some(admission) = &mut self.admission else {
+            return Poll::Ready(Ok(()));
+        };
+        // Controls have settled. Signal pre-handle reads without losing the
+        // later cancellation of a core handle still being reserved.
+        if self.cancel_requested {
+            let _ = self.current.request_active_cancel();
+        }
+        let result = match admission.as_mut().poll(cx) {
+            Poll::Pending => {
+                // First poll may just have installed the taken job's token.
+                // Do not wait for the read worker to wake us to deliver cancel.
+                if self.cancel_requested {
+                    let _ = self.current.request_active_cancel();
+                }
+                return Poll::Pending;
+            }
+            Poll::Ready(result) => result,
+        };
+        self.admission.take();
+        match result {
+            Ok(turn) => {
+                self.turn = turn;
+                Poll::Ready(Ok(()))
+            }
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+
     fn begin_requested_transition(&mut self, now_ms: i64) -> bool {
         if self.transition.is_none() && (self.pending.is_some() || self.shutting_down) {
             let request = self.pending.take().unwrap_or(Request {

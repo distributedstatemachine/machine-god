@@ -22,6 +22,9 @@ mod undo;
 #[path = "clipboard/tests.rs"]
 mod clipboard;
 
+#[path = "../skills_queue/interactive_tests.rs"]
+mod skills_queue;
+
 #[derive(Default)]
 struct Gate {
     ready: AtomicBool,
