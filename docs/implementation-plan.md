@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `owned transports, production permission routing and CLI composition; focused checks before the complete feature gate`
+- Next gate: `combined transport/component regression gate, then production runtime and CLI composition before the complete feature gate`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -389,16 +389,22 @@ gates.
 Configuration/command parsing, protocol negotiation, contextual forwarding,
 endpoint validation, seven human feature-request projections, SSE framing,
 shared profile-file transactions/MCP persistence and one-shot tool submission
-are integrated. The combined gate at `3fdf6248` passed workspace-wide strict
+are integrated. Bounded raw catalog page assembly, resolved remote headers,
+proof-bearing exact HTTP plaintext writes and owned stdio connections are now
+integrated too; their focused tests and strict native Clippy passed before
+integration. The combined replacement component gate is pending. The earlier
+gate at `3fdf6248` passed workspace-wide strict
 Clippy, 131 MCP unit tests, 42 shared/settings unit tests, the seven selected
 integration suites (including the subprocess fixture), and native doctests.
 Core's exact-turn cancellation
 observer passed the complete core tests, explicit doctests and strict Clippy.
 All completed component worktrees are removed; evidence and build caches remain.
 These components do not constitute a delivered runtime. Remaining composition
-must own stdio/HTTP/SSE connections, proof-bearing HTTP writes above TLS, typed
-feature/control authority, progress/continuation metadata, bounded per-conversation
-routing and wire-ID allocation, catalogs, authentication and the CLI lifecycle.
+must own HTTP/TLS/SSE networking and response handling, typed feature/control
+authority, negotiation, progress/continuation metadata, bounded per-conversation
+routing and wire-ID allocation, catalog schema admission and publication,
+authentication and the CLI lifecycle. The exact-byte HTTP writer is not an
+HTTP connector, and raw catalog pages do not grant executable tool authority.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
 and this ledger. Subsequent transport, permission and authentication lanes use
 the agreed typed interfaces with non-overlapping files. Keep runtime/resource

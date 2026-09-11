@@ -65,7 +65,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
 - Native MCP building blocks: [command/configuration parsing](mcp-cli.md),
   [protocol and endpoint admission](mcp-runtime.md), [SSE framing](mcp-sse.md),
   [profile persistence](mcp-persistence.md), [catalog page assembly](mcp-pagination.md),
-  and [tool submission](mcp-submission.md).
+  [resolved remote headers](mcp-headers.md), [owned stdio](mcp-stdio.md), and
+  [tool submission](mcp-submission.md).
 - Foreground one-off delegation: [subagent](subagent.md).
 - Host-owned background execution and durable history production:
   [background supervisor](background-supervisor.md).

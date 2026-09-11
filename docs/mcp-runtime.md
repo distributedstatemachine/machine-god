@@ -114,7 +114,15 @@ secret: debug/errors redact them. URL parsing does not resolve DNS, follow
 redirects, authorize OAuth or release header credentials. The owned connector
 must still enforce those separate boundaries and final submission proof.
 
+[Resolved remote headers](mcp-headers.md) preserve explicitly captured byte
+values and pinned OAuth/bearer precedence. Their private identity bytes are
+separate from endpoint, configuration and connection-generation admission.
+
 ### Transport and runtime ownership
+
+The [owned stdio connection](mcp-stdio.md) supplies bounded bidirectional process
+I/O, proof-bearing submission and host-collected cleanup. Negotiation and catalog
+publication remain runtime responsibilities, separate from connection readiness.
 
 Transport startup must convert only validated observations into negotiation
 events. Ready protocol selection still requires bounded capability/schema
@@ -134,8 +142,9 @@ authentication changes and cancellation require explicit native ownership;
 protocol data cannot grant or reconstruct that ownership.
 
 The [one-shot submission boundary](mcp-submission.md) retains a concrete native
-proof through direct stdio plaintext writes. It does not yet supply an HTTP
-writer, control/feature authority or production permission-preparer routing.
+proof through direct stdio writes and exact, pre-admitted HTTP plaintext writes
+above TLS. Owned HTTP networking/response handling, control/feature authority
+and production permission-preparer routing remain separate responsibilities.
 The [profile store](mcp-persistence.md) owns configuration publication separately
 from runtime activation; callers must preserve save and reload outcomes as
 independent facts.

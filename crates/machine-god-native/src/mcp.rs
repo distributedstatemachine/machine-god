@@ -8,10 +8,13 @@ pub mod commands;
 pub mod config;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod endpoint;
+pub mod headers;
 pub mod pagination;
 pub mod protocol;
 
 pub mod sse;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod stdio;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod store;
 pub mod submission;
