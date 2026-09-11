@@ -33,6 +33,16 @@ pub struct McpSubmissionHttpHead {
     headers: Box<[OwnedHeader]>,
 }
 impl McpSubmissionHttpHead {
+    /// Read-only selection data; does not grant destination or submission authority.
+    pub(crate) fn endpoint(&self) -> &McpEndpoint {
+        &self.endpoint
+    }
+
+    /// Exact immutable fields for trusted connection/projection composition.
+    pub(crate) fn headers(&self) -> impl ExactSizeIterator<Item = (&str, &[u8])> {
+        self.headers.iter().map(|(name, value)| (&**name, &**value))
+    }
+
     /// Copies bounded explicit headers and an already syntax-admitted endpoint.
     /// Header names are canonical lowercase; values retain exact bytes,
     /// including HTAB and obs-text from explicitly resolved header inputs.
@@ -103,13 +113,13 @@ impl McpSubmissionHttpHead {
         // fields were validated before ownership; no reparsing or ambient input.
         let mut bytes = Vec::new();
         append(&mut bytes, b"POST ")?;
-        append(&mut bytes, self.endpoint.request_target().as_bytes())?;
+        append(&mut bytes, self.endpoint().request_target().as_bytes())?;
         append(&mut bytes, b" HTTP/1.1\r\nhost: ")?;
-        append(&mut bytes, self.endpoint.authority().as_bytes())?;
+        append(&mut bytes, self.endpoint().authority().as_bytes())?;
         append(&mut bytes, b"\r\ncontent-type: application/json\r\naccept: application/json, text/event-stream\r\ncontent-length: ")?;
         append(&mut bytes, payload.len().to_string().as_bytes())?;
         append(&mut bytes, b"\r\nconnection: close\r\n")?;
-        for (name, value) in &self.headers {
+        for (name, value) in self.headers() {
             append(&mut bytes, name.as_bytes())?;
             append(&mut bytes, b": ")?;
             append(&mut bytes, value)?;

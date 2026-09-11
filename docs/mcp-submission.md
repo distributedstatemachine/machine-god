@@ -59,6 +59,8 @@ authority.
 
 Native connectors can inspect the exact immutable HTTP request before opening
 the admitted destination; this read-only observation is not a submission grant.
+Trusted native composition can also borrow the head's admitted endpoint and
+exact header fields without reparsing paths or reacquiring configuration.
 An owned cancellation observer retains execution, preparation, registered-turn,
 original core-turn and runtime-retirement signals after the submission writer
 is consumed, so response reads remain cancellable. It retains neither a proof
