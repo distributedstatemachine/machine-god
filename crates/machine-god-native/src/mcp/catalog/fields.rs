@@ -4,14 +4,14 @@ use crate::mcp::schema::{McpSchema, McpSchemaLimits, McpSchemaValidation};
 use serde_json::value::RawValue;
 use std::collections::BTreeMap;
 
-pub(super) type Object<'a> = BTreeMap<String, &'a RawValue>;
-pub(super) fn object(raw: &RawValue) -> Result<Object<'_>> {
+pub(crate) type Object<'a> = BTreeMap<String, &'a RawValue>;
+pub(crate) fn object(raw: &RawValue) -> Result<Object<'_>> {
     serde_json::from_str(raw.get()).map_err(|_| Error::InvalidDescriptor)
 }
-pub(super) fn array(raw: &RawValue) -> Result<Vec<&RawValue>> {
+pub(crate) fn array(raw: &RawValue) -> Result<Vec<&RawValue>> {
     serde_json::from_str(raw.get()).map_err(|_| Error::InvalidDescriptor)
 }
-pub(super) fn boolean(raw: &RawValue) -> Result<bool> {
+pub(crate) fn boolean(raw: &RawValue) -> Result<bool> {
     serde_json::from_str(raw.get()).map_err(|_| Error::InvalidDescriptor)
 }
 fn text(raw: &RawValue, maximum: usize, required: bool) -> Result<Box<str>> {
@@ -24,20 +24,20 @@ fn text(raw: &RawValue, maximum: usize, required: bool) -> Result<Box<str>> {
     }
     Ok(text.into_boxed_str())
 }
-pub(super) fn required(object: &Object<'_>, key: &str, maximum: usize) -> Result<Box<str>> {
+pub(crate) fn required(object: &Object<'_>, key: &str, maximum: usize) -> Result<Box<str>> {
     text(
         object.get(key).ok_or(Error::InvalidDescriptor)?,
         maximum,
         true,
     )
 }
-pub(super) fn optional(object: &Object<'_>, key: &str, maximum: usize) -> Result<Option<Box<str>>> {
+pub(crate) fn optional(object: &Object<'_>, key: &str, maximum: usize) -> Result<Option<Box<str>>> {
     object
         .get(key)
         .map(|raw| text(raw, maximum, false))
         .transpose()
 }
-pub(super) fn metadata(
+pub(crate) fn metadata(
     raw: &RawValue,
     maximum_depth: usize,
     require_object: bool,
@@ -70,7 +70,7 @@ fn depth(raw: &RawValue, current: usize, maximum: usize) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn icons(raw: &RawValue, source_limit: usize) -> Result<()> {
+pub(crate) fn icons(raw: &RawValue, source_limit: usize) -> Result<()> {
     let icons = array(raw)?;
     if icons.len() > 16 {
         return Err(Error::Limit);
@@ -96,7 +96,7 @@ pub(super) fn icons(raw: &RawValue, source_limit: usize) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn annotations(raw: &RawValue, tool: bool) -> Result<()> {
+pub(crate) fn annotations(raw: &RawValue, tool: bool) -> Result<()> {
     let fields = object(raw)?;
     if tool {
         optional(&fields, "title", 4096)?;
@@ -142,7 +142,7 @@ pub(super) fn annotations(raw: &RawValue, tool: bool) -> Result<()> {
 }
 
 /// Complete, already JSON-validated numeric lexeme; no expansion or float.
-pub(super) fn size(text: &str) -> Result<u64> {
+pub(crate) fn size(text: &str) -> Result<u64> {
     if text.is_empty() || text.len() > 4096 || !matches!(text.as_bytes()[0], b'-' | b'0'..=b'9') {
         return Err(Error::InvalidDescriptor);
     }

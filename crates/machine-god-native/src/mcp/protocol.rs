@@ -5,10 +5,12 @@
 //! transport retains deadlines, cancellation, connection generations and write
 //! ownership. Only startup negotiation can produce a restart instruction.
 
+mod client_metadata;
 mod json;
 mod negotiation;
 mod wire;
 
+pub use client_metadata::McpClientMetadata;
 pub use negotiation::{
     HttpDiscoveryStatus, NegotiatedProtocol, Negotiation, NegotiationAction, NegotiationFailure,
     ProtocolVersion, TransportKind,

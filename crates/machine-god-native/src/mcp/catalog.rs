@@ -9,7 +9,7 @@ use super::schema::McpSchemaError;
 
 mod candidate;
 mod descriptors;
-mod fields;
+pub(crate) mod fields;
 mod names;
 mod template;
 #[cfg(test)]

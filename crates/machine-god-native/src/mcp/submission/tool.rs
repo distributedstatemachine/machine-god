@@ -7,10 +7,10 @@ use super::{
     RpcId, ToolCallId, ToolName, Value, bounded_json, canonical_arguments,
 };
 use crate::mcp::{
-    protocol::{NegotiatedProtocol, ProtocolVersion, TransportKind},
+    protocol::{McpClientMetadata, NegotiatedProtocol, ProtocolVersion, TransportKind},
     schema::{McpSchema, McpSchemaValidation},
 };
-use serde::{Serialize, Serializer, ser::SerializeMap};
+use serde::Serialize;
 use serde_json::value::RawValue;
 use std::collections::BTreeMap;
 
@@ -134,7 +134,12 @@ impl McpToolRequest {
                 params: Params {
                     name: runtime.binding.remote_tool(),
                     arguments: raw,
-                    metadata: Metadata::for_options(options),
+                    metadata: McpClientMetadata::for_protocol(
+                        options.protocol.version,
+                        options.progress_token,
+                        options.form,
+                        options.url,
+                    ),
                 },
             },
             MAX_MCP_SUBMISSION_REQUEST_BYTES,
@@ -277,48 +282,7 @@ struct Params<'a> {
     name: &'a str,
     arguments: &'a RawValue,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    metadata: Option<Metadata>,
-}
-struct Metadata(McpToolCallOptions);
-impl Metadata {
-    fn for_options(options: McpToolCallOptions) -> Option<Self> {
-        (options.protocol.version == ProtocolVersion::Modern || options.progress_token.is_some())
-            .then_some(Self(options))
-    }
-}
-impl Serialize for Metadata {
-    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let options = self.0;
-        let mut map = serializer.serialize_map(None)?;
-        if options.protocol.version == ProtocolVersion::Modern {
-            map.serialize_entry(
-                "io.modelcontextprotocol/protocolVersion",
-                ProtocolVersion::Modern.as_str(),
-            )?;
-            map.serialize_entry(
-                "io.modelcontextprotocol/clientInfo",
-                &serde_json::json!({
-                    "name": "machine-god", "version": env!("CARGO_PKG_VERSION")
-                }),
-            )?;
-            let mut modes = serde_json::Map::new();
-            for (enabled, name) in [(options.form, "form"), (options.url, "url")] {
-                if enabled {
-                    modes.insert(name.into(), serde_json::json!({}));
-                }
-            }
-            let capabilities = if modes.is_empty() {
-                serde_json::json!({})
-            } else {
-                serde_json::json!({"elicitation": Value::Object(modes)})
-            };
-            map.serialize_entry("io.modelcontextprotocol/clientCapabilities", &capabilities)?;
-        }
-        if let Some(token) = options.progress_token {
-            map.serialize_entry("progressToken", &token)?;
-        }
-        map.end()
-    }
+    metadata: Option<McpClientMetadata>,
 }
 
 fn validate_arguments(schema: &McpSchema, value: &Value, bytes: &[u8]) -> Result<()> {
