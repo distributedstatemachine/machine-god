@@ -5,6 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "path_tests.rs"]
 mod path_tests;
 
+#[path = "discovery_tests.rs"]
+mod discovery_tests;
+
 mod resource_modes {
     use super::{Fixture, fs};
     use crate::skills_managed::{

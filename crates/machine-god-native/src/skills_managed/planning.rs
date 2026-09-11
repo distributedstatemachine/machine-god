@@ -8,6 +8,8 @@ use super::{
 };
 use crate::skills_metadata::parse_skill_metadata;
 use machine_god_core::CancellationToken;
+use rustix::fs::Mode;
+use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::{
@@ -15,6 +17,40 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+#[path = "source_snapshot.rs"]
+mod source_snapshot;
+
+pub(super) struct SourceSnapshot {
+    inventory: [u8; 32],
+    selected: Vec<(String, [u8; 32])>,
+}
+
+struct Candidate {
+    path: String,
+    name: String,
+    destination: String,
+    directory: fs::Identity,
+    directory_mode: Mode,
+    file: fs::Identity,
+    file_mode: Mode,
+    digest: [u8; 32],
+}
+impl Candidate {
+    fn matches(&self, tree: &Tree) -> bool {
+        tree.root == self.directory
+            && tree.root_mode == self.directory_mode
+            && tree.entries.iter().any(|entry| {
+                entry.path == "SKILL.md"
+                    && entry.identity == self.file
+                    && entry.mode == self.file_mode
+                    && entry
+                        .bytes
+                        .as_ref()
+                        .is_some_and(|bytes| <[u8; 32]>::from(Sha256::digest(bytes)) == self.digest)
+            })
+    }
+}
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum Operation {
@@ -154,52 +190,53 @@ fn prepare_from_directory(
     directory: &File,
     root_name: &str,
     budget: &mut Budget<'_>,
-) -> Result<(Vec<PlannedItem>, Tree), Kind> {
-    let original = fs::read_tree(directory, true, budget)?;
+) -> Result<(Vec<PlannedItem>, SourceSnapshot), Kind> {
     let mut selections = Vec::new();
-    for entry in &original.entries {
-        let Some(bytes) = &entry.bytes else {
-            continue;
-        };
-        let (parent, basename) = entry.path.rsplit_once('/').unwrap_or(("", &entry.path));
-        if basename != "SKILL.md" {
-            continue;
-        }
-        std::str::from_utf8(bytes).map_err(|_| Kind::InvalidMetadata)?;
+    let inventory = fs::read_inventory(directory, budget, |observed| {
+        let (parent, _) = observed
+            .path
+            .rsplit_once('/')
+            .unwrap_or(("", observed.path));
+        std::str::from_utf8(observed.bytes).map_err(|_| Kind::InvalidMetadata)?;
         let destination = if parent.is_empty() {
             root_name
         } else {
             parent.rsplit('/').next().ok_or(Kind::InvalidName)?
         };
         let metadata =
-            parse_skill_metadata(bytes, destination).map_err(|_| Kind::InvalidMetadata)?;
+            parse_skill_metadata(observed.bytes, destination).map_err(|_| Kind::InvalidMetadata)?;
         if source
             .filter
             .as_deref()
             .is_some_and(|filter| filter != destination && filter != metadata.name)
         {
-            continue;
+            return Ok(());
         }
         source::validate_destination(destination)?;
         if selections.len() >= MAX_MANAGED_SKILL_ITEMS {
             return Err(Kind::ResourceLimit);
         }
-        selections.push((
-            metadata.name,
-            destination.to_owned(),
-            original.subset(parent)?,
-        ));
-    }
+        selections.push(Candidate {
+            path: parent.to_owned(),
+            name: metadata.name,
+            destination: destination.to_owned(),
+            directory: observed.directory,
+            directory_mode: observed.directory_mode,
+            file: observed.file,
+            file_mode: observed.file_mode,
+            digest: Sha256::digest(observed.bytes).into(),
+        });
+        Ok(())
+    })?;
     if selections.is_empty() {
         return Err(Kind::NoMatches);
     }
     let mut collisions = BTreeSet::new();
-    let mut total_bytes = 0_usize;
-    let mut total_entries = 0_usize;
-    for (_, destination, tree) in &selections {
+    for candidate in &selections {
         // Conservative Unicode lowercase plus the special long-s fold covers
         // ordinary native aliases without selecting arbitrary walk order.
-        let folded = destination
+        let folded = candidate
+            .destination
             .chars()
             .flat_map(char::to_lowercase)
             .map(|c| if c == '\u{017f}' { 's' } else { c })
@@ -207,23 +244,35 @@ fn prepare_from_directory(
         if !collisions.insert(folded) {
             return Err(Kind::Collision);
         }
-        total_bytes = total_bytes
-            .checked_add(tree.bytes())
-            .ok_or(Kind::ResourceLimit)?;
-        total_entries += tree.entries.len();
     }
-    if total_bytes > MAX_MANAGED_SKILL_TOTAL_BYTES || total_entries > MAX_MANAGED_SKILL_ENTRIES {
-        return Err(Kind::ResourceLimit);
-    }
+    // Parent paths precede their descendants, allowing overlapping captures to share bytes.
+    selections.sort_by(|a, b| a.path.cmp(&b.path));
+    // Inventory and selected-resource reads are separate bounded phases. Candidate
+    // bodies have already been discarded; their read budget does not reduce copy capacity.
+    let captured = source_snapshot::capture(
+        directory,
+        selections.iter().map(|candidate| candidate.path.as_str()),
+        &mut Budget::new(budget.cancellation),
+    )?;
+    let original = SourceSnapshot {
+        inventory,
+        selected: captured
+            .iter()
+            .map(|capture| (capture.path.clone(), capture.tree.fingerprint()))
+            .collect(),
+    };
     let mut destination_budget = Budget::new(budget.cancellation);
     let mut items = Vec::new();
-    for (name, destination, tree) in selections {
-        let expected = destination_tree(owner, &destination, &mut destination_budget)?
-            .map(|tree| revision(&destination, &tree));
+    for (candidate, capture) in selections.into_iter().zip(captured) {
+        if !candidate.matches(&capture.tree) {
+            return Err(Kind::Changed);
+        }
+        let expected = destination_tree(owner, &candidate.destination, &mut destination_budget)?
+            .map(|tree| revision(&candidate.destination, &tree));
         items.push(PlannedItem {
-            name,
-            destination,
-            tree,
+            name: candidate.name,
+            destination: candidate.destination,
+            tree: capture.tree,
             expected,
             operation: Operation::Install,
         });

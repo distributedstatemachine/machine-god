@@ -11,6 +11,10 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Component, Path};
 
+#[path = "inventory.rs"]
+mod inventory;
+pub(super) use inventory::read_inventory;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct Identity(pub i128, pub i128);
 

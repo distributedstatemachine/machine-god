@@ -154,7 +154,7 @@ pub struct NativeSkillInstallPlan {
     authority: Arc<File>,
     namespace: Option<filesystem::Identity>,
     items: Vec<publication::PlannedItem>,
-    source: Option<(File, filesystem::Tree)>,
+    source: Option<(File, planning::SourceSnapshot)>,
 }
 impl fmt::Debug for NativeSkillInstallPlan {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

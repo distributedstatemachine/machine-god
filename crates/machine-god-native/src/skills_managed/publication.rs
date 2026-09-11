@@ -74,11 +74,8 @@ pub(super) fn commit(
     if fs::named_identity(&owner.root, "skills")? != plan.namespace {
         return Err(Kind::Changed.into());
     }
-    if let Some((directory, expected)) = &plan.source
-        && fs::read_tree(directory, true, &mut Budget::new(cancellation))?.fingerprint()
-            != expected.fingerprint()
-    {
-        return Err(Kind::Changed.into());
+    if let Some((directory, expected)) = &plan.source {
+        expected.validate(directory, cancellation)?;
     }
     let mut budget = Budget::new(cancellation);
     for item in &plan.items {
