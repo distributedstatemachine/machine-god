@@ -11,10 +11,15 @@ use std::task::{Context, Poll};
 
 use machine_god_core::{BackgroundOutputOwner, BoxFuture, PermissionRequest, ToolContext};
 
+use crate::mcp::interaction::{
+    McpElicitationAnswer, McpElicitationAnswerInput, McpElicitationPresenter,
+    McpElicitationPromptError, McpElicitationPromptRequest,
+};
 use crate::{
     PermissionPromptDecision, PermissionPromptError, PermissionPrompter, QuestionPromptError,
     QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
 };
+use payload::AcceptedResponse;
 use payload::Payload;
 use state::Shared;
 
@@ -22,12 +27,15 @@ use state::Shared;
 pub const MAX_NATIVE_INTERACTIVE_PROMPTS: usize = 8;
 /// Hard aggregate retained request payload bound; response bytes are separately bounded.
 pub const MAX_NATIVE_INTERACTIVE_PROMPT_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+/// Independent aggregate replied-but-unconsumed response bound.
+pub const MAX_NATIVE_INTERACTIVE_PROMPT_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Explicit admission bounds. They do not change the underlying tool contracts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeInteractivePromptLimits {
-    max_pending: usize,
-    max_payload_bytes: usize,
+    pending: usize,
+    payload_bytes: usize,
+    response_bytes: usize,
 }
 
 impl NativeInteractivePromptLimits {
@@ -43,17 +51,32 @@ impl NativeInteractivePromptLimits {
             return Err(NativeInteractivePromptError::Limit);
         }
         Ok(Self {
-            max_pending,
-            max_payload_bytes,
+            pending: max_pending,
+            payload_bytes: max_payload_bytes,
+            response_bytes: MAX_NATIVE_INTERACTIVE_PROMPT_RESPONSE_BYTES,
         })
+    }
+    /// Lower the aggregate retained response bound without changing requests.
+    /// # Errors
+    /// Rejects zero or a value above the published hard ceiling.
+    pub fn with_response_bytes(
+        mut self,
+        max_response_bytes: usize,
+    ) -> Result<Self, NativeInteractivePromptError> {
+        if !(1..=MAX_NATIVE_INTERACTIVE_PROMPT_RESPONSE_BYTES).contains(&max_response_bytes) {
+            return Err(NativeInteractivePromptError::Limit);
+        }
+        self.response_bytes = max_response_bytes;
+        Ok(self)
     }
 }
 
 impl Default for NativeInteractivePromptLimits {
     fn default() -> Self {
         Self {
-            max_pending: MAX_NATIVE_INTERACTIVE_PROMPTS,
-            max_payload_bytes: 8 * 1024 * 1024,
+            pending: MAX_NATIVE_INTERACTIVE_PROMPTS,
+            payload_bytes: 8 * 1024 * 1024,
+            response_bytes: MAX_NATIVE_INTERACTIVE_PROMPT_RESPONSE_BYTES,
         }
     }
 }
@@ -127,14 +150,21 @@ impl NativeInteractivePromptView {
     pub fn permission(&self) -> Option<&PermissionRequest> {
         match self.payload.as_ref() {
             Payload::Permission { request, .. } => Some(request),
-            Payload::Question { .. } => None,
+            Payload::Question { .. } | Payload::Elicitation { .. } => None,
         }
     }
     #[must_use]
     pub fn question(&self) -> Option<(&ToolContext, &QuestionPromptRequest)> {
         match self.payload.as_ref() {
             Payload::Question { context, request } => Some((context, request)),
-            Payload::Permission { .. } => None,
+            Payload::Permission { .. } | Payload::Elicitation { .. } => None,
+        }
+    }
+    #[must_use]
+    pub fn elicitation(&self) -> Option<&McpElicitationPromptRequest> {
+        match self.payload.as_ref() {
+            Payload::Elicitation { request } => Some(request),
+            _ => None,
         }
     }
     /// Whether native preparation supplied an exact-action proposal source.
@@ -158,6 +188,7 @@ impl fmt::Debug for NativeInteractivePromptView {
 pub enum NativeInteractivePromptResponse {
     Permission(PermissionPromptDecision),
     Question(QuestionPromptOutcome),
+    Elicitation(McpElicitationAnswerInput),
 }
 impl fmt::Debug for NativeInteractivePromptResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -177,8 +208,8 @@ impl NativeInteractivePromptBridge {
     pub fn new(
         limits: NativeInteractivePromptLimits,
     ) -> Result<(Arc<Self>, NativeInteractivePromptInbox), NativeInteractivePromptError> {
-        let limits =
-            NativeInteractivePromptLimits::new(limits.max_pending, limits.max_payload_bytes)?;
+        let limits = NativeInteractivePromptLimits::new(limits.pending, limits.payload_bytes)?
+            .with_response_bytes(limits.response_bytes)?;
         let shared = Arc::new(Shared {
             identity: Arc::new(()),
             limits,
@@ -219,10 +250,8 @@ impl PermissionPrompter for NativeInteractivePromptBridge {
         });
         Box::pin(async move {
             match shared.request(scope, payload).await {
-                Ok(NativeInteractivePromptResponse::Permission(decision)) => Ok(decision),
-                Ok(NativeInteractivePromptResponse::Question(_)) | Err(_) => {
-                    Err(PermissionPromptError::new())
-                }
+                Ok(AcceptedResponse::Permission(decision)) => Ok(decision),
+                Ok(_) | Err(_) => Err(PermissionPromptError::new()),
             }
         })
     }
@@ -246,10 +275,49 @@ impl QuestionPrompter for NativeInteractivePromptBridge {
         let payload = Arc::new(Payload::Question { context, request });
         Box::pin(async move {
             match shared.request(scope, payload).await {
-                Ok(NativeInteractivePromptResponse::Question(outcome)) => Ok(outcome),
-                Ok(NativeInteractivePromptResponse::Permission(_)) | Err(_) => {
-                    Err(QuestionPromptError::new())
+                Ok(AcceptedResponse::Question(outcome)) => Ok(outcome),
+                Ok(_) | Err(_) => Err(QuestionPromptError::new()),
+            }
+        })
+    }
+}
+
+impl McpElicitationPresenter for NativeInteractivePromptBridge {
+    fn present(
+        &self,
+        request: McpElicitationPromptRequest,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'_, Result<McpElicitationAnswer, McpElicitationPromptError>> {
+        let scope = self.shared.scope();
+        let shared = Arc::clone(&self.shared);
+        let payload = Arc::new(Payload::Elicitation { request });
+        Box::pin(async move {
+            use futures_util::future::{Either, select};
+            if cancellation.is_cancelled() {
+                return Err(McpElicitationPromptError::Cancelled);
+            }
+            let result = match select(
+                Box::pin(cancellation.cancelled()),
+                Box::pin(shared.request(scope, payload)),
+            )
+            .await
+            {
+                Either::Left(((), pending)) => {
+                    drop(pending);
+                    return Err(McpElicitationPromptError::Cancelled);
                 }
+                Either::Right((result, waiter)) => {
+                    drop(waiter);
+                    result
+                }
+            };
+            if cancellation.is_cancelled() {
+                return Err(McpElicitationPromptError::Cancelled);
+            }
+            match result {
+                Ok(AcceptedResponse::Elicitation(answer)) => Ok(answer),
+                Ok(_) => Err(McpElicitationPromptError::InvalidResponse),
+                Err(error) => Err(McpElicitationPromptError::Inbox(error)),
             }
         })
     }
@@ -311,7 +379,8 @@ impl NativeInteractivePromptInbox {
         self.shared.reply(token, response)
     }
     /// Explicit user cancellation resolves Deny for permissions or Cancelled
-    /// for questions. Engine cancellation still has its existing precedence.
+    /// for questions, or the distinct MCP elicitation cancel action. Engine
+    /// cancellation still has its existing precedence.
     /// # Errors
     /// Rejects stale/non-displayed tokens.
     pub fn cancel(

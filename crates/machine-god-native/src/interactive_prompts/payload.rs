@@ -1,4 +1,5 @@
 use super::{NativeInteractivePromptError as Error, NativeInteractivePromptResponse as Response};
+use crate::mcp::interaction::{McpElicitationAnswer, McpElicitationPromptRequest};
 use crate::{
     MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES, MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES,
     QuestionPromptOutcome, QuestionPromptRequest,
@@ -6,6 +7,31 @@ use crate::{
 use machine_god_core::{BackgroundOutputOwner, Capability, PermissionRequest, ToolContext};
 use serde_json::Value;
 use std::io::{self, Write};
+
+pub(super) enum AcceptedResponse {
+    Permission(crate::PermissionPromptDecision),
+    Question(QuestionPromptOutcome),
+    Elicitation(McpElicitationAnswer),
+}
+impl AcceptedResponse {
+    pub fn bytes(&self) -> Result<usize, Error> {
+        match self {
+            Self::Permission(_)
+            | Self::Question(
+                QuestionPromptOutcome::Cancelled | QuestionPromptOutcome::Unavailable,
+            ) => Ok(64),
+            Self::Question(QuestionPromptOutcome::Answered(answers)) => {
+                answers.iter().try_fold(64_usize, |total, text| {
+                    total
+                        .checked_add(text.len())
+                        .and_then(|bytes| bytes.checked_add(32))
+                        .ok_or(Error::Limit)
+                })
+            }
+            Self::Elicitation(answer) => Ok(answer.retained_byte_charge()),
+        }
+    }
+}
 
 pub(super) enum Payload {
     Permission {
@@ -15,6 +41,9 @@ pub(super) enum Payload {
     Question {
         context: ToolContext,
         request: QuestionPromptRequest,
+    },
+    Elicitation {
+        request: McpElicitationPromptRequest,
     },
 }
 
@@ -27,6 +56,10 @@ impl Payload {
             Self::Question { context, .. } => {
                 (&context.session_id, &context.session_incarnation_id)
             }
+            Self::Elicitation { request } => (
+                &request.context().session_id,
+                &request.context().session_incarnation_id,
+            ),
         };
         session == owner.session_id() && incarnation == owner.session_incarnation_id()
     }
@@ -63,8 +96,27 @@ impl Payload {
                     }
                 }
             }
+            Self::Elicitation { request } => budget.add(request.retained_byte_charge())?,
         }
         Ok(budget.bytes)
+    }
+
+    pub fn admit_response(&self, response: Response) -> Result<AcceptedResponse, Error> {
+        match (self, response) {
+            (Self::Elicitation { request }, Response::Elicitation(input)) => {
+                McpElicitationAnswer::validate(request.request(), &input)
+                    .map(AcceptedResponse::Elicitation)
+                    .map_err(|_| Error::InvalidResponse)
+            }
+            (_, response) => {
+                self.validate_response(&response)?;
+                match response {
+                    Response::Permission(decision) => Ok(AcceptedResponse::Permission(decision)),
+                    Response::Question(outcome) => Ok(AcceptedResponse::Question(outcome)),
+                    Response::Elicitation(_) => Err(Error::InvalidResponse),
+                }
+            }
+        }
     }
 
     pub fn validate_response(&self, response: &Response) -> Result<(), Error> {

@@ -1,4 +1,4 @@
-use super::payload::Payload;
+use super::payload::{AcceptedResponse, Payload};
 use super::{
     NativeInteractivePromptError as Error, NativeInteractivePromptLimits,
     NativeInteractivePromptResponse as Response, NativeInteractivePromptScope as Scope,
@@ -23,6 +23,7 @@ pub(super) struct State {
     next_scope: u64,
     next_request: u64,
     bytes: usize,
+    response_bytes: usize,
     entries: VecDeque<Entry>,
     ui_wake: Option<Waker>,
 }
@@ -35,6 +36,7 @@ impl Default for State {
             next_scope: 1,
             next_request: 1,
             bytes: 0,
+            response_bytes: 0,
             entries: VecDeque::new(),
             ui_wake: None,
         }
@@ -46,7 +48,9 @@ struct Entry {
     payload: Arc<Payload>,
     bytes: usize,
     displayed: bool,
-    response: Option<Response>,
+    answered: bool,
+    response: Option<AcceptedResponse>,
+    response_bytes: usize,
     wake: Option<Waker>,
 }
 
@@ -101,6 +105,7 @@ impl Shared {
                 entry.invalidate_rule();
             }
             state.bytes = 0;
+            state.response_bytes = 0;
             (
                 scope,
                 std::mem::take(&mut state.entries),
@@ -121,6 +126,7 @@ impl Shared {
                 entry.invalidate_rule();
             }
             state.bytes = 0;
+            state.response_bytes = 0;
             (std::mem::take(&mut state.entries), state.ui_wake.take())
         };
         discard(old);
@@ -131,7 +137,7 @@ impl Shared {
         self: &Arc<Self>,
         scope: Option<Scope>,
         payload: Arc<Payload>,
-    ) -> Result<Response, Error> {
+    ) -> Result<AcceptedResponse, Error> {
         let remaining = {
             let state = self.lock();
             if state.closed {
@@ -141,10 +147,10 @@ impl Shared {
             if scope != Some(*active) || !payload.belongs_to(owner) {
                 return Err(Error::Stale);
             }
-            if state.entries.len() >= self.limits.max_pending {
+            if state.entries.len() >= self.limits.pending {
                 return Err(Error::Busy);
             }
-            self.limits.max_payload_bytes - state.bytes
+            self.limits.payload_bytes - state.bytes
         };
         let bytes = payload.bytes(remaining)?;
         let (token, wake) = {
@@ -157,10 +163,10 @@ impl Shared {
                 return Err(Error::Stale);
             }
             let total = state.bytes.checked_add(bytes).ok_or(Error::Limit)?;
-            if state.entries.len() >= self.limits.max_pending {
+            if state.entries.len() >= self.limits.pending {
                 return Err(Error::Busy);
             }
-            if total > self.limits.max_payload_bytes {
+            if total > self.limits.payload_bytes {
                 return Err(Error::Limit);
             }
             let next = state.next_request.checked_add(1).ok_or(Error::Exhausted)?;
@@ -176,7 +182,9 @@ impl Shared {
                 payload,
                 bytes,
                 displayed: false,
+                answered: false,
                 response: None,
+                response_bytes: 0,
                 wake: None,
             });
             (token, state.ui_wake.take())
@@ -202,11 +210,7 @@ impl Shared {
             let mut state = self.lock();
             if state.closed {
                 (Poll::Ready(None), Some(wake))
-            } else if let Some(entry) = state
-                .entries
-                .iter_mut()
-                .find(|entry| entry.response.is_none())
-            {
+            } else if let Some(entry) = state.entries.iter_mut().find(|entry| !entry.answered) {
                 entry.displayed = true;
                 (
                     Poll::Ready(Some(View {
@@ -224,20 +228,43 @@ impl Shared {
     }
 
     pub fn reply(&self, token: &Token, response: Response) -> Result<(), Error> {
-        let (prompt_wake, ui_wake) = {
-            let mut state = self.lock();
+        let payload = {
+            let state = self.lock();
             if state.closed {
                 return Err(Error::Closed);
             }
             let entry = state
                 .entries
-                .iter_mut()
-                .find(|entry| entry.token == *token)
+                .iter()
+                .find(|entry| entry.token == *token && entry.displayed && !entry.answered)
                 .ok_or(Error::Stale)?;
-            if !entry.displayed || entry.response.is_some() {
+            Arc::clone(&entry.payload)
+        };
+        // Pattern/schema validation and owned-response destruction cannot run
+        // inside the queue mutex. The second admission binds the same payload.
+        let response = payload.admit_response(response)?;
+        let bytes = response.bytes()?;
+        let (prompt_wake, ui_wake) = {
+            let mut state = self.lock();
+            if state.closed {
+                return Err(Error::Closed);
+            }
+            let index = state
+                .entries
+                .iter()
+                .position(|entry| entry.token == *token)
+                .ok_or(Error::Stale)?;
+            let total = state
+                .response_bytes
+                .checked_add(bytes)
+                .ok_or(Error::Limit)?;
+            if total > self.limits.response_bytes {
+                return Err(Error::Limit);
+            }
+            let entry = &mut state.entries[index];
+            if !entry.displayed || entry.answered || !Arc::ptr_eq(&entry.payload, &payload) {
                 return Err(Error::Stale);
             }
-            entry.payload.validate_response(&response)?;
             if let Payload::Permission {
                 rule: Some(rule), ..
             } = entry.payload.as_ref()
@@ -245,7 +272,11 @@ impl Shared {
                 rule.invalidate();
             }
             entry.response = Some(response);
-            (entry.wake.take(), state.ui_wake.take())
+            entry.answered = true;
+            entry.response_bytes = bytes;
+            let prompt_wake = entry.wake.take();
+            state.response_bytes = total;
+            (prompt_wake, state.ui_wake.take())
         };
         notify(prompt_wake);
         notify(ui_wake);
@@ -266,6 +297,9 @@ impl Shared {
             match entry.payload.as_ref() {
                 Payload::Permission { .. } => Response::Permission(PermissionPromptDecision::Deny),
                 Payload::Question { .. } => Response::Question(QuestionPromptOutcome::Cancelled),
+                Payload::Elicitation { .. } => Response::Elicitation(
+                    crate::mcp::interaction::McpElicitationAnswerInput::cancel(),
+                ),
             }
         };
         self.reply(token, response)
@@ -281,6 +315,7 @@ impl Shared {
         let wake = if let Some(entry) = &removed {
             entry.invalidate_rule();
             state.bytes -= entry.bytes;
+            state.response_bytes -= entry.response_bytes;
             state.ui_wake.take()
         } else {
             None
@@ -301,7 +336,7 @@ impl Shared {
             let entry = state
                 .entries
                 .iter()
-                .find(|entry| entry.token == *token && entry.displayed && entry.response.is_none())
+                .find(|entry| entry.token == *token && entry.displayed && !entry.answered)
                 .ok_or(Error::Stale)?;
             let Payload::Permission {
                 rule: Some(rule), ..
@@ -320,7 +355,7 @@ struct Pending {
     token: Token,
 }
 impl Pending {
-    fn poll(&self, cx: &mut Context<'_>) -> Poll<Result<Response, Error>> {
+    fn poll(&self, cx: &mut Context<'_>) -> Poll<Result<AcceptedResponse, Error>> {
         let wake = cx.waker().clone();
         let (result, old) = {
             let mut state = self.shared.lock();

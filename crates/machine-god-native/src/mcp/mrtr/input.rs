@@ -4,13 +4,16 @@ use super::{
 };
 use crate::mcp::protocol::ProtocolVersion;
 use serde_json::value::RawValue;
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 /// A closed method union, with no implementation or transport attached.
 pub enum McpInputRequestPayload {
     Sampling { params: Box<RawValue> },
     Roots { params: Option<Box<RawValue>> },
-    Elicitation(Box<McpElicitationRequest>),
+    // Shared unchanged into human presentation: reparsing would incorrectly
+    // replace inherited MRTR bounds with standalone form limits. The existing
+    // 256-byte per-node retained charge includes the Arc control block.
+    Elicitation(Arc<McpElicitationRequest>),
 }
 impl McpInputRequestPayload {
     #[must_use]
@@ -132,7 +135,7 @@ impl McpInputRequired {
             }
             requests.push(McpInputRequest {
                 key: key.into(),
-                payload: McpInputRequestPayload::Elicitation(Box::new(request)),
+                payload: McpInputRequestPayload::Elicitation(Arc::new(request)),
             });
         }
         let required = Self {
@@ -283,7 +286,7 @@ fn parse_requests(raw: &RawValue, limits: McpMrtrLimits) -> Result<Vec<McpInputR
                     params: request.get("params").map(|value| super::raw(value)),
                 }
             }
-            "elicitation/create" => McpInputRequestPayload::Elicitation(Box::new(
+            "elicitation/create" => McpInputRequestPayload::Elicitation(Arc::new(
                 McpElicitationRequest::parse_admitted(
                     bounds::required(&request, "params")?,
                     ProtocolVersion::Modern,

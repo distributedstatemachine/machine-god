@@ -1,0 +1,75 @@
+# Native MCP human presentation
+
+`mcp::interaction` connects admitted form and URL elicitation data to the same
+bounded `NativeInteractivePromptBridge` used by permission and question prompts.
+It creates no additional queue, input reader, background task, or ambient owner.
+The presenter is explicitly injected; `UnavailableMcpElicitationPresenter`
+returns an explicit unavailable result, never an invented human answer.
+
+## Identity and schema
+
+`McpElicitationPromptRequest::new` requires the exact `ToolContext`, selected
+server identity, exposed `ToolName`, and an `Arc<McpElicitationRequest>`. Server
+identity is nonempty and at most 256 bytes; the tool identity retains the
+core's 128-byte `ToolName` admission. The executor
+supplies these identities from selection, not server text.
+Views expose all identities for the host to render safely; Debug is redacted.
+The context retains session, incarnation, turn, and call identity. Admission
+checks the inbox's active session/incarnation and scope captured when the
+presenter is called, including for futures not yet polled.
+
+The original admitted elicitation object is shared unchanged. Nested MRTR forms
+therefore retain their inherited 256-field limit rather than being reparsed
+through the standalone 64-field contract. Every admitted field type and exact
+number remains available through the typed form schema. These forms do not use
+the four-question adapter. [MRTR admission](mcp-mrtr.md) remains responsible for
+the protocol revision, schema grammar, URL data, and exact response rules.
+
+## Replies and lifecycle
+
+`NativeInteractivePromptView::elicitation` exposes the typed request.
+`NativeInteractivePromptResponse::Elicitation` takes bounded
+`McpElicitationAnswerInput`. Input construction only admits at most 128 KiB of
+raw JSON; it does not establish schema validity or consent. Inbox reply validates
+against the exact displayed request with the existing MRTR validator, then
+stores canonical response data. Numeric lexemes are preserved. Decline and
+cancel are distinct actions; their ignored content is omitted canonically.
+URL acceptance rejects content and does not open a browser.
+
+Validation occurs outside the inbox lock. Admission then rechecks the token,
+displayed/unanswered state, exact payload Arc, and response budget under lock.
+Wrong-kind, stale, foreign-owner, duplicate, invalid, and over-budget replies
+cannot consume a prompt. An answered marker remains set while a ready response
+is taken, preventing reentrant cleanup from reopening that token. Existing
+permission-rule invalidation and wake-outside-lock behavior remain intact.
+
+Unpolled calls enqueue nothing. Dropping a pending call unregisters it. Engine
+cancellation wins over a ready answer and returns `Cancelled`; UI cancellation
+instead supplies the protocol's canonical cancel action. Inbox deactivation,
+reactivation, closure, or drop invalidates queued and ready responses. No model
+text is interpreted as human input.
+
+## Bounds and authority
+
+The existing pending-count and aggregate request-byte limits also cover
+elicitation. A stored conservative MRTR charge accounts for each admitted
+request's raw data, typed fields, and container overhead, including Arc control
+storage. Inbox charging adds context/source strings and 256 bytes of prompt
+bookkeeping. Shared request bytes are charged for each queued prompt, even when
+the Arc storage is shared. Saturating overflow cannot fit the finite inbox cap.
+Returned views are ordinary caller-owned references; retaining them after a
+token expires does not retain queue capacity or create response authority.
+
+`NativeInteractivePromptLimits::with_response_bytes` lowers a separate aggregate
+ready-response budget, positive and at most the 8 MiB default. This default is
+above all previously accepted question/permission responses. Canonical MCP
+responses charge their raw bytes plus 64 bytes; existing question answers charge
+their strings and container bookkeeping. Charges remain until consumption or
+removal, including when no unanswered prompt remains. An explicitly tiny budget
+may reject a UI cancel reply; dropping/cancelling the producer or closing the
+inbox still removes it without a budget bypass.
+
+The validated answer is data only. It is not browser-launch authority,
+completion evidence, permission to execute a tool, or proof permitting a
+continuation/resubmission. Those decisions remain separate native runtime
+responsibilities. Sampling and roots have no presentation implementation here.

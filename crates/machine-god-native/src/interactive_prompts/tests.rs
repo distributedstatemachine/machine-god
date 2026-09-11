@@ -9,6 +9,7 @@ use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake, Waker};
+mod elicitation;
 
 fn context() -> ToolContext {
     ToolContext {

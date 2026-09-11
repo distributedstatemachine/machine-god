@@ -32,6 +32,7 @@ pub struct McpElicitationRequest {
     host: Option<Box<[u8]>>,
     id: Option<Box<str>>,
     limits: McpMrtrLimits,
+    retained_bytes: usize,
 }
 impl fmt::Debug for McpElicitationRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -50,21 +51,37 @@ impl McpElicitationRequest {
         version: ProtocolVersion,
         limits: McpMrtrLimits,
     ) -> Result<Self> {
-        bounds::admit(params, limits)?;
-        Self::parse_bounded(params, version, limits, bounds::FormBounds::direct(limits))
+        let retained_bytes = bounds::admit(params, limits)?;
+        Self::parse_bounded(
+            params,
+            version,
+            limits,
+            bounds::FormBounds::direct(limits),
+            retained_bytes,
+        )
     }
     pub(super) fn parse_admitted(
         params: &RawValue,
         version: ProtocolVersion,
         limits: McpMrtrLimits,
     ) -> Result<Self> {
-        Self::parse_bounded(params, version, limits, bounds::FormBounds::nested(limits))
+        // One local charge is stored with each shareable request. Presentation
+        // and inbox admission never reparse schemas to recover their footprint.
+        let retained_bytes = bounds::admit(params, limits)?;
+        Self::parse_bounded(
+            params,
+            version,
+            limits,
+            bounds::FormBounds::nested(limits),
+            retained_bytes,
+        )
     }
     fn parse_bounded(
         params: &RawValue,
         version: ProtocolVersion,
         limits: McpMrtrLimits,
         form_bounds: bounds::FormBounds,
+        retained_bytes: usize,
     ) -> Result<Self> {
         if !matches!(
             version,
@@ -129,11 +146,17 @@ impl McpElicitationRequest {
             host,
             id,
             limits,
+            retained_bytes,
         })
     }
     #[must_use]
     pub const fn version(&self) -> ProtocolVersion {
         self.version
+    }
+    /// Conservative owned-data charge, not allocator telemetry or authority.
+    #[must_use]
+    pub const fn retained_byte_charge(&self) -> usize {
+        self.retained_bytes
     }
     #[must_use]
     pub const fn mode(&self) -> McpElicitationMode {
