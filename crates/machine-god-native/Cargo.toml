@@ -9,7 +9,7 @@ publish.workspace = true
 
 [features]
 default = []
-mcp-http = ["dep:httparse", "dep:rustls", "dep:tokio", "dep:tokio-rustls"]
+mcp-http = ["dep:hickory-proto", "dep:hickory-resolver", "dep:httparse", "dep:rustls", "dep:tokio", "dep:tokio-rustls"]
 ai-gateway-http = [
     "ai-gateway-model-catalog-http",
     "dep:bytes",

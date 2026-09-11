@@ -2,6 +2,15 @@
 
 pub mod mcp;
 
+#[cfg(all(
+    any(
+        feature = "ai-gateway-model-catalog-http",
+        all(feature = "mcp-http", any(target_os = "linux", target_os = "macos"))
+    ),
+    not(target_family = "wasm")
+))]
+mod bounded_dns;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod bounded_profile_file;
 
