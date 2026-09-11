@@ -101,7 +101,7 @@ cutoff observation, not EOF. Only settled worker evidence can admit a negotiatio
 fallback; requesting the snapshot alone cannot. Explicit connection or host
 cancellation still takes priority.
 
-`admit_runtimes` registers at most 1,024 exact native runtime allocations after
+`admit_runtimes` registers at most 2,048 exact native runtime allocations after
 catalog admission. It grants no permission. `submit` requires a non-clone
 [`McpSubmission`](mcp-submission.md) belonging to an explicitly registered
 allocation; equal names or numeric generations from another owner do not match.

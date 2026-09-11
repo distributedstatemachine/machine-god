@@ -2,6 +2,34 @@ use super::*;
 mod runtime;
 
 #[test]
+fn runtime_set_admits_pinned_tool_count_and_rejects_overflow_atomically() {
+    let scope = NativeOwnedWorkerScope::new();
+    let shared = Arc::new(Shared::new(WireLimits::default(), CancellationToken::new()));
+    let connection = McpStdioConnection {
+        shared: shared.clone(),
+        completion: scope.completion(),
+    };
+    let fixture = super::super::submission::tests::Fixture::new();
+    connection
+        .admit_runtimes(vec![fixture.runtime.clone(); 2048])
+        .unwrap();
+    assert_eq!(shared.runtimes.lock().unwrap().len(), 2048);
+    assert_eq!(
+        connection.admit_runtimes(vec![fixture.runtime.clone(); 2049]),
+        Err(McpStdioError::Capacity)
+    );
+    let retained = shared.runtimes.lock().unwrap();
+    assert_eq!(retained.len(), 2048);
+    assert!(
+        retained
+            .iter()
+            .all(|runtime| Arc::ptr_eq(runtime, &fixture.runtime))
+    );
+    drop(retained);
+    scope.close();
+}
+
+#[test]
 fn received_frame_preserves_original_catalog_json_without_roundtrip() {
     let scope = NativeOwnedWorkerScope::new();
     let shared = Arc::new(Shared::new(WireLimits::default(), CancellationToken::new()));

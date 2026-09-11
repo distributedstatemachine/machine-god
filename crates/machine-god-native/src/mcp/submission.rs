@@ -29,6 +29,8 @@ use crate::NativePermissionExecutionProof;
 
 mod runtime;
 pub use runtime::{McpSubmissionRuntime, McpSubmissionRuntimeBinding, McpSubmissionRuntimeOwner};
+mod tool;
+pub use tool::{McpToolCallOptions, McpToolRequest};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod http;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -423,36 +425,7 @@ impl McpSubmissionRegistry {
         wire: &[u8],
         cancellation: &CancellationToken,
     ) -> Result<CopiedRequest> {
-        check(cancellation)?;
-        self.live()?;
-        runtime.live()?;
-        if request.session_id != self.session
-            || request.session_incarnation_id != self.incarnation
-            || &request.turn_id != self.handle.id()
-            || invocation.tool_name != runtime.binding.tool_name()
-        {
-            return Err(McpSubmissionError::Denied);
-        }
-        let Capability::Tool {
-            name,
-            call_id,
-            arguments,
-        } = &request.capability
-        else {
-            return Err(McpSubmissionError::Invalid);
-        };
-        let canonical = canonical_arguments(invocation.arguments)?;
-        if name != invocation.tool_name
-            || call_id != invocation.call_id
-            || canonical_arguments(arguments)? != canonical
-        {
-            return Err(McpSubmissionError::Denied);
-        }
-        // Bound every copied permission field, including diagnostic reason.
-        if request.reason.len() > MAX_MCP_SUBMISSION_REQUEST_BYTES {
-            return Err(McpSubmissionError::Limit);
-        }
-        bounded_json(request, MAX_MCP_SUBMISSION_REQUEST_BYTES)?;
+        let invocation = self.copy_invocation(request, invocation, runtime, cancellation)?;
         if wire.len() > MAX_MCP_SUBMISSION_REQUEST_BYTES {
             return Err(McpSubmissionError::Limit);
         }
@@ -483,7 +456,7 @@ impl McpSubmissionRegistry {
             || params.len() != 2
             || params.get("name").and_then(Value::as_str) != Some(runtime.binding.remote_tool())
             || canonical_arguments(params.get("arguments").ok_or(McpSubmissionError::Invalid)?)?
-                != canonical
+                != invocation.arguments
         {
             return Err(McpSubmissionError::Denied);
         }
@@ -491,15 +464,72 @@ impl McpSubmissionRegistry {
         let mut framed = Vec::with_capacity(wire.len() + 1);
         framed.extend_from_slice(wire);
         framed.push(b'\n');
-        Ok(CopiedRequest {
+        Ok(invocation.with_wire(framed.into_boxed_slice(), Framing::Ndjson, rpc_id))
+    }
+
+    fn copy_invocation(
+        &self,
+        request: &PermissionRequest,
+        invocation: PermissionInvocation<'_>,
+        runtime: &McpSubmissionRuntime,
+        cancellation: &CancellationToken,
+    ) -> Result<CopiedInvocation> {
+        check(cancellation)?;
+        self.live()?;
+        runtime.live()?;
+        if request.session_id != self.session
+            || request.session_incarnation_id != self.incarnation
+            || &request.turn_id != self.handle.id()
+            || invocation.tool_name != runtime.binding.tool_name()
+        {
+            return Err(McpSubmissionError::Denied);
+        }
+        let Capability::Tool {
+            name,
+            call_id,
+            arguments,
+        } = &request.capability
+        else {
+            return Err(McpSubmissionError::Invalid);
+        };
+        let canonical = canonical_arguments(invocation.arguments)?;
+        if name != invocation.tool_name
+            || call_id != invocation.call_id
+            || canonical_arguments(arguments)? != canonical
+        {
+            return Err(McpSubmissionError::Denied);
+        }
+        // Bound every copied permission field, including diagnostic reason.
+        if request.reason.len() > MAX_MCP_SUBMISSION_REQUEST_BYTES {
+            return Err(McpSubmissionError::Limit);
+        }
+        bounded_json(request, MAX_MCP_SUBMISSION_REQUEST_BYTES)?;
+        Ok(CopiedInvocation {
             permission: request.clone(),
             tool: invocation.tool_name.clone(),
             call: invocation.call_id.clone(),
             arguments: canonical,
-            wire: framed.into_boxed_slice(),
-            framing: Framing::Ndjson,
-            rpc_id,
         })
+    }
+}
+
+struct CopiedInvocation {
+    permission: PermissionRequest,
+    tool: ToolName,
+    call: ToolCallId,
+    arguments: Box<[u8]>,
+}
+impl CopiedInvocation {
+    fn with_wire(self, wire: Box<[u8]>, framing: Framing, rpc_id: RpcId) -> CopiedRequest {
+        CopiedRequest {
+            permission: self.permission,
+            tool: self.tool,
+            call: self.call,
+            arguments: self.arguments,
+            wire,
+            framing,
+            rpc_id,
+        }
     }
 }
 

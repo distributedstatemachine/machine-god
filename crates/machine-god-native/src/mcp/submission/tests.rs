@@ -19,6 +19,9 @@ use crate::{
 #[path = "http/tests.rs"]
 mod http_tests;
 
+#[path = "tool/tests.rs"]
+mod tool_tests;
+
 struct Adapter(Mutex<Option<PreparedMcpSubmission>>);
 impl NativePermissionActionPreparer for Adapter {
     fn prepare<'a>(
@@ -247,6 +250,10 @@ impl Fixture {
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn ready_http(&self, call: &str, head: &McpSubmissionHttpHead) {
+        self.ready_http_with_id(call, head, RpcId::String("rpc-secret".into()));
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn ready_http_with_id(&self, call: &str, head: &McpSubmissionHttpHead, id: RpcId) {
         let request = self.request(call);
         let Capability::Tool {
             name,
@@ -256,6 +263,13 @@ impl Fixture {
         else {
             panic!()
         };
+        let mut wire: Value = serde_json::from_slice(&self.wire()).unwrap();
+        wire["id"] = match id {
+            RpcId::Integer(id) => Value::from(id),
+            RpcId::String(id) => Value::String(id),
+            RpcId::Null => panic!("tool fixture requires a request ID"),
+        };
+        let wire = serde_json::to_vec(&wire).unwrap();
         let prepared = block_on(self.registry.prepare_http(
             &request,
             PermissionInvocation {
@@ -265,7 +279,7 @@ impl Fixture {
             },
             self.runtime.clone(),
             head,
-            &self.wire(),
+            &wire,
             CancellationToken::new(),
         ))
         .unwrap();

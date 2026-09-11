@@ -395,20 +395,18 @@ Owned stdio peers now drive negotiation, correlated requests, raw catalogs and
 bounded timeout snapshots. The CLI build also includes the owned HTTP/TLS
 connector, exact proof-bearing writes and bounded streaming responses.
 
-The frozen component commit `69fb2d73` passes exact-1.94.1 formatting, strict
-workspace all-target/all-feature Clippy, 246 MCP unit tests, all 458 CLI unit
-tests (six existing ignored helper entrypoints), and workspace doctests.
-Its fresh locked canonical release passes help/version smokes and supplies the
-helper for serial macOS process fixtures after all builds finished. An additional
-native-only no-default-feature library lint probe reports 54 dead-code errors;
-the diagnostic headers are identical on parent `0c2fa45a`, with no new MCP
-diagnostics. That extra probe is not green and does not replace the canonical
-workspace gate. Earlier shared/settings, interactive-host and selected integration
-regressions passed at `c9189be9` and `b3a48750`; core's cancellation observer
-passed its complete tests, doctests and strict Clippy. All completed component
-and diagnostic worktrees are removed; evidence and build caches remain.
-These are internal regression checks, not a new delivery or the complete
-workspace/platform/adversarial/remote feature gate.
+Admitted schemas now back typed tool requests, modern/legacy client metadata,
+progress-token selection and modern HTTP argument headers. These projections
+retain the existing one-shot permission/writer boundary; raw preparation remains
+strict. Catalog page and stdio runtime capacities match the pinned per-server
+tool/resource/prompt cardinalities without removing independent byte limits.
+
+Earlier transport component `69fb2d73` passed 246 MCP tests, 458 CLI tests,
+strict workspace Clippy, doctests and fresh-release macOS fixtures. Its separate
+minimal-feature lint probe retained 54 parent-identical dead-code diagnostics;
+that extra probe was not green. Detailed command evidence remains with the
+component's historical plan revision. Completed worktrees are removed; evidence
+and caches remain. These are internal regression checks, not feature delivery.
 
 Exact conversation/turn routing is also integrated into both CLI setup paths.
 Commit `1990eec5` passes 65 focused non-process tests, strict workspace
@@ -419,8 +417,8 @@ a new release/platform/full-feature/remote gate or delivery claim.
 
 These components do not constitute a delivered runtime. Remaining composition
 must own admitted DNS, HTTP/SSE negotiation and session/listener lifecycle,
-typed feature/control authority, progress/continuation metadata,
-lossless schema and argument/header projection, atomic
+typed feature/control authority, input/continuation custody,
+lossless end-to-end provider/permission JSON projection, atomic
 catalog publication, authentication and CLI activation/finalization. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.

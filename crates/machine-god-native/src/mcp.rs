@@ -18,6 +18,7 @@ pub mod pagination;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod peer;
 pub mod protocol;
+pub mod schema;
 
 pub mod sse;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -372,7 +372,7 @@ fn budgets_are_positive_cumulative_and_inclusive() {
             ..McpCatalogLimits::default()
         },
         McpCatalogLimits {
-            max_items: 1025,
+            max_items: 4097,
             ..McpCatalogLimits::default()
         },
         McpCatalogLimits {
@@ -417,6 +417,32 @@ fn page_cursor_and_item_count_limits_prevent_futile_next_requests() {
             append(&mut b, result, None, 0),
             Err(McpPaginationError::Limit)
         );
+    }
+}
+
+#[test]
+fn default_catalogs_admit_exact_pinned_family_cardinalities() {
+    for kind in [
+        McpCatalogKind::Tools,
+        McpCatalogKind::Resources,
+        McpCatalogKind::ResourceTemplates,
+        McpCatalogKind::Prompts,
+    ] {
+        for overflow in [false, true] {
+            let mut builder = builder(kind, ProtocolVersion::Modern);
+            let count = kind.max_items() + usize::from(overflow);
+            let items: Vec<_> = (0..count)
+                .map(|index| json!({kind.identity().0: format!("item-{index}")}))
+                .collect();
+            let result = append(&mut builder, json!({kind.field():items}), None, 0);
+            if overflow {
+                assert_eq!(result, Err(McpPaginationError::Limit));
+                assert!(builder.finish().is_err());
+            } else {
+                assert_eq!(result, Ok(false));
+                assert_eq!(builder.finish().unwrap().items().count(), kind.max_items());
+            }
+        }
     }
 }
 

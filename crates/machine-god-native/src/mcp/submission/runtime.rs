@@ -70,6 +70,9 @@ impl McpSubmissionRuntimeBinding {
     pub(super) fn remote_tool(&self) -> &str {
         &self.remote_tool
     }
+    pub(super) fn schema_bytes(&self) -> &[u8] {
+        &self.schema
+    }
 }
 
 struct State {

@@ -26,6 +26,15 @@ pub enum McpCatalogKind {
     Prompts,
 }
 impl McpCatalogKind {
+    /// Pinned per-family descriptor cardinality, independent of byte budgets.
+    #[must_use]
+    pub const fn max_items(self) -> usize {
+        match self {
+            Self::Tools => 2048,
+            Self::Resources | Self::ResourceTemplates | Self::Prompts => 4096,
+        }
+    }
+
     /// Corresponding read-only discovery method, not a user feature invocation.
     #[must_use]
     pub const fn method(self) -> &'static str {
@@ -77,7 +86,7 @@ impl Default for McpCatalogLimits {
     fn default() -> Self {
         Self {
             max_pages: 64,
-            max_items: 1024,
+            max_items: 4096,
             max_response_bytes: 16 * 1024 * 1024,
             max_item_bytes: 8 * 1024 * 1024,
             max_cursor_bytes: 4096,
@@ -181,10 +190,12 @@ impl McpCatalogBuilder {
         version: ProtocolVersion,
         limits: McpCatalogLimits,
     ) -> Result<Self, McpPaginationError> {
+        let mut limits = limits.validate()?;
+        limits.max_items = limits.max_items.min(kind.max_items());
         Ok(Self {
             kind,
             version,
-            limits: limits.validate()?,
+            limits,
             state: Some(Assembly::default()),
         })
     }

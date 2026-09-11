@@ -66,6 +66,54 @@ original core-turn and runtime-retirement signals after the submission writer
 is consumed, so response reads remain cancellable. It retains neither a proof
 nor a replayable submission. The borrowed queue observer uses the same path.
 
+## Schema-bound tool projection
+
+`McpToolRequest` constructs the production envelope from an already admitted
+`McpSchema`, exact immutable runtime binding, `PermissionInvocation` and
+peer-selected `McpToolCallOptions`. The schema bytes must match the binding
+exactly and its root must declare `type: "object"`. Arguments are canonicalized
+under the existing argument budgets and validated without changing the values
+used for permission or transmission. Whole-schema server-authoritative
+assessment remains allowed, not a local validation success; the native automatic
+review must still receive the schema and its required-schema flag.
+
+The typed serializer adds modern namespaced protocol version, machine-god client
+identity and explicitly selected elicitation capability metadata, plus an optional
+progress token. Legacy requests contain only progress metadata when selected.
+Advertising a capability does not provide consent or an input responder. IDs must
+be nonnegative and reserved by the owning peer; unsupported protocol/transport
+combinations are rejected. There is no arbitrary metadata or continuation-byte
+constructor. The original raw preparation methods remain strict two-parameter
+interfaces; metadata-bearing requests use `prepare_tool`.
+
+For modern HTTP, `validate_modern_http_schema` checks catalog eligibility and
+`with_http_head` fixes protocol-derived method/name and `Mcp-Param-*` headers
+before permission. Header annotations must occur only on declared properties,
+use unique case-insensitive token suffixes and an exact string/integer/boolean
+type, without reference/union ambiguity. Nested declared properties are supported;
+annotations in arrays, conditionals, definitions or other locations reject modern
+HTTP eligibility. Legacy transports do not interpret these annotations.
+
+Missing/null optional header values produce no field. After ordinary schema
+validation fails, only optional top-level annotated nulls may be omitted from a
+validation-only retry; required nulls remain errors, and the original arguments
+remain intact in the body and permission request. Integer header values require
+literal integer spelling in the JSON-safe range. Non-ASCII/control text, leading
+or trailing whitespace and literal `=?base64?` prefixes use the pinned Base64
+wrapper, with encoded expansion charged before allocation; empty strings remain
+empty fields. All existing field/count/aggregate head limits still apply.
+
+The selected base head must contain exactly the negotiated protocol version
+where required, no such header where forbidden, and no method/name/parameter
+overrides. Authentication/session/endpoint data is retained unchanged. A head can
+be attached once and never to stdio; non-stdio preparation requires a head. The
+immutable shared head is connection-selection data, not permission. Typed
+preparation matches the exact arguments/tool/call again and uses the same inert
+reservation and concrete-proof path as raw preparation. No request bytes can be
+changed between permission admission and the final writer.
+
+## One-shot ownership
+
 Each turn follows `Reserved -> Ready -> Claimed`. The prepared value owns its
 reservation generation. Dropping it or its unconsumed core admission releases
 only that reservation. Binding a concrete proof does not publish a ready route:

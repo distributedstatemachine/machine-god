@@ -33,7 +33,7 @@ pub const MAX_MCP_STDIO_WRITES: usize = 8;
 /// Fixed maximum queued inbound frames. A stalled consumer fails closed.
 pub const MAX_MCP_STDIO_FRAMES: usize = 2;
 /// Fixed maximum explicitly registered executable runtime allocations.
-pub const MAX_MCP_STDIO_RUNTIMES: usize = 1024;
+pub const MAX_MCP_STDIO_RUNTIMES: usize = super::pagination::McpCatalogKind::Tools.max_items();
 
 /// Redacted failures; no command, environment or server bytes are retained.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
