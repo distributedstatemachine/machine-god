@@ -67,3 +67,47 @@ exact server/resource/prompt admission, aggregate canonical request limits and
 permission policy before any effect. Feature result bounds and trust handling
 remain governed by [MCP features](mcp-features.md); tool selection grants no
 execution permission under [MCP selection](mcp-select-tool.md).
+
+## Profile configuration codec
+
+`machine_god_native::mcp::config` validates and owns an explicit profile
+configuration independently of command parsing, filesystem storage and runtime
+admission. `McpConfig` accepts the pinned top-level `mcp` object and retains
+server order. `McpServerConfig` exposes immutable transport-specific getters;
+its constructors and decoder grant no process, network or credential authority.
+
+The codec supports stdio/local string or vector commands, ordered arguments,
+`environment` over `env` precedence, and vector-command over separate-arguments
+precedence. HTTP and SSE configurations retain exact URL strings, headers,
+header-environment bindings and bearer-token environment names. OAuth retains
+resource, issuer, client ID, client-secret environment name, client metadata URL
+and scopes. Required/enabled flags and nonzero `u32` startup/operation timeouts
+are preserved; defaults are 10,000 and 60,000 milliseconds. Stdio restart count
+uses the full `u8` domain and defaults to one.
+
+Decoding rejects duplicate JSON keys, including escaped duplicates, while
+constructing its bounded intermediate data. Limits are 1 MiB input and canonical
+output, 64 servers, 128-byte ASCII server aliases, JSON depth 8, 16,384 value
+nodes, and 512 KiB of aggregate decoded keys and strings. Individual strings are
+at most 16 KiB; executable and URL fields are at most 4 KiB. Collections permit
+at most 256 arguments or environment bindings, 128 combined headers, and 64
+OAuth scopes. Retained owned strings and collections are compacted.
+
+Canonical encoding preserves server order and deterministically encodes object
+fields. Accepted output is bounded and re-admitted against the codec's own
+constraints. Insert rejects an existing alias; replace retains its original
+position; new entries append. An invalid or aggregate-overflowing mutation
+leaves the previous configuration unchanged. Removal affects only the exact
+case-sensitive server identity.
+
+Unknown or inactive transport fields, invalid environment names, duplicate
+case-insensitive header identities, reserved/authentication headers and active
+control strings are intentionally rejected rather than silently ignored.
+Debug and error forms omit server identities, commands, header values and
+credentials. No secret environment variable is resolved by decoding.
+
+URL validation here is bounded structural validation, not complete URI or
+network admission. The effect-bearing HTTP authority must use its established
+URI parser and validate origin, DNS, endpoint and OAuth policy before effects.
+The codec does not discover or mutate fx roots, change native settings schema,
+create a profile directory, save credentials or connect to any server.

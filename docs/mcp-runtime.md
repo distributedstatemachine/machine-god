@@ -17,8 +17,8 @@ status belongs only in the implementation plan.
 `push`, together with the exact consumed-byte count. Callers resubmit the
 unconsumed tail. Empty input is not EOF. Empty lines and trailing carriage
 returns follow pinned stdio behavior; JSON and UTF-8 validation occur only after
-a complete frame. `finish` rejects an unterminated frame. Oversize input or
-completion closes the decoder; later input cannot revive it.
+a complete frame. `finish` rejects an unterminated frame. Calling `finish` or
+exceeding the frame budget closes the decoder; later input cannot revive it.
 
 Scanning stops within the remaining frame budget plus one byte. Partial-frame
 allocation grows geometrically within its cap, avoiding repeated full copies
