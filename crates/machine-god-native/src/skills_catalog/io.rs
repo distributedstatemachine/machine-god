@@ -302,7 +302,13 @@ fn metadata_complete(bytes: &[u8], eof: bool) -> bool {
     if bytes.len() < 5 && !eof {
         return false;
     }
-    header_start(bytes).is_none_or(|start| closing_delimiter(bytes, start).is_some())
+    header_start(bytes).is_none_or(|start| {
+        closing_delimiter(bytes, start).is_some_and(|(_, end)| {
+            // A trailing `---` may continue in the next read. Only a delimiter
+            // newline or an actual zero-byte read establishes its full line.
+            eof || bytes[..end].ends_with(b"\n")
+        })
+    })
 }
 
 pub(super) struct Names {
@@ -377,6 +383,45 @@ pub(super) fn read_names(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_completion_requires_a_whole_line_or_actual_eof() {
+        for bytes in [
+            b"---\nname: review\n---\n".as_slice(),
+            b"---\r\nname: review\r\n---\r\n".as_slice(),
+        ] {
+            for end in 0..bytes.len() {
+                assert!(!metadata_complete(&bytes[..end], false), "{end}");
+            }
+            assert!(metadata_complete(bytes, false));
+        }
+        assert!(metadata_complete(b"---\nname: review\n---", true));
+        assert!(!metadata_complete(b"---\nname: review\n---\r", true));
+        assert!(!metadata_complete(b"---\nname: review\n---x", true));
+        assert!(!metadata_complete(b"---\nname: review\n---\rX", true));
+    }
+
+    #[test]
+    fn boundary_delimiters_remain_provisional_through_short_continuation_reads() {
+        for boundary in [16_384, 32_768, 49_152, MAX_NATIVE_SKILL_HEADER_BYTES] {
+            let mut prefix = b"---\nname: review\n#".to_vec();
+            prefix.resize(boundary - 4, b'x');
+            prefix.extend_from_slice(b"\n---");
+            assert!(!metadata_complete(&prefix, false));
+            assert!(metadata_complete(&prefix, true));
+            for ending in [b"\n".as_slice(), b"\r\n", b"x\n---\n", b"\rX\n---\n"] {
+                let mut bytes = prefix.clone();
+                for (index, byte) in ending.iter().enumerate() {
+                    bytes.push(*byte);
+                    assert_eq!(
+                        metadata_complete(&bytes, false),
+                        boundary < MAX_NATIVE_SKILL_HEADER_BYTES && index + 1 == ending.len(),
+                        "{boundary} {ending:?} {index}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn budget_checks_before_dispatch_and_after_native_return() {

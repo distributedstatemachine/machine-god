@@ -2,6 +2,10 @@
 #[path = "tests/supported.rs"]
 mod supported;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "tests/prefix.rs"]
+mod prefix;
+
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[test]
 fn unsupported_catalog_construction_is_inert() {
