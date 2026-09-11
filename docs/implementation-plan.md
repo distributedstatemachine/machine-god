@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `repair three skills review findings, then replacement full gate and three fresh reviews`
+- Next gate: `replacement full skills local gate, then three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -380,8 +380,9 @@ Gateway multipart projection are integrated. The complete local gate passed
 on macOS and Linux, including fresh release scenarios. Three independent reviews
 then rejected the candidate with three distinct findings: executable resource
 mode loss, copying an oversized borrowed install filter before validation, and
-quadratic picker query matching. Repair these in isolated parallel lanes, retain
-regressions, then rerun the complete replacement gate and three fresh reviews.
+quadratic picker query matching. All three repairs and focused regressions are
+integrated from isolated parallel lanes; completed repair worktrees are removed.
+Run the complete replacement gate and three fresh reviews on the frozen candidate.
 Historical candidate, gate and finding evidence belongs in the
 [skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
 accepted yet. Linux validation retains its unprivileged environment; macOS and

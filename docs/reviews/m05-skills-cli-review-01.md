@@ -77,3 +77,37 @@ and `skills_review_r1_resources`. The candidate was rejected despite green
 local tests and was not pushed or merged. All three unchanged review worktrees
 were removed after their reviews finished; review and benchmark evidence was
 retained.
+
+## Review round 1 remediation
+
+The fixes used three isolated, non-overlapping implementation worktrees:
+
+- R1-1: `3929ab20eec2a4966cda9dd2c93198116f35e5af`, integrated as
+  `55bc9cac`, captures modes in exact fingerprints, publishes private normalized
+  modes while preserving execute bits, and preserves original backup modes on
+  rollback. All 35 focused managed tests passed, including seven new mode
+  regressions; exact Rust 1.94.1 strict native Clippy and formatting passed.
+- R1-2: `f23a372960b096bb10b5ec3789dffa7ec873a0e6`, integrated as
+  `5b75acca`, validates borrowed filters before copying. The allocation regression
+  first reproduced 8,388,615 allocated bytes for an invalid 8 MiB filter versus
+  264 bytes for a 257-byte filter; both now allocate equally within a 4 KiB bound.
+  Five new tests and two existing parser tests passed, as did exact Rust 1.94.1
+  strict native Clippy and formatting.
+
+- R1-3: `c2cc6d2b07ead77a9850c3b0cede832dde8388cc`, integrated as
+  `46338f0e`, preprocesses each bounded picker query once with a linear-time
+  ASCII-insensitive matcher and avoids a redundant CLI cursor transition after
+  actual edits. Native cursor/frame semantics remain unchanged. All 22 focused
+  native picker tests and six CLI adapter tests passed; exact Rust 1.94.1 strict
+  native/CLI Clippy and formatting passed after fixing two new style warnings.
+  Deterministic comparison-count and exhaustive small-byte-string regressions
+  cover worst-case work and preserved matching semantics. The final optimized
+  production-matcher diagnostic took 1.985–2.112 ms for the same 1,024-byte query
+  and 480-entry workload; this is not an end-to-end or M07 claim.
+
+Mode and filter logs remain under `/private/tmp/mg-skills-cli.jpLoxt` with
+`r1-modes-` and `r1-filter-` prefixes. Their clean committed worktrees were removed
+after cherry-pick integration; external logs and build caches were retained.
+The query worktree was likewise removed after integration. Its external
+diagnostics remain under `/private/tmp/mg-skills-query-r1.6X0LSL`, including
+`query-linear-accepted.log` for the final committed matcher.

@@ -155,6 +155,8 @@ is parsed only. A two-component local path must use `./` (or an absolute path)
 to distinguish it from repository shorthand. A failed local lookup never falls
 back to the network. Unsupported schemes/options are errors. These are
 intentional authority-preserving differences from upstream's local fallback.
+Explicit install filters are checked as borrowed UTF-8 text against the 256-byte
+name bound before retaining a copy; absent and empty filters remain equivalent.
 
 Install planning includes root and nested skills, metadata-name/basename filters,
 deterministic destination selection and collision checks, including filesystem
@@ -171,6 +173,14 @@ Explicit outer `--replace` authorizes only the plan's exact observed replacement
 revisions; pasted `-y`, `--yes` or global flags are not replacement consent.
 Changed destinations reject the stale plan rather than transferring consent to
 a new occupant.
+
+On Unix, installed regular files retain their source execute bits with private
+owner read/write permissions (`0600 | (source_mode & 0111)`). Generated `SKILL.md`
+files use `0600`; staged and published directories use `0700`. Group/other
+read/write and special permission bits are not copied. Replacing `SKILL.md`
+preserves sibling resources' execute bits. Exact observed modes participate in
+local-source revalidation, destination revisions and rollback checks; publication
+checks the deliberately normalized planned modes.
 
 Publication uses a private advisory lock, bounded staging/backup and rollback.
 Per-item receipts distinguish installed, replaced, removed, failed, rolled back,
@@ -341,6 +351,12 @@ display data and visibly reports incomplete discovery. Draft and selection bound
 match invocation planning (256 KiB, 16 selections and 64 KiB retained selection
 text); failing edits are atomic. The picker performs no discovery, materialization,
 permission granting or filesystem effects.
+
+Picker substring queries use ASCII-only case-insensitive byte matching. Each
+filter preprocesses the bounded query once and performs linear work in scanned
+name, description and location bytes, including repetitive prefixes. The CLI
+does not repeat a cursor transition already applied by an exact edit receipt;
+explicit native cursor transitions still invalidate frames.
 
 The CLI menu projection is separately effect-free. It returns one escaped,
 64 KiB-bounded frame with at most 128 physical rows, 480 projected bytes per
