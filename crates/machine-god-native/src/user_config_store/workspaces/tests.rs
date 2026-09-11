@@ -4,7 +4,7 @@ use crate::{
 };
 use futures_executor::block_on;
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -570,16 +570,21 @@ fn busy_lock_is_not_retried_and_foreign_temp_is_not_removed() {
     let fixture = Fixture::new();
     let original = fixture.legacy();
     let store = fixture.store();
-    let snapshot = store.load().unwrap();
-    let root = snapshot.root.as_ref().unwrap();
-    let lock = open_lock(root).unwrap();
-    let guard = lock_config(&lock).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(fixture.root().join(LOCK))
+        .unwrap();
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive).unwrap();
     assert_eq!(
         block_on(store.apply_workspace_directory_mutation(b"/work", &add(b"/extra"), &[]))
             .unwrap_err(),
         NativeUserConfigError::Busy
     );
-    drop(guard);
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::Unlock).unwrap();
     fs::write(fixture.root().join(TEMP), b"owned elsewhere").unwrap();
     assert_eq!(
         block_on(store.apply_workspace_directory_mutation(b"/work", &add(b"/extra"), &[]))

@@ -356,7 +356,7 @@ impl NativeConfigError {
         self.kind
     }
 
-    const fn new(kind: NativeConfigErrorKind) -> Self {
+    pub(crate) const fn new(kind: NativeConfigErrorKind) -> Self {
         Self { kind }
     }
 }

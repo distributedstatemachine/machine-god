@@ -1,17 +1,12 @@
 //! Latest-state workspace mutations; the existing snapshot-CAS routes are separate.
 
-use std::fs::File;
-
-use rustix::fd::OwnedFd;
-use rustix::fs::{Mode, OFlags};
-
-use super::{
-    DATA, LOCK, NativeUserConfigError, NativeUserConfigStore, TEMP, decode, lock_config, open_lock,
-    open_root, read_current, remove_owned_temp, same_file, validate_link, validate_private,
-    write_bounded,
-};
+#[cfg(test)]
+use super::{DATA, LOCK, TEMP};
+use super::{NativeUserConfigError, NativeUserConfigStore, decode};
 use crate::LoadedNativeConfig;
+use crate::bounded_profile_file::{PublicationDurability, UpdateMode};
 use crate::config::{NativeSavedWorkspaceDirectory, NativeWorkspaceDirectoryMutation};
+use rustix::fd::OwnedFd;
 
 /// Ephemeral identity evidence from the accepted retained workspace authority.
 /// It applies only while the entire saved record remains exactly unchanged.
@@ -155,36 +150,10 @@ impl NativeUserConfigStore {
             return unchanged(snapshot.loaded, primary);
         }
         before_lock();
-        let name = self.component()?;
-        let parent = snapshot
-            .parent
-            .resolve(true)?
-            .ok_or(NativeUserConfigError::Persistence)?;
-        let observed = open_root(parent.descriptor(), name)?;
-        let root = match (&snapshot.root, observed) {
-            (Some(expected), Some(actual)) if same_file(expected, &actual)? => actual,
-            (None, Some(actual)) => actual,
-            (None, None) => {
-                match rustix::fs::mkdirat(parent.descriptor(), name, Mode::from_raw_mode(0o700)) {
-                    Ok(()) => {}
-                    Err(error) if error == rustix::io::Errno::EXIST => {}
-                    Err(_) => return Err(NativeUserConfigError::Persistence),
-                }
-                let root = open_root(parent.descriptor(), name)?
-                    .ok_or(NativeUserConfigError::Persistence)?;
-                rustix::fs::fsync(parent.descriptor())
-                    .map_err(|_| NativeUserConfigError::Persistence)?;
-                root
-            }
-            _ => return Err(NativeUserConfigError::Conflict),
-        };
-        let lock = open_lock(&root)?;
-        let _guard = lock_config(&lock)?;
-        parent.validate()?;
-        validate_link(parent.descriptor(), name, &root)?;
-        validate_link(&root, LOCK, &lock)?;
-        let bytes = read_current(&root)?;
-        let latest = decode(bytes.as_deref())?;
+        let transaction = self
+            .file
+            .begin(&snapshot.observed, UpdateMode::MergeLatest)?;
+        let latest = decode(transaction.current_bytes())?;
         let (candidate, changed) = latest
             .config()
             .with_workspace_directory_mutation(primary, mutation)
@@ -205,14 +174,10 @@ impl NativeUserConfigStore {
         let encoded = candidate
             .serialize_current()
             .map_err(NativeUserConfigError::InvalidConfig)?;
-        let publication = WorkspacePublication {
-            parent: &parent,
-            name,
-            root: &root,
-            lock: &lock,
-            previous: bytes.as_deref(),
+        let durability = match transaction.publish(&encoded, sync_directory)? {
+            PublicationDurability::Confirmed => NativeWorkspaceCommitDurability::Confirmed,
+            PublicationDurability::Ambiguous => NativeWorkspaceCommitDurability::Ambiguous,
         };
-        let durability = publication.publish(&encoded, sync_directory)?;
         Ok(NativeUserWorkspaceCommit {
             before,
             after,
@@ -289,67 +254,6 @@ fn unchanged(
         changed: false,
         durability: NativeWorkspaceCommitDurability::Confirmed,
     })
-}
-
-struct WorkspacePublication<'a> {
-    parent: &'a super::parents::ResolvedParent<'a>,
-    name: &'a std::ffi::OsStr,
-    root: &'a OwnedFd,
-    lock: &'a OwnedFd,
-    previous: Option<&'a [u8]>,
-}
-
-impl WorkspacePublication<'_> {
-    fn publish(
-        &self,
-        encoded: &[u8],
-        sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
-    ) -> Result<NativeWorkspaceCommitDurability, NativeUserConfigError> {
-        let temp = rustix::fs::openat(
-            self.root,
-            TEMP,
-            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::from_raw_mode(0o600),
-        )
-        .map_err(|_| NativeUserConfigError::Persistence)?;
-        let mut temp = File::from(temp);
-        if rustix::fs::fchmod(&temp, Mode::RUSR | Mode::WUSR).is_err()
-            || validate_private(&temp, false).is_err()
-            || write_bounded(&mut temp, encoded).is_err()
-            || temp.sync_all().is_err()
-        {
-            remove_owned_temp(self.root, &temp);
-            return Err(NativeUserConfigError::Persistence);
-        }
-        let checked = (|| {
-            self.parent.validate()?;
-            validate_link(self.parent.descriptor(), self.name, self.root)?;
-            validate_link(self.root, LOCK, self.lock)?;
-            validate_link(self.root, TEMP, &temp)?;
-            if read_current(self.root)?.as_deref() != self.previous {
-                return Err(NativeUserConfigError::Conflict);
-            }
-            Ok(())
-        })();
-        if let Err(error) = checked {
-            remove_owned_temp(self.root, &temp);
-            return Err(error);
-        }
-        if rustix::fs::renameat(self.root, TEMP, self.root, DATA).is_err() {
-            remove_owned_temp(self.root, &temp);
-            return Err(NativeUserConfigError::Persistence);
-        }
-        Ok(
-            if sync_directory(self.root).is_err()
-                || self.parent.validate().is_err()
-                || validate_link(self.parent.descriptor(), self.name, self.root).is_err()
-            {
-                NativeWorkspaceCommitDurability::Ambiguous
-            } else {
-                NativeWorkspaceCommitDurability::Confirmed
-            },
-        )
-    }
 }
 
 #[cfg(test)]

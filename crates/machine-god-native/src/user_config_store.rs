@@ -1,33 +1,32 @@
 //! Explicit, descriptor-bound publication of native user defaults.
 
 use std::fmt;
-use std::fs::File;
-use std::io::Write;
-use std::os::unix::ffi::OsStrExt;
-use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
+use crate::bounded_profile_file::{
+    ProfileFile, ProfileFileError, ProfileFileKind, ProfileObservation, PublicationDurability,
+    UpdateMode,
+};
 use rustix::fd::OwnedFd;
-use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags};
 
 use crate::config::{
     NativeConfiguredPermissionMutation, NativeConfiguredPermissionMutationOutcome,
-    NativeConfiguredPermissionScope, parse_config_bytes, read_bounded,
+    NativeConfiguredPermissionScope, parse_config_bytes,
 };
 use crate::{LoadedNativeConfig, NativeConfigError, NativeModelPreferences};
 
+#[cfg(test)]
 mod parents;
 mod workspaces;
 pub(crate) use workspaces::WorkspaceDirectoryAlias;
 pub use workspaces::{NativeUserWorkspaceCommit, NativeWorkspaceCommitDurability};
 
+#[cfg(test)]
 const DATA: &str = "config.json";
+#[cfg(test)]
 const LOCK: &str = ".config.lock";
+#[cfg(test)]
 const TEMP: &str = ".config.tmp";
-const READ: OFlags = OFlags::RDONLY
-    .union(OFlags::NOFOLLOW)
-    .union(OFlags::CLOEXEC)
-    .union(OFlags::NONBLOCK);
 
 /// A fixed, redacted user-default persistence outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,8 +62,7 @@ impl std::error::Error for NativeUserConfigError {}
 
 /// Explicit authority over one configuration directory; construction is inert.
 pub struct NativeUserConfigStore {
-    directory: PathBuf,
-    identity: Arc<()>,
+    file: ProfileFile,
 }
 
 impl fmt::Debug for NativeUserConfigStore {
@@ -80,10 +78,7 @@ impl fmt::Debug for NativeUserConfigStore {
 /// existing root descriptor. Bound to its originating store instance.
 pub struct NativeUserConfigSnapshot {
     loaded: LoadedNativeConfig,
-    bytes: Option<Vec<u8>>,
-    parent: parents::ParentObservation,
-    root: Option<OwnedFd>,
-    identity: Arc<()>,
+    observed: ProfileObservation,
 }
 
 /// Confirmed persistent result, independent of any later runtime reload.
@@ -113,26 +108,8 @@ impl NativeUserConfigStore {
     #[must_use]
     pub fn new(directory: PathBuf) -> Self {
         Self {
-            directory,
-            identity: Arc::new(()),
+            file: ProfileFile::new(directory, ProfileFileKind::Settings),
         }
-    }
-
-    fn component(&self) -> Result<&std::ffi::OsStr, NativeUserConfigError> {
-        if !self.directory.is_absolute()
-            || self.directory.as_os_str().as_bytes().len() > 4096
-            || self.directory.as_os_str().as_bytes().contains(&0)
-            || self.directory.components().count() > 64
-            || self
-                .directory
-                .components()
-                .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
-        {
-            return Err(NativeUserConfigError::UnsafePath);
-        }
-        self.directory
-            .file_name()
-            .ok_or(NativeUserConfigError::UnsafePath)
     }
 
     /// Reads a bounded snapshot without creating files, directories or locks.
@@ -140,31 +117,9 @@ impl NativeUserConfigStore {
     /// # Errors
     /// Rejects unsafe roots, invalid configurations and unavailable parent authority.
     pub fn load(&self) -> Result<NativeUserConfigSnapshot, NativeUserConfigError> {
-        let component = self.component()?;
-        let parent = parents::ParentObservation::observe(
-            self.directory
-                .parent()
-                .ok_or(NativeUserConfigError::UnsafePath)?,
-        )?;
-        let resolved = parent.resolve(false)?;
-        let root = resolved
-            .as_ref()
-            .map(|parent| open_root(parent.descriptor(), component))
-            .transpose()?
-            .flatten();
-        let bytes = root.as_ref().map(read_current).transpose()?.flatten();
-        let loaded = decode(bytes.as_deref())?;
-        if let Some(resolved) = &resolved {
-            resolved.validate()?;
-        }
-        drop(resolved);
-        Ok(NativeUserConfigSnapshot {
-            loaded,
-            bytes,
-            parent,
-            root,
-            identity: self.identity.clone(),
-        })
+        let observed = self.file.observe()?;
+        let loaded = decode(observed.bytes())?;
+        Ok(NativeUserConfigSnapshot { loaded, observed })
     }
 
     /// Atomically upgrades and changes only the requested default model controls.
@@ -225,9 +180,7 @@ impl NativeUserConfigStore {
         mutation: &NativeConfiguredPermissionMutation,
         sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
     ) -> Result<NativeUserPermissionCommit, NativeUserConfigError> {
-        if !Arc::ptr_eq(&self.identity, &snapshot.identity) {
-            return Err(NativeUserConfigError::Conflict);
-        }
+        self.file.validate_identity(&snapshot.observed)?;
         let (config, outcome) = snapshot
             .loaded
             .config()
@@ -246,29 +199,9 @@ impl NativeUserConfigStore {
         &self,
         snapshot: &NativeUserConfigSnapshot,
     ) -> Result<(), NativeUserConfigError> {
-        let name = self.component()?;
-        let Some(parent) = snapshot.parent.resolve(false)? else {
-            return if snapshot.root.is_none() && snapshot.bytes.is_none() {
-                Ok(())
-            } else {
-                Err(NativeUserConfigError::Conflict)
-            };
-        };
-        let observed = open_root(parent.descriptor(), name)?;
-        let bytes = match (&snapshot.root, observed) {
-            (Some(expected), Some(actual)) if same_file(expected, &actual)? => {
-                let bytes = read_current(&actual)?;
-                validate_link(parent.descriptor(), name, &actual)?;
-                bytes
-            }
-            (None, None) => None,
-            _ => return Err(NativeUserConfigError::Conflict),
-        };
-        if bytes != snapshot.bytes {
-            return Err(NativeUserConfigError::Conflict);
-        }
-        parent.validate()?;
-        Ok(())
+        self.file
+            .validate_unchanged(&snapshot.observed)
+            .map_err(Into::into)
     }
 
     fn publish_config(
@@ -277,146 +210,37 @@ impl NativeUserConfigStore {
         config: crate::NativeConfig,
         sync_directory: impl FnOnce(&OwnedFd) -> rustix::io::Result<()>,
     ) -> Result<LoadedNativeConfig, NativeUserConfigError> {
-        if !Arc::ptr_eq(&self.identity, &snapshot.identity) {
-            return Err(NativeUserConfigError::Conflict);
-        }
-        // Bound the complete candidate before any directory, lock or temp creation.
+        self.file.validate_identity(&snapshot.observed)?;
         let encoded = config
             .serialize_current()
             .map_err(NativeUserConfigError::InvalidConfig)?;
-        let name = self.component()?;
-        let parent = snapshot
-            .parent
-            .resolve(true)?
-            .ok_or(NativeUserConfigError::Persistence)?;
-        let observed = open_root(parent.descriptor(), name)?;
-        let root = match (&snapshot.root, observed) {
-            (Some(expected), Some(actual)) if same_file(expected, &actual)? => actual,
-            (None, None) => {
-                rustix::fs::mkdirat(parent.descriptor(), name, Mode::from_raw_mode(0o700))
-                    .map_err(|_| NativeUserConfigError::Conflict)?;
-                let root = open_root(parent.descriptor(), name)?
-                    .ok_or(NativeUserConfigError::Persistence)?;
-                rustix::fs::fsync(parent.descriptor())
-                    .map_err(|_| NativeUserConfigError::Persistence)?;
-                root
-            }
-            _ => return Err(NativeUserConfigError::Conflict),
-        };
-        parent.validate()?;
-        let lock = open_lock(&root)?;
-        let _lock_guard = lock_config(&lock)?;
-        validate_link(&root, LOCK, &lock)?;
-        let bytes = read_current(&root)?;
-        decode(bytes.as_deref())?;
-        if bytes != snapshot.bytes {
-            return Err(NativeUserConfigError::Conflict);
+        let transaction = self
+            .file
+            .begin(&snapshot.observed, UpdateMode::CompareAndSwap)?;
+        // Keep settings' error precedence: malformed latest data is not a CAS retry.
+        decode(transaction.current_bytes())?;
+        if transaction.publish(&encoded, sync_directory)? == PublicationDurability::Ambiguous {
+            return Err(NativeUserConfigError::CommitAmbiguous);
         }
-        let temp = rustix::fs::openat(
-            &root,
-            TEMP,
-            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::from_raw_mode(0o600),
-        )
-        .map_err(|_| NativeUserConfigError::Persistence)?;
-        let mut temp = File::from(temp);
-        if rustix::fs::fchmod(&temp, Mode::RUSR | Mode::WUSR).is_err()
-            || validate_private(&temp, false).is_err()
-        {
-            remove_owned_temp(&root, &temp);
-            return Err(NativeUserConfigError::Persistence);
-        }
-        let prepared = write_bounded(&mut temp, &encoded).and_then(|()| temp.sync_all());
-        if prepared.is_err() {
-            remove_owned_temp(&root, &temp);
-            return Err(NativeUserConfigError::Persistence);
-        }
-        // Recheck both links and bytes while holding the cooperative writer lock.
-        let checked = (|| {
-            parent.validate()?;
-            validate_link(parent.descriptor(), name, &root)?;
-            validate_link(&root, LOCK, &lock)?;
-            validate_link(&root, TEMP, &temp)?;
-            if read_current(&root)? != snapshot.bytes {
-                return Err(NativeUserConfigError::Conflict);
-            }
-            Ok(())
-        })();
-        if let Err(error) = checked {
-            remove_owned_temp(&root, &temp);
-            return Err(error);
-        }
-        if rustix::fs::renameat(&root, TEMP, &root, DATA).is_err() {
-            remove_owned_temp(&root, &temp);
-            return Err(NativeUserConfigError::Persistence);
-        }
-        sync_directory(&root).map_err(|_| NativeUserConfigError::CommitAmbiguous)?;
-        parent
-            .validate()
-            .map_err(|_| NativeUserConfigError::CommitAmbiguous)?;
-        validate_link(parent.descriptor(), name, &root)
-            .map_err(|_| NativeUserConfigError::CommitAmbiguous)?;
         Ok(LoadedNativeConfig::from_file(config))
     }
 }
 
-#[must_use = "retain the guard until the configuration transaction completes"]
-struct ConfigLockGuard<'a>(&'a OwnedFd);
-
-impl Drop for ConfigLockGuard<'_> {
-    fn drop(&mut self) {
-        // An inherited or duplicated open-file description may outlive the local
-        // descriptor. Explicit nonblocking unlock releases its shared lock now;
-        // local close remains the fallback on a non-interruption OS failure.
-        let _ = retry_lock_interrupted(|| rustix::fs::flock(self.0, FlockOperation::Unlock));
-    }
-}
-
-fn lock_config(lock: &OwnedFd) -> Result<ConfigLockGuard<'_>, NativeUserConfigError> {
-    retry_lock_interrupted(|| rustix::fs::flock(lock, FlockOperation::NonBlockingLockExclusive))
-        .map_err(|error| {
-            if error == rustix::io::Errno::WOULDBLOCK {
-                NativeUserConfigError::Busy
-            } else {
-                NativeUserConfigError::Persistence
-            }
-        })?;
-    Ok(ConfigLockGuard(lock))
-}
-
-fn retry_lock_interrupted<T>(
-    mut operation: impl FnMut() -> rustix::io::Result<T>,
-) -> rustix::io::Result<T> {
-    loop {
-        match operation() {
-            Err(rustix::io::Errno::INTR) => {}
-            result => return result,
+impl From<ProfileFileError> for NativeUserConfigError {
+    fn from(error: ProfileFileError) -> Self {
+        match error {
+            ProfileFileError::UnsafePath => Self::UnsafePath,
+            ProfileFileError::Busy => Self::Busy,
+            ProfileFileError::Conflict => Self::Conflict,
+            ProfileFileError::Persistence => Self::Persistence,
+            ProfileFileError::TooLarge => Self::InvalidConfig(NativeConfigError::new(
+                crate::NativeConfigErrorKind::TooLarge,
+            )),
+            ProfileFileError::Unreadable => Self::InvalidConfig(NativeConfigError::new(
+                crate::NativeConfigErrorKind::Unreadable,
+            )),
         }
     }
-}
-
-fn remove_owned_temp(root: &OwnedFd, temp: &File) {
-    if validate_link(root, TEMP, temp).is_ok() {
-        let _ = rustix::fs::unlinkat(root, TEMP, AtFlags::empty());
-    }
-}
-
-fn write_bounded(writer: &mut impl Write, mut bytes: &[u8]) -> std::io::Result<()> {
-    let mut interruptions = 0;
-    while !bytes.is_empty() {
-        match writer.write(bytes) {
-            Ok(written) if written > 0 && written <= bytes.len() => bytes = &bytes[written..],
-            Ok(_) => return Err(std::io::ErrorKind::WriteZero.into()),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
-                interruptions += 1;
-                if interruptions >= 16 {
-                    return Err(error);
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
 }
 
 fn decode(bytes: Option<&[u8]>) -> Result<LoadedNativeConfig, NativeUserConfigError> {
@@ -430,200 +254,10 @@ fn decode(bytes: Option<&[u8]>) -> Result<LoadedNativeConfig, NativeUserConfigEr
     )
 }
 
-fn open_root(
-    parent: &OwnedFd,
-    name: &std::ffi::OsStr,
-) -> Result<Option<OwnedFd>, NativeUserConfigError> {
-    match rustix::fs::openat(parent, name, READ | OFlags::DIRECTORY, Mode::empty()) {
-        Ok(root) => {
-            validate_private(&root, true)?;
-            Ok(Some(root))
-        }
-        Err(e) if e == rustix::io::Errno::NOENT => Ok(None),
-        Err(_) => Err(NativeUserConfigError::UnsafePath),
-    }
-}
-
-fn validate_private(
-    fd: &impl rustix::fd::AsFd,
-    directory: bool,
-) -> Result<(), NativeUserConfigError> {
-    let stat = rustix::fs::fstat(fd).map_err(|_| NativeUserConfigError::Persistence)?;
-    let kind = FileType::from_raw_mode(stat.st_mode);
-    if stat.st_uid != nix::unistd::Uid::effective().as_raw()
-        || stat.st_mode & 0o077 != 0
-        || if directory {
-            !kind.is_dir()
-        } else {
-            !kind.is_file() || stat.st_nlink != 1
-        }
-    {
-        return Err(NativeUserConfigError::UnsafePath);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let acl = calcifer_macos_acl::read_acl(fd.as_fd())
-            .map_err(|_| NativeUserConfigError::UnsafePath)?;
-        if acl.flags != 0
-            || acl.entries.iter().any(|entry| {
-                entry.tag != calcifer_macos_acl::TAG_DENY
-                    || entry.flags != 0
-                    || entry.permissions != calcifer_macos_acl::PERMISSION_DELETE
-            })
-        {
-            return Err(NativeUserConfigError::UnsafePath);
-        }
-    }
-    Ok(())
-}
-
-fn same_file(
-    a: &impl rustix::fd::AsFd,
-    b: &impl rustix::fd::AsFd,
-) -> Result<bool, NativeUserConfigError> {
-    let a = rustix::fs::fstat(a).map_err(|_| NativeUserConfigError::Persistence)?;
-    let b = rustix::fs::fstat(b).map_err(|_| NativeUserConfigError::Persistence)?;
-    Ok(a.st_dev == b.st_dev && a.st_ino == b.st_ino)
-}
-
-fn validate_link(
-    parent: &OwnedFd,
-    name: impl rustix::path::Arg,
-    fd: &impl rustix::fd::AsFd,
-) -> Result<(), NativeUserConfigError> {
-    let linked = rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|_| NativeUserConfigError::Conflict)?;
-    let opened = rustix::fs::fstat(fd).map_err(|_| NativeUserConfigError::Persistence)?;
-    if linked.st_dev != opened.st_dev || linked.st_ino != opened.st_ino {
-        return Err(NativeUserConfigError::Conflict);
-    }
-    Ok(())
-}
-
-fn read_current(root: &OwnedFd) -> Result<Option<Vec<u8>>, NativeUserConfigError> {
-    let fd = match rustix::fs::openat(root, DATA, READ, Mode::empty()) {
-        Ok(fd) => fd,
-        Err(e) if e == rustix::io::Errno::NOENT => return Ok(None),
-        Err(_) => return Err(NativeUserConfigError::UnsafePath),
-    };
-    // Existing legacy files may be world-readable; never accept nonregular or
-    // multiply-linked entries. New publications always have private permissions.
-    let stat = rustix::fs::fstat(&fd).map_err(|_| NativeUserConfigError::Persistence)?;
-    if !FileType::from_raw_mode(stat.st_mode).is_file()
-        || stat.st_nlink != 1
-        || stat.st_uid != nix::unistd::Uid::effective().as_raw()
-        || stat.st_mode & 0o022 != 0
-    {
-        return Err(NativeUserConfigError::UnsafePath);
-    }
-    let mut file = File::from(fd);
-    read_bounded(&mut file)
-        .map(Some)
-        .map_err(NativeUserConfigError::InvalidConfig)
-}
-
-fn open_lock(root: &OwnedFd) -> Result<OwnedFd, NativeUserConfigError> {
-    let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
-    let fd = match rustix::fs::openat(
-        root,
-        LOCK,
-        flags | OFlags::CREATE | OFlags::EXCL,
-        Mode::from_raw_mode(0o600),
-    ) {
-        Ok(fd) => {
-            rustix::fs::fchmod(&fd, Mode::RUSR | Mode::WUSR)
-                .map_err(|_| NativeUserConfigError::Persistence)?;
-            fd
-        }
-        Err(e) if e == rustix::io::Errno::EXIST => {
-            rustix::fs::openat(root, LOCK, flags, Mode::empty())
-                .map_err(|_| NativeUserConfigError::UnsafePath)?
-        }
-        Err(_) => return Err(NativeUserConfigError::Persistence),
-    };
-    validate_private(&fd, false)?;
-    Ok(fd)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-
-    #[test]
-    fn config_lock_scope_releases_a_surviving_open_description_duplicate() {
-        let directory =
-            std::env::temp_dir().join(format!("mg-user-config-lock-{}", std::process::id()));
-        std::fs::create_dir(&directory).unwrap();
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let root = rustix::fs::open(&directory, READ | OFlags::DIRECTORY, Mode::empty()).unwrap();
-        let survivor = {
-            let original = open_lock(&root).unwrap();
-            let _guard = lock_config(&original).unwrap();
-            let survivor = rustix::io::dup(&original).unwrap();
-            let contender = open_lock(&root).unwrap();
-            assert!(matches!(
-                lock_config(&contender),
-                Err(NativeUserConfigError::Busy)
-            ));
-            survivor
-        };
-        let contender = open_lock(&root).unwrap();
-        let acquired = lock_config(&contender).unwrap();
-        drop(acquired);
-        drop(survivor);
-        drop(contender);
-        drop(root);
-        std::fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn config_lock_retries_interruption_but_not_busy_or_other_errors() {
-        let mut calls = 0;
-        let result = retry_lock_interrupted(|| {
-            calls += 1;
-            if calls < 3 {
-                Err(rustix::io::Errno::INTR)
-            } else {
-                Ok(7)
-            }
-        });
-        assert_eq!(result, Ok(7));
-        assert_eq!(calls, 3);
-        for error in [rustix::io::Errno::WOULDBLOCK, rustix::io::Errno::IO] {
-            let mut calls = 0;
-            let result: rustix::io::Result<()> = retry_lock_interrupted(|| {
-                calls += 1;
-                Err(error)
-            });
-            assert_eq!(result, Err(error));
-            assert_eq!(calls, 1);
-        }
-    }
-
-    #[test]
-    fn write_interruptions_are_bounded_even_with_partial_progress() {
-        struct InterruptedWriter(usize);
-        impl Write for InterruptedWriter {
-            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                self.0 += 1;
-                if self.0.is_multiple_of(2) {
-                    Ok(1)
-                } else {
-                    Err(std::io::ErrorKind::Interrupted.into())
-                }
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut writer = InterruptedWriter(0);
-        assert_eq!(
-            write_bounded(&mut writer, &[0; 64]).unwrap_err().kind(),
-            std::io::ErrorKind::Interrupted
-        );
-        assert_eq!(writer.0, 31);
-    }
 
     #[test]
     fn failed_directory_sync_after_rename_is_ambiguous_and_new_bytes_are_observable() {

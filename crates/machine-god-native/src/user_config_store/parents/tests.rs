@@ -229,7 +229,10 @@ fn failed_ancestor_sync_reports_failure_and_retains_created_directory_truthfully
     let fixture = Fixture::new();
     let observed = ParentObservation::observe(fixture.root().parent().unwrap()).unwrap();
     let result = observed.resolve_with_sync(true, |_| Err(rustix::io::Errno::IO));
-    assert!(matches!(result, Err(Error::Persistence)));
+    assert!(matches!(
+        result,
+        Err(crate::bounded_profile_file::ProfileFileError::Persistence)
+    ));
     assert!(fixture.missing().is_dir());
     assert!(!fixture.missing().join("nested").exists());
     assert!(!fixture.root().exists());
