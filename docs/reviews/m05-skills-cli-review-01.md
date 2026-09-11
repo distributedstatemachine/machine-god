@@ -111,3 +111,38 @@ after cherry-pick integration; external logs and build caches were retained.
 The query worktree was likewise removed after integration. Its external
 diagnostics remain under `/private/tmp/mg-skills-query-r1.6X0LSL`, including
 `query-linear-accepted.log` for the final committed matcher.
+
+## Independent review round 2
+
+Candidate `b84afebc18b94ab12eb985d2fc0cf55a5ee0d3d5`, tree
+`90ef2cb8a454ba120b3030a7570a94824a1a86b7`, retained the same base. Its complete
+replacement local gate passed on macOS and Linux before fresh reviews began.
+Exact Rust 1.94.1 formatting, strict Clippy, fresh locked release builds,
+focused CLI (44) and native skills (175) tests, full workspace tests, explicit
+doctests and official release smoke checks passed. The macOS workspace included
+446 CLI and 2,452 native passing unit tests, with existing ignored fixture
+entries; Linux retained default concurrency under its unprivileged environment.
+The Python suite passed 269 tests with 14 platform skips. Documentation policy,
+upstream drift, dependency policy/audit and FreeBSD/WASI checks also passed.
+Linux runtime and smoke finished before macOS runtime began.
+
+Mac evidence is retained under `/private/tmp/mg-skills-r1-replacement.hgx1ji`;
+Linux evidence is candidate-SHA-prefixed under the existing Linux evidence
+directory. Both sources remained clean, and fresh release hashes were verified
+before/after runtime and smoke. This was regression evidence, not an M07 claim.
+
+Fresh local reviewers `skills_review_r2_correctness`,
+`skills_review_r2_lifecycle`, and `skills_review_r2_resources` inspected the full
+feature. Correctness/API and lifecycle/platform each reported zero actionable
+introduced findings. Resource review reported one grouped P2 finding:
+
+| Finding | Historical source location | Evidence and required repair |
+| --- | --- | --- |
+| R2-1: oversized paths copied before admission bounds | `skills_roots.rs:76`, `skills_managed/planning.rs:118` | Root-authority construction normalized/cloned an arbitrary owned label before its 4,096-byte rejection. Relative local installation joined/normalized an arbitrary borrowed cwd repeatedly before the same bound. Reject oversized borrowed path representations before additional allocation, preserving bounded normalization and ignoring unused cwd for absolute local/Git sources. |
+
+The finding was supported by static public-API call paths, not a new runtime
+reproduction. A separate `.git*` resource-exclusion lead was ruled out because
+the pinned upstream uses the same prefix exclusion. All three reviews were
+local, not Bugbot, and performed no builds or process tests. Their clean
+unchanged worktrees were removed after review. The candidate was rejected and
+was not pushed or merged.
