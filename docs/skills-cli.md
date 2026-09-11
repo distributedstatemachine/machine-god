@@ -45,6 +45,8 @@ contents and obtain the appropriate owned admission.
 `NativeSkillRoot` values. Each root carries a retained directory, a relative
 discovery location, reporting labels, provenance and link policy. Construction
 validates these values without opening paths or consulting the environment.
+Directory-authority labels pass the existing catalog path policy on borrowed
+input before normalization or copying, including the 4,096-byte raw-path bound.
 Discovery scans one child-directory level per root. Missing ordinary roots are
 empty; unreadable or malformed candidates, broken links and exhausted bounds
 produce diagnostics and an incomplete snapshot. Hidden skill basenames remain
@@ -157,6 +159,10 @@ back to the network. Unsupported schemes/options are errors. These are
 intentional authority-preserving differences from upstream's local fallback.
 Explicit install filters are checked as borrowed UTF-8 text against the 256-byte
 name bound before retaining a copy; absent and empty filters remain equivalent.
+Relative local sources validate the borrowed current-directory and joined path
+against the 4,096-byte bound before allocating the join or normalizing its
+basename. Absolute local and Git sources ignore the unused current-directory
+argument. Bounded local dot/parent spelling retains its existing interpretation.
 
 Install planning includes root and nested skills, metadata-name/basename filters,
 deterministic destination selection and collision checks, including filesystem

@@ -146,3 +146,25 @@ the pinned upstream uses the same prefix exclusion. All three reviews were
 local, not Bugbot, and performed no builds or process tests. Their clean
 unchanged worktrees were removed after review. The candidate was rejected and
 was not pushed or merged.
+
+## Review round 2 remediation
+
+Two isolated implementation lanes repaired the grouped admission finding:
+
+- Managed paths: `f32e83f01915e65cdba41225fb9a7de4a60dbb59`, integrated as
+  `244f94f1`, bounds borrowed cwd and joined path bytes before copying or
+  normalization. Absolute local and Git sources continue to ignore unused cwd,
+  and cancellation keeps precedence. All 45 focused managed tests passed,
+  including five new allocation, boundary, normalization and unused-cwd cases.
+- Root labels: `fc40440fb34fa6187ed079e39498605fb6b63c7f`, integrated as
+  `a1a76aa5`, reuses the existing catalog validator before normalization/copying.
+  The shared raw-byte check now precedes UTF-8 conversion. The allocation control
+  first reproduced 16,777,226 extra bytes for an 8 MiB owned label versus 8,202
+  bytes for a 4,097-byte label; repaired rejection allocates zero additional
+  bytes. All 20 root and 30 catalog tests passed, including exact bounds,
+  normalization and invalid UTF-8 cases.
+
+Both lanes passed exact Rust 1.94.1 strict native all-target/all-feature Clippy,
+formatting and diff checks. Their clean committed worktrees were removed after
+integration, preserving external logs/caches. These focused results do not
+replace the complete candidate gate or fresh review cycle.
