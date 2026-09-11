@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `combined native profile-management and CLI regression gate, then production runtime composition before the complete feature gate`
+- Next gate: `production runtime, permission routing and CLI activation; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -396,10 +396,16 @@ Clippy, 203 MCP unit tests, 42 shared/settings unit tests, 28 process-helper
 regressions (plus two existing ignored helper entrypoints), the seven selected
 integration suites (including the subprocess fixture), and native doctests.
 Its process fixtures used a fresh debug helper after all builds finished.
-Native profile-management controls and thin `/mcp` startup/dispatch/receipts
-are being integrated next. Their combined check is pending; configuration saves
-explicitly do not activate a runtime. This remains internal feature work, not
-a new delivery or the complete release/platform/adversarial gate.
+Native profile-management controls and thin `/mcp` startup/dispatch/receipts are
+integrated; configuration saves explicitly do not activate a runtime. After
+fixing four integration lint findings without suppressions, the replacement gate
+at `b3a48750` passed formatting, strict workspace Clippy, 219 MCP and 458 CLI
+tests (six pre-existing ignored CLI tests), 13 interactive-host tests, six shared
+skills-control regressions, 16 slash tests, the seven selected integration suites
+and workspace doctests. A fresh locked canonical release passed help/version
+smokes and supplied the process helper after all builds finished. All worktrees
+are removed and the source was frozen for these checks. This is internal feature
+validation, not a new delivery or the complete workspace/platform/adversarial gate.
 Core's exact-turn cancellation
 observer passed the complete core tests, explicit doctests and strict Clippy.
 All completed component worktrees are removed; evidence and build caches remain.
