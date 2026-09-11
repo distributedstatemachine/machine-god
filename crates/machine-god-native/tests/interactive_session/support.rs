@@ -130,10 +130,33 @@ pub struct Fixture {
     _temporary: TemporaryDirectory,
 }
 
+#[derive(Clone, Copy)]
 enum FixtureExtension {
     None,
     Skills,
     Mcp,
+}
+
+impl FixtureExtension {
+    fn apply(
+        self,
+        options: NativeReferenceHostConversationOptions,
+        workspace: &Path,
+        state: &Path,
+    ) -> NativeReferenceHostConversationOptions {
+        match self {
+            Self::None => options,
+            Self::Skills => options.with_skills(skills_service(state)),
+            Self::Mcp => options.with_mcp_management(Arc::new(
+                super::native::mcp::management::NativeMcpManagementService::new(Arc::new(
+                    super::native::mcp::store::NativeMcpConfigStore::new(
+                        workspace.parent().unwrap().join("mcp-profile"),
+                    )
+                    .unwrap(),
+                )),
+            )),
+        }
+    }
 }
 
 impl Fixture {
@@ -241,18 +264,7 @@ impl Fixture {
                 Arc::new(super::native::NativeWorkspaceContexts::new()),
             );
         }
-        options = match extension {
-            FixtureExtension::None => options,
-            FixtureExtension::Skills => options.with_skills(skills_service(&state_root)),
-            FixtureExtension::Mcp => options.with_mcp_management(Arc::new(
-                super::native::mcp::management::NativeMcpManagementService::new(Arc::new(
-                    super::native::mcp::store::NativeMcpConfigStore::new(
-                        workspace.parent().unwrap().join("mcp-profile"),
-                    )
-                    .unwrap(),
-                )),
-            )),
-        };
+        options = extension.apply(options, &workspace, &state_root);
         let transport = ScriptedTransport::default();
         let host = Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             config, Arc::new(transport.clone()), NetworkTarget {

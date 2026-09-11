@@ -3,6 +3,7 @@ use native::mcp::{
     management::{McpManagementActivation, NativeMcpManagementError, NativeMcpManagementReceipt},
     store::McpConfigCommitDurability,
 };
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn mcp_slash_recognition_and_help_preserve_the_global_envelope() {
@@ -126,7 +127,6 @@ fn cancelled_mcp_mutation_is_inert_and_malformed_selected_store_is_not_hidden() 
         ));
         assert!(!profile.exists());
         std::fs::create_dir(&profile).unwrap();
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
         let file = profile.join("mcp.json");
         std::fs::write(&file, b"invalid selected configuration").unwrap();

@@ -1166,23 +1166,31 @@ fn session_save_name(value: &NativeModelPreferencePersistence) -> &'static str {
 
 mod background;
 
-pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
-    use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
-
-    match &outcome.result {
+fn render_profile_control(
+    outcome: &NativeInteractiveControlOutcome,
+) -> Option<Result<Vec<u8>, ()>> {
+    use machine_god_native::NativeInteractiveControlError;
+    Some(match &outcome.result {
         Ok(NativeInteractiveControlReceipt::Mcp(receipt)) => {
-            return super::mcp_receipts::render(outcome.id.get(), Ok(receipt));
+            super::mcp_receipts::render(outcome.id.get(), Ok(receipt))
         }
         Err(NativeInteractiveControlError::Mcp(error)) => {
-            return super::mcp_receipts::render(outcome.id.get(), Err(error));
+            super::mcp_receipts::render(outcome.id.get(), Err(error))
         }
         Ok(NativeInteractiveControlReceipt::Skills(receipt)) => {
-            return super::skills_receipts::render(outcome.id.get(), Ok(receipt));
+            super::skills_receipts::render(outcome.id.get(), Ok(receipt))
         }
         Err(NativeInteractiveControlError::Skills(error)) => {
-            return super::skills_receipts::render(outcome.id.get(), Err(error));
+            super::skills_receipts::render(outcome.id.get(), Err(error))
         }
-        _ => {}
+        _ => return None,
+    })
+}
+
+pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
+    use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
+    if let Some(rendered) = render_profile_control(outcome) {
+        return rendered;
     }
 
     if let Ok(NativeInteractiveControlReceipt::Background(receipt)) = &outcome.result {
