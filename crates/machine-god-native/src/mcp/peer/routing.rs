@@ -212,7 +212,7 @@ pub(super) async fn call(
     peer: &mut McpStdioPeer,
     submission: McpSubmission,
     deadline: Instant,
-) -> Result<RpcEnvelope> {
+) -> Result<McpStdioFrame> {
     check(&peer.cancellation, deadline)?;
     if peer.closed {
         return Err(McpPeerError::Correlation);
@@ -237,7 +237,7 @@ pub(super) async fn call(
     )
     .await?;
     peer.closed = false;
-    Ok(frame.into_envelope())
+    Ok(frame)
 }
 
 pub(super) async fn catalog(

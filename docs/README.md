@@ -69,7 +69,7 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [stdio negotiation and routing](mcp-peer.md), [owned HTTP/TLS](mcp-http.md), and
   [tool submission](mcp-submission.md), [HTTP peers](mcp-http-peer.md),
   [schema admission](mcp-schema.md), [descriptor catalogs](mcp-catalog.md),
-  [native permission preparation](mcp-permission.md)
+  [native permission preparation](mcp-permission.md), [OAuth lifecycle](mcp-auth.md)
   and [exact conversation routing](mcp-context.md).
 - Human MCP profile operations: [native management](mcp-management.md) and
   [interactive CLI management](mcp-cli-management.md).

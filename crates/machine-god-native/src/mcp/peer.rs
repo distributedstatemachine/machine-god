@@ -152,6 +152,9 @@ impl McpStdioPeer {
     /// Rejects a second reservation, closed peer or integer exhaustion.
     pub fn reserve_tool_id(&mut self) -> Result<RpcId> {
         self.check_available()?;
+        if self.reserved.is_live() {
+            return Err(McpPeerError::Capacity);
+        }
         let id = self.allocate()?;
         self.reserved = McpPendingToolReservation::manual(id.clone());
         Ok(id)
@@ -160,17 +163,18 @@ impl McpStdioPeer {
     /// permission request. Abandonment releases the unsent slot without I/O.
     ///
     /// # Errors
-    /// Rejects a live reservation, closed peer or integer exhaustion.
+    /// Rejects 64 live leases, a manual reservation, closed peer or ID exhaustion.
     pub fn reserve_tool(&mut self) -> Result<McpToolReservation> {
         self.check_available()?;
+        if !self.reserved.has_capacity() {
+            return Err(McpPeerError::Capacity);
+        }
         let id = self.allocate()?;
-        let (pending, lease) = McpPendingToolReservation::leased(id);
-        self.reserved = pending;
-        Ok(lease)
+        self.reserved.reserve(id).ok_or(McpPeerError::Capacity)
     }
-    /// Discards an unsent reservation, without making its ID reusable.
+    /// Discards only a manual reservation; owned request leases are unaffected.
     pub fn discard_tool_id(&mut self) {
-        self.reserved = McpPendingToolReservation::default();
+        self.reserved.discard_manual();
     }
     /// Sends the exact reserved proof-bearing request once and correlates its
     /// response. Any abandoned polled request closes the connection.
@@ -182,6 +186,18 @@ impl McpStdioPeer {
         submission: McpSubmission,
         deadline: Instant,
     ) -> Result<RpcEnvelope> {
+        self.call_frame(submission, deadline)
+            .await
+            .map(super::stdio::McpStdioFrame::into_envelope)
+    }
+    /// Retains the exact correlated response bytes for result/schema admission.
+    /// # Errors
+    /// Uses the same proof, correlation, deadline and no-replay rules as `call`.
+    pub async fn call_frame(
+        &mut self,
+        submission: McpSubmission,
+        deadline: Instant,
+    ) -> Result<super::stdio::McpStdioFrame> {
         routing::call(self, submission, deadline).await
     }
     /// Loads every bounded catalog page without normalizing raw schema numbers.
@@ -212,7 +228,7 @@ impl McpStdioPeer {
         if self.closed || self.cancellation.is_cancelled() {
             return Err(McpPeerError::Closed);
         }
-        if self.reserved.is_live() {
+        if self.reserved.blocks_control() {
             return Err(McpPeerError::Capacity);
         }
         Ok(())

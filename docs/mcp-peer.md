@@ -52,14 +52,20 @@ Successful writing is not remote execution success; returned responses remain
 untrusted data requiring method-specific result handling.
 
 Production preparation uses `reserve_tool` and moves its non-clone reservation
-into `McpToolRequest::with_reservation`. The peer retains only a weak allocation
-observer. Dropping an unprepared request, unpolled preparation, denied admission
+into `McpToolRequest::with_reservation`. At most 64 independent unsent requests
+retain weak peer slots, allowing preparation across turns without holding the
+serialized exchange lane across permission. Catalog controls may run between
+these unsent requests. Dropping an unprepared request, unpolled preparation, denied admission
 or unsubmitted claimed value makes the unsent slot available again, without I/O
 or reusing its ID. A call must retain that exact allocation; matching the number
 alone is insufficient. Dropping a stale reservation cannot clear a replacement.
-The older `reserve_tool_id` interface remains explicitly manually discarded and
-does not accept another peer's lease. Already attempted calls retain the existing
+The older `reserve_tool_id` interface remains single-exclusive and cannot mix
+with live owned reservations. `discard_tool_id` clears only that manual slot and
+does not accept or discard another request's lease. Already attempted calls retain the existing
 no-replay and connection-cleanup rules.
+
+`call_frame` preserves the correlated response's original JSON bytes for
+method-specific result admission; `call` remains the envelope-only convenience API.
 
 The peer polls stdout while a request write is still pending, preventing ordinary
 bidirectional pipe backpressure from stalling correlation. Unsupported server

@@ -230,6 +230,9 @@ impl McpHttpPeer {
     /// Rejects a second reservation, retirement or integer exhaustion.
     pub fn reserve_tool_id(&mut self) -> Result<RpcId> {
         self.available()?;
+        if self.reserved.is_live() {
+            return Err(McpHttpPeerError::Limit);
+        }
         let id = self.allocate()?;
         self.reserved = McpPendingToolReservation::manual(id.clone());
         Ok(id)
@@ -237,16 +240,18 @@ impl McpHttpPeer {
     /// Reserves an application ID whose ownership moves through the typed
     /// permission request. Abandonment releases the unsent slot without I/O.
     /// # Errors
-    /// Rejects a live reservation, retirement or integer exhaustion.
+    /// Rejects 64 live leases, a manual reservation, retirement or ID exhaustion.
     pub fn reserve_tool(&mut self) -> Result<McpToolReservation> {
         self.available()?;
+        if !self.reserved.has_capacity() {
+            return Err(McpHttpPeerError::Limit);
+        }
         let id = self.allocate()?;
-        let (pending, lease) = McpPendingToolReservation::leased(id);
-        self.reserved = pending;
-        Ok(lease)
+        self.reserved.reserve(id).ok_or(McpHttpPeerError::Limit)
     }
+    /// Discards only a manual reservation; owned request leases are unaffected.
     pub fn discard_tool_id(&mut self) {
-        self.reserved = McpPendingToolReservation::default();
+        self.reserved.discard_manual();
     }
     /// Selected immutable base head for typed pre-permission projection.
     /// # Errors
@@ -311,7 +316,7 @@ impl McpHttpPeer {
     }
     fn available(&self) -> Result<()> {
         self.check(self.options.lifetime_deadline)?;
-        if self.reserved.is_live() {
+        if self.reserved.blocks_control() {
             return Err(McpHttpPeerError::Limit);
         }
         Ok(())

@@ -65,12 +65,15 @@ cancelled notification within 100 ms while the peer owner remains live. It does
 not prove remote cancellation. Abandoned futures spawn no notification worker.
 
 `reserve_tool` returns a non-clone reservation for the typed request to own
-through permission and submission. Its weak peer slot becomes reclaimable when
+through permission and submission. Up to 64 independent unsent reservations
+allow cross-turn preparation while the actual wire exchange remains serialized;
+catalog controls can run between unsent requests. Its weak peer slot becomes reclaimable when
 an unsent request is dropped or denied. The final call checks allocation identity
 as well as its wire ID, so a stale owner cannot release another call's slot and
 a raw request with the same number cannot consume a leased reservation.
 Destruction performs no callbacks or network work. The manual `reserve_tool_id`
-API remains available with explicit discard; neither form reuses consumed IDs.
+API remains single-exclusive and cannot mix with live owned reservations.
+Explicit discard clears only the manual slot; neither form reuses consumed IDs.
 
 Typed catalog controls return raw candidates, not executable publication.
 Notifications/progress remain bounded untrusted envelopes. Modern server

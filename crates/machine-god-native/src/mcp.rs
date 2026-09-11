@@ -4,6 +4,8 @@
 //! persistence or execution authority. Runtime effects require separate,
 //! explicitly injected native ownership.
 
+#[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
+pub mod auth;
 pub mod catalog;
 pub mod commands;
 pub mod config;

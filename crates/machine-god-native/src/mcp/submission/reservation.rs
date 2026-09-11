@@ -3,6 +3,9 @@
 use super::RpcId;
 use std::sync::Arc;
 
+/// Maximum unsent, independently owned tool IDs on one serialized peer.
+pub const MAX_MCP_PEER_RESERVATIONS: usize = 64;
+
 /// A non-clone reservation minted by the owning peer, not a submission grant.
 ///
 /// Move this value into the exact typed request before permission preparation.
@@ -30,7 +33,7 @@ impl std::fmt::Debug for McpToolReservation {
 /// The peer retains only a weak observer; request ownership never retains it.
 #[derive(Default)]
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
-pub(crate) struct McpPendingToolReservation(Option<Pending>);
+pub(crate) struct McpPendingToolReservation(Vec<Pending>);
 
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
 enum Pending {
@@ -44,48 +47,91 @@ enum Pending {
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
 impl McpPendingToolReservation {
     pub(crate) fn manual(id: RpcId) -> Self {
-        Self(Some(Pending::Manual(id)))
+        Self(vec![Pending::Manual(id)])
     }
 
+    #[cfg(test)]
     pub(crate) fn leased(id: RpcId) -> (Self, McpToolReservation) {
+        let mut pending = Self::default();
+        let lease = pending.reserve(id).expect("empty reservation set");
+        (pending, lease)
+    }
+
+    pub(crate) fn has_capacity(&mut self) -> bool {
+        self.0.retain(Pending::is_live);
+        !self.blocks_control() && self.0.len() < MAX_MCP_PEER_RESERVATIONS
+    }
+
+    pub(crate) fn reserve(&mut self, id: RpcId) -> Option<McpToolReservation> {
+        if !self.has_capacity() || self.0.iter().any(|pending| pending.id() == &id) {
+            return None;
+        }
         let state = Arc::new(());
-        let pending = Self(Some(Pending::Leased {
+        self.0.push(Pending::Leased {
             id: id.clone(),
             state: Arc::downgrade(&state),
-        }));
-        (pending, McpToolReservation { id, state })
+        });
+        Some(McpToolReservation { id, state })
     }
 
     pub(crate) fn is_live(&self) -> bool {
-        match &self.0 {
-            None => false,
-            Some(Pending::Manual(_)) => true,
-            Some(Pending::Leased { state, .. }) => state.strong_count() != 0,
-        }
+        self.0.iter().any(Pending::is_live)
+    }
+
+    pub(crate) fn blocks_control(&self) -> bool {
+        self.0
+            .iter()
+            .any(|pending| matches!(pending, Pending::Manual(_)))
+    }
+
+    pub(crate) fn discard_manual(&mut self) {
+        self.0
+            .retain(|pending| !matches!(pending, Pending::Manual(_)));
     }
 
     pub(crate) fn matches(&self, id: &RpcId, lease: Option<&McpToolReservation>) -> bool {
-        match (&self.0, lease) {
-            (Some(Pending::Manual(expected)), None) => expected == id,
-            (
-                Some(Pending::Leased {
-                    id: expected,
-                    state,
-                }),
-                Some(lease),
-            ) => expected == id && &lease.id == id && state.ptr_eq(&Arc::downgrade(&lease.state)),
-            _ => false,
-        }
+        self.0.iter().any(|pending| pending.matches(id, lease))
     }
 
     /// Consume only the matching allocation. A rejected call cannot clear a
     /// different request, and a dropped old owner cannot clear its replacement.
     pub(crate) fn take(&mut self, id: &RpcId, lease: Option<&McpToolReservation>) -> Option<RpcId> {
-        if !self.matches(id, lease) {
-            return None;
-        }
-        match self.0.take()? {
+        let index = self
+            .0
+            .iter()
+            .position(|pending| pending.matches(id, lease))?;
+        match self.0.swap_remove(index) {
             Pending::Manual(id) | Pending::Leased { id, .. } => Some(id),
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+impl Pending {
+    fn id(&self) -> &RpcId {
+        match self {
+            Self::Manual(id) | Self::Leased { id, .. } => id,
+        }
+    }
+
+    fn is_live(&self) -> bool {
+        match self {
+            Self::Manual(_) => true,
+            Self::Leased { state, .. } => state.strong_count() != 0,
+        }
+    }
+
+    fn matches(&self, id: &RpcId, lease: Option<&McpToolReservation>) -> bool {
+        match (self, lease) {
+            (Self::Manual(expected), None) => expected == id,
+            (
+                Self::Leased {
+                    id: expected,
+                    state,
+                },
+                Some(lease),
+            ) => expected == id && &lease.id == id && state.ptr_eq(&Arc::downgrade(&lease.state)),
+            _ => false,
         }
     }
 }
@@ -93,6 +139,36 @@ impl McpPendingToolReservation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiple_leases_are_bounded_independent_and_do_not_block_controls() {
+        let mut pending = McpPendingToolReservation::default();
+        let mut leases: Vec<_> = (0..64)
+            .map(|id| pending.reserve(RpcId::Integer(id)).unwrap())
+            .collect();
+        assert!(!pending.blocks_control());
+        assert!(pending.reserve(RpcId::Integer(64)).is_none());
+        pending.discard_manual();
+        assert!(!pending.has_capacity());
+        drop(leases.remove(0));
+        let last = pending.reserve(RpcId::Integer(64)).unwrap();
+        assert!(pending.reserve(RpcId::Integer(64)).is_none());
+        let selected = leases.remove(20);
+        assert_eq!(
+            pending.take(selected.rpc_id(), Some(&selected)),
+            Some(RpcId::Integer(21))
+        );
+        assert!(pending.has_capacity());
+        for lease in &leases {
+            assert!(pending.matches(lease.rpc_id(), Some(lease)));
+        }
+        assert!(pending.matches(last.rpc_id(), Some(&last)));
+        let mut manual = McpPendingToolReservation::manual(RpcId::Integer(1));
+        assert!(manual.blocks_control());
+        assert!(manual.reserve(RpcId::Integer(2)).is_none());
+        manual.discard_manual();
+        assert!(manual.has_capacity());
+    }
 
     #[test]
     fn abandonment_releases_only_the_exact_weak_slot() {

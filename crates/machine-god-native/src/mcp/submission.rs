@@ -31,7 +31,7 @@ mod reservation;
 mod runtime;
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
 pub(crate) use reservation::McpPendingToolReservation;
-pub use reservation::McpToolReservation;
+pub use reservation::{MAX_MCP_PEER_RESERVATIONS, McpToolReservation};
 pub use runtime::{McpSubmissionRuntime, McpSubmissionRuntimeBinding, McpSubmissionRuntimeOwner};
 mod tool;
 pub use tool::{McpToolCallOptions, McpToolRequest};

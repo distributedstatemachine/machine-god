@@ -151,7 +151,7 @@ while IFS= read -r line; do :; done
     peer.discard_tool_id();
     let lease = peer.reserve_tool().unwrap();
     assert_eq!(lease.rpc_id(), &RpcId::Integer(6));
-    assert!(peer.reserve_tool().is_err());
+    assert!(peer.reserve_tool_id().is_err());
     drop(lease);
     let lease = peer.reserve_tool().unwrap();
     assert_eq!(lease.rpc_id(), &RpcId::Integer(7));

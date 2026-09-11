@@ -413,12 +413,12 @@ Native permission preparation now composes exact builtin/MCP routing, required
 schema review, per-turn workspace evidence and credential-free reusable keys.
 Proof and request ownership remain checked through core admission and writing.
 
-Exact conversation/turn routing is also integrated into both CLI setup paths.
-Earlier component checks remain in historical plan revisions and retained
-evidence. The extra minimal-feature lint probe retained parent-identical
-diagnostics. Completed worktrees are removed after integration; evidence and
-caches remain. Internal checks do not establish a full-feature, platform,
-adversarial or remote delivery gate.
+Exact conversation/turn routing is integrated into both CLI setup paths. Owned
+OAuth provides discovery, approved callbacks, refresh, private credentials and
+generation-bound logout receipts; runtime/CLI activation remains below.
+Earlier component checks and minimal-feature diagnostics remain in historical
+plan revisions and retained evidence. Completed worktrees are removed after
+integration. Internal checks do not establish a full-feature or remote gate.
 
 These components do not constitute a delivered runtime. Remaining composition
 must own native startup/DNS, peers through reload/finalization,
