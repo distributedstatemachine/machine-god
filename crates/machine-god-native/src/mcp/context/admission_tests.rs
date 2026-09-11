@@ -12,6 +12,7 @@ fn failed_later_permission_enrollment_unwinds_mcp_registration_before_returning(
         SessionId::new("unwind").unwrap(),
         SessionIncarnationId::new("unwind-life").unwrap(),
     );
+    record.revision = SessionRevision(1);
     record.metadata.insert(
         NATIVE_SESSION_METADATA_KEY.into(),
         NativeSessionMetadata::new(
