@@ -240,6 +240,10 @@ impl McpToolRequest {
             let head = self.head.ok_or(McpSubmissionError::Invalid)?;
             let mut copied = invocation.with_wire(head.encode(&self.payload)?, Framing::Http, id);
             copied.tool_reservation = self.tool_reservation;
+            #[cfg(any(test, feature = "mcp-http"))]
+            {
+                copied.http_head = Some(head);
+            }
             Ok(copied)
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]

@@ -118,6 +118,11 @@ struct Data {
     cancellation: CancellationToken,
     reservation: Reservation,
     tool_reservation: Option<McpToolReservation>,
+    #[cfg(all(
+        any(test, feature = "mcp-http"),
+        any(target_os = "linux", target_os = "macos")
+    ))]
+    http_head: Option<Arc<McpSubmissionHttpHead>>,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Framing {
@@ -291,6 +296,11 @@ impl McpSubmissionRegistry {
                 framing,
                 rpc_id,
                 tool_reservation,
+                #[cfg(all(
+                    any(test, feature = "mcp-http"),
+                    any(target_os = "linux", target_os = "macos")
+                ))]
+                http_head,
             } = copied?;
             let generation = {
                 let mut state = registry
@@ -328,6 +338,11 @@ impl McpSubmissionRegistry {
                     framing,
                     rpc_id,
                     tool_reservation,
+                    #[cfg(all(
+                        any(test, feature = "mcp-http"),
+                        any(target_os = "linux", target_os = "macos")
+                    ))]
+                    http_head,
                     runtime,
                     cancellation,
                     reservation: Reservation {
@@ -537,6 +552,11 @@ impl CopiedInvocation {
             framing,
             rpc_id,
             tool_reservation: None,
+            #[cfg(all(
+                any(test, feature = "mcp-http"),
+                any(target_os = "linux", target_os = "macos")
+            ))]
+            http_head: None,
         }
     }
 }
@@ -550,6 +570,11 @@ struct CopiedRequest {
     framing: Framing,
     rpc_id: RpcId,
     tool_reservation: Option<McpToolReservation>,
+    #[cfg(all(
+        any(test, feature = "mcp-http"),
+        any(target_os = "linux", target_os = "macos")
+    ))]
+    http_head: Option<Arc<McpSubmissionHttpHead>>,
 }
 
 /// Reserved exact request, not yet executable. Drop releases only its own
@@ -664,6 +689,15 @@ pub struct McpSubmission {
     attempted: bool,
 }
 impl McpSubmission {
+    /// Exact immutable head retained by typed preparation, not reconstructed
+    /// from arguments or current mutable connection configuration.
+    #[cfg(all(
+        any(test, feature = "mcp-http"),
+        any(target_os = "linux", target_os = "macos")
+    ))]
+    pub(crate) fn http_head(&self) -> Option<Arc<McpSubmissionHttpHead>> {
+        self.ready.data.http_head.clone()
+    }
     #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     pub(crate) fn tool_reservation(&self) -> Option<&McpToolReservation> {
         self.ready.data.tool_reservation.as_ref()

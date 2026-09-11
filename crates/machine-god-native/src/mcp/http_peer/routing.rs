@@ -92,6 +92,12 @@ pub(super) async fn call(
     deadline: Instant,
 ) -> Result<McpHttpPeerFrame> {
     peer.check(deadline)?;
+    if submission
+        .http_head()
+        .is_some_and(|retained| !Arc::ptr_eq(&retained, &projected))
+    {
+        return Err(McpHttpPeerError::Invalid);
+    }
     if !peer
         .reserved
         .matches(submission.rpc_id(), submission.tool_reservation())

@@ -13,6 +13,36 @@ fn base(version: ProtocolVersion) -> McpSubmissionHttpHead {
     .unwrap()
 }
 
+#[test]
+fn typed_http_head_preserves_allocation_through_permission_and_claim() {
+    let (fixture, schema) = fixture(r#"{"type":"object"}"#);
+    let request = fixture.request("call");
+    let projection = project(
+        &fixture,
+        &schema,
+        &request,
+        options(ProtocolVersion::Modern, TransportKind::StreamableHttp),
+    )
+    .unwrap()
+    .with_http_head(&base(ProtocolVersion::Modern))
+    .unwrap();
+    let head = projection.http_head().unwrap();
+    let prepared = prepare(&fixture, &request, projection).unwrap();
+    assert!(Arc::ptr_eq(
+        prepared.data.http_head.as_ref().unwrap(),
+        &head
+    ));
+    fixture.admission("call", prepared).admit().unwrap();
+    let submission = block_on(fixture.claim("call", CancellationToken::new())).unwrap();
+    let claimed = submission.http_head().unwrap();
+    assert!(Arc::ptr_eq(&claimed, &head));
+    assert!(
+        claimed
+            .headers()
+            .any(|(name, value)| name == "authorization" && value == b"Bearer secret")
+    );
+}
+
 fn http_projection(raw: &str, value: Value) -> Result<McpToolRequest> {
     let (fixture, schema) = fixture(raw);
     let mut request = fixture.request("call");

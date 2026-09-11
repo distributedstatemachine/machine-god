@@ -13,12 +13,25 @@ use std::sync::{
 /// Trusted runtime composition supplies the exact admitted snapshots, including
 /// resolved authentication identity; no mutable external object is consulted.
 pub struct McpSubmissionRuntimeBinding {
-    server: Box<str>,
+    server: Arc<str>,
     tool: ToolName,
-    remote_tool: Box<str>,
-    configuration: Box<[u8]>,
-    schema: Box<[u8]>,
-    authentication: Box<[u8]>,
+    remote_tool: Arc<str>,
+    configuration: Arc<[u8]>,
+    schema: BindingSchema,
+    authentication: Arc<[u8]>,
+}
+
+enum BindingSchema {
+    Bytes(Arc<[u8]>),
+    Admitted(crate::mcp::schema::McpSchema),
+}
+impl BindingSchema {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Bytes(bytes) => bytes,
+            Self::Admitted(schema) => schema.raw_json().as_bytes(),
+        }
+    }
 }
 impl McpSubmissionRuntimeBinding {
     /// Copies a finite immutable binding. Secret-bearing bytes never appear in
@@ -34,34 +47,53 @@ impl McpSubmissionRuntimeBinding {
         schema: &[u8],
         authentication: &[u8],
     ) -> Result<Self> {
-        if server.is_empty()
-            || server.len() > 128
-            || remote_tool.is_empty()
-            || remote_tool.len() > 256
-        {
-            return Err(McpSubmissionError::Invalid);
-        }
-        let total = [
-            server.len(),
-            tool.as_str().len(),
-            remote_tool.len(),
+        validate_binding(
+            server,
+            &tool,
+            remote_tool,
             configuration.len(),
             schema.len(),
             authentication.len(),
-        ]
-        .into_iter()
-        .try_fold(0usize, usize::checked_add)
-        .ok_or(McpSubmissionError::Limit)?;
-        if total > MAX_MCP_SUBMISSION_BINDING_BYTES {
-            return Err(McpSubmissionError::Limit);
-        }
+        )?;
         Ok(Self {
             server: server.into(),
             tool,
             remote_tool: remote_tool.into(),
             configuration: configuration.into(),
-            schema: schema.into(),
+            schema: BindingSchema::Bytes(schema.into()),
             authentication: authentication.into(),
+        })
+    }
+    /// Retains shared immutable server identity and an already admitted schema.
+    /// Every logical binding still obeys the legacy aggregate bound; callers
+    /// additionally bound distinct shared allocations across the publication.
+    /// No configuration, authentication or schema bytes are copied per tool.
+    ///
+    /// # Errors
+    /// Rejects invalid names or more than 1 MiB logical binding bytes.
+    pub fn shared(
+        server: Arc<str>,
+        tool: ToolName,
+        remote_tool: Arc<str>,
+        configuration: Arc<[u8]>,
+        schema: crate::mcp::schema::McpSchema,
+        authentication: Arc<[u8]>,
+    ) -> Result<Self> {
+        validate_binding(
+            &server,
+            &tool,
+            &remote_tool,
+            configuration.len(),
+            schema.raw_json().len(),
+            authentication.len(),
+        )?;
+        Ok(Self {
+            server,
+            tool,
+            remote_tool,
+            configuration,
+            schema: BindingSchema::Admitted(schema),
+            authentication,
         })
     }
     pub(crate) fn tool_name(&self) -> &ToolName {
@@ -71,7 +103,7 @@ impl McpSubmissionRuntimeBinding {
         &self.remote_tool
     }
     pub(crate) fn schema_bytes(&self) -> &[u8] {
-        &self.schema
+        self.schema.bytes()
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn server(&self) -> &str {
@@ -84,6 +116,36 @@ impl McpSubmissionRuntimeBinding {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn authentication_bytes(&self) -> &[u8] {
         &self.authentication
+    }
+}
+
+fn validate_binding(
+    server: &str,
+    tool: &ToolName,
+    remote_tool: &str,
+    configuration: usize,
+    schema: usize,
+    authentication: usize,
+) -> Result<()> {
+    if server.is_empty() || server.len() > 128 || remote_tool.is_empty() || remote_tool.len() > 256
+    {
+        return Err(McpSubmissionError::Invalid);
+    }
+    let total = [
+        server.len(),
+        tool.as_str().len(),
+        remote_tool.len(),
+        configuration,
+        schema,
+        authentication,
+    ]
+    .into_iter()
+    .try_fold(0usize, usize::checked_add)
+    .ok_or(McpSubmissionError::Limit)?;
+    if total > MAX_MCP_SUBMISSION_BINDING_BYTES {
+        Err(McpSubmissionError::Limit)
+    } else {
+        Ok(())
     }
 }
 
@@ -148,6 +210,12 @@ impl McpSubmissionRuntimeOwner {
     }
     /// Invalidates before waking, with no waker/proof destruction under lock.
     pub fn retire(&self) {
+        self.retire_deferred().complete();
+    }
+    /// Marks this lineage invalid without invoking any registered waker. The
+    /// caller completes the returned retirement after releasing publication
+    /// locks, so a complete catalog can become invalid atomically.
+    pub(crate) fn retire_deferred(&self) -> McpDeferredRuntimeRetirement {
         let previous = {
             let mut state = self
                 .state
@@ -159,7 +227,17 @@ impl McpSubmissionRuntimeOwner {
             }
             previous
         };
-        if let Some(previous) = previous {
+        McpDeferredRuntimeRetirement(previous)
+    }
+}
+
+/// Deferred cancellation has no destructor callbacks. Complete outside all
+/// publication locks; the allocation is already invalid before completion.
+#[must_use]
+pub(crate) struct McpDeferredRuntimeRetirement(Option<Arc<McpSubmissionRuntime>>);
+impl McpDeferredRuntimeRetirement {
+    pub(crate) fn complete(self) {
+        if let Some(previous) = self.0 {
             previous.cancellation.cancel();
         }
     }
@@ -286,5 +364,57 @@ mod tests {
                     .is_ready()
             );
         }
+    }
+
+    #[test]
+    fn shared_binding_retains_exact_allocations_and_schema_tokens() {
+        let configuration: Arc<[u8]> = Arc::from(b"configuration".as_slice());
+        let authentication: Arc<[u8]> = Arc::from(b"secret".as_slice());
+        let schema = crate::mcp::schema::McpSchema::parse(
+            br#"{"type":"object","properties":{"n":{"const":-0}}}"#,
+            crate::mcp::schema::McpSchemaLimits::default(),
+        )
+        .unwrap();
+        let binding = McpSubmissionRuntimeBinding::shared(
+            Arc::from("server"),
+            ToolName::new("tool").unwrap(),
+            Arc::from("remote"),
+            configuration.clone(),
+            schema.clone(),
+            authentication.clone(),
+        )
+        .unwrap();
+        assert!(Arc::ptr_eq(&configuration, &binding.configuration));
+        assert!(Arc::ptr_eq(&authentication, &binding.authentication));
+        assert_eq!(
+            binding.schema_bytes().as_ptr(),
+            schema.raw_json().as_bytes().as_ptr()
+        );
+        assert_eq!(binding.schema_bytes(), schema.raw_json().as_bytes());
+    }
+
+    #[test]
+    fn deferred_retirement_invalidates_before_any_waker_runs() {
+        let owner = McpSubmissionRuntimeOwner::new();
+        let runtime = owner.install(binding()).unwrap();
+        let (waker, calls) = reentrant_waker(Callback::Wake, || {});
+        let mut cancelled = Box::pin(runtime.cancellation.cancelled());
+        assert!(
+            cancelled
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        let deferred = owner.retire_deferred();
+        assert!(runtime.live().is_err());
+        assert_eq!(calls.calls(), 0);
+        deferred.complete();
+        assert_eq!(calls.calls(), 1);
+        assert!(
+            cancelled
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_ready()
+        );
     }
 }
