@@ -2,6 +2,9 @@
 
 pub mod mcp;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod bounded_profile_file;
+
 mod native_environment;
 pub use native_environment::{
     ConfigFileState, NativeEnvironment, NativeSandboxMode, NativeStatus, PermissionMode,

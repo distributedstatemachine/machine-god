@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `integrated MCP component checks, then owned transports, persistence and CLI composition`
+- Next gate: `MCP persistence, SSE framing and one-shot admission integration; then owned transports and CLI composition`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -386,9 +386,11 @@ gates.
   fixtures, two-session isolation, stale authority, cancellation, partial writes,
   failed reload/auth/logout, fresh-release CLI and supported platforms.
 
-Initial isolated lanes own configuration/command parsing, protocol framing and
-negotiation, and contextual catalog/feature forwarding. Their public interfaces
-remain effect-free until explicitly injected runtime ownership is integrated.
+Configuration/command parsing, protocol negotiation and contextual forwarding
+are integrated. The combined focused gate passed 60 library tests, all six MCP
+integration suites and strict native Clippy. Current isolated lanes own shared
+profile-file transactions/MCP persistence, SSE framing and one-shot submission
+admission; these components do not constitute a delivered runtime.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
 and this ledger. Subsequent transport, permission and authentication lanes use
 the agreed typed interfaces with non-overlapping files. Keep runtime/resource
