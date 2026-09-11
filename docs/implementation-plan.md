@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `repair nested skill discovery, then replacement full gate and three fresh reviews`
+- Next gate: `replacement full gate and three fresh reviews of repaired nested skill discovery`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -398,7 +398,12 @@ The fixture-repaired candidate passed the complete local gate. R3 lifecycle and
 resource reviews reported zero findings; correctness found that copy exclusions
 were applied before nested skill discovery. Separate ancestor discovery from
 selected-resource exclusions while retaining bounds and exact revalidation.
-Completed R3 review worktrees are removed; no candidate has been pushed or merged.
+The discovery repair separates bounded metadata inventory from selected resource
+capture and preserves shared overlapping payloads and exact local revalidation.
+All 53 focused managed tests and strict native lint pass. A composed CLI
+regression reproduced the original `NoMatches`; its integrated green run remains
+part of the replacement gate. Completed R3 review and repair worktrees are
+removed; no accepted candidate has been pushed or merged.
 Historical candidate, gate and finding evidence belongs in the
 [skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
 accepted yet. Linux validation retains its unprivileged environment; macOS and

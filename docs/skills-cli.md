@@ -172,6 +172,18 @@ prefix. Create generates a native template and preserves sibling resources when
 replacing an existing `SKILL.md`. Removal captures one exact managed basename;
 advertised-name resolution belongs to the native command facade.
 
+Repository discovery traverses ancestors such as `.github/skills` when looking
+for candidate `SKILL.md` files. It inventories entry metadata and reads candidate
+skill files without reading unrelated resource or Git-object bodies. Only after
+selection does resource capture omit entries whose basenames start with `.git`,
+matching the pinned recursive-copy behavior inside each selected skill. Thus a
+skill beneath a `.github` ancestor remains installable, while `.github` resources
+inside that selected skill are excluded. Inventory never follows symbolic links.
+Inventory and selected-resource capture have separate bounded read budgets, so
+reading candidate metadata does not reduce the selected payload allowance.
+Overlapping selections share captured bytes while still counting each selected
+tree toward the aggregate installation limits.
+
 Plans retain bounded immutable content and exact destination revisions. Local
 and completed remote preparation do not leave a disk staging tree while waiting
 for consent. Default `NoReplace` cannot overwrite an existing destination.
@@ -179,6 +191,12 @@ Explicit outer `--replace` authorizes only the plan's exact observed replacement
 revisions; pasted `-y`, `--yes` or global flags are not replacement consent.
 Changed destinations reject the stale plan rather than transferring consent to
 a new occupant.
+Local source revalidation compares the bounded inventory and exact selected
+resource revisions; a changed candidate, namespace, selected payload or mode
+cannot silently alter an admitted plan. Completed Git preparation retains its
+immutable selected bytes without preserving the clone directory for consent.
+Changes to unselected inventory metadata can conservatively invalidate a local
+plan, including metadata beneath excluded `.git*` resource paths.
 
 On Unix, installed regular files retain their source execute bits with private
 owner read/write permissions (`0600 | (source_mode & 0111)`). Generated `SKILL.md`

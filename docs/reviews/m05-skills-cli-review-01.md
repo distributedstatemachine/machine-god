@@ -248,3 +248,33 @@ This is narrower than the previously ruled-out resource-copy lead: excluding
 behavior, but excluding ancestors before selection is not. The candidate was
 rejected despite its green local gate and was not pushed or merged. All completed
 clean review worktrees were removed, preserving their evidence.
+
+## Nested discovery remediation
+
+Native repair `70444d649e3a068d998f6b86e043d045a6741a9e`, integrated as
+`9d0b46be`, separates ancestor inventory from selected-resource capture. Inventory
+reads candidate files one at a time and retains a digest of paths, metadata and
+candidate bytes. Selected trees keep the existing copy exclusions and payload
+bounds; ordinary overlapping selections share immutable bytes. Independent
+bounded read phases preserve the full selected payload allowance. Local plans
+revalidate the inventory and exact selected tree fingerprints; completed Git
+plans retain immutable payloads without retaining a consent-time clone.
+
+All 53 focused managed tests passed, including eight discovery regressions for
+hidden ancestors, copy exclusions, stale revisions, non-following traversal,
+overlap sharing and exact 64 MiB selected capacity. Exact Rust 1.94.1 strict
+native all-target/all-feature Clippy, formatting and diff checks passed. Logs
+remain under `/private/tmp/mg-skills-cli.jpLoxt` as
+`r3-discovery-focused-final.log` and `r3-discovery-clippy-accepted.log`.
+
+CLI regression `3fdc2105597147acb60d68b91c077655cefabae6`, integrated as
+`2feaad26`, exercises `/skills install` for `.github/skills/review`, receipt and
+refresh, ordinary resources, excluded `.git*` resources, unchanged source and
+zero inference. The fresh composed-interactive test executable against the
+unrepaired backend failed as expected with `NoMatches`; formatting, precompilation
+and strict CLI lint passed. This harness uses a production-run test child with
+injected boundaries, not a direct invocation of the shipped CLI. Its green
+integrated run and separate fresh-release smoke belong to the replacement gate.
+The `r3-cli-discovery-{build,clippy,red}.log` evidence is retained. Both clean
+committed repair worktrees were removed after integration; these focused results
+do not replace full-feature validation or fresh independent review.
