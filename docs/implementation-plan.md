@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `full integrated skills CLI local gate, then three exact-SHA reviews`
+- Next gate: `repair Gateway multipart user projection, then replacement full skills CLI gate and three exact-SHA reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -378,7 +378,12 @@ FIFO invocation, checkpoint context and CLI command receipts are integrated.
 The interactive picker, initial snapshot, owned refresh and input-generation
 handling are integrated, with composed launch/PTY scenarios ready for execution.
 Focused startup/queue, routing and helper-free input checks pass; these component
-checks do not replace the full feature gate. The complete local/review/remote
+checks do not replace the full feature gate. The initial full workspace run
+exposed the Gateway codec's older single-text-block user-message assumption:
+automatic and exact-picker skill invocation correctly append provider-only
+context, but the codec rejects that second block. Repair bounded multipart user
+projection without changing canonical history, and rerun both PTY regressions
+and the complete replacement gate. The complete local/review/remote
 gates remain, including fresh release-helper process scenarios and both supported
 platforms. Linux gate prerequisites are prepared under an unprivileged account;
 macOS and Linux process-heavy runtime runs must remain separate.

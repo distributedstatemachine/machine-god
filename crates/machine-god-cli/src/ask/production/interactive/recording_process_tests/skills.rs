@@ -188,7 +188,7 @@ fn skills_add_and_install_require_explicit_replacement_and_preserve_source() {
 }
 
 #[test]
-fn affirmative_first_prompt_uses_initial_catalog_and_next_prompt_has_no_skill_leakage() {
+fn skills_affirmative_first_prompt_uses_initial_catalog_and_next_prompt_has_no_skill_leakage() {
     let fixture = Fixture::new();
     let (_, full_text) = skill(
         &fixture.workspace.join("skills"),
@@ -232,7 +232,7 @@ fn affirmative_first_prompt_uses_initial_catalog_and_next_prompt_has_no_skill_le
 }
 
 #[test]
-fn inline_picker_inserts_exact_duplicate_and_projects_only_selected_full_text() {
+fn skills_inline_picker_inserts_exact_duplicate_and_projects_only_selected_full_text() {
     let fixture = Fixture::new();
     let root = fixture.workspace.join("skills");
     skill(
