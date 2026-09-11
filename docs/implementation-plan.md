@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `repair metadata prefix-boundary completion, then replacement full gate and three fresh reviews`
+- Next gate: `replacement full gate and three fresh reviews of repaired metadata prefix completion`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -387,12 +387,13 @@ The discovery-repaired candidate passed the complete macOS/Linux gate, including
 45 focused CLI tests, 192 native skills tests and fresh-release smoke. Three
 fresh R4 reviewers reported zero lifecycle/resource findings and one correctness
 finding: a metadata read ending exactly after closing dashes can be mistaken for
-EOF, causing an unchanged skill to fail invocation as stale. Require newline or
-actual EOF before accepting that prefix boundary, preserving existing read and
-header limits. Then repeat the full gate and three fresh reviews. Completed
-review and earlier repair worktrees are removed; the bounded prefix repair and
-Linux validation worktrees remain active. No accepted candidate has been pushed
-or merged.
+EOF, causing an unchanged skill to fail invocation as stale. The integrated
+completion-only fix requires newline or actual EOF, preserving read/header
+limits, shared parser and error policy. The original failure is reproduced and
+all 36 catalog tests, including six new boundary regressions, and strict native
+lint pass. Repeat the full gate and three fresh reviews. Completed review and
+repair worktrees are removed; Linux validation remains active. No accepted
+candidate has been pushed or merged.
 Historical candidate, gate and finding evidence belongs in the
 [skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
 accepted yet. Linux validation retains its unprivileged environment; macOS and

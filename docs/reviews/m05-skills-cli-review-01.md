@@ -309,3 +309,18 @@ findings. Correctness established one P2:
 The candidate was rejected despite its green local gate and was not pushed or
 merged. All three clean completed review worktrees were removed; retained logs
 remain historical evidence, not a claim that the outstanding finding is fixed.
+
+The completion repair `11dea0fbc903013a2a2a6f04dce6f431db5c0b7a`, integrated as
+`34c1c242`, changes only the catalog prefix-completion predicate: a detected
+closing delimiter needs its terminating newline or an actual zero-byte EOF
+read. Shared parsing, read loop, budgets, public APIs and error policy remain
+unchanged. The public discover/resolve/materialize regression first reproduced
+`StaleSelection` against the unchanged baseline, then passed with the fix.
+All 36 catalog tests passed, including six new tests covering short reads,
+LF/CRLF splits and complete chunk-end delimiters, continued delimiter-like lines,
+actual EOF at the exact 64 KiB header limit, and over-limit newline rejection
+without an advertised selection. Strict exact Rust 1.94.1 native
+all-target/all-feature Clippy, formatting and diff checks passed. Evidence is
+retained as `r4-prefix-{expected-red,focused,clippy}.log` under the shared skills
+evidence parent. The clean committed repair worktree was removed after
+integration. Full replacement validation and fresh reviews remain required.

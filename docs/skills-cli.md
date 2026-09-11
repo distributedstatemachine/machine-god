@@ -118,6 +118,9 @@ Metadata supports a 65,536-byte frontmatter envelope, 256-byte names and
 block-description forms. Unknown metadata is ignored; malformed recognized
 fields are errors. Basename fallback applies only when frontmatter is absent.
 This is a bounded compatibility parser, not a general YAML implementation.
+Prefix discovery accepts a closing delimiter only after its newline or actual
+file EOF is observed. A read-chunk boundary is not EOF and cannot change the
+metadata or body offset later checked during full materialization.
 
 Snapshots retain entries, provenance, diagnostics, completeness and a generation
 digest. Exact duplicate names remain separate locations. Name-only resolution
