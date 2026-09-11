@@ -27,8 +27,8 @@ pub enum NativeSlashCommand {
     Permissions,
     Allowlist,
     Undo,
-    Skills,
     Mcp,
+    Skills,
     Copy,
     Compact,
     Fast,
@@ -252,20 +252,20 @@ static REGISTRY: [NativeSlashSpec; 23] = [
         false
     ),
     spec!(
-        Skills,
-        "/skills",
-        "/skills [list|add|install|show|create|remove|path] [name|url|path]",
-        "browse and manage skills",
+        Mcp,
+        "/mcp",
+        "/mcp [list|path|add SERVER COMMAND [args...]|remove SERVER]",
+        "inspect and edit native MCP profiles",
         Extensions,
         true,
         false,
         false
     ),
     spec!(
-        Mcp,
-        "/mcp",
-        "/mcp [list|path|add SERVER COMMAND [args...]|remove SERVER]",
-        "inspect and edit native MCP profiles",
+        Skills,
+        "/skills",
+        "/skills [list|add|install|show|create|remove|path] [name|url|path]",
+        "browse and manage skills",
         Extensions,
         true,
         false,
@@ -1180,8 +1180,8 @@ mod tests {
             "/permissions",
             "/allowlist",
             "/undo",
-            "/skills",
             "/mcp",
+            "/skills",
             "/copy",
             "/compact",
             "/fast",
@@ -1595,8 +1595,8 @@ mod tests {
                 "/sandbox",
                 "/workspace",
                 "/background",
-                "/skills",
-                "/mcp"
+                "/mcp",
+                "/skills"
             ]
         );
         let search = |query: &str| {
