@@ -408,7 +408,13 @@ are removed and the source was frozen for these checks. This is internal feature
 validation, not a new delivery or the complete workspace/platform/adversarial gate.
 Core's exact-turn cancellation
 observer passed the complete core tests, explicit doctests and strict Clippy.
-All completed component worktrees are removed; evidence and build caches remain.
+Completed component worktrees were removed; evidence and build caches remain.
+The shared transport interfaces at `5d66762c` pass 193 focused MCP unit tests
+(stdio process-runtime fixtures excluded), formatting and documentation checks.
+Lossless frames, read-only HTTP data and owned response cancellation are ready
+for the isolated stdio-peer and HTTP-connector lanes now being integrated.
+Their worktrees remain active; timeout snapshot behavior still needs the worker
+implementation, and these checks are not a full feature or remote gate.
 These components do not constitute a delivered runtime. Remaining composition
 must own HTTP/TLS/SSE networking and response handling, typed feature/control
 authority, negotiation, progress/continuation metadata, bounded per-conversation
