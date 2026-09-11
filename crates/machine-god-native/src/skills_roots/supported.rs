@@ -417,6 +417,94 @@ fn authority_construction_is_inert_bounded_and_redacted() {
 }
 
 #[test]
+fn oversized_owned_authority_label_is_rejected_without_copying_it() {
+    let fixture = Fixture::new();
+    let directory = Arc::new(File::open(&fixture.0).unwrap());
+    // The caller owns these input allocations; measure only adapter work.
+    let small = PathBuf::from(format!("/{}", "x".repeat(4096)));
+    let huge = PathBuf::from(format!("/{}", "x".repeat(8 * 1024 * 1024)));
+    allocation_counter::measure(|| {});
+    let measure = |path| {
+        allocation_counter::measure(|| {
+            assert_eq!(
+                NativeSkillDirectoryAuthority::from_directory(directory.clone(), path).unwrap_err(),
+                NativeSkillRootsError::InvalidAuthority
+            );
+        })
+    };
+    let small_allocations = measure(small);
+    let huge_allocations = measure(huge);
+    assert_eq!(huge_allocations.bytes_total, small_allocations.bytes_total);
+    assert_eq!(huge_allocations.bytes_total, 0, "{huge_allocations:?}");
+}
+
+#[test]
+fn authority_label_byte_and_component_bounds_are_inclusive() {
+    use crate::skills_catalog::{MAX_NATIVE_SKILL_PATH_BYTES, MAX_NATIVE_SKILL_PATH_COMPONENTS};
+    let fixture = Fixture::new();
+    let directory = Arc::new(File::open(&fixture.0).unwrap());
+    // Construction is lexical: even a nonexistent long component needs no I/O.
+    let longest = PathBuf::from(format!("/{}", "x".repeat(MAX_NATIVE_SKILL_PATH_BYTES - 1)));
+    let authority =
+        NativeSkillDirectoryAuthority::from_directory(directory.clone(), longest.clone()).unwrap();
+    assert_eq!(authority.path(), longest);
+    let deepest = PathBuf::from(format!(
+        "/{}",
+        vec!["x"; MAX_NATIVE_SKILL_PATH_COMPONENTS - 1].join("/")
+    ));
+    assert_eq!(
+        deepest.components().count(),
+        MAX_NATIVE_SKILL_PATH_COMPONENTS
+    );
+    assert!(
+        NativeSkillDirectoryAuthority::from_directory(directory.clone(), deepest.clone()).is_ok()
+    );
+    for path in [
+        PathBuf::from(format!("{}x", longest.display())),
+        deepest.join("x"),
+    ] {
+        assert_eq!(
+            NativeSkillDirectoryAuthority::from_directory(directory.clone(), path).unwrap_err(),
+            NativeSkillRootsError::InvalidAuthority
+        );
+    }
+}
+
+#[test]
+fn authority_preflight_preserves_normalization_and_rejects_oversized_raw_spelling() {
+    let fixture = Fixture::new();
+    let directory = Arc::new(File::open(&fixture.0).unwrap());
+    for path in ["/α//./β/", "/./α/β", "/α/β"] {
+        let authority =
+            NativeSkillDirectoryAuthority::from_directory(directory.clone(), path.into()).unwrap();
+        assert_eq!(authority.path(), Path::new("/α/β"));
+    }
+    // A short normalized result does not make an oversized raw label valid.
+    let oversized = PathBuf::from(format!("/α/{}β", "/".repeat(4096)));
+    assert_eq!(
+        NativeSkillDirectoryAuthority::from_directory(directory, oversized).unwrap_err(),
+        NativeSkillRootsError::InvalidAuthority
+    );
+}
+
+#[test]
+fn authority_preflight_keeps_invalid_utf8_errors_below_and_above_byte_limit() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let fixture = Fixture::new();
+    let directory = Arc::new(File::open(&fixture.0).unwrap());
+    for length in [2, crate::skills_catalog::MAX_NATIVE_SKILL_PATH_BYTES + 1] {
+        let mut bytes = vec![b'x'; length];
+        bytes[0] = b'/';
+        bytes[length - 1] = 0xff;
+        let path = PathBuf::from(OsString::from_vec(bytes));
+        assert_eq!(
+            NativeSkillDirectoryAuthority::from_directory(directory.clone(), path).unwrap_err(),
+            NativeSkillRootsError::InvalidAuthority
+        );
+    }
+}
+
+#[test]
 fn absent_or_nonancestor_home_allows_bounded_climb_to_filesystem_root() {
     let fixture = Fixture::new();
     let workspace = fixture.authority("outside/workspace");

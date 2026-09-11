@@ -387,11 +387,13 @@ fn check(cancellation: &CancellationToken) -> Result<()> {
     }
 }
 
-fn validate_path(path: &std::path::Path, absolute: bool) -> Result<()> {
+pub(crate) fn validate_path(path: &std::path::Path, absolute: bool) -> Result<()> {
     use std::path::Component;
+    if path.as_os_str().len() > MAX_NATIVE_SKILL_PATH_BYTES {
+        return Err(NativeSkillCatalogError::InvalidRoot);
+    }
     let text = path.to_str().ok_or(NativeSkillCatalogError::InvalidRoot)?;
-    if text.len() > MAX_NATIVE_SKILL_PATH_BYTES
-        || path.is_absolute() != absolute
+    if path.is_absolute() != absolute
         || path.components().count() > MAX_NATIVE_SKILL_PATH_COMPONENTS
         || text.contains(['\0', '\\'])
         || path

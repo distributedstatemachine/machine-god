@@ -73,6 +73,10 @@ impl NativeSkillDirectoryAuthority {
     /// Rejects unsupported platforms and invalid/bounded-out catalog labels.
     pub fn from_directory(directory: Arc<File>, captured_absolute_path: PathBuf) -> Result<Self> {
         supported()?;
+        // Reject the caller-owned raw label before allocating any normalized
+        // copies. Reuse the catalog's byte, component and lexical policy.
+        crate::skills_catalog::validate_path(&captured_absolute_path, true)
+            .map_err(|_| NativeSkillRootsError::InvalidAuthority)?;
         let path: PathBuf = captured_absolute_path.components().collect();
         // Reuse the catalog's lexical policy, including its independent byte
         // and component limits; do not duplicate or widen its path grammar.
