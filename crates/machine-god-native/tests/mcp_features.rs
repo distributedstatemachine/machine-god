@@ -20,6 +20,134 @@ use machine_god_native::{
 };
 use serde_json::{Value, json};
 
+#[derive(Clone, Default)]
+struct ContextAuthority {
+    entered: Arc<AtomicUsize>,
+    contexts: Arc<Mutex<Vec<ToolContext>>>,
+    echo: EchoAuthority,
+    cancel_on_poll: Option<bool>,
+}
+
+impl McpFeatureAuthority for ContextAuthority {
+    fn call(
+        &self,
+        _request: McpFeatureRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
+        panic!("contextual authority must not use the legacy fallback")
+    }
+
+    fn call_for_turn(
+        &self,
+        context: ToolContext,
+        request: McpFeatureRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
+        self.entered.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            self.contexts.lock().unwrap().push(context);
+            if let Some(fail) = self.cancel_on_poll {
+                cancellation.cancel();
+                if fail {
+                    return Err(McpFeatureError::new(McpFeatureErrorKind::Unavailable));
+                }
+            }
+            self.echo.call(request, cancellation).await
+        })
+    }
+}
+
+fn distinct_contexts() -> Vec<ToolContext> {
+    let base = context();
+    vec![
+        base.clone(),
+        ToolContext {
+            session_id: SessionId::new("other-session").unwrap(),
+            ..base.clone()
+        },
+        ToolContext {
+            session_incarnation_id: SessionIncarnationId::new("other-incarnation").unwrap(),
+            ..base.clone()
+        },
+        ToolContext {
+            turn_id: TurnId::new("other-turn").unwrap(),
+            ..base.clone()
+        },
+        ToolContext {
+            call_id: ToolCallId::new("other-call").unwrap(),
+            ..base
+        },
+    ]
+}
+
+#[test]
+fn contextual_authority_receives_exact_context_and_all_seven_requests() {
+    let authority = ContextAuthority::default();
+    let tool = McpFeaturesTool::shared_authority(Arc::new(authority.clone()));
+    let legacy = EchoAuthority::default();
+    let legacy_tool = McpFeaturesTool::new(legacy.clone());
+    let contexts = distinct_contexts();
+    let cases = [
+        json!({"action":"resource_list","server":"fixture"}),
+        json!({"action":"resource_templates","server":"fixture"}),
+        json!({"action":"resource_read","server":"fixture","uri":"custom://item"}),
+        json!({"action":"prompt_list","server":"fixture"}),
+        json!({"action":"prompt_get","server":"fixture","prompt":"review","arguments":{"tone":"brief"}}),
+        json!({"action":"prompt_complete","server":"fixture","prompt":"review","argument":"tone","value":"br","context":{"language":"en"}}),
+        json!({"action":"resource_complete","server":"fixture","uri_template":"custom:///{path}","argument":"path","context":{"root":"src"}}),
+    ];
+    let mut expected_contexts = Vec::new();
+    for context in &contexts {
+        for requested in &cases {
+            let prepared = tool.prepare(call(requested.clone())).unwrap();
+            let output = poll_ready(tool.execute(
+                context.clone(),
+                prepared.arguments().clone(),
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            let legacy_output = execute(&legacy_tool, requested.clone()).unwrap();
+            assert_eq!(output, legacy_output);
+            expected_contexts.push(context.clone());
+        }
+    }
+    assert_eq!(*authority.contexts.lock().unwrap(), expected_contexts);
+    assert_eq!(authority.echo.requests(), legacy.requests());
+    assert_eq!(
+        authority.entered.load(Ordering::SeqCst),
+        expected_contexts.len()
+    );
+}
+
+#[test]
+fn contextual_authority_is_not_entered_before_poll_or_after_precancellation() {
+    let authority = ContextAuthority::default();
+    let tool = McpFeaturesTool::new(authority.clone());
+    let arguments = json!({"action":"resource_list","server":"fixture"});
+    drop(tool.execute(context(), arguments.clone(), CancellationToken::new()));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let error = poll_ready(tool.execute(context(), arguments, cancellation)).unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(authority.entered.load(Ordering::SeqCst), 0);
+    assert!(authority.contexts.lock().unwrap().is_empty());
+}
+
+#[test]
+fn contextual_authority_cancellation_wins_over_same_poll_success_and_error() {
+    for fail in [false, true] {
+        let authority = ContextAuthority {
+            cancel_on_poll: Some(fail),
+            ..ContextAuthority::default()
+        };
+        let tool = McpFeaturesTool::new(authority.clone());
+        let error =
+            execute(&tool, json!({"action":"resource_list","server":"fixture"})).unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::Cancelled);
+        assert_eq!(*authority.contexts.lock().unwrap(), vec![context()]);
+    }
+}
+
 struct NoopWake;
 
 impl Wake for NoopWake {

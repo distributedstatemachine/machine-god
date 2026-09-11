@@ -405,6 +405,23 @@ pub trait McpFeatureAuthority: Send + Sync + 'static {
         request: McpFeatureRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>>;
+
+    /// Executes against the exact invoking session, incarnation, turn, and call.
+    /// The tool forwards its original context unchanged, without an ambient
+    /// current-session fallback. Context-aware implementations must establish
+    /// live admission for that identity; context alone grants no authority.
+    ///
+    /// The default delegates to [`Self::call`] only when polled, preserving
+    /// existing context-independent authorities. Overrides must remain inert
+    /// before polling and preserve the trait's admission and cancellation rules.
+    fn call_for_turn(
+        &self,
+        _context: ToolContext,
+        request: McpFeatureRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
+        Box::pin(async move { self.call(request, cancellation).await })
+    }
 }
 
 /// Portable `mcp_features` tool over explicitly injected authority.
@@ -466,7 +483,7 @@ impl Tool for McpFeaturesTool {
 
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
@@ -489,7 +506,8 @@ impl Tool for McpFeaturesTool {
             drop(arguments);
             let publication = McpFeaturePublication::from(&request);
             check_cancellation(&cancellation)?;
-            let result = call_authority(self.authority.as_ref(), request, &cancellation).await;
+            let result =
+                call_authority(self.authority.as_ref(), context, request, &cancellation).await;
             check_cancellation(&cancellation)?;
             match result {
                 Ok(payload) => publish_payload(&publication, payload, &cancellation),
@@ -716,13 +734,14 @@ fn string_map_json(values: &BTreeMap<Box<str>, Box<str>>) -> Value {
 
 async fn call_authority(
     authority: &dyn McpFeatureAuthority,
+    context: ToolContext,
     request: McpFeatureRequest,
     cancellation: &CancellationToken,
 ) -> Result<McpFeaturePayload, McpFeatureError> {
     if cancellation.is_cancelled() {
         return Err(McpFeatureError::new(McpFeatureErrorKind::Cancelled));
     }
-    let mut operation = authority.call(request, cancellation.clone());
+    let mut operation = authority.call_for_turn(context, request, cancellation.clone());
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
     let result = poll_fn(|context| {
         if cancellation_wait.as_mut().poll(context).is_ready() {

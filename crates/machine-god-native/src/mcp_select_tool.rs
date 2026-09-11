@@ -95,11 +95,11 @@ impl Tool for McpSelectTool {
 
     fn execute_for_turn(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
-        let selection = self.select(arguments, cancellation);
+        let selection = self.select(context, arguments, cancellation);
         Box::pin(async move {
             let selected = selection.await?;
             Ok(match selected.registration {
@@ -120,6 +120,7 @@ struct Selection {
 impl McpSelectTool {
     fn select(
         &self,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<Selection, ToolError>> {
@@ -134,6 +135,7 @@ impl McpSelectTool {
 
             let snapshot = acquire_catalog_snapshot(
                 self.catalog.as_ref(),
+                context,
                 &cancellation,
                 map_catalog_error,
                 cancelled,

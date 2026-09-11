@@ -68,10 +68,20 @@ separately injected feature authority described below.
 
 ## Injected authority and stable identities
 
-`McpFeatureAuthority` is the sole host-interaction boundary. It receives an
-owned typed `McpFeatureRequest` and a cancellation token. Constructors and
+`McpFeatureAuthority` is the sole host-interaction boundary. Its `call_for_turn`
+hook receives the execution's exact original `ToolContext`, an owned typed
+`McpFeatureRequest`, and a cancellation token. Constructors and
 preparation never invoke it, and calling `execute` creates no authority work
 until the returned future is first polled.
+
+Session, session-incarnation, turn, and call identities are forwarded unchanged.
+The tool neither selects a global current session nor invents missing authority.
+Context-aware authorities must establish live admission for that exact context
+and reject foreign or retired invocations; context alone grants no permission.
+The backward-compatible default delegates to the existing `call` method only
+when polled. An override is used exclusively, including on errors; rejection
+never retries through the context-independent method. This seam adds no effects,
+permission schema, or production routing by itself.
 
 An authority implementation must treat the request's server and identity as
 exact stable bytes. It must not trim, case-fold, Unicode-normalize, prefix

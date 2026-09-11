@@ -16,6 +16,147 @@ use machine_god_native::{
 };
 use serde_json::{Value, json};
 
+#[derive(Clone)]
+struct ContextCatalog {
+    entered: Arc<AtomicUsize>,
+    contexts: Arc<std::sync::Mutex<Vec<ToolContext>>>,
+    snapshot: McpToolCatalogSnapshot,
+    cancel_on_poll: Option<bool>,
+}
+
+impl ContextCatalog {
+    fn new() -> Self {
+        Self {
+            entered: Arc::new(AtomicUsize::new(0)),
+            contexts: Arc::new(std::sync::Mutex::new(Vec::new())),
+            snapshot: McpToolCatalogSnapshot::new(vec![metadata(
+                "mcp_context_tool",
+                "fixture",
+                "",
+            )])
+            .unwrap(),
+            cancel_on_poll: None,
+        }
+    }
+}
+
+impl McpToolCatalog for ContextCatalog {
+    fn snapshot(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
+        panic!("contextual catalog must not use the legacy fallback")
+    }
+
+    fn snapshot_for_turn(
+        &self,
+        context: ToolContext,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
+        // Instrument construction separately to detect even unpolled acquisition.
+        self.entered.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            self.contexts.lock().unwrap().push(context);
+            if let Some(fail) = self.cancel_on_poll {
+                cancellation.cancel();
+                if fail {
+                    return Err(McpToolCatalogError::new(
+                        McpToolCatalogErrorKind::Unavailable,
+                    ));
+                }
+            }
+            Ok(self.snapshot.clone())
+        })
+    }
+}
+
+fn distinct_contexts() -> Vec<ToolContext> {
+    let base = context();
+    vec![
+        base.clone(),
+        ToolContext {
+            session_id: SessionId::new("other-session").unwrap(),
+            ..base.clone()
+        },
+        ToolContext {
+            session_incarnation_id: SessionIncarnationId::new("other-incarnation").unwrap(),
+            ..base.clone()
+        },
+        ToolContext {
+            turn_id: TurnId::new("other-turn").unwrap(),
+            ..base.clone()
+        },
+        ToolContext {
+            call_id: ToolCallId::new("other-call").unwrap(),
+            ..base
+        },
+    ]
+}
+
+#[test]
+fn contextual_catalog_receives_each_exact_invocation_without_legacy_fallback() {
+    let catalog = ContextCatalog::new();
+    let tool = McpSelectTool::shared_catalog(Arc::new(catalog.clone()));
+    let contexts = distinct_contexts();
+    for context in &contexts {
+        let result = poll_ready(tool.execute_for_turn(
+            context.clone(),
+            json!({"name":"mcp_context_tool"}),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert!(result.next_round_tool().is_some());
+    }
+    assert_eq!(*catalog.contexts.lock().unwrap(), contexts);
+    assert_eq!(catalog.entered.load(Ordering::SeqCst), contexts.len());
+}
+
+#[test]
+fn contextual_catalog_is_not_entered_before_poll_or_after_precancellation() {
+    let catalog = ContextCatalog::new();
+    let tool = McpSelectTool::new(catalog.clone());
+    drop(tool.execute_for_turn(
+        context(),
+        json!({"name":"mcp_context_tool"}),
+        CancellationToken::new(),
+    ));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let error = poll_ready(tool.execute_for_turn(
+        context(),
+        json!({"name":"mcp_context_tool"}),
+        cancellation,
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    let error = poll_ready(tool.execute(
+        context(),
+        json!({"name":"mcp_context_tool"}),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "mcp_select_tool_turn_orchestration_required");
+    assert_eq!(catalog.entered.load(Ordering::SeqCst), 0);
+    assert!(catalog.contexts.lock().unwrap().is_empty());
+}
+
+#[test]
+fn contextual_catalog_cancellation_wins_over_same_poll_success_and_error() {
+    for fail in [false, true] {
+        let mut catalog = ContextCatalog::new();
+        catalog.cancel_on_poll = Some(fail);
+        let tool = McpSelectTool::new(catalog.clone());
+        let error = poll_ready(tool.execute_for_turn(
+            context(),
+            json!({"name":"mcp_context_tool"}),
+            CancellationToken::new(),
+        ))
+        .unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::Cancelled);
+        assert_eq!(*catalog.contexts.lock().unwrap(), vec![context()]);
+    }
+}
+
 struct NoopWake;
 
 impl Wake for NoopWake {

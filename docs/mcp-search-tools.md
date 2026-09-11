@@ -37,15 +37,26 @@ that canonical form.
 ## Catalog boundary
 
 `McpToolCatalog` is an explicitly injected asynchronous snapshot authority. Its
-`snapshot` method receives cancellation and returns either:
+`snapshot_for_turn` method receives the execution's exact original `ToolContext`
+and cancellation token, and returns either:
 
 - a validated ready `McpToolCatalogSnapshot`;
 - a bounded `discovering` snapshot; or
 - one fixed unavailable, resource-limit, or cancelled error.
 
+The context retains session, session-incarnation, turn, and call identity without
+normalization or a global current-session fallback. Context-aware catalogs must
+use their explicitly admitted live routing view and reject foreign or retired
+invocations; the context alone grants no permission. The backward-compatible
+default delegates to the existing `snapshot(cancellation)` method only when
+polled, so context-independent injected catalogs remain supported. An override
+is used exclusively; its rejection never falls back to `snapshot`.
+
 Calling `execute` constructs an inert future. Catalog acquisition starts only
-when that future is polled. A snapshot is an immutable point-in-time value;
-matching never calls an MCP transport or mutates the snapshot. The host that
+when that future is polled. Pre-cancellation, including cancellation observed
+after canonical argument validation, prevents construction of the contextual
+catalog future. A snapshot is an immutable point-in-time value; matching never
+calls an MCP transport or mutates the snapshot. The host that
 owns discovery must perform readiness, visibility, and policy admission before
 placing entries in the snapshot.
 

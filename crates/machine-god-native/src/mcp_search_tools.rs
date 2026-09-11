@@ -377,6 +377,23 @@ pub trait McpToolCatalog: Send + Sync + 'static {
         &self,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>>;
+
+    /// Acquires a snapshot for the exact invoking session, incarnation, turn,
+    /// and call. Search and selection forward their original context unchanged.
+    /// Context-aware implementations must reject missing, foreign, or retired
+    /// admission rather than infer an engine-global current session. The context
+    /// identifies the invocation; it is not itself a permission grant.
+    ///
+    /// The default preserves context-independent catalogs by delegating to
+    /// [`Self::snapshot`] only when polled. Overrides must likewise be inert
+    /// before polling and observe the supplied cancellation token.
+    fn snapshot_for_turn(
+        &self,
+        _context: ToolContext,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
+        Box::pin(async move { self.snapshot(cancellation).await })
+    }
 }
 
 /// Deterministic metadata-only search over an injected MCP catalog.
@@ -441,7 +458,7 @@ impl Tool for McpSearchToolsTool {
 
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
@@ -456,6 +473,7 @@ impl Tool for McpSearchToolsTool {
 
             let snapshot = acquire_catalog_snapshot(
                 self.catalog.as_ref(),
+                context,
                 &cancellation,
                 map_catalog_error,
                 cancelled,
@@ -686,11 +704,15 @@ fn validate_executable_schema(schema: &Value) -> Result<(), McpToolCatalogBuildE
 
 pub(crate) async fn acquire_catalog_snapshot(
     catalog: &dyn McpToolCatalog,
+    context: ToolContext,
     cancellation: &CancellationToken,
     map_error: fn(McpToolCatalogError) -> ToolError,
     cancelled_error: fn() -> ToolError,
 ) -> Result<McpToolCatalogSnapshot, ToolError> {
-    let mut snapshot = catalog.snapshot(cancellation.clone());
+    if cancellation.is_cancelled() {
+        return Err(cancelled_error());
+    }
+    let mut snapshot = catalog.snapshot_for_turn(context, cancellation.clone());
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
     let result = poll_fn(|poll_context| {
         if cancellation_wait.as_mut().poll(poll_context).is_ready() {
