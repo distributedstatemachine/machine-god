@@ -9,9 +9,13 @@ pub mod config;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod endpoint;
 pub mod headers;
+#[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
+pub mod http;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod management;
 pub mod pagination;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod peer;
 pub mod protocol;
 
 pub mod sse;

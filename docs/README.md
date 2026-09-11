@@ -65,7 +65,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
 - Native MCP building blocks: [command/configuration parsing](mcp-cli.md),
   [protocol and endpoint admission](mcp-runtime.md), [SSE framing](mcp-sse.md),
   [profile persistence](mcp-persistence.md), [catalog page assembly](mcp-pagination.md),
-  [resolved remote headers](mcp-headers.md), [owned stdio](mcp-stdio.md), and
+  [resolved remote headers](mcp-headers.md), [owned stdio](mcp-stdio.md),
+  [stdio negotiation and routing](mcp-peer.md), [owned HTTP/TLS](mcp-http.md), and
   [tool submission](mcp-submission.md).
 - Human MCP profile operations: [native management](mcp-management.md) and
   [interactive CLI management](mcp-cli-management.md).

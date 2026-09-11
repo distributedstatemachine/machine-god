@@ -411,16 +411,19 @@ observer passed the complete core tests, explicit doctests and strict Clippy.
 Completed component worktrees were removed; evidence and build caches remain.
 The shared transport interfaces at `5d66762c` pass 193 focused MCP unit tests
 (stdio process-runtime fixtures excluded), formatting and documentation checks.
-Lossless frames, read-only HTTP data and owned response cancellation are ready
-for the isolated stdio-peer and HTTP-connector lanes now being integrated.
-Their worktrees remain active; timeout snapshot behavior still needs the worker
-implementation, and these checks are not a full feature or remote gate.
+Owned stdio negotiation, correlated requests, raw catalog loading and bounded
+timeout snapshots are integrated, alongside the HTTP/TLS connector and streaming
+responses. Worker checks cover four non-process peer/snapshot cases and 15 HTTP
+socket cases; the combined strict, fresh-release and process gate is next.
+The CLI build includes the native HTTP adapter, but profile saves still do not
+activate servers. Component worktrees are removed after clean integration.
 These components do not constitute a delivered runtime. Remaining composition
-must own HTTP/TLS/SSE networking and response handling, typed feature/control
-authority, negotiation, progress/continuation metadata, bounded per-conversation
-routing and wire-ID allocation, catalog schema admission and publication,
-authentication and the CLI lifecycle. The exact-byte HTTP writer is not an
-HTTP connector, and raw catalog pages do not grant executable tool authority.
+must own admitted DNS, HTTP/SSE negotiation and session/listener lifecycle,
+typed feature/control authority, progress/continuation metadata, bounded
+per-conversation routing, lossless schema admission/projection and atomic catalog
+publication, authentication and CLI activation/finalization. Raw catalog pages
+do not grant executable tool authority. Schema integration must preserve pinned
+exact-number, reference and server-authoritative validation semantics end to end.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
 and this ledger. Subsequent transport, permission and authentication lanes use
 the agreed typed interfaces with non-overlapping files. Keep runtime/resource

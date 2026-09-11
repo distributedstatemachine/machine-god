@@ -15,6 +15,7 @@ impl fmt::Debug for McpStdioControl {
 impl McpStdioControl {
     /// Already admitted control JSON without the stdio delimiter. This is data,
     /// not a generic HTTP method or application-call authorization boundary.
+    #[cfg(feature = "mcp-http")]
     pub(crate) fn json_bytes(&self) -> &[u8] {
         &self.bytes[..self.bytes.len() - 1]
     }

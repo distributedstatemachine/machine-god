@@ -60,6 +60,7 @@ fn startup_discovery_and_lifecycle_have_separate_exact_methods() {
         let bytes = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}"}}"#);
         let frame = McpStdioControl::discovery(bytes.as_bytes()).unwrap();
         assert_eq!(frame.bytes.last(), Some(&b'\n'));
+        #[cfg(feature = "mcp-http")]
         assert_eq!(frame.json_bytes(), bytes.as_bytes());
         assert!(McpStdioControl::notification(bytes.as_bytes()).is_err());
     }
