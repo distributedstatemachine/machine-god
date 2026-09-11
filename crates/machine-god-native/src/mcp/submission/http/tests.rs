@@ -219,17 +219,136 @@ fn header_conflicts_smuggling_controls_duplicates_and_bounds_are_rejected() {
     ] {
         assert!(McpSubmissionHttpHead::new(&endpoint, &fields).is_err());
     }
-    assert!(McpSubmissionHttpHead::new(&endpoint, &vec![("x", b"".as_slice()); 65]).is_err());
-    assert!(McpSubmissionHttpHead::new(&endpoint, &[(&"n".repeat(129), b"")]).is_err());
+    assert!(matches!(
+        McpSubmissionHttpHead::new(&endpoint, &vec![("x", b"".as_slice()); 257]),
+        Err(McpSubmissionError::Limit)
+    ));
+    assert!(matches!(
+        McpSubmissionHttpHead::new(&endpoint, &[(&"n".repeat(16 * 1024 + 1), b"")]),
+        Err(McpSubmissionError::Limit)
+    ));
     assert!(McpSubmissionHttpHead::new(&endpoint, &[("x", &vec![b'v'; 16 * 1024 + 1])]).is_err());
-    let large = vec![b'v'; 16 * 1024];
-    assert!(
-        McpSubmissionHttpHead::new(
-            &endpoint,
-            &[("a", &large), ("b", &large), ("c", &large), ("d", &large)]
-        )
-        .is_err()
+}
+
+fn boundary_headers(count: usize, field_bytes: usize) -> (Vec<String>, Vec<Vec<u8>>) {
+    let mut names: Vec<_> = (0..count).map(|index| format!("x-{index:03}")).collect();
+    names[0] = "n".repeat(16 * 1024);
+    let mut remaining = field_bytes - names.iter().map(String::len).sum::<usize>();
+    let values = (0..count)
+        .map(|_| {
+            let count = remaining.min(16 * 1024);
+            remaining -= count;
+            vec![b'v'; count]
+        })
+        .collect();
+    assert_eq!(remaining, 0);
+    (names, values)
+}
+
+fn prepare_with_head(fixture: &Fixture, head: &McpSubmissionHttpHead) -> PreparedMcpSubmission {
+    let request = fixture.request("call");
+    let Capability::Tool {
+        name,
+        call_id,
+        arguments,
+    } = &request.capability
+    else {
+        panic!()
+    };
+    block_on(fixture.registry.prepare_http(
+        &request,
+        PermissionInvocation {
+            tool_name: name,
+            call_id,
+            arguments,
+        },
+        fixture.runtime.clone(),
+        head,
+        &fixture.wire(),
+        CancellationToken::new(),
+    ))
+    .unwrap()
+}
+
+#[test]
+fn maximal_resolved_headers_plus_protocol_fields_fit_the_transport_head() {
+    let fixture = Fixture::new();
+    let endpoint =
+        McpEndpoint::parse(&format!("https://example.test/{}", "p".repeat(4000))).unwrap();
+    let (names, values) = boundary_headers(128, 512 * 1024);
+    let mut borrowed: Vec<_> = names
+        .iter()
+        .zip(&values)
+        .map(|(name, value)| (name.as_str(), value.as_slice()))
+        .collect();
+    assert_eq!(borrowed.len(), 128);
+    assert_eq!(
+        borrowed
+            .iter()
+            .map(|(name, value)| name.len() + value.len())
+            .sum::<usize>(),
+        512 * 1024
     );
+    borrowed.extend([
+        ("mcp-protocol-version", b"2025-11-25".as_slice()),
+        ("mcp-session-id", b"session"),
+    ]);
+    let head = McpSubmissionHttpHead::new(&endpoint, &borrowed).unwrap();
+    fixture
+        .admission("call", prepare_with_head(&fixture, &head))
+        .admit()
+        .unwrap();
+    let state = Arc::new(Mutex::new(SinkState::default()));
+    let mut driver = block_on(fixture.claim("call", CancellationToken::new()))
+        .unwrap()
+        .into_http_driver(Sink(state.clone()))
+        .unwrap();
+    let wire = driver.request_bytes().to_vec();
+    assert!(wire.len() > 512 * 1024 + endpoint.request_target().len());
+    assert!(wire.len() < 1024 * 1024 + MAX_MCP_SUBMISSION_REQUEST_BYTES);
+    assert_eq!(
+        driver.poll_write(&mut context(), &wire),
+        Poll::Ready(Ok(wire.len()))
+    );
+    assert_eq!(driver.poll_flush(&mut context()), Poll::Ready(Ok(())));
+    assert_eq!(state.lock().unwrap().bytes, wire);
+}
+
+#[test]
+fn composed_header_count_name_value_and_aggregate_bounds_are_inclusive() {
+    let fixture = Fixture::new();
+    let endpoint = McpEndpoint::parse("https://example.test/mcp").unwrap();
+    let (names, mut values) = boundary_headers(256, 768 * 1024);
+    let borrowed: Vec<_> = names
+        .iter()
+        .zip(&values)
+        .map(|(name, value)| (name.as_str(), value.as_slice()))
+        .collect();
+    assert_eq!(borrowed.len(), 256);
+    assert_eq!(borrowed[0].0.len(), 16 * 1024);
+    assert_eq!(borrowed[0].1.len(), 16 * 1024);
+    assert_eq!(
+        borrowed
+            .iter()
+            .map(|(name, value)| name.len() + value.len())
+            .sum::<usize>(),
+        768 * 1024
+    );
+    let head = McpSubmissionHttpHead::new(&endpoint, &borrowed).unwrap();
+    let prepared = prepare_with_head(&fixture, &head);
+    assert!(prepared.data.wire.len() > 768 * 1024);
+    assert!(prepared.data.wire.len() < 1024 * 1024 + MAX_MCP_SUBMISSION_REQUEST_BYTES);
+    drop(borrowed);
+    values.last_mut().unwrap().push(b'v');
+    let borrowed: Vec<_> = names
+        .iter()
+        .zip(&values)
+        .map(|(name, value)| (name.as_str(), value.as_slice()))
+        .collect();
+    assert!(matches!(
+        McpSubmissionHttpHead::new(&endpoint, &borrowed),
+        Err(McpSubmissionError::Limit)
+    ));
 }
 
 #[test]

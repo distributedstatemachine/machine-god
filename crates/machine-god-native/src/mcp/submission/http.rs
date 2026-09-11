@@ -9,14 +9,17 @@ use std::task::{Context, Poll};
 use machine_god_core::{BoxFuture, CancellationToken, PermissionInvocation, PermissionRequest};
 
 use super::{
-    Framing, McpSubmission, McpSubmissionError, McpSubmissionRegistry, McpSubmissionRuntime,
-    McpSubmissionWriter, PreparedMcpSubmission, Result, WriteGuard,
+    Framing, MAX_MCP_SUBMISSION_REQUEST_BYTES, McpSubmission, McpSubmissionError,
+    McpSubmissionRegistry, McpSubmissionRuntime, McpSubmissionWriter, PreparedMcpSubmission,
+    Result, WriteGuard,
 };
 use crate::mcp::endpoint::McpEndpoint;
 
-const MAX_HEAD_BYTES: usize = 64 * 1024;
-const MAX_HEADERS: usize = 64;
-const MAX_HEADER_NAME_BYTES: usize = 128;
+const MAX_HEAD_BYTES: usize = 1024 * 1024;
+const MAX_HTTP_WIRE_BYTES: usize = MAX_HEAD_BYTES + MAX_MCP_SUBMISSION_REQUEST_BYTES;
+const MAX_HEADERS: usize = 256;
+const MAX_HEADER_FIELD_BYTES: usize = 768 * 1024;
+const MAX_HEADER_NAME_BYTES: usize = 16 * 1024;
 const MAX_HEADER_VALUE_BYTES: usize = 16 * 1024;
 const MAX_VECTORS: usize = 64;
 type OwnedHeader = (Box<str>, Box<[u8]>);
@@ -33,6 +36,11 @@ impl McpSubmissionHttpHead {
     /// Copies bounded explicit headers and an already syntax-admitted endpoint.
     /// Header names are canonical lowercase; values retain exact bytes,
     /// including HTAB and obs-text from explicitly resolved header inputs.
+    /// This transport bound admits up to 256 trusted-composed fields (16 KiB
+    /// each name/value, 768 KiB summed names/values). The resolved-input layer
+    /// must independently enforce its smaller 128-field/512-KiB admission before
+    /// trusted native composition adds bounded protocol headers. Endpoint and
+    /// generated framing bytes are charged separately against a 1 MiB head cap.
     ///
     /// # Errors
     /// Rejects case-insensitive duplicates, generated/hop-by-hop header names,
@@ -43,7 +51,7 @@ impl McpSubmissionHttpHead {
         }
         let mut names = BTreeSet::new();
         let mut owned = Vec::with_capacity(headers.len());
-        let mut total = endpoint.as_str().len();
+        let mut total = 0usize;
         for &(name, value) in headers {
             if name.len() > MAX_HEADER_NAME_BYTES || value.len() > MAX_HEADER_VALUE_BYTES {
                 return Err(McpSubmissionError::Limit);
@@ -77,9 +85,9 @@ impl McpSubmissionHttpHead {
                 return Err(McpSubmissionError::Invalid);
             }
             total = total
-                .checked_add(name.len() + value.len() + 4)
+                .checked_add(name.len() + value.len())
                 .ok_or(McpSubmissionError::Limit)?;
-            if total > MAX_HEAD_BYTES {
+            if total > MAX_HEADER_FIELD_BYTES {
                 return Err(McpSubmissionError::Limit);
             }
             owned.push((name.into_boxed_str(), value.into()));
@@ -108,12 +116,26 @@ impl McpSubmissionHttpHead {
             append(&mut bytes, b"\r\n")?;
         }
         append(&mut bytes, b"\r\n")?;
-        // Payload was bounded and semantically validated by copy_request.
-        let mut framed = Vec::with_capacity(bytes.len() + payload.len());
-        framed.extend_from_slice(&bytes);
-        framed.extend_from_slice(payload);
-        Ok(framed.into_boxed_slice())
+        // Payload was semantically validated by copy_request; framing also
+        // explicitly checks the independent body and complete wire byte caps.
+        frame(&bytes, payload)
     }
+}
+fn frame(head: &[u8], payload: &[u8]) -> Result<Box<[u8]>> {
+    let total = head
+        .len()
+        .checked_add(payload.len())
+        .ok_or(McpSubmissionError::Limit)?;
+    if head.len() > MAX_HEAD_BYTES
+        || payload.len() > MAX_MCP_SUBMISSION_REQUEST_BYTES
+        || total > MAX_HTTP_WIRE_BYTES
+    {
+        return Err(McpSubmissionError::Limit);
+    }
+    let mut framed = Vec::with_capacity(total);
+    framed.extend_from_slice(head);
+    framed.extend_from_slice(payload);
+    Ok(framed.into_boxed_slice())
 }
 fn header_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
@@ -303,5 +325,35 @@ impl<W: McpSubmissionWriter> McpSubmissionHttpDriver<W> {
             self.complete = true;
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod framing_tests {
+    use super::*;
+
+    #[test]
+    fn encoded_head_and_total_wire_limits_are_inclusive_and_independent() {
+        let mut head = vec![b'h'; MAX_HEAD_BYTES - 1];
+        append(&mut head, b"h").unwrap();
+        assert_eq!(head.len(), MAX_HEAD_BYTES);
+        assert_eq!(append(&mut head, b"h"), Err(McpSubmissionError::Limit));
+        assert_eq!(head.len(), MAX_HEAD_BYTES);
+        let payload = vec![b'p'; MAX_MCP_SUBMISSION_REQUEST_BYTES];
+        let framed = frame(&head, &payload).unwrap();
+        assert_eq!(framed.len(), MAX_HTTP_WIRE_BYTES);
+        head.push(b'h');
+        assert_eq!(frame(&head, &payload), Err(McpSubmissionError::Limit));
+        assert_eq!(frame(&head, b""), Err(McpSubmissionError::Limit));
+        head.pop();
+        let oversized_payload = vec![b'p'; MAX_MCP_SUBMISSION_REQUEST_BYTES + 1];
+        assert_eq!(
+            frame(&head, &oversized_payload),
+            Err(McpSubmissionError::Limit)
+        );
+        assert_eq!(
+            frame(b"", &oversized_payload),
+            Err(McpSubmissionError::Limit)
+        );
     }
 }

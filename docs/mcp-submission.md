@@ -94,10 +94,14 @@ uses an 8,192-node/depth-64 envelope limit. Tombstones count against the turn
 slot bound; closing the turn clears them. Owners must separately bound the
 number of session registries/runtime lineages and unpolled futures they retain.
 
-HTTP adds at most 64 KiB of encoded request head to the 128 KiB JSON payload.
-Explicit headers are limited to 64 entries, 128-byte names, 16 KiB values and
-64 KiB aggregate endpoint/header bytes; final generated head bytes have their
-own 64 KiB check. A vectored driver call accepts at most 64 slices and never
+HTTP adds at most 1 MiB of encoded request head to the 128 KiB JSON payload,
+with an explicit total wire cap of 1 MiB + 128 KiB. The head accepts up to
+256 trusted-composed fields, 16 KiB names/values and 768 KiB summed name/value
+bytes, excluding endpoint and framing. The resolved-input validator separately
+admits at most 128 fields/512 KiB before trusted native composition appends its
+bounded protocol headers; this transport head is not a substitute for that
+input validator. Endpoint, generated headers and CRLF framing are charged
+against the independent 1 MiB encoded-head cap. A vectored driver call accepts at most 64 slices and never
 concatenates them. Header construction, request construction and prefix matching
 all charge their bounds before copying/delegating. The HTTP adapter is enabled
 on Linux/macOS, matching the existing endpoint type's platform boundary.
