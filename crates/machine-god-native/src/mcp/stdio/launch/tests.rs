@@ -1,6 +1,120 @@
 use super::*;
 use std::sync::Mutex;
 
+fn observed_launch() -> McpStdioLaunch {
+    McpStdioLaunch::new(
+        PathBuf::from("/unavailable-explicit-helper"),
+        vec![],
+        "/unavailable-explicit-server".into(),
+        vec![],
+        vec![],
+        None,
+        Arc::new(File::open(".").unwrap()),
+        WireLimits::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn observed_launch_rejection_host_failure_and_unwind_settle_without_workers() {
+    for scenario in 0..3 {
+        let host = NativeOwnedWorkerScope::new();
+        if scenario == 1 {
+            host.close();
+        }
+        let observed = Arc::new(Mutex::new(None));
+        let capture = observed.clone();
+        let admit = Arc::new(move |completion: crate::NativeOwnedWorkerCompletion| {
+            assert!(!completion.is_complete());
+            *capture.lock().unwrap() = Some(completion);
+            assert_ne!(scenario, 2, "deliberate observer unwind");
+            scenario != 0
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            futures_executor::block_on(observed_launch().connect_observed(
+                host.clone(),
+                Instant::now() + Duration::from_secs(5),
+                CancellationToken::new(),
+                Box::new(()),
+                admit,
+            ))
+        }));
+        match result {
+            Ok(result) => assert!(matches!(result, Err(McpStdioError::Capacity))),
+            Err(_) => assert_eq!(scenario, 2),
+        }
+        assert!(observed.lock().unwrap().as_ref().unwrap().is_complete());
+        host.close();
+        assert!(host.completion().is_complete());
+    }
+}
+
+#[test]
+fn observed_launch_is_inert_and_long_deadline_admission_is_explicit() {
+    let host = NativeOwnedWorkerScope::new();
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let capture = hits.clone();
+    let observer: Arc<dyn Fn(crate::NativeOwnedWorkerCompletion) -> bool + Send + Sync> =
+        Arc::new(move |_| {
+            capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            false
+        });
+    let deadline = Instant::now() + Duration::from_millis(u64::from(u32::MAX));
+    drop(observed_launch().connect_observed(
+        host.clone(),
+        deadline,
+        CancellationToken::new(),
+        Box::new(()),
+        observer.clone(),
+    ));
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(matches!(
+        futures_executor::block_on(observed_launch().connect(
+            host.clone(),
+            deadline,
+            CancellationToken::new(),
+            Box::new(())
+        )),
+        Err(McpStdioError::Invalid)
+    ));
+    assert!(matches!(
+        futures_executor::block_on(observed_launch().connect_observed(
+            host.clone(),
+            deadline,
+            CancellationToken::new(),
+            Box::new(()),
+            observer.clone()
+        )),
+        Err(McpStdioError::Capacity)
+    ));
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(matches!(
+        futures_executor::block_on(observed_launch().connect_observed(
+            host.clone(),
+            deadline + Duration::from_secs(1),
+            CancellationToken::new(),
+            Box::new(()),
+            observer.clone()
+        )),
+        Err(McpStdioError::Invalid)
+    ));
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert!(matches!(
+        futures_executor::block_on(observed_launch().connect_observed(
+            host.clone(),
+            deadline,
+            cancel,
+            Box::new(()),
+            observer
+        )),
+        Err(McpStdioError::Cancelled)
+    ));
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    host.close();
+    assert!(host.completion().is_complete());
+}
+
 #[test]
 fn parent_completion_waits_for_retained_nested_connection_cleanup() {
     let parent = NativeOwnedWorkerScope::new();

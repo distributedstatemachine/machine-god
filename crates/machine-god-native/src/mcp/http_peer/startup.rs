@@ -5,6 +5,7 @@ use super::{
     McpSubmissionHttpHead, NegotiatedProtocol, ProtocolVersion, Result, TransportKind, VecDeque,
     head, stream,
 };
+use super::{Duration, McpHttpCompletionObserver};
 use crate::mcp::{
     protocol::{HttpDiscoveryStatus, Negotiation, NegotiationAction},
     sse::{SseLimits, SseMode},
@@ -40,6 +41,7 @@ fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result
         notification_bytes: 0,
         operation_events: 0,
         closed: false,
+        configured_timeouts: false,
     })
 }
 
@@ -48,7 +50,75 @@ pub(super) async fn connect(
     cancellation: CancellationToken,
     deadline: Instant,
 ) -> Result<McpHttpPeer> {
+    connect_inner(options, cancellation, deadline, None)
+        .await
+        .map(|(peer, _)| peer)
+}
+
+pub(super) async fn connect_observed(
+    options: McpHttpPeerOptions,
+    cancellation: CancellationToken,
+    deadline: Instant,
+    startup_timeout: Duration,
+    first_attempt_deadline: Option<Instant>,
+    observer: McpHttpCompletionObserver,
+) -> Result<(McpHttpPeer, Instant)> {
+    if startup_timeout.is_zero() || startup_timeout > Duration::from_millis(u64::from(u32::MAX)) {
+        return Err(McpHttpPeerError::Limit);
+    }
+    connect_inner(
+        options,
+        cancellation,
+        deadline,
+        Some(ConfiguredStartup {
+            timeout: startup_timeout,
+            first_deadline: first_attempt_deadline,
+            observer,
+        }),
+    )
+    .await
+}
+
+struct ConfiguredStartup {
+    timeout: Duration,
+    first_deadline: Option<Instant>,
+    observer: McpHttpCompletionObserver,
+}
+
+fn observed_owner(
+    options: McpHttpPeerOptions,
+    cancellation: CancellationToken,
+    outer_deadline: Instant,
+    configured: Option<&ConfiguredStartup>,
+) -> Result<(McpHttpPeer, Instant)> {
     let mut peer = inert(options, cancellation)?;
+    peer.configured_timeouts = configured.is_some();
+    peer.check(outer_deadline)?;
+    let mut deadline = attempt_deadline(
+        &peer,
+        outer_deadline,
+        configured.map(|policy| policy.timeout),
+    )?;
+    if let Some(first) = configured.and_then(|policy| policy.first_deadline) {
+        deadline = deadline.min(first);
+    }
+    peer.check(deadline)?;
+    if let Some(policy) = configured
+        && !(policy.observer)(peer.completion())
+    {
+        return Err(McpHttpPeerError::Limit);
+    }
+    Ok((peer, deadline))
+}
+
+async fn connect_inner(
+    options: McpHttpPeerOptions,
+    cancellation: CancellationToken,
+    outer_deadline: Instant,
+    configured: Option<ConfiguredStartup>,
+) -> Result<(McpHttpPeer, Instant)> {
+    let (mut peer, mut deadline) =
+        observed_owner(options, cancellation, outer_deadline, configured.as_ref())?;
     let transport = peer.options.transport;
     peer.check(deadline)?;
     if transport == TransportKind::LegacySse {
@@ -56,11 +126,21 @@ pub(super) async fn connect(
     }
     let (mut negotiation, mut action) = Negotiation::new(transport);
     let mut initialized_capabilities = McpPeerCapabilities::default();
+    let mut was_modern = transport != TransportKind::LegacySse;
     loop {
-        peer.check(deadline)?;
+        peer.check(outer_deadline)?;
         let version = match action {
             NegotiationAction::SendDiscover => ProtocolVersion::Modern,
-            NegotiationAction::Initialize(version) => version,
+            NegotiationAction::Initialize(version) => {
+                if was_modern {
+                    deadline = attempt_deadline(
+                        &peer,
+                        outer_deadline,
+                        configured.as_ref().map(|policy| policy.timeout),
+                    )?;
+                }
+                version
+            }
             NegotiationAction::Ready(protocol) => {
                 peer.protocol = protocol;
                 peer.capabilities = initialized_capabilities;
@@ -75,13 +155,15 @@ pub(super) async fn connect(
                     .await?;
                 }
                 peer.check(deadline)?;
-                return Ok(peer);
+                return Ok((peer, deadline));
             }
             NegotiationAction::Failed(error) => return Err(McpHttpPeerError::Negotiation(error)),
             NegotiationAction::RestartInitialize(_) => return Err(McpHttpPeerError::Protocol),
         };
+        peer.check(deadline)?;
         peer.protocol.version = version;
         let modern = version == ProtocolVersion::Modern;
+        was_modern = modern;
         let id = peer.allocate()?;
         let method = if modern {
             "server/discover"
@@ -128,6 +210,24 @@ pub(super) async fn connect(
             }
         }
     }
+}
+
+fn attempt_deadline(
+    peer: &McpHttpPeer,
+    outer: Instant,
+    timeout: Option<Duration>,
+) -> Result<Instant> {
+    let selected = match timeout {
+        Some(timeout) => peer
+            .options
+            .clock
+            .now()
+            .checked_add(timeout)
+            .ok_or(McpHttpPeerError::Limit)?
+            .min(outer),
+        None => outer,
+    };
+    Ok(selected.min(peer.options.lifetime_deadline))
 }
 
 async fn legacy_endpoint(peer: &mut McpHttpPeer, deadline: Instant) -> Result<()> {

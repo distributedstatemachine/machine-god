@@ -8,6 +8,7 @@ use futures_util::future::join;
 use std::net::{Ipv4Addr, SocketAddr};
 
 mod lifecycle;
+mod observed;
 mod submission;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},

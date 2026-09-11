@@ -172,6 +172,53 @@ fn ordinary_discovery_error_restarts_only_after_old_child_settles() {
 }
 
 #[test]
+fn observed_fallback_retains_each_completion_before_launch_and_refreshes_only_attempt() {
+    let fixture = Fixture::new();
+    let first = r#"IFS= read -r line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no"}}'; while IFS= read -r line; do :; done"#;
+    for allow_fallback in [false, true] {
+        let mut launches = VecDeque::from([fixture.launch(first), fixture.launch(LEGACY)]);
+        let observed = Arc::new(std::sync::Mutex::new(
+            Vec::<NativeOwnedWorkerCompletion>::new(),
+        ));
+        let capture = observed.clone();
+        let admit = Arc::new(move |completion: NativeOwnedWorkerCompletion| {
+            let mut values = capture.lock().unwrap();
+            assert!(values.iter().all(NativeOwnedWorkerCompletion::is_complete));
+            let admitted = values.is_empty() || allow_fallback;
+            values.push(completion);
+            admitted
+        });
+        let start = Instant::now();
+        let timeout = Duration::from_secs(2);
+        let result = fixture.runtime.block_on(McpStdioPeer::connect_observed(
+            &mut || launches.pop_front().ok_or(McpStdioError::Invalid),
+            fixture.host.clone(),
+            Arc::new(Timer),
+            CancellationToken::new(),
+            start + Duration::from_secs(20),
+            timeout,
+            admit,
+        ));
+        if allow_fallback {
+            let (mut peer, attempt) = result.unwrap();
+            assert!(attempt > start + timeout);
+            assert!(attempt <= Instant::now() + timeout);
+            peer.close();
+            let completion = peer.completion();
+            completion.wait_on_worker().unwrap();
+        } else {
+            assert!(matches!(
+                result,
+                Err(McpPeerError::Transport(McpStdioError::Capacity))
+            ));
+        }
+        let values = observed.lock().unwrap();
+        assert_eq!(values.len(), 2);
+        assert!(values.iter().all(NativeOwnedWorkerCompletion::is_complete));
+    }
+}
+
+#[test]
 fn discovery_timeout_snapshot_restarts_but_partial_or_malformed_output_does_not() {
     let fixture = Fixture::new();
     let silent = "while IFS= read -r line; do :; done";

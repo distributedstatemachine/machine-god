@@ -83,8 +83,13 @@ events or publish resume cursors.
 
 ## Lifetime and completion
 
-The operation deadline is explicit, positive and at most 24 hours. The same
-deadline and cancellation cover TCP connection, TLS handshake, request writes,
+The public standalone constructors require an explicit positive operation
+deadline at most 24 hours away. Observed configured peers select a separate
+native-only prepared-head policy admitting at most `u32::MAX` milliseconds per
+exchange, preserving the complete configured timeout without weakening those
+existing constructor limits. Both paths reject oversized or expired deadlines.
+The same selected deadline and cancellation cover TCP connection, TLS handshake,
+request writes,
 response head and every body read, including buffered bytes. Userspace waits are
 bounded; synchronous OS/library work and scheduling are not real-time guarantees.
 

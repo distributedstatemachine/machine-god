@@ -33,6 +33,7 @@ mod stream;
 mod tests;
 
 type Result<T> = std::result::Result<T, McpHttpPeerError>;
+pub type McpHttpCompletionObserver = Arc<dyn Fn(McpHttpPeerCompletion) -> bool + Send + Sync>;
 
 /// Bounded challenge observations for separately authorized authentication.
 pub struct McpHttpAuthentication {
@@ -169,8 +170,34 @@ pub struct McpHttpPeer {
     notification_bytes: usize,
     operation_events: usize,
     closed: bool,
+    configured_timeouts: bool,
 }
 impl McpHttpPeer {
+    /// Configured startup with bounded pre-effect cleanup observation. Returns
+    /// the selected attempt deadline for initial tools catalog loading; neither
+    /// observation nor successful startup grants application execution authority.
+    /// `first_attempt_deadline` preserves time already spent on auth/DNS and
+    /// can only shorten the first phase, never a fresh admitted legacy fallback.
+    /// # Errors
+    /// Rejects invalid timeout, observer capacity, transport or negotiation.
+    pub async fn connect_observed(
+        options: McpHttpPeerOptions,
+        cancellation: CancellationToken,
+        outer_deadline: Instant,
+        startup_timeout: Duration,
+        first_attempt_deadline: Option<Instant>,
+        observer: McpHttpCompletionObserver,
+    ) -> Result<(Self, Instant)> {
+        startup::connect_observed(
+            options,
+            cancellation,
+            outer_deadline,
+            startup_timeout,
+            first_attempt_deadline,
+            observer,
+        )
+        .await
+    }
     /// Performs actual bounded discovery/initialization and legacy notifications.
     /// # Errors
     /// Rejects invalid authority, malformed negotiation, authentication, redirects,
@@ -358,7 +385,12 @@ impl McpHttpPeer {
         deadline: Instant,
     ) -> Result<McpHttpConnection> {
         self.check(deadline)?;
-        let connection = McpHttpConnection::from_prepared_head(
+        let connect = if self.configured_timeouts {
+            McpHttpConnection::from_configured_head
+        } else {
+            McpHttpConnection::from_prepared_head
+        };
+        let connection = connect(
             self.destination.clone(),
             head,
             self.options.trust.clone(),

@@ -25,8 +25,16 @@ pub use capabilities::McpPeerCapabilities;
 /// Explicit host-selected asynchronous timer. Implementations must be inert
 /// before polling and must retain ownership of any timer work after abandonment.
 pub trait McpPeerTimer: Send + Sync {
+    /// Monotonic observation in the native `Instant` domain. Existing timers
+    /// retain their native clock; configured hosts may inject the same domain.
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
     fn sleep_until(&self, deadline: Instant) -> BoxFuture<'_, ()>;
 }
+
+pub type McpStdioCompletionObserver =
+    Arc<dyn Fn(NativeOwnedWorkerCompletion) -> bool + Send + Sync>;
 
 /// Explicit authority to reopen the same selected server during negotiation.
 /// The factory must not switch server/configuration identity between attempts.
@@ -94,6 +102,32 @@ impl fmt::Debug for McpStdioPeer {
     }
 }
 impl McpStdioPeer {
+    /// Configured startup with pre-effect completion observation. The returned
+    /// deadline also bounds initial tools catalog loading. Modern-to-legacy
+    /// fallback receives a fresh timeout; legacy-version retries share it.
+    /// Complete-startup retry policy remains with the caller, after cleanup.
+    /// # Errors
+    /// Rejects invalid timeout, failed observation, startup or negotiation.
+    pub async fn connect_observed(
+        factory: &mut dyn McpStdioLaunchFactory,
+        host: NativeOwnedWorkerScope,
+        timer: Arc<dyn McpPeerTimer>,
+        cancellation: CancellationToken,
+        outer_deadline: Instant,
+        startup_timeout: Duration,
+        observer: McpStdioCompletionObserver,
+    ) -> Result<(Self, Instant)> {
+        startup::connect_observed(
+            factory,
+            host,
+            timer,
+            cancellation,
+            outer_deadline,
+            startup_timeout,
+            observer,
+        )
+        .await
+    }
     /// Drives discovery/initialize over actual owned pipes. A restart occurs
     /// only after positively settled old-connection cleanup and live control.
     /// `discovery_timeout` is a subdeadline, never the overall deadline.

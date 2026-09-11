@@ -75,3 +75,41 @@ deadlines, cancellation, child lifetime and retained cleanup; the factory adds n
 task, finalizer or detached work. Debug/errors omit commands, arguments,
 environment, helper paths and cwd. Production host/CLI composition and the full
 feature gates remain in the [implementation plan](implementation-plan.md).
+
+## Observed configured startup
+
+`McpStdioPeer::connect_observed` accepts explicit startup timeout, absolute outer
+deadline and a synchronous fallible completion observer. It returns the ready
+peer and selected attempt deadline; initial tools catalog loading shares that
+remaining budget. Complete-startup retries, including catalog failures, belong
+to the composer under the configured `restart_limit` (0–255), not an additional
+peer retry loop. Application requests are never replayed by startup.
+
+Configured timeouts are positive and at most `u32::MAX` milliseconds. Deadline
+addition is checked and always bounded by the caller's outer deadline. The
+existing `connect` interfaces retain their 300-second admission behavior.
+`McpPeerTimer::now` defaults to native monotonic time; explicit hosts can provide
+the same `Instant` domain alongside their existing injected timer. Child-side
+process deadlines still use native monotonic time.
+
+The pinned `connectionAttemptControl` gives modern discovery one configured
+attempt, then modern-to-legacy fallback a fresh attempt. All subsequent legacy
+version retries share that legacy deadline; they do not each reset it. The
+outer deadline and cancellation remain live during cleanup and fallback.
+Positive, settled old-connection evidence is still required before reopening;
+malformed success and ambiguous application operations do not authorize it.
+
+The launch companion invokes its observer on first poll after creating an inert
+child scope and before admitting a host worker, resolving paths or spawning a
+process. It holds no transport mutex during the callback. Returning false rejects
+with capacity; the unadmitted scope closes on rejection, cancellation, host
+admission failure or callback unwind. An observed completion therefore remains
+settleable even if startup never returns a peer. Once admitted, existing host
+ownership retains child and deferred-reap cleanup after cancellation or dropped
+futures. Observation adds no worker, waiter task or detached finalizer.
+
+Observers must use a finite receipt ledger, pruning only positively complete
+entries. Each fallback is observed separately; a full ledger rejects before new
+effects. Hosts must wait for previous observed cleanup before full-startup
+retries and keep the finite ledger across all 256 configured attempts. Observation is
+cleanup data, not execution authority or proof of remote effect reversal.

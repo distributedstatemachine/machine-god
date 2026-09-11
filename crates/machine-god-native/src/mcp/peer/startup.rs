@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use super::McpStdioCompletionObserver;
 use super::routing::{CloseOnDrop, Exchange, bounded, check, exchange, request};
 use super::{
     Arc, CancellationToken, Duration, Instant, McpPeerCapabilities, McpPeerError, McpPeerTimer,
@@ -11,6 +12,9 @@ use crate::mcp::protocol::{
 };
 use crate::mcp::stdio::{McpStdioControl, McpStdioReadEnd};
 
+#[cfg(test)]
+mod tests;
+
 pub(super) async fn connect(
     factory: &mut dyn McpStdioLaunchFactory,
     host: NativeOwnedWorkerScope,
@@ -19,47 +23,136 @@ pub(super) async fn connect(
     deadline: Instant,
     discovery_timeout: Duration,
 ) -> Result<McpStdioPeer> {
-    check(&cancellation, deadline)?;
-    if discovery_timeout.is_zero()
-        || discovery_timeout > Duration::from_secs(300)
-        || deadline.saturating_duration_since(Instant::now()) > Duration::from_secs(300)
-    {
-        return Err(McpPeerError::Capacity);
-    }
-    let connection = factory
-        .launch()?
-        .connect(host.clone(), deadline, cancellation.clone(), Box::new(()))
-        .await?;
-    let mut peer = McpStdioPeer {
-        connection,
-        protocol: NegotiatedProtocol {
-            transport: TransportKind::Stdio,
-            version: ProtocolVersion::Modern,
-        },
-        capabilities: McpPeerCapabilities::default(),
+    connect_inner(
+        factory,
+        host,
         timer,
         cancellation,
-        next_id: Some(1),
-        reserved: super::McpPendingToolReservation::default(),
-        notifications: VecDeque::new(),
-        notification_bytes: 0,
-        closed: false,
-    };
+        Startup {
+            deadline,
+            timeout: discovery_timeout,
+            observer: None,
+        },
+    )
+    .await
+    .map(|(peer, _)| peer)
+}
+
+pub(super) async fn connect_observed(
+    factory: &mut dyn McpStdioLaunchFactory,
+    host: NativeOwnedWorkerScope,
+    timer: Arc<dyn McpPeerTimer>,
+    cancellation: CancellationToken,
+    deadline: Instant,
+    startup_timeout: Duration,
+    observer: McpStdioCompletionObserver,
+) -> Result<(McpStdioPeer, Instant)> {
+    connect_inner(
+        factory,
+        host,
+        timer,
+        cancellation,
+        Startup {
+            deadline,
+            timeout: startup_timeout,
+            observer: Some(observer),
+        },
+    )
+    .await
+}
+
+struct Startup {
+    deadline: Instant,
+    timeout: Duration,
+    observer: Option<McpStdioCompletionObserver>,
+}
+impl Startup {
+    fn validate(&self, now: Instant) -> Result<()> {
+        let maximum = if self.observer.is_some() {
+            Duration::from_millis(u64::from(u32::MAX))
+        } else {
+            Duration::from_secs(300)
+        };
+        if self.timeout.is_zero()
+            || self.timeout > maximum
+            || (self.observer.is_none() && self.deadline.saturating_duration_since(now) > maximum)
+        {
+            return Err(McpPeerError::Capacity);
+        }
+        Ok(())
+    }
+    fn attempt_deadline(&self, now: Instant) -> Result<Instant> {
+        if self.observer.is_none() {
+            return Ok(self.deadline);
+        }
+        Ok(now
+            .checked_add(self.timeout)
+            .ok_or(McpPeerError::Capacity)?
+            .min(self.deadline))
+    }
+    async fn launch(
+        &self,
+        factory: &mut dyn McpStdioLaunchFactory,
+        host: NativeOwnedWorkerScope,
+        cancellation: CancellationToken,
+        deadline: Instant,
+    ) -> Result<crate::mcp::stdio::McpStdioConnection> {
+        let launch = factory.launch()?;
+        match &self.observer {
+            Some(observer) => {
+                launch
+                    .connect_observed(host, deadline, cancellation, Box::new(()), observer.clone())
+                    .await
+            }
+            None => {
+                launch
+                    .connect(host, deadline, cancellation, Box::new(()))
+                    .await
+            }
+        }
+        .map_err(Into::into)
+    }
+}
+
+async fn connect_inner(
+    factory: &mut dyn McpStdioLaunchFactory,
+    host: NativeOwnedWorkerScope,
+    timer: Arc<dyn McpPeerTimer>,
+    cancellation: CancellationToken,
+    startup: Startup,
+) -> Result<(McpStdioPeer, Instant)> {
+    let deadline = startup.deadline;
+    live(&cancellation, &*timer, deadline)?;
+    startup.validate(timer.now())?;
+    let mut selected_deadline = startup.attempt_deadline(timer.now())?;
+    live(&cancellation, &*timer, selected_deadline)?;
+    let connection = startup
+        .launch(
+            factory,
+            host.clone(),
+            cancellation.clone(),
+            selected_deadline,
+        )
+        .await?;
+    let mut peer = unnegotiated(connection, timer, cancellation);
     let (mut negotiation, mut action) = Negotiation::new(TransportKind::Stdio);
+    let mut was_modern = true;
     loop {
-        check(&peer.cancellation, deadline)?;
+        live(&peer.cancellation, &*peer.timer, deadline)?;
         let version = match action {
             NegotiationAction::SendDiscover => ProtocolVersion::Modern,
             NegotiationAction::RestartInitialize(version) => {
+                if was_modern {
+                    selected_deadline = startup.attempt_deadline(peer.timer.now())?;
+                }
                 settle(&peer, &host, deadline, true).await?;
-                check(&peer.cancellation, deadline)?;
-                peer.connection = factory
-                    .launch()?
-                    .connect(
+                live(&peer.cancellation, &*peer.timer, selected_deadline)?;
+                peer.connection = startup
+                    .launch(
+                        factory,
                         host.clone(),
-                        deadline,
                         peer.cancellation.clone(),
-                        Box::new(()),
+                        selected_deadline,
                     )
                     .await?;
                 // Notifications cannot acquire a new connection generation.
@@ -70,22 +163,24 @@ pub(super) async fn connect(
             NegotiationAction::Ready(protocol) => {
                 peer.protocol = protocol;
                 if protocol.needs_initialized_notification() {
-                    initialized(&peer, deadline).await?;
+                    initialized(&peer, selected_deadline).await?;
                 }
-                check(&peer.cancellation, deadline)?;
-                return Ok(peer);
+                live(&peer.cancellation, &*peer.timer, selected_deadline)?;
+                return Ok((peer, selected_deadline));
             }
             NegotiationAction::Failed(error) => return Err(McpPeerError::Negotiation(error)),
             NegotiationAction::Initialize(_) => return Err(McpPeerError::InvalidResult),
         };
         let modern = version == ProtocolVersion::Modern;
-        let attempt_deadline = if modern {
-            Instant::now()
-                .checked_add(discovery_timeout)
+        was_modern = modern;
+        let attempt_deadline = if modern && startup.observer.is_none() {
+            peer.timer
+                .now()
+                .checked_add(startup.timeout)
                 .ok_or(McpPeerError::Capacity)?
                 .min(deadline)
         } else {
-            deadline
+            selected_deadline
         };
         let id = peer.allocate()?;
         let (method, params) = startup_params(version);
@@ -116,6 +211,28 @@ pub(super) async fn connect(
                     unavailable(&peer, &host, &mut negotiation, modern, error, deadline).await?;
             }
         }
+    }
+}
+
+fn unnegotiated(
+    connection: crate::mcp::stdio::McpStdioConnection,
+    timer: Arc<dyn McpPeerTimer>,
+    cancellation: CancellationToken,
+) -> McpStdioPeer {
+    McpStdioPeer {
+        connection,
+        protocol: NegotiatedProtocol {
+            transport: TransportKind::Stdio,
+            version: ProtocolVersion::Modern,
+        },
+        capabilities: McpPeerCapabilities::default(),
+        timer,
+        cancellation,
+        next_id: Some(1),
+        reserved: super::McpPendingToolReservation::default(),
+        notifications: VecDeque::new(),
+        notification_bytes: 0,
+        closed: false,
     }
 }
 
@@ -168,7 +285,7 @@ async fn settle(
     .await?
     .map_err(|_| McpPeerError::Closed)?
     .map_err(|_| McpPeerError::Closed)?;
-    check(&peer.cancellation, deadline)
+    live(&peer.cancellation, &*peer.timer, deadline)
 }
 
 async fn unavailable(
@@ -179,7 +296,7 @@ async fn unavailable(
     error: McpPeerError,
     deadline: Instant,
 ) -> Result<NegotiationAction> {
-    check(&peer.cancellation, deadline)?;
+    live(&peer.cancellation, &*peer.timer, deadline)?;
     if !matches!(
         error,
         McpPeerError::Deadline | McpPeerError::Transport(McpStdioError::Closed)
@@ -205,5 +322,18 @@ async fn unavailable(
             Ok(negotiation.stdio_initialize_closed())
         }
         _ => Err(error),
+    }
+}
+
+fn live(
+    cancellation: &CancellationToken,
+    timer: &dyn McpPeerTimer,
+    deadline: Instant,
+) -> Result<()> {
+    check(cancellation, deadline)?;
+    if timer.now() >= deadline {
+        Err(McpPeerError::Deadline)
+    } else {
+        Ok(())
     }
 }

@@ -192,9 +192,43 @@ impl McpStdioLaunch {
         cancellation: CancellationToken,
         keepalive: Box<dyn Send>,
     ) -> BoxFuture<'static, Result<McpStdioConnection>> {
+        self.connect_inner(host, deadline, cancellation, keepalive, None)
+    }
+
+    /// Observes the child cleanup scope before worker/process admission. The
+    /// callback must retain observations under its own finite capacity and
+    /// returns false to reject admission. It runs on poll, outside transport
+    /// locks. Configured startup admits at most `u32::MAX` milliseconds.
+    /// # Errors
+    /// Uses the existing launch errors; rejected observation returns capacity.
+    #[must_use]
+    pub fn connect_observed(
+        self,
+        host: NativeOwnedWorkerScope,
+        deadline: Instant,
+        cancellation: CancellationToken,
+        keepalive: Box<dyn Send>,
+        observer: Arc<dyn Fn(crate::NativeOwnedWorkerCompletion) -> bool + Send + Sync>,
+    ) -> BoxFuture<'static, Result<McpStdioConnection>> {
+        self.connect_inner(host, deadline, cancellation, keepalive, Some(observer))
+    }
+
+    fn connect_inner(
+        self,
+        host: NativeOwnedWorkerScope,
+        deadline: Instant,
+        cancellation: CancellationToken,
+        keepalive: Box<dyn Send>,
+        observer: Option<Arc<dyn Fn(crate::NativeOwnedWorkerCompletion) -> bool + Send + Sync>>,
+    ) -> BoxFuture<'static, Result<McpStdioConnection>> {
         Box::pin(async move {
             check_start(deadline, &cancellation)?;
-            if deadline.saturating_duration_since(Instant::now()) > MAX_STARTUP {
+            let maximum = if observer.is_some() {
+                Duration::from_millis(u64::from(u32::MAX))
+            } else {
+                MAX_STARTUP
+            };
+            if deadline.saturating_duration_since(Instant::now()) > maximum {
                 return Err(McpStdioError::Invalid);
             }
             let stop = CancellationToken::new();
@@ -203,6 +237,11 @@ impl McpStdioLaunch {
             let startup = Arc::new(Response::new());
             let child_scope = NativeOwnedWorkerScope::new();
             let completion = child_scope.completion();
+            let mut unadmitted = UnadmittedScope(Some(child_scope.clone()));
+            if observer.is_some_and(|observe| !observe(completion.clone())) {
+                return Err(McpStdioError::Capacity);
+            }
+            check_start(deadline, &cancellation)?;
             let worker_shared = shared.clone();
             let worker_startup = startup.clone();
             host.spawn(move || {
@@ -247,6 +286,7 @@ impl McpStdioLaunch {
                 // child-scope cleanup settles, even when admission unwinds.
             })
             .map_err(|_| McpStdioError::Capacity)?;
+            unadmitted.0 = None;
             startup.wait().await?;
             // A server can send a final response and close immediately after
             // exec. Preserve the admitted connection and queued frame.
@@ -412,6 +452,16 @@ fn check_start(deadline: Instant, cancellation: &CancellationToken) -> Result<()
 struct Finish {
     shared: Arc<Shared>,
     startup: Arc<Response<()>>,
+}
+/// Closes an observed but never admitted scope on rejection, panic, cancellation
+/// or failed host enrollment. It never waits or starts cleanup work.
+struct UnadmittedScope(Option<NativeOwnedWorkerScope>);
+impl Drop for UnadmittedScope {
+    fn drop(&mut self) {
+        if let Some(scope) = &self.0 {
+            scope.close();
+        }
+    }
 }
 impl Drop for Finish {
     fn drop(&mut self) {

@@ -89,7 +89,7 @@ elicitation/continuation replies remain a separate runtime boundary.
 ## Bounds and cleanup
 
 Peer lifetime is explicitly host-selected, independently of the connector's
-24-hour maximum for one exchange; each operation still has a finite deadline. IDs use
+per-exchange ceiling; each operation still has a finite deadline. IDs use
 positive signed-64-bit integers and fail on exhaustion. Limits are 2,048 runtime
 allocations, eight live exchange observations, one listener, 64 queued events
 totaling 1 MiB, and 4,096 admitted events per caller operation. Each response stream
@@ -114,3 +114,35 @@ Debug/display omit endpoints, IDs, headers, challenges and payloads.
 DNS composition, authentication effects, executable publication, permission and
 consent/continuation routing, and CLI activation retain native runtime ownership.
 The [implementation plan](implementation-plan.md) is the sole live gate ledger.
+
+## Observed configured startup
+
+`connect_observed` adds a synchronous fallible completion observer and configured
+startup duration to the explicit outer deadline. The observer receives the inert
+peer's completion on poll, outside locks and before network effects. Rejection,
+callback unwind, cancellation, failed initialization and abandoned futures retire
+the same observed owner. There is no detached observer or listener task. Hosts
+retain observations in a bounded ledger and prune only completed owners.
+
+An optional `first_attempt_deadline` carries the initial budget already consumed
+by caller-owned credential refresh and DNS. It can only shorten the first
+configured attempt; an expired first budget rejects before observation/effects.
+It does not shorten the fresh legacy fallback timeout. Omitting it starts the
+initial budget when the peer future is polled.
+
+The returned `(peer, attempt_deadline)` preserves the remaining initial tools
+catalog budget. Modern discovery and its admitted retry share one deadline;
+same-family legacy fallback gets a fresh configured timeout, bounded by the outer
+deadline and selected peer lifetime. Legacy initialization/version exchanges and
+initialized notification share that legacy attempt. Explicit deprecated SSE
+endpoint discovery and initialization share one attempt. Errors do not add
+automatic full-startup or application retries.
+
+Configured timeouts admit positive durations through `u32::MAX` milliseconds,
+with checked `Instant` addition. Observed peers select a separate configured
+connector policy admitting that same maximum for each finite exchange; existing
+public connector constructors and the original peer `connect` retain their
+24-hour exchange ceiling. No configured timeout is silently clamped. A listener
+whose requested lifetime exceeds the selected per-exchange bound must be given
+an admissible host lifetime or fails explicitly. Completion remains local cleanup
+evidence, not session revocation, permission or remote cancellation proof.

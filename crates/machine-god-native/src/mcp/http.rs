@@ -220,8 +220,51 @@ impl McpHttpConnection {
         deadline: Instant,
         clock: Arc<dyn McpHttpClock>,
     ) -> Result<Self> {
+        Self::from_bounded_head(
+            destination,
+            (head, Duration::from_secs(24 * 60 * 60)),
+            trust,
+            limits,
+            cancellation,
+            deadline,
+            clock,
+        )
+    }
+
+    /// Explicit configured peer policy; legacy public constructors retain their
+    /// 24-hour ceiling. Every exchange remains finite and independently bounded.
+    pub(crate) fn from_configured_head(
+        destination: McpHttpDestination,
+        head: Arc<McpSubmissionHttpHead>,
+        trust: Option<McpHttpTrust>,
+        limits: McpHttpLimits,
+        cancellation: CancellationToken,
+        deadline: Instant,
+        clock: Arc<dyn McpHttpClock>,
+    ) -> Result<Self> {
+        Self::from_bounded_head(
+            destination,
+            (head, Duration::from_millis(u64::from(u32::MAX))),
+            trust,
+            limits,
+            cancellation,
+            deadline,
+            clock,
+        )
+    }
+
+    fn from_bounded_head(
+        destination: McpHttpDestination,
+        policy: (Arc<McpSubmissionHttpHead>, Duration),
+        trust: Option<McpHttpTrust>,
+        limits: McpHttpLimits,
+        cancellation: CancellationToken,
+        deadline: Instant,
+        clock: Arc<dyn McpHttpClock>,
+    ) -> Result<Self> {
+        let (head, maximum) = policy;
         let now = clock.now();
-        if deadline <= now || deadline.duration_since(now) > Duration::from_secs(24 * 60 * 60) {
+        if deadline <= now || deadline.duration_since(now) > maximum {
             return Err(McpHttpError::Deadline);
         }
         if destination.endpoint().is_tls() != trust.is_some()
