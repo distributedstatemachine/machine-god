@@ -215,3 +215,36 @@ release helper; they were not full-gate acceptance. External logs are retained
 as `pty-ready-{regression,lifecycle,module}.log` under the shared skills evidence
 parent. The clean committed repair worktree was removed after integration.
 This repairs the empty-read race, not the separate child-reaping timeouts.
+
+## Independent review round 3
+
+Candidate `7ed64e22c4a88c50db06fe69b1a1f13bb15cf92c`, tree
+`9f7e6268150324bce7fd9a271f26999ee0c8f1fd`, passed the complete replacement
+local gate on macOS and Linux. Mac focused CLI (44), native skills (184), full
+workspace (including 446 CLI and 2,462 native passing unit tests, with existing
+ignored fixtures), explicit doctests and official release smoke passed.
+Formatting, strict Clippy, fresh locked releases, test precompilation, 269 Python
+tests (14 skips), documentation, drift, dependency policy/audit and FreeBSD/WASI
+checks passed. Linux retained its explicit unprivileged environment and default
+runtime concurrency, and finished before Mac runtime began. Source and release
+hashes remained exact and unchanged. Evidence is retained under
+`/private/tmp/mg-skills-pty-replacement.WpOjLY` and the SHA-prefixed Linux logs.
+
+The correctness and lifecycle tracks used new local reviewers
+`skills_review_r3_correctness` and `skills_review_r3_lifecycle`. A new resource
+reviewer could not be spawned because of the host thread limit; the independent
+`skills_pty_gate_diagnosis` agent performed its first full skills review instead.
+It had authored no source changes and participated in no earlier skills review,
+only a separate read-only PTY diagnosis. All tracks were static local reviews,
+not Bugbot; they ran no builds or process fixtures. Lifecycle and resources
+reported zero actionable introduced findings. Correctness reported one P2:
+
+| Finding | Historical source location | Evidence and required repair |
+| --- | --- | --- |
+| R3-1: copy exclusion suppresses nested discovery | `skills_managed/filesystem.rs:360`, `skills_managed/planning.rs:158` | Source traversal skipped every `.git*` entry before finding `SKILL.md`, so `.github/skills/review/SKILL.md` yielded `NoMatches`. Pinned upstream discovery walks these ancestors, selects `review`, then applies `.git*` exclusions only while copying that selected skill's contents. Separate the stages while retaining finite bounds and exact source revalidation. |
+
+This is narrower than the previously ruled-out resource-copy lead: excluding
+`.github` resources inside an already selected skill is intentional pinned
+behavior, but excluding ancestors before selection is not. The candidate was
+rejected despite its green local gate and was not pushed or merged. All completed
+clean review worktrees were removed, preserving their evidence.

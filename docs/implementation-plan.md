@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `complete fixture-repaired local gate, then three fresh reviews`
+- Next gate: `repair nested skill discovery, then replacement full gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -394,6 +394,11 @@ PID readiness-file race. The fixture now publishes the complete PID atomically;
 focused regression/lifecycle/PTY tests pass and its worktree is removed. Preserve
 both failures and do not claim this fixture repair explains the separate
 admission timeouts. No deadlines or product semantics were changed.
+The fixture-repaired candidate passed the complete local gate. R3 lifecycle and
+resource reviews reported zero findings; correctness found that copy exclusions
+were applied before nested skill discovery. Separate ancestor discovery from
+selected-resource exclusions while retaining bounds and exact revalidation.
+Completed R3 review worktrees are removed; no candidate has been pushed or merged.
 Historical candidate, gate and finding evidence belongs in the
 [skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
 accepted yet. Linux validation retains its unprivileged environment; macOS and
