@@ -369,8 +369,8 @@ new independent R5 reviewers reported zero findings. Exact feature CI
 `34578473915` and Benchmark `34578474071` passed with both required unexpired
 artifacts, and `main` was fast-forwarded and pushed. Exact-main gates remain
 required before incrementing the delivered count or replacing canonical behavior
-evidence. All completed repair/review worktrees are removed. The clean Linux
-validation tree is retained only for final bounded documentation validation.
+evidence. All completed repair/review worktrees and the final clean Linux
+validation worktree are removed; external gate evidence and caches are retained.
 The [skills CLI contract](skills-cli.md) owns durable behavior and the
 [skills CLI review](reviews/m05-skills-cli-review-01.md) retains detailed evidence.
 

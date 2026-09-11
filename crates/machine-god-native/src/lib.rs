@@ -1,5 +1,7 @@
 #![doc = "Explicit native capabilities for machine-god hosts."]
 
+pub mod mcp;
+
 mod native_environment;
 pub use native_environment::{
     ConfigFileState, NativeEnvironment, NativeSandboxMode, NativeStatus, PermissionMode,
