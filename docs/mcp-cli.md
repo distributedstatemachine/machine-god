@@ -78,6 +78,34 @@ the model-facing tool. This conversion creates a request, not a permission grant
 or network call; live native feature authority and untrusted-result validation
 remain required.
 
+## Human input presentation
+
+The interactive modal presents an explicitly queued native MCP elicitation,
+including its selected server and exposed tool identity. Server messages, URLs,
+field schemas, choices and answer previews are terminal-escaped. Source text is
+paged in UTF-8-safe 8 KiB pieces within the existing 64 KiB output bound; long
+accepted messages and schemas are not silently truncated. Each page and field
+has its own acknowledged input epoch. Buffered answers for earlier pages cannot
+answer a later field or approve the final submission.
+
+Forms support string, number, integer, boolean, single-select and multi-select
+fields. Native schema validation precedes advancing a field. Numeric input keeps
+its original JSON lexeme; strings preserve spaces, `text <literal>` escapes UI
+commands, and `json <quoted string>` permits escaped newlines or other characters.
+Choices use displayed indices, with comma-separated indices for multiple choices.
+`/default` explicitly selects a declared default; `/skip` omits only optional
+fields. The complete answers are shown for a separate final `y` confirmation,
+under an independent 128 KiB response bound. The native inbox independently
+validates the entire response against the exact queued request.
+
+`/decline` and `/cancel-input` return distinct protocol actions; `/cancel` retains
+its existing whole-turn cancellation meaning. URL approval is explicit consent
+only: this presentation code does not launch a browser, infer authentication
+completion, or resubmit a tool call. Browser execution, exact continuation
+authority and legacy completion observations remain native responsibilities.
+The shared input queue owns stale-token, cancellation and principal checks.
+This presentation adapter does not itself activate a configured MCP server.
+
 ## Profile configuration codec
 
 `machine_god_native::mcp::config` validates and owns an explicit profile

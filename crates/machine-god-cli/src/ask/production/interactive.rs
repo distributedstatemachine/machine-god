@@ -16,6 +16,7 @@ mod driver;
 mod framing;
 mod history_view;
 mod input_lines;
+mod mcp_elicitation;
 mod mcp_receipts;
 mod picker;
 mod picker_driver;

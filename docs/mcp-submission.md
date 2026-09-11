@@ -148,6 +148,15 @@ requests retaining that runtime. Equal numeric generations from different
 owners are not interchangeable: claims require the exact retained allocation.
 Both runtime and reservation counters reject exhaustion instead of wrapping.
 
+Trusted composition may use `install_guarded` to attach at most eight shared
+native cancellation guards, such as authentication and connection generations.
+An oversized or already-cancelled selection preserves the active binding.
+Every preparation, admission, claim and final writer checkpoint checks those
+guards; pending queue, write and response observers also wake on revocation.
+Observers retain cancellation tokens, not schemas, bindings or peer ownership.
+Revocation does not erase acknowledged bytes or permit replay. The ordinary
+`install` API retains its existing unguarded behavior.
+
 Bounds are 64 reserved/ready/claimed slots per registered turn, 64 KiB canonical
 arguments, 4,096 argument nodes (object keys charged) and depth 64, 128 KiB exact
 JSON payload, 128 KiB serialized permission request, and 1 MiB aggregate bytes

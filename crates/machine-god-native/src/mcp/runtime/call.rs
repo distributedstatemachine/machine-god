@@ -126,16 +126,19 @@ impl NativeMcpRuntimeToolCall {
         let caller = self.cancellation.cancelled();
         let turn = self.turn.cancelled();
         let route = self.server.cancellation.cancelled();
-        let binding = self.tool.binding.clone();
+        let binding = self.tool.binding.cancelled_owned();
+        let invalid = self.tool.binding.live().is_err();
         Box::pin(async move {
-            if binding.live().is_err() {
+            if invalid {
                 return;
             }
             select(
                 Box::pin(async {
                     select(caller, turn).await;
                 }),
-                route,
+                Box::pin(async {
+                    select(route, Box::pin(binding)).await;
+                }),
             )
             .await;
         })

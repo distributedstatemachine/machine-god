@@ -154,3 +154,70 @@ fn question_pages_cannot_consume_buffered_previous_page_answers() {
     };
     assert_eq!(answers.iter().collect::<Vec<_>>(), ["A", "my choice"]);
 }
+
+#[test]
+fn mcp_form_answers_require_each_acknowledged_page_and_exact_native_reply() {
+    use machine_god_native::mcp::{
+        interaction::{McpElicitationPresenter, McpElicitationPromptRequest},
+        mrtr::{McpElicitationRequest, McpMrtrLimits},
+        protocol::ProtocolVersion,
+    };
+    let (bridge, mut inbox) = bridge();
+    let raw = serde_json::value::RawValue::from_string(
+        r#"{"message":"Confirm value","requestedSchema":{"type":"object","properties":{"count":{"type":"number"}},"required":["count"]}}"#.into(),
+    ).unwrap();
+    let request = McpElicitationPromptRequest::new(
+        context(),
+        Arc::from("actual-server"),
+        ToolName::new("mcp_actual_tool").unwrap(),
+        Arc::new(
+            McpElicitationRequest::parse(&raw, ProtocolVersion::Modern, McpMrtrLimits::default())
+                .unwrap(),
+        ),
+    )
+    .unwrap();
+    let mut pending =
+        McpElicitationPresenter::present(bridge.as_ref(), request, CancellationToken::new());
+    assert!(
+        pending
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+    );
+    let mut modal = modal(&mut inbox);
+    let source = String::from_utf8(modal.render().unwrap()).unwrap();
+    assert!(source.contains("actual-server"));
+    assert!(source.contains("mcp_actual_tool"));
+    let intro = modal.presentation_binding();
+    assert!(modal.answer("/next", &intro).is_err());
+    modal.displayed = true;
+    assert!(modal.answer("/next", &intro).unwrap().is_none());
+    assert!(!modal.displayed);
+    modal.displayed = true;
+    assert!(modal.answer("9007199254740993.00000001", &intro).is_err());
+    let field = modal.binding();
+    assert!(
+        modal
+            .answer("9007199254740993.00000001", &field)
+            .unwrap()
+            .is_none()
+    );
+    assert!(modal.answer("y", &field).is_err());
+    modal.displayed = true;
+    assert!(modal.answer("y", &field).is_err());
+    let confirmation = modal.binding();
+    let response = modal.answer("y", &confirmation).unwrap().unwrap();
+    inbox.reply(modal.view.token(), response).unwrap();
+    let Poll::Ready(Ok(answer)) = pending
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    else {
+        panic!()
+    };
+    assert!(
+        answer
+            .canonical_json()
+            .get()
+            .contains("9007199254740993.00000001")
+    );
+}

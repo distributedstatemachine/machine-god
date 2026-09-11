@@ -1,4 +1,5 @@
 use super::input_lines::InputBinding;
+use super::mcp_elicitation::ElicitationModal;
 use machine_god_core::Capability;
 use machine_god_native::{
     MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, NativeInteractivePromptResponse,
@@ -12,6 +13,7 @@ pub(super) struct Modal {
     pub displayed: bool,
     answers: QuestionPromptAnswers,
     answer_bytes: usize,
+    elicitation: ElicitationModal,
 }
 
 impl Modal {
@@ -21,6 +23,7 @@ impl Modal {
             displayed: false,
             answers: QuestionPromptAnswers::new(),
             answer_bytes: 0,
+            elicitation: ElicitationModal::default(),
         }
     }
     pub fn binding(&self) -> InputBinding {
@@ -33,10 +36,21 @@ impl Modal {
     pub fn presentation_binding(&self) -> InputBinding {
         InputBinding::Prompt {
             token: self.view.token().clone(),
-            question: self.answers.len(),
+            question: if self.view.elicitation().is_some() {
+                self.elicitation.epoch()
+            } else {
+                self.answers.len()
+            },
         }
     }
     pub fn render(&self) -> Result<Vec<u8>, ()> {
+        if let Some(request) = self.view.elicitation() {
+            return self.elicitation.render(
+                request.request(),
+                request.server(),
+                request.tool().as_str(),
+            );
+        }
         let mut text = crate::ask::production::interactive::bounded_output();
         if let Some(request) = self.view.permission() {
             text.write_str("\n[permission] ").map_err(|_| ())?;
@@ -86,6 +100,11 @@ impl Modal {
     ) -> Result<Option<NativeInteractivePromptResponse>, ()> {
         if !self.displayed || binding != &self.binding() {
             return Err(());
+        }
+        if let Some(request) = self.view.elicitation() {
+            let response = self.elicitation.answer(request.request(), line)?;
+            self.displayed = false;
+            return Ok(response);
         }
         let line = line.trim();
         if self.view.permission().is_some() {

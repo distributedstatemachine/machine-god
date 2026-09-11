@@ -8,6 +8,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+mod cancellation;
+pub(crate) use cancellation::McpRuntimeCancellation;
+
 /// Immutable native runtime identity. Bytes are identity evidence, not parsed
 /// configuration, schema validation, credentials authority or executable input.
 /// Trusted runtime composition supplies the exact admitted snapshots, including
@@ -185,17 +188,51 @@ impl McpSubmissionRuntimeOwner {
         &self,
         binding: McpSubmissionRuntimeBinding,
     ) -> Result<Arc<McpSubmissionRuntime>> {
+        self.install_inner(binding, None)
+    }
+
+    /// Installs a binding with explicitly selected native generation guards.
+    /// All tools on one server may share the same immutable guard allocation.
+    /// Guard cancellation is checked by every final writer poll and wakes
+    /// pending queue, write and response observers without requiring a reload.
+    ///
+    /// # Errors
+    /// Rejects more than eight guards, already cancelled authority, poisoned
+    /// state or exhausted generations. Failure preserves the active binding.
+    pub fn install_guarded(
+        &self,
+        binding: McpSubmissionRuntimeBinding,
+        guards: Arc<[CancellationToken]>,
+    ) -> Result<Arc<McpSubmissionRuntime>> {
+        if guards.len() > super::MAX_MCP_RUNTIME_CANCELLATION_GUARDS {
+            return Err(McpSubmissionError::Limit);
+        }
+        self.install_inner(binding, (!guards.is_empty()).then_some(guards))
+    }
+
+    fn install_inner(
+        &self,
+        binding: McpSubmissionRuntimeBinding,
+        authority_cancellations: Option<Arc<[CancellationToken]>>,
+    ) -> Result<Arc<McpSubmissionRuntime>> {
         let (runtime, previous) = {
             let mut state = self
                 .state
                 .lock()
                 .map_err(|_| McpSubmissionError::Unavailable)?;
+            if authority_cancellations
+                .as_deref()
+                .is_some_and(|guards| guards.iter().any(CancellationToken::is_cancelled))
+            {
+                return Err(McpSubmissionError::Cancelled);
+            }
             let generation = next_generation(&mut state.next_generation)?;
             let runtime = Arc::new(McpSubmissionRuntime {
                 generation,
                 binding,
                 retired: AtomicBool::new(false),
                 cancellation: CancellationToken::new(),
+                authority_cancellations,
             });
             let previous = state.active.replace(runtime.clone());
             if let Some(previous) = &previous {
@@ -255,6 +292,7 @@ pub struct McpSubmissionRuntime {
     pub(super) binding: McpSubmissionRuntimeBinding,
     retired: AtomicBool,
     pub(super) cancellation: CancellationToken,
+    authority_cancellations: Option<Arc<[CancellationToken]>>,
 }
 impl McpSubmissionRuntime {
     /// Monotonic within its owner; insufficient alone to authorize a request.
@@ -265,9 +303,20 @@ impl McpSubmissionRuntime {
     pub(crate) fn live(&self) -> Result<()> {
         if self.retired.load(Ordering::Acquire) {
             Err(McpSubmissionError::Unavailable)
+        } else if self
+            .authority_cancellations
+            .as_deref()
+            .is_some_and(|guards| guards.iter().any(CancellationToken::is_cancelled))
+        {
+            Err(McpSubmissionError::Cancelled)
         } else {
             Ok(())
         }
+    }
+
+    /// Observes revocation without retaining bindings, schemas or peer ownership.
+    pub(crate) fn cancelled_owned(&self) -> McpRuntimeCancellation {
+        McpRuntimeCancellation::new(self)
     }
 }
 impl fmt::Debug for McpSubmissionRuntimeBinding {
@@ -310,6 +359,32 @@ mod tests {
             b"auth",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn guarded_bindings_share_the_exact_selection_and_empty_guards_are_absent() {
+        let guards: Arc<[CancellationToken]> = Arc::from([CancellationToken::new()]);
+        let owners = [
+            McpSubmissionRuntimeOwner::new(),
+            McpSubmissionRuntimeOwner::new(),
+        ];
+        for owner in &owners {
+            let runtime = owner.install_guarded(binding(), guards.clone()).unwrap();
+            assert!(Arc::ptr_eq(
+                runtime.authority_cancellations.as_ref().unwrap(),
+                &guards
+            ));
+        }
+        let owner = McpSubmissionRuntimeOwner::new();
+        let runtime = owner.install_guarded(binding(), Arc::from([])).unwrap();
+        assert!(runtime.authority_cancellations.is_none());
+        assert!(
+            owner
+                .install(binding())
+                .unwrap()
+                .authority_cancellations
+                .is_none()
+        );
     }
 
     #[test]

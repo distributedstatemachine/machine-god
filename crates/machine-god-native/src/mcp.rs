@@ -19,6 +19,7 @@ pub mod headers;
 pub mod http;
 #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
 pub mod http_peer;
+pub mod interaction;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod management;
 pub mod mrtr;
@@ -30,6 +31,8 @@ pub mod peer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod permission;
 pub mod protocol;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod runtime;
 pub mod schema;
 
 pub mod sse;

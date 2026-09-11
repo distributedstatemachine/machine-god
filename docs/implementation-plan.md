@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `production runtime, permission routing and CLI activation; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `production executor, native startup/control and CLI activation; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -416,14 +416,14 @@ Proof and request ownership remain checked through core admission and writing.
 Exact conversation/turn routing is integrated into both CLI setup paths. Owned
 OAuth provides discovery, approved callbacks, refresh, private credentials and
 generation-bound logout receipts; runtime/CLI activation remains below.
-Typed feature/result/input codecs, shared executable bindings and exact HTTP
-heads compose with explicit DNS/TLS and shared inert stdio startup factories.
+Typed feature/result/input codecs and exact HTTP heads compose with explicit
+DNS/TLS, shared stdio factories, atomic publication and typed CLI input pages.
 Component checks are not full-feature gates; completed clean trees are removed.
 
 These components do not constitute a delivered runtime. Remaining composition
-must own native startup/DNS, peers through reload/finalization,
-typed feature/control authority, input/continuation custody, atomic
-catalog publication, authentication and CLI activation/finalization. Raw pages
+must compose native startup, peers through reload/finalization, result archives,
+typed feature/control authority, input/continuation custody, TTL/notification
+refresh, authentication and CLI activation/finalization. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition

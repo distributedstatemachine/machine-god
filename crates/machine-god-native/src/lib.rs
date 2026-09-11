@@ -233,10 +233,10 @@ pub use clipboard_reply::{
 };
 mod interactive_prompts;
 pub use interactive_prompts::{
-    MAX_NATIVE_INTERACTIVE_PROMPT_PAYLOAD_BYTES, MAX_NATIVE_INTERACTIVE_PROMPTS,
-    NativeInteractivePromptBridge, NativeInteractivePromptError, NativeInteractivePromptInbox,
-    NativeInteractivePromptLimits, NativeInteractivePromptResponse, NativeInteractivePromptScope,
-    NativeInteractivePromptToken, NativeInteractivePromptView,
+    MAX_NATIVE_INTERACTIVE_PROMPT_PAYLOAD_BYTES, MAX_NATIVE_INTERACTIVE_PROMPT_RESPONSE_BYTES,
+    MAX_NATIVE_INTERACTIVE_PROMPTS, NativeInteractivePromptBridge, NativeInteractivePromptError,
+    NativeInteractivePromptInbox, NativeInteractivePromptLimits, NativeInteractivePromptResponse,
+    NativeInteractivePromptScope, NativeInteractivePromptToken, NativeInteractivePromptView,
 };
 mod copy_file;
 mod create_folder;
@@ -777,7 +777,9 @@ mod tool_output_serializer;
 mod tool_result_archive;
 mod tool_result_projection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use native_tool_result_archive::NativeToolResultArchiveAdapter;
+pub use native_tool_result_archive::{
+    NativeToolArgumentsArchiveLimits, NativeToolResultArchiveAdapter, NativeToolResultArchiveLimits,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use tool_result_archive::{
     ArchivedToolResult, TOOL_RESULT_ARCHIVE_HANDLE_PREFIX, TOOL_RESULT_ARCHIVE_MAX_BYTES,

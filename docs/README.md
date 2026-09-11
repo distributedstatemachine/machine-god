@@ -71,7 +71,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [schema admission](mcp-schema.md), [descriptor catalogs](mcp-catalog.md),
   [native permission preparation](mcp-permission.md), [OAuth lifecycle](mcp-auth.md),
   [network admission](mcp-network.md), [stdio startup](mcp-stdio-startup.md),
-  [input continuations](mcp-mrtr.md), [shared runtime bindings](mcp-runtime-publication.md),
+  [input continuations](mcp-mrtr.md), [human input](mcp-elicitation.md),
+  [runtime publication](mcp-runtime-publication.md),
   [exact conversation routing](mcp-context.md), [feature codecs](mcp-feature-runtime.md)
   and [tool results](mcp-tool-results.md).
 - Human MCP profile operations: [native management](mcp-management.md) and

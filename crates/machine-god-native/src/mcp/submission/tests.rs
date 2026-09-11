@@ -22,6 +22,9 @@ mod http_tests;
 #[path = "tool/tests.rs"]
 mod tool_tests;
 
+#[path = "runtime/guard_tests.rs"]
+mod guard_tests;
+
 struct Adapter(Mutex<Option<PreparedMcpSubmission>>);
 impl NativePermissionActionPreparer for Adapter {
     fn prepare<'a>(

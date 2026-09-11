@@ -48,6 +48,8 @@ pub const MAX_MCP_SUBMISSION_ARGUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_MCP_SUBMISSION_REQUEST_BYTES: usize = 128 * 1024;
 /// Maximum aggregate immutable runtime binding bytes.
 pub const MAX_MCP_SUBMISSION_BINDING_BYTES: usize = 1024 * 1024;
+/// Maximum independently revocable native authorities shared by one server.
+pub const MAX_MCP_RUNTIME_CANCELLATION_GUARDS: usize = 8;
 const MAX_ARGUMENT_NODES: usize = 4096;
 const MAX_ARGUMENT_DEPTH: usize = 64;
 
@@ -747,7 +749,7 @@ impl McpSubmission {
         let execution = self.cancellation.cancelled();
         let preparation = self.ready.data.cancellation.cancelled();
         let turn = self.registry.cancelled_owned();
-        let runtime = self.ready.data.runtime.cancellation.cancelled();
+        let runtime = self.ready.data.runtime.cancelled_owned();
         Box::pin(async move {
             let mut execution = std::pin::pin!(execution);
             let mut preparation = std::pin::pin!(preparation);
@@ -847,7 +849,8 @@ struct WriteGuard {
     submission: McpSubmission,
     offset: usize,
     terminal: bool,
-    cancellations: Option<[Cancelled; 5]>,
+    cancellations: Option<[Cancelled; 4]>,
+    runtime_cancellation: Option<runtime::McpRuntimeCancellation>,
 }
 impl WriteGuard {
     fn new(submission: McpSubmission) -> Self {
@@ -856,18 +859,20 @@ impl WriteGuard {
             submission.ready.data.cancellation.cancelled(),
             submission.registry.cancellation.cancelled(),
             submission.registry.handle.cancelled(),
-            submission.ready.data.runtime.cancellation.cancelled(),
         ]);
+        let runtime_cancellation = Some(submission.ready.data.runtime.cancelled_owned());
         Self {
             submission,
             offset: 0,
             terminal: false,
             cancellations,
+            runtime_cancellation,
         }
     }
     fn stop(&mut self) {
         self.terminal = true;
         self.cancellations = None;
+        self.runtime_cancellation = None;
     }
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if self.terminal {
@@ -877,7 +882,11 @@ impl WriteGuard {
             waiters
                 .iter_mut()
                 .any(|waiter| Pin::new(waiter).poll(cx).is_ready())
-        }) {
+        }) || self
+            .runtime_cancellation
+            .as_mut()
+            .is_some_and(|waiter| Pin::new(waiter).poll(cx).is_ready())
+        {
             self.stop();
             return Err(McpSubmissionError::Cancelled);
         }
