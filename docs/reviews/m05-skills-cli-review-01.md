@@ -372,3 +372,23 @@ not restart CI; a reconnected watch confirmed success. Main was fast-forwarded
 and pushed from `909c52ea` to this candidate without force. These records do not
 assert later exact-main acceptance or an M07 performance result; the canonical
 implementation plan owns subsequent delivery status.
+
+## Exact-main acceptance
+
+Main CI `34581407701` and Benchmark `34581407764` both succeeded for
+`431030b930c0c6bcc51c899a66c1fcb97a92e701` on the `main` push. The exact CI
+aggregate, quality/documentation checks, both Linux architectures, both macOS
+architectures and FreeBSD/WASI checks passed. Dependency audit was intentionally
+unselected by path routing; the complete local dependency gate was already green.
+
+Both expected main-run benchmark artifacts were verified unexpired and bound to
+that SHA: upstream `10192025483` and bootstrap `10191884247`. Their workflow
+success and retained artifacts establish the required regression-evidence gate,
+not an M07 performance claim. No remote rerun was required. The local failed
+runtime and unchanged retry remain part of the evidence above.
+
+The complete skills feature was accepted as one delivery. All skills review,
+repair and validation worktrees were removed after clean/integration checks;
+external logs and build caches were retained. The subsequent documentation-only
+record does not create another delivery or replace the behavior commit's exact
+artifact-producing evidence.
