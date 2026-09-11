@@ -68,6 +68,16 @@ permission policy before any effect. Feature result bounds and trust handling
 remain governed by [MCP features](mcp-features.md); tool selection grants no
 execution permission under [MCP selection](mcp-select-tool.md).
 
+`McpFeatureRequest::try_from(McpFeatureCommand)` projects all seven human feature
+forms through the existing feature request decoder and 64 KiB canonical request
+budget. Direct enum construction is validated before copying fields into an
+owned JSON map. Prompt arguments retain escaped control characters as data;
+their count, key lengths and compact JSON bytes are checked separately. Empty
+completion values and empty argument objects use the same canonical defaults as
+the model-facing tool. This conversion creates a request, not a permission grant
+or network call; live native feature authority and untrusted-result validation
+remain required.
+
 ## Profile configuration codec
 
 `machine_god_native::mcp::config` validates and owns an explicit profile

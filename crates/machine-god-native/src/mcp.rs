@@ -6,6 +6,8 @@
 
 pub mod commands;
 pub mod config;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod endpoint;
 pub mod protocol;
 
 pub mod sse;

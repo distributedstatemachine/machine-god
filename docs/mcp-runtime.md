@@ -84,6 +84,34 @@ transport responsibilities.
 
 ## Runtime integration obligations
 
+### HTTP endpoint syntax and origin policy
+
+On Linux/macOS, `mcp::endpoint::McpEndpoint` uses the established `url` parser
+for complete endpoint syntax, request-target construction and same-origin SSE
+message-endpoint resolution. It is immutable data, not network or credential
+authority. Configured URLs are bounded to 4 KiB before parsing; deprecated SSE
+endpoint events to 8 KiB before resolution; canonical retained URLs to 16 KiB.
+Relative events inherit the admitted discovery origin. Absolute/network-path
+events must independently meet endpoint policy and remain on the same origin.
+
+HTTPS is supported; HTTP requires an explicit port and exactly `localhost`,
+`127.0.0.1` or `[::1]` in the submitted authority. Numeric and expanded loopback
+aliases do not acquire plaintext admission through URL normalization. Explicit
+default ports remain admitted even when the parser removes them from canonical
+spelling. User information (including empty `@`), fragments, whitespace,
+backslashes and malformed percent escapes are rejected. Canonical host/IDNA,
+path and default-port normalization follow `url`; same-origin comparison uses
+the parsed scheme, host and effective port, never a string-prefix test.
+
+These checks follow the pinned `streamable_http.zig` endpoint policy and
+`legacy_http_sse.zig` resolution boundary, with explicit native input limits and
+stricter rejection of silent parser repairs. Query strings remain potentially
+secret: debug/errors redact them. URL parsing does not resolve DNS, follow
+redirects, authorize OAuth or release header credentials. The owned connector
+must still enforce those separate boundaries and final submission proof.
+
+### Transport and runtime ownership
+
 Transport startup must convert only validated observations into negotiation
 events. Ready protocol selection still requires bounded capability/schema
 admission, atomic catalog construction and live-generation checks. Selected

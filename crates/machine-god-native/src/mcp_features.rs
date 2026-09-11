@@ -14,6 +14,8 @@ use machine_god_core::{
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+mod command;
+
 /// Registered name of [`McpFeaturesTool`].
 pub const MCP_FEATURES_TOOL_NAME: &str = "mcp_features";
 /// Maximum UTF-8 bytes in an exact configured server identity.
