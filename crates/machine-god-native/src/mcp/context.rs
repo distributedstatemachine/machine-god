@@ -102,6 +102,40 @@ impl NativeMcpContexts {
             &request.turn_id,
         )
     }
+
+    /// Retires only the exact turn, including a cancelled turn whose public
+    /// snapshot is already unavailable. Its registration remains exclusive
+    /// until the actual owner drops it. No registry destructor runs under a
+    /// router/session lock.
+    pub(crate) fn close_turn(
+        &self,
+        id: &SessionId,
+        incarnation: &SessionIncarnationId,
+        turn: &TurnId,
+    ) {
+        let owners: Vec<_> = self
+            .routes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        let state = owners
+            .iter()
+            .find(|owner| &owner.id == id && &owner.incarnation == incarnation)
+            .and_then(|owner| {
+                owner
+                    .active
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .route
+                    .as_ref()
+                    .and_then(Weak::upgrade)
+            });
+        if let Some(state) = state.filter(|state| &state.id == turn) {
+            state.registry.retire();
+        }
+    }
     fn snapshot(
         &self,
         id: &SessionId,

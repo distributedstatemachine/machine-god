@@ -275,6 +275,25 @@ impl NativePermissionTargetAuthority {
     }
 
     fn registered_tool(&self, name: &str) -> Result<&NativePermissionTargetTool, PermissionError> {
+        self.registered_tool_optional(name)?.ok_or_else(invalid)
+    }
+
+    /// Checks the actual retained native registrations, not a name prefix or
+    /// the global builtin catalog. Duplicate registrations are invalid.
+    /// # Errors
+    /// Rejects ambiguous registration rather than selecting a fallback route.
+    pub fn has_registered_tool(
+        &self,
+        name: &machine_god_core::ToolName,
+    ) -> Result<bool, PermissionError> {
+        self.registered_tool_optional(name.as_str())
+            .map(|tool| tool.is_some())
+    }
+
+    fn registered_tool_optional(
+        &self,
+        name: &str,
+    ) -> Result<Option<&NativePermissionTargetTool>, PermissionError> {
         let mut registered = self.tools.iter().filter(|entry| match entry {
             NativePermissionTargetTool::Ordinary(tool) => tool.spec().name.as_str() == name,
             NativePermissionTargetTool::Question(_) => name == "ask_user_question",
@@ -282,7 +301,7 @@ impl NativePermissionTargetAuthority {
             NativePermissionTargetTool::Terminal(_)
             | NativePermissionTargetTool::TerminalWithResolver { .. } => name == "terminal",
         });
-        let entry = registered.next().ok_or_else(invalid)?;
+        let entry = registered.next();
         if registered.next().is_some() {
             return Err(invalid());
         }
