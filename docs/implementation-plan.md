@@ -410,10 +410,17 @@ and diagnostic worktrees are removed; evidence and build caches remain.
 These are internal regression checks, not a new delivery or the complete
 workspace/platform/adversarial/remote feature gate.
 
+Exact conversation/turn routing is also integrated into both CLI setup paths.
+Commit `1990eec5` passes 65 focused non-process tests, strict workspace
+all-target/all-feature Clippy, formatting and workspace doctests on Rust 1.94.1.
+The composed-host test exercises actual turn enrollment and finalization; the
+completed routing worktree is removed. These remain component checks, without
+a new release/platform/full-feature/remote gate or delivery claim.
+
 These components do not constitute a delivered runtime. Remaining composition
 must own admitted DNS, HTTP/SSE negotiation and session/listener lifecycle,
-typed feature/control authority, progress/continuation metadata, bounded
-per-conversation routing, lossless schema and argument/header projection, atomic
+typed feature/control authority, progress/continuation metadata,
+lossless schema and argument/header projection, atomic
 catalog publication, authentication and CLI activation/finalization. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
