@@ -1,6 +1,10 @@
 use super::NativeSkillManagedErrorKind as Error;
 use std::fmt;
 
+#[cfg(test)]
+#[path = "source_tests.rs"]
+mod tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeSkillSourceKind {
     Local,
@@ -37,16 +41,16 @@ impl NativeSkillInstallSource {
         let (source, inline_filter) = normalize_inline(source)?;
         let mut filter = None;
         for candidate in [
-            command_filter,
-            inline_filter,
-            explicit_filter.map(str::to_owned),
+            command_filter.as_deref(),
+            inline_filter.as_deref(),
+            explicit_filter,
         ]
         .into_iter()
         .flatten()
         .filter(|value| !value.is_empty())
         {
-            validate_name(&candidate)?;
-            if filter.as_ref().is_some_and(|value| value != &candidate) {
+            validate_name(candidate)?;
+            if filter.is_some_and(|value| value != candidate) {
                 return Err(Error::ConflictingFilter);
             }
             filter = Some(candidate);
@@ -54,7 +58,7 @@ impl NativeSkillInstallSource {
         let (source, kind) = classify(source)?;
         Ok(Self {
             source,
-            filter,
+            filter: filter.map(str::to_owned),
             kind,
         })
     }
