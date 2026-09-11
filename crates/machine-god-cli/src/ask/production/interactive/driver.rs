@@ -47,6 +47,7 @@ impl Driver {
         // continue even when every presentation slot is occupied.
         let _ = self.owner.poll_progress(cx, now_ms);
         self.observe_outcomes();
+        self.poll_skills_refresh(now_ms);
         if self.owner.shutdown_error().is_some() {
             self.native_failed = true;
             if !self.shutting_down {
@@ -109,6 +110,7 @@ impl Driver {
             render: self.render,
             in_flight: self.in_flight,
             notice: self.notice,
+            skills_warning: self.skills_warning,
             outcomes,
             controls,
             copies,
@@ -151,6 +153,7 @@ impl Driver {
         if self.control_outcome.is_none()
             && let Some(outcome) = self.owner.take_control_outcome()
         {
+            self.observe_skills_control(&outcome);
             self.native_failed |= control_failed(&outcome);
             self.control_outcome = Some(outcome);
         }
@@ -209,11 +212,14 @@ impl Driver {
                     .as_ref()
                     .is_none_or(|modal| modal.view.token() != view.token())
                 {
+                    self.reset_skills();
                     self.modal = Some(Modal::new(view));
                 }
             }
             Poll::Pending => {
-                self.modal.take();
+                if self.modal.take().is_some() {
+                    self.reset_skills();
+                }
             }
             Poll::Ready(None) => {
                 self.native_failed = true;
@@ -223,11 +229,12 @@ impl Driver {
     }
 
     fn poll_input(&mut self, cx: &mut Context<'_>, now_ms: i64) {
-        let binding = self
+        let mut binding = self
             .saved_rule
             .as_ref()
             .map(super::saved_rules::Confirmation::binding)
             .or_else(|| self.picker_binding())
+            .or_else(|| self.skills_binding())
             .unwrap_or_else(|| {
                 self.modal.as_ref().map_or_else(
                     || {
@@ -240,6 +247,12 @@ impl Driver {
                     Modal::binding,
                 )
             });
+        self.sync_skills_input_owner(&binding);
+        // A context transfer creates a new draft epoch; bind only bytes not yet
+        // received to it. Retained chunks still carry their previous owner.
+        if matches!(binding, InputBinding::Skills { .. }) {
+            binding = self.skills_binding().expect("configured skills draft");
+        }
         if self.frontend.is_some() {
             self.poll_raw_input(cx, binding, now_ms);
             return;
@@ -304,6 +317,7 @@ impl Driver {
                 if let Some(picker) = &mut self.picker {
                     picker.resize(frontend.rows);
                 }
+                self.invalidate_skills_frame();
             }
             Poll::Ready(Err(())) => {
                 self.native_failed = true;
@@ -319,15 +333,36 @@ impl Driver {
         let context = ComposerContext {
             active_response: status.active || status.queued_jobs != 0,
             session_picker: self.picker_open(),
+            skills: if self.skills_query_open() {
+                Some(machine_god_native::NativeSkillPickerMode::Menu)
+            } else {
+                self.skills_open()
+                    .then_some(machine_god_native::NativeSkillPickerMode::Inline)
+            },
         };
         let tape = &mut self.output.tape;
-        let polled = self
-            .input
-            .poll_event_recorded(cx, binding, context, |bytes| {
+        let skills = &mut self.skills;
+        let mut edit_failed = false;
+        let polled = self.input.poll_event_observed(
+            cx,
+            binding,
+            context,
+            |bytes| {
                 if let Some(tape) = tape {
                     tape.stdin(bytes);
                 }
-            });
+            },
+            |binding, range, inserted, cursor| {
+                if let Some(skills) = skills
+                    && matches!(binding, InputBinding::Skills { .. })
+                {
+                    edit_failed |= skills.edit(binding, range, inserted, cursor).is_err();
+                }
+            },
+        );
+        if edit_failed {
+            self.reset_skills();
+        }
         if self.input.take_cancel_disarm() {
             self.frontend.as_mut().expect("raw frontend").cancel_armed = None;
         }
@@ -357,9 +392,15 @@ impl Driver {
         if self.picker_event(&event.0, &event.1, now_ms) {
             return;
         }
+        if self.skills_event(&event.0, &event.1) {
+            return;
+        }
         let frontend = self.frontend.as_mut().expect("raw frontend");
         match event {
-            (ComposerEvent::Submit(line), binding) => self.line(&line, &binding, now_ms),
+            (ComposerEvent::Submit(line), binding) => {
+                self.line(&line, &binding, now_ms);
+                self.finish_skills_submission();
+            }
             (ComposerEvent::ExitRequested, _) => self.shutdown(),
             (ComposerEvent::CancelRequested, _) => {
                 let now = std::time::Instant::now();
@@ -374,7 +415,10 @@ impl Driver {
                 }
             }
             (ComposerEvent::InputError(_), _) => self.note(b"\n[input rejected; draft retained]\n"),
-            (ComposerEvent::SessionPickerRequested, InputBinding::Command) => {
+            (ComposerEvent::SessionPickerRequested, binding)
+                if matches!(binding, InputBinding::Command)
+                    || self.skills_command_binding(&binding) =>
+            {
                 self.open_picker(machine_god_native::NativeSessionCatalogScope::All);
             }
             _ => {}
@@ -408,7 +452,9 @@ impl Driver {
                 Ok(None) => {} // The next page needs its own completed flush.
                 Err(()) => self.note(b"\n[response does not match the displayed prompt]\n> "),
             }
-        } else if matches!(binding, InputBinding::Command) && self.scope_active {
+        } else if (matches!(binding, InputBinding::Command) || self.skills_command_binding(binding))
+            && self.scope_active
+        {
             self.command(line, now_ms);
         } else {
             self.note(b"\n[stale prompt input ignored]\n> ");
@@ -478,6 +524,7 @@ impl Driver {
         if let Some(InFlight::Flush { confirm, receipt }) = self.in_flight.take() {
             if let Some(binding) = &confirm {
                 self.acknowledge_picker(binding);
+                self.acknowledge_skills(binding);
                 self.acknowledge_saved_rule(binding);
             }
             if let (Some(binding), Some(modal)) = (confirm, &mut self.modal)
@@ -522,7 +569,10 @@ impl Driver {
                 {
                     picker.redraw();
                 }
-            } else if self.picker_open() {
+                if !matches!(render.confirm, Some(InputBinding::Skills { .. })) {
+                    self.invalidate_skills_frame();
+                }
+            } else if self.picker_open() || self.skills_open() {
                 self.frontend.as_mut().expect("menu frontend").menu_height = Some(height);
                 return;
             } else {
@@ -542,7 +592,7 @@ impl Driver {
                 });
             }
         }
-        let picker_open = self.picker_open();
+        let picker_open = self.picker_open() || self.skills_open();
         let Some(frontend) = &mut self.frontend else {
             return;
         };
@@ -593,6 +643,8 @@ impl Driver {
                 None,
                 Some(ReceiptKind::Copy),
             )
+        } else if let Some(warning) = self.skills_warning.take() {
+            (Ok(warning.to_vec()), None, None)
         } else if let Some(notice) = self.notice.take() {
             (Ok(notice), None, None)
         } else if let Some(confirmation) = &self.saved_rule {
@@ -607,6 +659,9 @@ impl Driver {
             (modal.render(), Some(modal.presentation_binding()), None)
         } else if !self.shutting_down {
             if self.prepare_picker_render() {
+                return;
+            }
+            if self.prepare_skills_render() {
                 return;
             }
             if self.prepare_history_render(cx) {
@@ -698,6 +753,7 @@ pub(super) struct FinalPresentation {
     render: Option<Render>,
     in_flight: Option<InFlight>,
     notice: Option<Vec<u8>>,
+    skills_warning: Option<&'static [u8]>,
     outcomes: std::collections::VecDeque<NativeInteractiveOutcome>,
     controls: std::collections::VecDeque<NativeInteractiveControlOutcome>,
     copies: std::collections::VecDeque<NativeInteractiveCopyOutcome>,
@@ -724,6 +780,7 @@ impl FinalPresentation {
             render,
             in_flight,
             notice: None,
+            skills_warning: None,
             outcomes: std::collections::VecDeque::new(),
             controls: std::collections::VecDeque::new(),
             copies: std::collections::VecDeque::new(),
@@ -838,6 +895,8 @@ impl FinalPresentation {
                 Some((render_control(control), Some(ReceiptKind::Control)))
             } else if let Some(copy) = self.copies.front() {
                 Some((super::clipboard::render(copy), Some(ReceiptKind::Copy)))
+            } else if let Some(warning) = self.skills_warning.take() {
+                Some((Ok(warning.to_vec()), None))
             } else if let Some(notice) = self.notice.take() {
                 Some((Ok(notice), None))
             } else {

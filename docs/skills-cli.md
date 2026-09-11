@@ -1,9 +1,10 @@
-# Skills CLI components
+# Skills CLI
 
-This document describes native components supporting human-invoked skills.
+The interactive CLI supports human-invoked skill discovery, management and
+prompt selection through explicitly supplied native capabilities.
 Implementation status and delivery gates are tracked only in the
-[implementation plan](implementation-plan.md). The native component APIs below
-do not by themselves register an interactive CLI command or install authority.
+[implementation plan](implementation-plan.md). The CLI owns input decoding and
+presentation; native adapters own matching, installation and queued context.
 Existing model-facing [skill](skill.md) and [install_skill](install-skill.md)
 tools keep their independent contracts and permission boundaries.
 
@@ -352,3 +353,41 @@ warnings take priority over ordinary content. Terminals narrower than 16 columns
 or shorter than five rows (six with a warning) display a resize notice and cannot
 acknowledge a selectable frame. Output height counts actual lines below the
 anchor and no trailing newline is emitted.
+
+## Interactive input and refresh
+
+`/skills` and `/skills list` open the observed catalog menu; `show` applies the
+native query and exact focus without displaying a skill body. Not-found results
+do not open a menu. A separate query editor is limited to 1,024 UTF-8 bytes and
+preserves the original draft/cursor. Inline `$` editing instead uses the ordinary
+draft and replaces only the exact native token span. Arrow keys move selection;
+Enter or Tab selects only after the corresponding visible frame has been fully
+written and flushed. A separate newly received Enter submits the resulting draft.
+
+Input retains its first-received draft epoch and query/draft editor identity
+through partial UTF-8, escape sequences, paste and buffered remainders. An old
+editor's bytes cannot be reassigned to its replacement. Choosing advances the
+input epoch without discarding the newly created native binding; a coalesced
+Tab/Enter chunk cannot select and silently submit the changed draft. Resize and
+navigation invalidate prior frame acknowledgements. Tiny or hidden frames cannot
+authorize selection. Escape closes the menu and preserves the original draft
+and valid bindings; idle Ctrl-C clears the draft, including a suspended slash-menu
+draft. Submission, modal ownership changes and session transitions reset binding
+ownership so it cannot transfer to another prompt.
+
+Catalog control results are applied only to their exact request and current
+session owner. Every managed batch receipt invalidates the old invocation
+snapshot and closes its menu, including partial or uncertain batches. Its outcome
+and recovery evidence remain available independently of refresh. Only after the
+receipt is flushed does a separate owned List request refresh the snapshot,
+without reopening a menu. A failed refresh cannot reuse the pre-mutation
+snapshot. Retained explicit bindings are revalidated against any later snapshot,
+never rebound by name.
+
+Production interactive startup supplies the first snapshot before accepting
+prompts. A host with skills authority but no initial or refreshed snapshot
+visibly rejects prompt queueing until discovery succeeds. Incomplete snapshots
+still allow valid explicit selections, but suppress automatic matching. That
+warning occupies its own bounded pending presentation slot, survives an occupied
+notice and is retained into final presentation on shutdown. It cannot replace a
+control receipt or cause notices to exceed their output limit.

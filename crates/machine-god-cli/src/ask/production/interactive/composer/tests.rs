@@ -145,6 +145,7 @@ fn feed(editor: &mut Composer, mut bytes: &[u8], active: bool) -> Vec<ComposerEv
             ComposerContext {
                 active_response: active,
                 session_picker: false,
+                ..ComposerContext::default()
             },
         );
         assert!(consumed > 0 && consumed <= MAX_COMPOSER_STEP_BYTES && consumed <= bytes.len());

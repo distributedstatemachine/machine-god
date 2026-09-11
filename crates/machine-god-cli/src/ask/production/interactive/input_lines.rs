@@ -2,7 +2,7 @@ use super::composer::{Composer, ComposerContext, ComposerEvent};
 use super::framing::{InteractiveInputFrameError, InteractiveInputFramer};
 use machine_god_native::{
     NativeInteractiveInput, NativeInteractiveInputChunk, NativeInteractiveInputError,
-    NativeInteractivePromptToken,
+    NativeInteractivePromptToken, NativeSkillDraftIdentity, NativeSkillFrameIdentity,
 };
 use std::{
     future::Future,
@@ -19,6 +19,11 @@ const ESCAPE_TIMEOUT: Duration = Duration::from_millis(50);
 pub(super) enum InputBinding {
     Command,
     AwaitingPrompt,
+    Skills {
+        epoch: NativeSkillDraftIdentity,
+        frame: Option<NativeSkillFrameIdentity>,
+        query: bool,
+    },
     SavedRule(u64),
     AwaitingPicker {
         generation: u64,
@@ -34,6 +39,24 @@ pub(super) enum InputBinding {
 }
 
 impl InputBinding {
+    fn same_editor(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Skills {
+                    epoch: left,
+                    query: lq,
+                    ..
+                },
+                Self::Skills {
+                    epoch: right,
+                    query: rq,
+                    ..
+                },
+            ) => left == right && lq == rq,
+            (Self::Skills { .. }, _) | (_, Self::Skills { .. }) => false,
+            _ => true,
+        }
+    }
     pub fn picker_view(&self) -> Option<(u64, Option<u64>)> {
         match self {
             Self::Picker {
@@ -58,6 +81,7 @@ pub(super) struct InputLines {
     pub input: NativeInteractiveInput,
     framer: InteractiveInputFramer,
     composer: Option<Composer>,
+    parked_composer: Option<Composer>,
     chunk: Option<NativeInteractiveInputChunk>,
     offset: usize,
     chunk_binding: InputBinding,
@@ -73,6 +97,7 @@ impl InputLines {
             input,
             framer: InteractiveInputFramer::default(),
             composer: None,
+            parked_composer: None,
             chunk: None,
             offset: 0,
             chunk_binding: InputBinding::Command,
@@ -99,6 +124,62 @@ impl InputLines {
             .map(|composer| (composer.text(), composer.cursor()))
     }
 
+    pub fn original_draft(&self) -> Option<(&str, usize)> {
+        self.parked_composer
+            .as_ref()
+            .or(self.composer.as_ref())
+            .map(|composer| (composer.text(), composer.cursor()))
+    }
+
+    pub fn open_skills_query(&mut self, query: &str) -> Result<(), ()> {
+        if query.len() > machine_god_native::MAX_NATIVE_SKILL_QUERY_BYTES
+            || self.parked_composer.is_some()
+            || self
+                .composer
+                .as_ref()
+                .is_none_or(Composer::has_pending_input)
+        {
+            return Err(());
+        }
+        let mut composer = Composer::default();
+        composer.replace(0..0, query, query.len()).map_err(|_| ())?;
+        self.parked_composer = self.composer.replace(composer);
+        self.line_binding = None;
+        self.escape_timer = None;
+        Ok(())
+    }
+
+    pub fn close_skills_query(&mut self) {
+        if let Some(mut original) = self.parked_composer.take() {
+            original.resume_editor();
+            self.composer = Some(original);
+            self.line_binding = None;
+            self.escape_timer = None;
+        }
+    }
+
+    pub fn apply_skill_insertion(
+        &mut self,
+        insertion: &machine_god_native::NativeSkillPickerInsertion,
+    ) -> Result<(), ()> {
+        self.close_skills_query();
+        self.composer
+            .as_mut()
+            .ok_or(())?
+            .replace(
+                insertion.range.clone(),
+                &insertion.inserted,
+                insertion.cursor_after,
+            )
+            .map_err(|_| ())?;
+        self.composer
+            .as_mut()
+            .expect("validated raw composer")
+            .resume_editor();
+        self.line_binding = None;
+        Ok(())
+    }
+
     /// Restore presentation-owned search after ignoring stale bytes. The
     /// remainder of an already received chunk retains its original identity.
     pub fn restore_picker_query(&mut self, query: &str) -> Result<(), ()> {
@@ -119,6 +200,7 @@ impl InputLines {
     /// Explicitly discards the raw draft and decoder. Already received bytes
     /// still retain their old chunk binding; reset cannot relabel pasted input.
     pub fn reset_raw_draft(&mut self) {
+        self.parked_composer = None;
         if let Some(composer) = &mut self.composer {
             composer.reset();
             self.line_binding = None;
@@ -230,6 +312,7 @@ impl InputLines {
         mut received: impl FnMut(&[u8]),
         mut edited: impl FnMut(&InputBinding, Range<usize>, &str, usize),
     ) -> Poll<Option<Result<(ComposerEvent, InputBinding), LineError>>> {
+        let editor = binding.clone();
         if self.composer.is_none() {
             return Poll::Ready(Some(Err(LineError::Input(
                 NativeInteractiveInputError::Unavailable,
@@ -263,6 +346,20 @@ impl InputLines {
         self.line_binding
             .get_or_insert_with(|| self.chunk_binding.clone());
         let chunk = self.chunk.as_ref().expect("a received chunk");
+        // Never decode an earlier editor's remaining bytes into a replacement
+        // query/draft. Frame changes within the same editor still permit edits;
+        // only selection requires the exact acknowledged frame.
+        if !self
+            .line_binding
+            .as_ref()
+            .expect("received binding")
+            .same_editor(&editor)
+        {
+            let stale = self.line_binding.take().expect("received binding");
+            self.chunk.take();
+            cx.waker().wake_by_ref();
+            return Poll::Ready(Some(Ok((ComposerEvent::StaleInput, stale))));
+        }
         let composer = self.composer.as_mut().expect("raw mode checked");
         let effective_context = ComposerContext {
             session_picker: self
@@ -307,7 +404,8 @@ impl InputLines {
             event,
             ComposerEvent::Submit(_) | ComposerEvent::ExitRequested
         ) || matches!(event, ComposerEvent::CancelRequested) && !context.active_response
-            || binding.picker_view().is_some() && !composer.has_pending_input()
+            || (binding.picker_view().is_some() || matches!(binding, InputBinding::Skills { .. }))
+                && !composer.has_pending_input()
             || matches!(event, ComposerEvent::SessionPickerRequested)
                 && matches!(binding, InputBinding::Command)
         {
@@ -338,7 +436,7 @@ impl InputLines {
             .as_ref()
             .expect("escape has an input binding")
             .clone();
-        if binding.picker_view().is_some() {
+        if binding.picker_view().is_some() || matches!(binding, InputBinding::Skills { .. }) {
             self.line_binding = None;
         }
         Some((event, binding))
@@ -351,6 +449,9 @@ mod tests {
     use machine_god_core::CancellationToken;
     use machine_god_native::NativeInteractiveInputSource;
     use std::{future::poll_fn, io::Write, os::fd::OwnedFd, time::Duration};
+
+    #[path = "skills_tests.rs"]
+    mod skills_tests;
 
     fn source() -> (InputLines, std::io::PipeWriter) {
         let (read, write) = std::io::pipe().unwrap();
@@ -724,6 +825,7 @@ mod tests {
                     ComposerContext {
                         active_response: active,
                         session_picker: matches!(binding, InputBinding::Picker { .. }),
+                        ..ComposerContext::default()
                     },
                 )
             }),
@@ -853,6 +955,7 @@ mod tests {
                                 ComposerContext {
                                     active_response: true,
                                     session_picker: false,
+                                    ..ComposerContext::default()
                                 }
                             )
                             .is_pending()
@@ -912,6 +1015,7 @@ mod tests {
                                 ComposerContext {
                                     active_response: true,
                                     session_picker: false,
+                                    ..ComposerContext::default()
                                 }
                             )
                             .is_pending()

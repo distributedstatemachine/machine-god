@@ -26,7 +26,9 @@ mod recording_lifetime_tests;
 mod recording_process_tests;
 mod resize;
 mod saved_rules;
+mod skills_driver;
 mod skills_receipts;
+mod skills_view;
 #[cfg(test)]
 mod terminal_lifetime_tests;
 #[cfg(test)]
@@ -167,7 +169,7 @@ fn run_interactive(
         observations: _observations,
         catalog_cache: _catalog_cache,
         user_config,
-        skills_snapshot: _skills_snapshot,
+        skills_snapshot,
     }) = prepare(bridge, control)
     else {
         return super::finish_setup_failure(signals, control);
@@ -222,7 +224,9 @@ fn run_interactive(
                     startup_notice: prepared.notice,
                 };
                 let mut driver = match opening.open(host, options, signals).await? {
-                    Ok(driver) => driver.with_resources(catalog, user_config),
+                    Ok(driver) => driver
+                        .with_resources(catalog, user_config)
+                        .with_skills_snapshot(skills_snapshot),
                     Err(presentation) => return Ok(presentation),
                 };
                 let result = poll_fn(|cx| driver.poll(cx, signals)).await;
@@ -533,6 +537,7 @@ struct Driver {
     render: Option<Render>,
     in_flight: Option<InFlight>,
     notice: Option<Vec<u8>>,
+    skills_warning: Option<&'static [u8]>,
     outcome: Option<NativeInteractiveOutcome>,
     control_outcome: Option<NativeInteractiveControlOutcome>,
     copy_outcome: Option<NativeInteractiveCopyOutcome>,
@@ -550,6 +555,7 @@ struct Driver {
     picker: Option<picker::Picker>,
     picker_request: Option<machine_god_native::NativeInteractiveRequestId>,
     picker_rejection: Option<machine_god_native::NativeInteractiveRequestId>,
+    skills: Option<skills_driver::SkillsUi>,
 }
 
 struct Frontend {
@@ -579,6 +585,9 @@ impl Driver {
         output: OutputBridge,
     ) -> Result<Self, ()> {
         inbox.activate(principal(&owner)).map_err(|_| ())?;
+        let skills = owner
+            .skills_catalog()
+            .map(|_| skills_driver::SkillsUi::new(None));
         Ok(Self {
             owner,
             input,
@@ -595,6 +604,7 @@ impl Driver {
                     .to_vec(),
             ),
             outcome: None,
+            skills_warning: None,
             control_outcome: None,
             copy_outcome: None,
             scope_active: true,
@@ -611,6 +621,7 @@ impl Driver {
             picker: None,
             picker_request: None,
             picker_rejection: None,
+            skills,
         })
     }
     fn with_resources(

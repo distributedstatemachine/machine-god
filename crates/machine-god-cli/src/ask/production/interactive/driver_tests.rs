@@ -239,6 +239,143 @@ fn executor() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+#[test]
+fn skills_incomplete_warning_survives_full_notice_in_native_free_tail() {
+    let (send, mut work) = tokio::sync::mpsc::channel(1);
+    let (ack, acknowledgements) = tokio::sync::mpsc::channel(1);
+    let mut tail = super::FinalPresentation::startup(
+        OutputBridge {
+            tape: None,
+            work: send,
+            acknowledgements,
+        },
+        None,
+        None,
+        AskCommandOutcome::Completed,
+        None,
+        None,
+    );
+    tail.notice = Some(vec![b'x'; MAX_PRESENTATION_OUTPUT_BYTES]);
+    let warning: &[u8] = b"\n[skills discovery incomplete; automatic matching suppressed]\n";
+    tail.skills_warning = Some(warning);
+    let mut output = Vec::new();
+    executor().block_on(poll_fn(|cx| {
+        tail.poll_output(cx);
+        if let Ok(item) = work.try_recv() {
+            if let OutputWork::Write(bytes) = item {
+                assert!(bytes.len() <= 4096);
+                output.extend_from_slice(&bytes);
+            }
+            ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
+            cx.waker().wake_by_ref();
+        }
+        if tail.final_flush_sent && tail.in_flight.is_none() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }));
+    assert!(output.starts_with(warning));
+    assert_eq!(
+        &output[warning.len()..warning.len() + MAX_PRESENTATION_OUTPUT_BYTES],
+        vec![b'x'; MAX_PRESENTATION_OUTPUT_BYTES]
+    );
+    assert!(tail.skills_warning.is_none());
+    assert!(tail.notice.is_none());
+}
+
+#[test]
+fn skills_driver_requires_exact_flush_and_resize_ack_before_inserting_without_submission() {
+    use std::io::Write as _;
+    let runtime = executor();
+    let fixture = support::Fixture::new_with_skills();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver.command("/skills create review", 100);
+    runtime.block_on(until(&mut harness, |driver| {
+        driver.control_outcome.is_some()
+    }));
+    let snapshot = harness
+        .driver
+        .owner
+        .skills_catalog()
+        .unwrap()
+        .discover(&CancellationToken::new())
+        .unwrap();
+    harness.driver = harness
+        .driver
+        .with_raw_input(100, None)
+        .with_skills_snapshot(Some(Arc::new(snapshot)));
+    let result = runtime.block_on(async {
+        pump_until(&mut harness, |driver| {
+            presentation_idle(driver) && driver.control_outcome.is_none()
+        })
+        .await;
+        harness.input_writer.write_all(b"Help $re").unwrap();
+        input_until(&mut harness, Driver::skills_open).await;
+        assert!(matches!(
+            harness.driver.skills_binding(),
+            Some(InputBinding::Skills { frame: None, .. })
+        ));
+        harness.input_writer.write_all(b"\t").unwrap();
+        input_until(&mut harness, |driver| driver.notice.is_some()).await;
+        assert_eq!(harness.driver.input.raw_draft(), Some(("Help $re", 8)));
+        pump_until(&mut harness, |driver| {
+            matches!(
+                driver.skills_binding(),
+                Some(InputBinding::Skills { frame: Some(_), .. })
+            )
+        })
+        .await;
+        let prior = harness.driver.skills_binding().unwrap();
+        harness.driver.frontend.as_mut().unwrap().columns = 72;
+        harness.driver.invalidate_skills_frame();
+        harness.driver.acknowledge_skills(&prior);
+        assert!(matches!(
+            harness.driver.skills_binding(),
+            Some(InputBinding::Skills { frame: None, .. })
+        ));
+        pump_until(&mut harness, |driver| {
+            matches!(
+                driver.skills_binding(),
+                Some(InputBinding::Skills { frame: Some(_), .. })
+            )
+        })
+        .await;
+        harness.input_writer.write_all(b"\t").unwrap();
+        input_until(&mut harness, |driver| !driver.skills_open()).await;
+        assert_eq!(
+            harness.driver.input.raw_draft(),
+            Some(("Help $review ", 13))
+        );
+        assert_eq!(harness.driver.owner.runtime().status().queued_jobs, 0);
+        assert!(fixture.transport.requests().is_empty());
+        harness.driver.command("/new", 102);
+        assert_eq!(harness.driver.input.raw_draft(), Some(("", 0)));
+        assert!(!harness.driver.skills_open());
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
+fn skills_fixture_without_initial_snapshot_visibly_rejects_first_prompt() {
+    let runtime = executor();
+    let fixture = support::Fixture::new_with_skills();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver.notice.take();
+    harness.driver.command("$review first prompt", 100);
+    assert_eq!(harness.driver.owner.runtime().status().queued_jobs, 0);
+    assert!(
+        String::from_utf8(harness.driver.notice.take().unwrap())
+            .unwrap()
+            .contains("skills discovery required")
+    );
+    let result = runtime.block_on(finish_signal(&mut harness));
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_tail(&mut tail));
+}
+
 async fn until(harness: &mut Harness, condition: impl Fn(&Driver) -> bool) {
     tokio::time::timeout(
         Duration::from_secs(10),
@@ -248,6 +385,22 @@ async fn until(harness: &mut Harness, condition: impl Fn(&Driver) -> bool) {
                 Poll::Ready(())
             } else {
                 assert!(result.is_pending());
+                Poll::Pending
+            }
+        }),
+    )
+    .await
+    .unwrap();
+}
+
+async fn input_until(harness: &mut Harness, condition: impl Fn(&Driver) -> bool) {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        poll_fn(|cx| {
+            harness.driver.poll_input(cx, 101);
+            if condition(&harness.driver) {
+                Poll::Ready(())
+            } else {
                 Poll::Pending
             }
         }),

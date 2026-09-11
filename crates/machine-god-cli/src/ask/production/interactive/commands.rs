@@ -80,9 +80,7 @@ impl Driver {
                     self.note(BUSY);
                     return;
                 }
-                if self.owner.enqueue(prompt.into()).is_err() {
-                    self.note(BUSY);
-                }
+                self.enqueue_skills_prompt(prompt);
             }
             Ok(Submission::Slash(command, payload)) => self.slash(command, payload, now_ms),
         }
@@ -120,7 +118,7 @@ impl Driver {
             Command::Copy => self.copy_command(),
             Command::Skills => match payload.parse() {
                 Ok(command) => {
-                    self.control_command(NativeInteractiveControl::Skills { command }, now_ms);
+                    self.skills_command(command, now_ms);
                 }
                 Err(_) => self.note(b"\n[usage: /skills [list|show NAME|path|create NAME|add SOURCE|install SOURCE|remove NAME]]\n> "),
             },
@@ -143,6 +141,8 @@ impl Driver {
     }
 
     fn cancel_command(&mut self) {
+        self.close_skills();
+        self.reset_skills();
         if self.cancel_saved_rule() {
             return;
         }
@@ -226,6 +226,8 @@ impl Driver {
         self.inbox.deactivate();
         self.scope_active = false;
         self.modal.take();
+        self.input.reset_raw_draft();
+        self.reset_skills();
     }
 
     fn permissions_command(&mut self, payload: &str) {
@@ -267,6 +269,7 @@ impl Driver {
             self.scope_active = true;
             self.modal.take();
             self.saved_rule.take();
+            self.reset_skills();
         }
         self.show_policy(payload.eq_ignore_ascii_case("reset"));
     }

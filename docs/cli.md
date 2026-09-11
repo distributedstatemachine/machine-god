@@ -316,7 +316,14 @@ uncertain or partial batch never becomes success. Reporting is bounded to 64 KiB
 Catalog text previews show at most 128 rows with clipped names/descriptions/paths,
 state the catalog count and incomplete-discovery warning, and preserve an exact
 show focus. They are previews, not full skill bodies or a uniqueness claim.
-The native component and picker contracts are in [skills CLI](skills-cli.md).
+Raw input opens an inline picker for `$` references or a catalog menu for list/show.
+Arrow keys navigate, Enter/Tab selects an acknowledged visible row, and a new
+Enter submits the preserved draft. Escape closes the menu without clearing the
+draft; idle Ctrl-C clears it. Selection remains bound to the exact token and location.
+Managed receipts flush before a separate catalog refresh, and stale pre-mutation
+snapshots cannot supply automatic invocation. The complete
+[skills CLI contract](skills-cli.md#interactive-input-and-refresh) defines input
+epochs, query bounds, warnings and refresh failures.
 
 ### Persistent allowlist
 

@@ -196,6 +196,7 @@ impl Startup {
             ComposerContext {
                 active_response: false,
                 session_picker: true,
+                ..ComposerContext::default()
             },
             |bytes| {
                 if let Some(tape) = tape {

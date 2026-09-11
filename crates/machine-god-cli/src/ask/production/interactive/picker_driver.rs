@@ -27,12 +27,13 @@ impl Driver {
             self.note(b"\n[finish the active response before opening sessions]\n");
         } else if self
             .input
-            .raw_draft()
+            .original_draft()
             .is_some_and(|(text, _)| !text.is_empty())
         {
             self.note(b"\n[clear the draft before opening sessions]\n");
         } else {
             self.input.reset_raw_draft();
+            self.reset_skills();
             self.picker.as_mut().expect("configured picker").open(scope);
         }
     }
@@ -42,6 +43,7 @@ impl Driver {
             picker.close();
         }
         self.input.reset_raw_draft();
+        self.reset_skills();
         if let Some(frontend) = &mut self.frontend {
             frontend.dirty = true;
         }
@@ -100,6 +102,8 @@ impl Driver {
                             self.inbox.deactivate();
                             self.scope_active = false;
                             self.modal.take();
+                            self.input.reset_raw_draft();
+                            self.reset_skills();
                         }
                         Err(_) => picker.selection_failed("Session transition is busy; try again"),
                     }

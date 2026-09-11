@@ -61,6 +61,7 @@ fn skills_commands_use_native_catalog_management_and_exact_receipts() {
         }
         driver.command("/skills show review", 200);
         assert!(control(&mut driver).await.failed());
+        Box::pin(finish(driver, fixture)).await;
     });
 }
 

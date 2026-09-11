@@ -22,6 +22,7 @@ const PASTE_END: &[u8] = b"\x1b[201~";
 pub(super) struct ComposerContext {
     pub active_response: bool,
     pub session_picker: bool,
+    pub skills: Option<machine_god_native::NativeSkillPickerMode>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +54,8 @@ pub(super) enum ComposerEvent {
     PickerPrevious,
     PickerNext,
     PickerToggleScope,
+    SkillSelected,
+    StaleInput,
     EscapeRequested,
     Changed,
     InputError(ComposerInputError),
@@ -67,6 +70,8 @@ impl fmt::Debug for ComposerEvent {
             Self::PickerPrevious => f.write_str("PickerPrevious"),
             Self::PickerNext => f.write_str("PickerNext"),
             Self::PickerToggleScope => f.write_str("PickerToggleScope"),
+            Self::SkillSelected => f.write_str("SkillSelected"),
+            Self::StaleInput => f.write_str("StaleInput"),
             Self::EscapeRequested => f.write_str("EscapeRequested"),
             Self::Changed => f.write_str("Changed"),
             Self::InputError(error) => f.debug_tuple("InputError").field(error).finish(),
@@ -150,6 +155,12 @@ impl Composer {
     }
     pub fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    /// A restored editor cannot carry the preceding editor's CRLF suppression
+    /// into newly received bytes. Text, cursor and partial decoder are unchanged.
+    pub fn resume_editor(&mut self) {
+        self.skip_lf = false;
     }
 
     /// Applies one already admitted external edit without reporting it again to
@@ -366,6 +377,11 @@ impl Composer {
 
     fn key(&mut self, byte: u8, context: ComposerContext) -> Option<ComposerEvent> {
         match byte {
+            b'\r' | b'\n' | 9 if context.skills.is_some() => {
+                self.skip_lf = byte == b'\r';
+                Some(ComposerEvent::SkillSelected)
+            }
+            11 if context.skills.is_some() => Some(ComposerEvent::PickerPrevious),
             9 if context.session_picker => Some(ComposerEvent::PickerToggleScope),
             10 if context.session_picker => Some(ComposerEvent::PickerNext),
             11 if context.session_picker => Some(ComposerEvent::PickerPrevious),
@@ -493,8 +509,12 @@ impl Composer {
             b"\x1b[H" | b"\x1bOH" | b"\x1b[1~" | b"\x1b[7~" => self.move_to(0),
             b"\x1b[F" | b"\x1bOF" | b"\x1b[4~" | b"\x1b[8~" => self.move_to(self.text.len()),
             b"\x1b[3~" => self.delete_forward(),
-            b"\x1bOA" if context.session_picker => Some(ComposerEvent::PickerPrevious),
-            b"\x1bOB" if context.session_picker => Some(ComposerEvent::PickerNext),
+            b"\x1bOA" if context.session_picker || context.skills.is_some() => {
+                Some(ComposerEvent::PickerPrevious)
+            }
+            b"\x1bOB" if context.session_picker || context.skills.is_some() => {
+                Some(ComposerEvent::PickerNext)
+            }
             b"\x1b[200~" => {
                 self.decoder = Decoder::Paste(Paste::default());
                 None
@@ -586,7 +606,9 @@ impl Paste {
 }
 
 fn byte_limit(context: ComposerContext) -> usize {
-    if context.session_picker {
+    if context.skills == Some(machine_god_native::NativeSkillPickerMode::Menu) {
+        machine_god_native::MAX_NATIVE_SKILL_QUERY_BYTES
+    } else if context.session_picker {
         MAX_PICKER_QUERY_BYTES
     } else {
         MAX_COMPOSER_BYTES
@@ -621,7 +643,7 @@ fn picker_escape(bytes: &[u8], context: ComposerContext) -> Option<EscapeKey> {
             return Some(EscapeKey::Consumed);
         }
     }
-    if !context.session_picker {
+    if !context.session_picker && context.skills.is_none() {
         return None;
     }
     if body == b"Z" {
@@ -650,7 +672,8 @@ fn picker_escape(bytes: &[u8], context: ComposerContext) -> Option<EscapeKey> {
 }
 
 fn printable(byte: u8, context: ComposerContext) -> bool {
-    byte == b'\t' && !context.session_picker || byte >= 32 && byte != 127
+    byte == b'\t' && !context.session_picker && context.skills.is_none()
+        || byte >= 32 && byte != 127
 }
 
 fn next_end(text: &str, start: usize) -> usize {

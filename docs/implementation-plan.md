@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `implement the full skills CLI, then exact local and three-review gates`
+- Next gate: `full integrated skills CLI local gate, then three exact-SHA reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -369,16 +369,19 @@ core context projection and thin CLI/picker components as interfaces permit.
 The coordinator owns native control/host integration, shared exports, composed
 scenarios and behavior documentation, including integration of the core context
 component. The [skills CLI contract](skills-cli.md) records integrated native
-component behavior without claiming that the full CLI is already available.
+and interactive behavior without claiming delivery acceptance.
 All components feed one complete local gate and
 three fresh independent adversarial reviews; retain the same delivery workflow.
 
 The native command service, managed Git runner, startup root composition,
 FIFO invocation, checkpoint context and CLI command receipts are integrated.
-Focused startup/queue and routing checks pass; these component checks do not
-replace the full feature gate. Remaining integration is the interactive picker,
-initial-snapshot consumption, refresh and input-generation handling, followed by
-composed launch/PTY scenarios and the complete local/review/remote gates.
+The interactive picker, initial snapshot, owned refresh and input-generation
+handling are integrated, with composed launch/PTY scenarios ready for execution.
+Focused startup/queue, routing and helper-free input checks pass; these component
+checks do not replace the full feature gate. The complete local/review/remote
+gates remain, including fresh release-helper process scenarios and both supported
+platforms. Linux gate prerequisites are prepared under an unprivileged account;
+macOS and Linux process-heavy runtime runs must remain separate.
 
 ## Parked complete-feature scope: fx session import
 
