@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34534157220` (`GREEN`)
 - Active branch: `agent/m62-skills-cli`
 - Active phase: `M05 complete skills CLI implementation`
-- Next gate: `repair PTY readiness fixture, then complete replacement gate and three fresh reviews`
+- Next gate: `complete fixture-repaired local gate, then three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI and background CLI are delivered features.
@@ -390,9 +390,10 @@ Repeat the complete gate and three fresh reviews on the replacement candidate.
 Completed R2 review and repair worktrees are removed.
 The next candidate passed Linux and build-time gates, but macOS runtime exposed
 three unestablished child-reaping timeouts and, on one unchanged retry, an empty
-PID readiness-file race. Repair the fixture's publication race without changing
-deadlines or product semantics; preserve both failures and do not claim the
-fixture repair explains the separate admission timeouts.
+PID readiness-file race. The fixture now publishes the complete PID atomically;
+focused regression/lifecycle/PTY tests pass and its worktree is removed. Preserve
+both failures and do not claim this fixture repair explains the separate
+admission timeouts. No deadlines or product semantics were changed.
 Historical candidate, gate and finding evidence belongs in the
 [skills CLI review](reviews/m05-skills-cli-review-01.md). No skills delivery is
 accepted yet. Linux validation retains its unprivileged environment; macOS and

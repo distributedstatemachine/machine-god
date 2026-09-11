@@ -202,3 +202,16 @@ the earlier unestablished admission timeouts. The required repair publishes a
 complete readiness value atomically without changing process assertions,
 deadlines or production behavior. Neither failed run was pushed or reviewed as
 an accepted candidate; their logs were preserved without source-fix claims.
+
+The readiness repair `3b74843e40401fb1439f3d9276fda056e357f809`, integrated as
+`805a9214`, changes only the test fixture: write a private pending PID file, then
+rename it to the readiness name. A deterministic regression observes the absence
+of the ready path before publication and exact complete content afterward. The
+regression (one test), affected lifecycle case (one test) and serial PTY module
+(27 tests) passed, along with exact Rust 1.94.1 formatting, native package check
+and strict all-target/all-feature Clippy. Focused diagnostics used the fresh
+patched test executable with the preceding candidate's production-equivalent
+release helper; they were not full-gate acceptance. External logs are retained
+as `pty-ready-{regression,lifecycle,module}.log` under the shared skills evidence
+parent. The clean committed repair worktree was removed after integration.
+This repairs the empty-read race, not the separate child-reaping timeouts.
