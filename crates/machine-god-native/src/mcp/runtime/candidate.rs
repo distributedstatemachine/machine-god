@@ -31,6 +31,30 @@ pub struct NativeMcpServerCandidate {
     pub authentication: Arc<[u8]>,
     pub catalogs: Vec<McpDescriptorCatalog>,
     pub peer: NativeMcpOwnedPeer,
+    /// Exact configured operation timeout, independent of other servers.
+    pub operation_timeout: std::time::Duration,
+    /// Explicit host/configuration/network/authentication generation observers.
+    /// Shared unchanged by every executable binding from this server.
+    pub authority_cancellations: Arc<[CancellationToken]>,
+}
+impl NativeMcpServerCandidate {
+    fn validate_options(&self) -> Result<()> {
+        if self.operation_timeout.is_zero()
+            || self.operation_timeout > std::time::Duration::from_millis(u64::from(u32::MAX))
+            || self.authority_cancellations.len()
+                > crate::mcp::submission::MAX_MCP_RUNTIME_CANCELLATION_GUARDS
+        {
+            return Err(Error::Limit);
+        }
+        if self
+            .authority_cancellations
+            .iter()
+            .any(CancellationToken::is_cancelled)
+        {
+            return Err(Error::Unavailable);
+        }
+        Ok(())
+    }
 }
 impl std::fmt::Debug for NativeMcpServerCandidate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -114,7 +138,8 @@ impl NativeMcpRuntime {
                 pending: AtomicUsize::new(0),
                 max_pending: self.limits.max_pending_operations,
                 clock: self.clock.clone(),
-                timeout: self.limits.operation_timeout,
+                timeout: server.operation_timeout,
+                authority_cancellations: server.authority_cancellations,
             });
             for (exposed, (owner, binding)) in selected.into_iter().zip(bindings) {
                 let name = ToolName::new(exposed.name()).map_err(|_| Error::Invalid)?;
@@ -186,6 +211,9 @@ impl NativeMcpRuntime {
     ) -> Result<(McpCatalogCandidate, usize)> {
         if servers.len() > self.limits.max_servers {
             return Err(Error::Limit);
+        }
+        for server in servers {
+            server.validate_options()?;
         }
         let policies: Vec<_> = servers
             .iter()
@@ -291,7 +319,9 @@ fn shared_binding(
     )
     .map_err(|_| Error::Invalid)?;
     let owner = McpSubmissionRuntimeOwner::new();
-    let binding = owner.install(binding).map_err(|_| Error::Unavailable)?;
+    let binding = owner
+        .install_guarded(binding, server.authority_cancellations.clone())
+        .map_err(|_| Error::Unavailable)?;
     Ok((owner, binding))
 }
 fn add_charge(total: &mut usize, amount: usize, maximum: usize) -> Result<()> {

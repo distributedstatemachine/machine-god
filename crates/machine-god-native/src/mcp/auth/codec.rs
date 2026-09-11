@@ -16,6 +16,12 @@ pub struct McpAuthIdentity {
     pub(super) endpoint: Box<str>,
     pub(super) selection: Box<str>,
 }
+impl McpAuthIdentity {
+    /// Exact selected endpoint, for native credential routing only.
+    pub(crate) fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+}
 pub struct McpAuthConfig {
     pub(super) identity: McpAuthIdentity,
     pub(super) resource: Box<str>,

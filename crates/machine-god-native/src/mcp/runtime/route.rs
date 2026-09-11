@@ -1,4 +1,3 @@
-#[cfg(feature = "mcp-http")]
 use super::NativeMcpOwnedPeer;
 use super::{NativeMcpRuntime, NativeMcpRuntimeClock, NativeMcpRuntimeError as Error, Result};
 use crate::mcp::{
@@ -35,6 +34,7 @@ pub(super) struct ServerRoute {
     pub max_pending: usize,
     pub clock: Arc<dyn NativeMcpRuntimeClock>,
     pub timeout: Duration,
+    pub authority_cancellations: Arc<[CancellationToken]>,
 }
 pub(super) struct ToolRoute {
     pub name: ToolName,
@@ -59,13 +59,38 @@ pub(super) struct PeerGuard<'a> {
     _pending: Pending<'a>,
 }
 impl ServerRoute {
+    pub(super) fn check_authority(&self) -> Result<()> {
+        if self.authority_cancelled() {
+            Err(Error::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn authority_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+            || self
+                .authority_cancellations
+                .iter()
+                .any(CancellationToken::is_cancelled)
+    }
+
+    async fn cancelled(&self) {
+        let observers: Vec<_> = std::iter::once(&self.cancellation)
+            .chain(self.authority_cancellations.iter())
+            .map(|token| Box::pin(token.cancelled()))
+            .collect();
+        futures_util::future::select_all(observers).await;
+    }
+
     pub async fn acquire<'a>(
         &'a self,
         context: &NativeMcpTurnContext,
         cancellation: &CancellationToken,
     ) -> Result<PeerGuard<'a>> {
         context.revalidate().map_err(|_| Error::Unavailable)?;
-        if cancellation.is_cancelled() || self.cancellation.is_cancelled() {
+        self.check_authority()?;
+        if cancellation.is_cancelled() {
             return Err(Error::Cancelled);
         }
         self.pending
@@ -85,11 +110,7 @@ impl ServerRoute {
                     select(cancellation.cancelled(), context.cancelled()).await;
                 }),
                 Box::pin(async {
-                    select(
-                        self.cancellation.cancelled(),
-                        self.clock.sleep_until(deadline),
-                    )
-                    .await;
+                    select(Box::pin(self.cancelled()), self.clock.sleep_until(deadline)).await;
                 }),
             )
             .await;
@@ -99,10 +120,8 @@ impl ServerRoute {
             Either::Right(_) => return Err(Error::Cancelled),
         };
         context.revalidate().map_err(|_| Error::Unavailable)?;
-        if cancellation.is_cancelled()
-            || self.cancellation.is_cancelled()
-            || self.clock.now() >= deadline
-        {
+        self.check_authority()?;
+        if cancellation.is_cancelled() || self.clock.now() >= deadline {
             return Err(Error::Cancelled);
         }
         Ok(PeerGuard {

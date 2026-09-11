@@ -22,7 +22,7 @@ use machine_god_core::{BoxFuture, CancellationToken, ToolContext};
 use std::{
     fmt,
     sync::{Arc, Mutex, Weak},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 /// Explicit monotonic observation; construction never reads an ambient clock.
@@ -39,7 +39,6 @@ pub struct NativeMcpRuntimeLimits {
     pub max_retired_servers: usize,
     pub max_pending_operations: usize,
     pub max_retained_bytes: usize,
-    pub operation_timeout: Duration,
 }
 impl Default for NativeMcpRuntimeLimits {
     fn default() -> Self {
@@ -49,7 +48,6 @@ impl Default for NativeMcpRuntimeLimits {
             max_retired_servers: 64,
             max_pending_operations: 64,
             max_retained_bytes: 256 * 1024 * 1024,
-            operation_timeout: Duration::from_secs(120),
         }
     }
 }
@@ -66,9 +64,6 @@ impl NativeMcpRuntimeLimits {
             if value == 0 || value > maximum {
                 return Err(NativeMcpRuntimeError::Limit);
             }
-        }
-        if self.operation_timeout.is_zero() || self.operation_timeout > cap.operation_timeout {
-            return Err(NativeMcpRuntimeError::Limit);
         }
         Ok(self)
     }
