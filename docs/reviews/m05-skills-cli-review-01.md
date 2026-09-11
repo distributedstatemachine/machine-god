@@ -168,3 +168,37 @@ Both lanes passed exact Rust 1.94.1 strict native all-target/all-feature Clippy,
 formatting and diff checks. Their clean committed worktrees were removed after
 integration, preserving external logs/caches. These focused results do not
 replace the complete candidate gate or fresh review cycle.
+
+## Path-repair gate and PTY fixture diagnosis
+
+Candidate `f24f8ef31f830d6bac4991cd57dc2324fec6e04a`, tree
+`aa12cb35167190bbe2a85e7ad4f438317a0df512`, passed exact Rust 1.94.1 formatting,
+strict workspace Clippy, fresh locked release builds, test precompilation,
+269 Python tests (14 skips), bounded documentation, drift, dependency policy,
+audit and FreeBSD/WASI checks. Linux focused tests, default-concurrency workspace,
+explicit doctests and official release smoke passed with the exact clean source
+and verified release hash. Build/Linux evidence remains under
+`/private/tmp/mg-skills-r2-replacement.VNzMKi` and the existing SHA-prefixed Linux
+evidence directory.
+
+Mac focused CLI (44) and native skills (184) tests passed. The first workspace
+run failed three `terminal_pty` cases with 2,458 native passes and 12 ignored
+fixtures. Fixed no-op child probes returned no positive wait status within the
+500 ms observation and separate 500 ms cleanup bounds, before inventory/PTY
+helper startup. Read-only diagnosis found the same historical signature in the
+[combined CLI review](m03-cli-full-review-01.md), but established no cause or
+direct connection to the skills path repairs. An unchanged workspace-filtered
+PTY suite passed all 26 tests, including the three failures; this was diagnostic
+evidence, not remediation or gate acceptance.
+
+One unchanged full-context retry retained separate logs under
+`/private/tmp/mg-skills-r2-runtime-retry.cMHhHP`. The original three cases passed,
+but `close_retry_retains_descendant_that_escaped_after_capture` failed at
+`terminal_pty.rs:1992` with `ParseIntError::Empty`; 2,460 native tests passed and
+12 fixtures remained ignored. The child used `std::fs::write` to create and then
+populate `escape.ready`, while the parent waited only for path existence before
+reading the PID. This is a concrete test-fixture publication race, separate from
+the earlier unestablished admission timeouts. The required repair publishes a
+complete readiness value atomically without changing process assertions,
+deadlines or production behavior. Neither failed run was pushed or reviewed as
+an accepted candidate; their logs were preserved without source-fix claims.
