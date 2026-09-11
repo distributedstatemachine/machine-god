@@ -1263,7 +1263,11 @@ mod production {
                 .with_observations(Arc::clone(&observations))
                 .with_permissions(capture_permission_options());
         if let Some(service) = mcp_management {
-            options = options.with_mcp_management(service);
+            options = options
+                .with_mcp_management(service)
+                .with_mcp_contexts(Arc::new(
+                    machine_god_native::mcp::context::NativeMcpContexts::new(),
+                ));
         }
         let host =
             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
@@ -1463,6 +1467,9 @@ mod production {
             .map_err(|_| ())?;
         let conversation = host
             .configure_conversation_workspace(conversation)
+            .map_err(|_| ())?;
+        let conversation = host
+            .configure_conversation_mcp(conversation)
             .map_err(|_| ())?;
         let conversation = NativeConversationRuntime::new_with_model_routes(
             conversation,

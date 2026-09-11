@@ -50,6 +50,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
+#[path = "reference_host/mcp_context_composition.rs"]
+mod mcp_context_composition;
 #[path = "reference_host/permission_composition.rs"]
 mod permission_composition;
 mod web_search_support;

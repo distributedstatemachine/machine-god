@@ -172,6 +172,16 @@ publication receipts through cancellation and cleanup. Skills and MCP profile
 controls share the same private owned-operation wrapper. Configuration saves
 and runtime activation remain independent facts; see [MCP management](mcp-management.md).
 
+`with_mcp_contexts(Arc<NativeMcpContexts>)` independently selects one shared,
+weak exact-session/turn router. Both prepared composition paths preserve that
+allocation; `configure_conversation_mcp` attaches a created or resumed native
+conversation before turn admission. Interactive transitions and noninteractive
+ask/resume use this same hook. Production CLI startup selects the router only
+when an explicit native MCP profile was selected. Registration opens no server
+and grants no tool permission. Hosts without this option remain unchanged.
+Conversation finalization and retirement invalidate retained turn routes; a
+router or snapshot cannot keep the conversation or engine alive.
+
 For non-workspace file mutations, the history wrapper captures the trusted
 backend's existing read-only approval ticket when the outer execution future
 is constructed. It retains both success and denial outcomes; a later grant

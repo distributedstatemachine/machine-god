@@ -276,6 +276,7 @@ struct TerminalCompositionSelection {
 #[derive(Clone)]
 pub struct NativeReferenceHostConversationOptions {
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
+    mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Arc<FileUndoTracker>,
@@ -291,6 +292,7 @@ impl NativeReferenceHostConversationOptions {
     pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
         Self {
             mcp_management: None,
+            mcp_contexts: None,
             skills: None,
             workspace_binding: None,
             undo_tracker,
@@ -325,6 +327,17 @@ impl NativeReferenceHostConversationOptions {
         service: Arc<crate::mcp::management::NativeMcpManagementService>,
     ) -> Self {
         self.mcp_management = Some(service);
+        self
+    }
+
+    /// Retains exact-turn MCP routing without registering sessions or opening servers.
+    /// Attach each conversation with `configure_conversation_mcp` before admission.
+    #[must_use]
+    pub fn with_mcp_contexts(
+        mut self,
+        contexts: Arc<crate::mcp::context::NativeMcpContexts>,
+    ) -> Self {
+        self.mcp_contexts = Some(contexts);
         self
     }
 
@@ -384,6 +397,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 #[derive(Default)]
 struct PreparedCompositionOptions {
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
+    mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
@@ -397,6 +411,7 @@ impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions
     fn from(options: NativeReferenceHostConversationOptions) -> Self {
         Self {
             mcp_management: options.mcp_management,
+            mcp_contexts: options.mcp_contexts,
             skills: options.skills,
             undo_tracker: Some(options.undo_tracker),
             workspace_binding: options.workspace_binding,
@@ -427,6 +442,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
+    mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
     engine: Engine,
@@ -673,6 +689,7 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
         let mcp_management = options.mcp_management.clone();
+        let mcp_contexts = options.mcp_contexts.clone();
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -708,6 +725,7 @@ impl NativeReferenceHost {
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
+            host.mcp_contexts = mcp_contexts;
             host.skills = skills;
             host.undo_tracker = undo_tracker;
             host.model_routes = model_routes;
@@ -1090,6 +1108,7 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
         let mcp_management = options.mcp_management.clone();
+        let mcp_contexts = options.mcp_contexts.clone();
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -1119,6 +1138,7 @@ impl NativeReferenceHost {
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
+            host.mcp_contexts = mcp_contexts;
             host.skills = skills;
             host.undo_tracker = undo_tracker;
             host.model_routes = model_routes;
@@ -1153,6 +1173,27 @@ impl NativeReferenceHost {
         &self,
     ) -> Option<Arc<crate::mcp::management::NativeMcpManagementService>> {
         self.mcp_management.clone()
+    }
+
+    /// Observes the exact selected router without registering or authorizing work.
+    #[must_use]
+    pub fn mcp_contexts(&self) -> Option<Arc<crate::mcp::context::NativeMcpContexts>> {
+        self.mcp_contexts.clone()
+    }
+
+    /// Attaches the host's shared MCP router before the first admitted turn.
+    /// Hosts without this selection leave the conversation unchanged.
+    ///
+    /// # Errors
+    /// Rejects busy conversations, duplicate identities or exhausted route capacity.
+    pub fn configure_conversation_mcp(
+        &self,
+        conversation: crate::NativeConversation,
+    ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
+        match &self.mcp_contexts {
+            Some(contexts) => conversation.with_mcp_contexts(contexts),
+            None => Ok(conversation),
+        }
     }
 
     /// Attaches this host's exact native permission routes before admitting work.
@@ -1508,6 +1549,7 @@ impl NativeReferenceHost {
         Ok(Self {
             engine,
             mcp_management: None,
+            mcp_contexts: None,
             skills: None,
             workspace_binding: None,
             control_workers,
@@ -2150,6 +2192,28 @@ fn consume_prepared_composition(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mcp_context_options_retain_exact_router_without_effect_authority() {
+        use super::*;
+        let contexts = Arc::new(crate::mcp::context::NativeMcpContexts::new());
+        let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+            .with_mcp_contexts(contexts.clone());
+        assert!(Arc::ptr_eq(
+            options.mcp_contexts.as_ref().unwrap(),
+            &contexts
+        ));
+        let prepared: PreparedCompositionOptions = options.into();
+        assert!(Arc::ptr_eq(
+            prepared.mcp_contexts.as_ref().unwrap(),
+            &contexts
+        ));
+        assert!(prepared.mcp_management.is_none());
+        assert!(prepared.terminal.is_none());
+        let config = LoadedNativeConfig::from_file(crate::NativeConfig::default());
+        assert!(validate_prepared_selections(&config, &prepared).is_ok());
+        assert!(PreparedCompositionOptions::default().mcp_contexts.is_none());
+    }
+
     #[test]
     fn mcp_management_options_are_inert_shared_and_require_owned_cleanup() {
         use super::*;

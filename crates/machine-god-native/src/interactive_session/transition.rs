@@ -147,6 +147,7 @@ pub(super) async fn compose(
         None => host.configure_conversation_permissions(conversation)?,
     };
     let conversation = host.configure_conversation_workspace(conversation)?;
+    let conversation = host.configure_conversation_mcp(conversation)?;
     let observations = host
         .observations()
         .ok_or(NativeInteractiveError::Configuration)?;
