@@ -43,6 +43,7 @@ fn deadline_covers_pending_response_head_and_body() {
             client.lifetime = super::super::io::Lifetime::new(
                 CancellationToken::new(),
                 Instant::now() + Duration::from_millis(200),
+                Arc::new(super::super::SystemClock),
             );
             let observation = client.observation();
             let server = async {

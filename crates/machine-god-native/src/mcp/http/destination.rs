@@ -3,6 +3,7 @@ use rustls::{ClientConfig, RootCertStore};
 use std::{collections::BTreeSet, fmt, net::SocketAddr, sync::Arc};
 
 /// Explicit endpoint-bound DNS result/address authority, never ambient resolution.
+#[derive(Clone)]
 pub struct McpHttpDestination {
     endpoint: McpEndpoint,
     pub(super) addresses: Box<[SocketAddr]>,
@@ -52,6 +53,16 @@ impl McpHttpDestination {
     #[must_use]
     pub fn endpoint(&self) -> &McpEndpoint {
         &self.endpoint
+    }
+    /// Resolve a deprecated SSE message endpoint without widening selected addresses.
+    /// # Errors
+    /// Rejects cross-origin or malformed endpoint events before any acquisition.
+    pub fn message_endpoint(&self, event: &str) -> Result<Self> {
+        let endpoint = self
+            .endpoint
+            .resolve_message_endpoint(event)
+            .map_err(|_| McpHttpError::Invalid)?;
+        Self::new(endpoint, &self.addresses)
     }
 }
 

@@ -60,7 +60,19 @@ impl McpHttpControl {
                 };
                 let mut bytes = Vec::with_capacity(post.len() + 2);
                 bytes.extend_from_slice(method);
-                bytes.extend_from_slice(&post[5..]);
+                for (index, line) in post[5..].split_inclusive(|byte| *byte == b'\n').enumerate() {
+                    if index != 0
+                        && (line.starts_with(b"content-type:")
+                            || line.starts_with(b"content-length:"))
+                    {
+                        continue;
+                    }
+                    if line.starts_with(b"accept:") {
+                        bytes.extend_from_slice(b"accept: text/event-stream\r\n");
+                    } else {
+                        bytes.extend_from_slice(line);
+                    }
+                }
                 Ok(bytes.into_boxed_slice())
             }
         }

@@ -41,7 +41,7 @@ impl McpPeerCapabilities {
     pub const fn completions(self) -> bool {
         self.flags & 128 != 0
     }
-    pub(super) fn admit(response: &RpcEnvelope, version: ProtocolVersion) -> Result<Self> {
+    pub(crate) fn admit(response: &RpcEnvelope, version: ProtocolVersion) -> Result<Self> {
         let result = response
             .result()
             .and_then(Value::as_object)

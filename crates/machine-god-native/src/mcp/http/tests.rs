@@ -8,11 +8,11 @@ use tokio::{
 
 mod streaming;
 mod submission;
-mod tls_fixture;
+pub(crate) mod tls_fixture;
 
 const DISCOVER: &[u8] = br#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}"#;
 
-fn executor() -> tokio::runtime::Runtime {
+pub(crate) fn executor() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -34,7 +34,7 @@ fn connection(address: SocketAddr, cancellation: CancellationToken) -> McpHttpCo
     )
     .unwrap()
 }
-async fn request(stream: &mut (impl AsyncRead + Unpin)) -> Vec<u8> {
+pub(crate) async fn request(stream: &mut (impl AsyncRead + Unpin)) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut scratch = [0u8; 4096];
     loop {
@@ -51,8 +51,7 @@ async fn request(stream: &mut (impl AsyncRead + Unpin)) -> Vec<u8> {
                     .headers
                     .iter()
                     .find(|header| header.name.eq_ignore_ascii_case("content-length"))
-                    .unwrap()
-                    .value,
+                    .map_or(b"0".as_slice(), |header| header.value),
             )
             .unwrap()
             .parse()

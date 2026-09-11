@@ -24,6 +24,23 @@ use std::{
 
 type Result<T> = std::result::Result<T, McpHttpError>;
 
+/// Explicit monotonic time/timer authority. Futures must be inert before polling.
+pub trait McpHttpClock: Send + Sync {
+    fn now(&self) -> Instant;
+    fn sleep_until(&self, deadline: Instant) -> BoxFuture<'_, ()>;
+}
+struct SystemClock;
+impl McpHttpClock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+    fn sleep_until(&self, deadline: Instant) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            tokio::time::sleep_until(deadline.into()).await;
+        })
+    }
+}
+
 /// Fixed errors disclose no endpoint, request, header or credential data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpHttpError {
@@ -127,7 +144,7 @@ impl McpHttpObservation {
 /// There are no spawned tasks, connection pools, redirects or automatic replay.
 pub struct McpHttpConnection {
     destination: McpHttpDestination,
-    head: McpSubmissionHttpHead,
+    head: Arc<McpSubmissionHttpHead>,
     trust: Option<McpHttpTrust>,
     limits: McpHttpLimits,
     lifetime: io::Lifetime,
@@ -153,22 +170,72 @@ impl McpHttpConnection {
         cancellation: CancellationToken,
         deadline: Instant,
     ) -> Result<Self> {
-        let now = Instant::now();
+        Self::with_clock(
+            destination,
+            headers,
+            trust,
+            limits,
+            cancellation,
+            deadline,
+            Arc::new(SystemClock),
+        )
+    }
+
+    /// Uses explicitly injected time authority for acquisition, writes and reads.
+    /// # Errors
+    /// Same authority and resource validation as [`Self::new`].
+    pub fn with_clock(
+        destination: McpHttpDestination,
+        headers: &[(&str, &[u8])],
+        trust: Option<McpHttpTrust>,
+        limits: McpHttpLimits,
+        cancellation: CancellationToken,
+        deadline: Instant,
+        clock: Arc<dyn McpHttpClock>,
+    ) -> Result<Self> {
+        let head = Arc::new(
+            McpSubmissionHttpHead::new(destination.endpoint(), headers)
+                .map_err(|_| McpHttpError::Invalid)?,
+        );
+        Self::from_prepared_head(
+            destination,
+            head,
+            trust,
+            limits,
+            cancellation,
+            deadline,
+            clock,
+        )
+    }
+
+    /// Retains an immutable native-prepared head; it remains data, not a proof.
+    /// # Errors
+    /// Rejects changed endpoint authority and the bounds enforced by [`Self::new`].
+    pub fn from_prepared_head(
+        destination: McpHttpDestination,
+        head: Arc<McpSubmissionHttpHead>,
+        trust: Option<McpHttpTrust>,
+        limits: McpHttpLimits,
+        cancellation: CancellationToken,
+        deadline: Instant,
+        clock: Arc<dyn McpHttpClock>,
+    ) -> Result<Self> {
+        let now = clock.now();
         if deadline <= now || deadline.duration_since(now) > Duration::from_secs(24 * 60 * 60) {
             return Err(McpHttpError::Deadline);
         }
-        if destination.endpoint().is_tls() != trust.is_some() {
+        if destination.endpoint().is_tls() != trust.is_some()
+            || destination.endpoint() != head.endpoint()
+        {
             return Err(McpHttpError::Invalid);
         }
-        let head = McpSubmissionHttpHead::new(destination.endpoint(), headers)
-            .map_err(|_| McpHttpError::Invalid)?;
         let observation = McpHttpObservation::default();
         Ok(Self {
             destination,
             head,
             trust,
             limits: limits.validate()?,
-            lifetime: io::Lifetime::new(cancellation, deadline),
+            lifetime: io::Lifetime::new(cancellation, deadline, clock),
             completion: io::Completion(observation.clone()),
             observation,
         })
@@ -203,4 +270,4 @@ impl McpHttpConnection {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -46,7 +46,8 @@ The response reader retains the owned cancellation observers after final flush.
 `McpHttpControl` uses the existing strict protocol-control admission for
 discovery/catalog requests, initialized/cancelled notifications and fixed
 unsupported-method replies. Explicit GET listener and DELETE session-teardown
-forms are separate typed operations. The runtime must supply admitted session
+forms are separate bodiless typed operations with an SSE-only Accept header.
+The runtime must supply admitted session
 headers and authorize teardown; protocol metadata cannot mint that authority.
 Arbitrary tool calls, application feature methods and successful continuation
 replies cannot enter this control lane.
@@ -86,6 +87,12 @@ The operation deadline is explicit, positive and at most 24 hours. The same
 deadline and cancellation cover TCP connection, TLS handshake, request writes,
 response head and every body read, including buffered bytes. Userspace waits are
 bounded; synchronous OS/library work and scheduling are not real-time guarantees.
+
+`with_clock` explicitly injects the monotonic clock and timer used at every
+acquisition/write/read boundary; the existing `new` constructor retains its
+system-clock behavior. `from_prepared_head` accepts immutable shared request
+data only when its endpoint equals the independently admitted destination.
+The [HTTP peer](mcp-http-peer.md) composes these seams without a second serializer.
 
 No task or worker is spawned: the polled exchange future owns acquisition and
 the returned body owns its socket. Dropping either releases the socket directly.

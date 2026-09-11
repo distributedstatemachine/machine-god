@@ -1,0 +1,144 @@
+use super::*;
+use crate::mcp::submission::tests::Fixture;
+
+#[test]
+fn allocated_tool_id_and_exact_native_proof_reach_owned_http_writer() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let selected = options(
+            listener.local_addr().unwrap(),
+            TransportKind::StreamableHttp,
+        );
+        let server = async {
+            legacy_start(&listener, "2025-11-25", "tool-session").await;
+            let request = accept_reply(
+                &listener,
+                200,
+                JSON,
+                &success(3, serde_json::json!({"content":[]})),
+            )
+            .await;
+            let split = memchr::memmem::find(&request, b"\r\n\r\n").unwrap() + 4;
+            let body: serde_json::Value = serde_json::from_slice(&request[split..]).unwrap();
+            assert_eq!(body["id"], 3);
+            assert_eq!(body["method"], "tools/call");
+            assert_eq!(body["params"]["name"], "secret-tool");
+        };
+        let client = async {
+            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
+                .await
+                .unwrap();
+            let fixture = Fixture::new();
+            peer.admit_runtimes(vec![fixture.runtime.clone()]).unwrap();
+            let id = peer.reserve_tool_id().unwrap();
+            let head = Arc::new(peer.request_head().unwrap());
+            fixture.ready_http_with_id("actual-call", &head, id.clone());
+            let submission = fixture
+                .claim("actual-call", CancellationToken::new())
+                .await
+                .unwrap();
+            let response = peer.call(submission, head, deadline()).await.unwrap();
+            assert_eq!(response.envelope().id(), Some(&id));
+            assert!(peer.reserve_tool_id().is_ok());
+        };
+        join(client, server).await;
+    });
+}
+
+#[test]
+fn changed_selected_headers_or_runtime_allocation_fail_before_socket_acquisition() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let selected = options(
+            listener.local_addr().unwrap(),
+            TransportKind::StreamableHttp,
+        );
+        let server = legacy_start(&listener, "2025-11-25", "strict");
+        let client = async {
+            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
+                .await
+                .unwrap();
+            let first = Fixture::new();
+            peer.admit_runtimes(vec![first.runtime.clone()]).unwrap();
+            let id = peer.reserve_tool_id().unwrap();
+            let head = Arc::new(peer.request_head().unwrap());
+            first.ready_http_with_id("changed-head", &head, id);
+            let submission = first
+                .claim("changed-head", CancellationToken::new())
+                .await
+                .unwrap();
+            let changed = Arc::new(
+                McpSubmissionHttpHead::new(
+                    head.endpoint(),
+                    &[
+                        ("X-Selected", b"changed"),
+                        ("mcp-protocol-version", b"2025-11-25"),
+                        ("mcp-session-id", b"strict"),
+                    ],
+                )
+                .unwrap(),
+            );
+            assert!(matches!(
+                peer.call(submission, changed, deadline()).await,
+                Err(McpHttpPeerError::Invalid)
+            ));
+            peer.discard_tool_id();
+            let id = peer.reserve_tool_id().unwrap();
+            let second = Fixture::new();
+            second.ready_http_with_id("foreign-runtime", &head, id);
+            let submission = second
+                .claim("foreign-runtime", CancellationToken::new())
+                .await
+                .unwrap();
+            assert!(matches!(
+                peer.call(submission, head, deadline()).await,
+                Err(McpHttpPeerError::Invalid)
+            ));
+        };
+        join(client, server).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+}
+
+#[test]
+fn deprecated_sse_tool_cancellation_keeps_scope_observed_after_post_ack() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let selected = options(listener.local_addr().unwrap(), TransportKind::LegacySse);
+        let cancellation = CancellationToken::new();
+        let server = async {
+            let (mut events, _) = listener.accept().await.unwrap();
+            request(&mut events).await;
+            events.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nevent: endpoint\ndata: /messages\n\n").await.unwrap();
+            let (mut init, _) = listener.accept().await.unwrap();
+            request(&mut init).await;
+            events.write_all(b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{}}}\n\n").await.unwrap();
+            init.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n").await.unwrap();
+            accept_reply(&listener, 202, "", b"").await;
+            let tool = accept_reply(&listener, 202, "", b"").await;
+            assert!(String::from_utf8_lossy(&tool).contains("tools/call"));
+            cancellation.cancel();
+            let cancelled = accept_reply(&listener, 202, "", b"").await;
+            assert!(String::from_utf8_lossy(&cancelled).contains("notifications/cancelled"));
+            assert!(!String::from_utf8_lossy(&cancelled).contains("tools/call"));
+            let mut byte = [0];
+            assert_eq!(events.read(&mut byte).await.unwrap(), 0);
+        };
+        let client = async {
+            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline()).await.unwrap();
+            let fixture = Fixture::new();
+            peer.admit_runtimes(vec![fixture.runtime.clone()]).unwrap();
+            let id = peer.reserve_tool_id().unwrap();
+            let head = Arc::new(peer.request_head().unwrap());
+            fixture.ready_http_with_id("cancelled-call", &head, id);
+            let submission = fixture.claim("cancelled-call", cancellation.clone()).await.unwrap();
+            assert!(peer.call(submission, head, deadline()).await.is_err());
+            peer.completion().completed().await;
+        };
+        join(client, server).await;
+    });
+}
