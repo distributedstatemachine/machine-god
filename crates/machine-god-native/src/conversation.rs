@@ -18,6 +18,9 @@ use serde_json::{Value, json};
 
 use crate::conversation_lifecycle::{LifecycleGate, LifecyclePermit, LifecyclePhase};
 use crate::conversation_observations::{ObservationBatch, ObservationSession};
+use crate::mcp::context::{
+    McpContextRegistration, McpContextSession, NativeMcpContextError, NativeMcpContexts,
+};
 use crate::permission_context::{ContextRegistration, ContextSession};
 use crate::workspace_context::{
     ConversationWorkspaceBinding, WorkspaceAdmission, WorkspaceContextRegistration,
@@ -47,6 +50,7 @@ pub enum NativeConversationError {
     InvalidHistory(NativeConversationHistoryError),
     Observation(NativeObservationError),
     PermissionContext(crate::NativePermissionContextError),
+    McpContext(NativeMcpContextError),
     WorkspaceContext(crate::NativeWorkspaceContextError),
     InvalidContext(NativeContextError),
     InvalidSkillContext(crate::NativeSkillPromptContextError),
@@ -68,6 +72,7 @@ impl fmt::Display for NativeConversationError {
             Self::InvalidHistory(error) => error.fmt(f),
             Self::Observation(error) => error.fmt(f),
             Self::PermissionContext(error) => error.fmt(f),
+            Self::McpContext(error) => error.fmt(f),
             Self::WorkspaceContext(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidSkillContext(error) => error.fmt(f),
@@ -166,7 +171,16 @@ pub struct NativeConversation {
     observations: Option<Arc<ObservationSession>>,
     permissions: Option<Arc<crate::NativePermissionSession>>,
     permission_contexts: Option<Arc<ContextSession>>,
+    mcp_contexts: Option<Arc<McpContextSession>>,
     workspace: Option<ConversationWorkspaceBinding>,
+}
+
+impl Drop for NativeConversation {
+    fn drop(&mut self) {
+        if let Some(owner) = &self.mcp_contexts {
+            owner.retire();
+        }
+    }
 }
 
 impl fmt::Debug for NativeConversation {
@@ -214,6 +228,9 @@ impl NativeConversation {
             owner.retire();
         }
         if let Some(owner) = &self.permission_contexts {
+            owner.retire();
+        }
+        if let Some(owner) = &self.mcp_contexts {
             owner.retire();
         }
         if let Some(binding) = &self.workspace {
@@ -288,6 +305,7 @@ impl NativeConversation {
             observations: None,
             permissions: None,
             permission_contexts: None,
+            mcp_contexts: None,
             workspace: None,
         })
     }
@@ -326,6 +344,27 @@ impl NativeConversation {
             contexts
                 .register(&self.session)
                 .map_err(NativeConversationError::PermissionContext)?,
+        );
+        Ok(self)
+    }
+
+    /// Enrolls this actual session in the weak native MCP router without I/O.
+    /// Every prompt/continuation registers its exact core turn before provider
+    /// polling; registration ends before native checkpoint finalization.
+    ///
+    /// # Errors
+    /// Rejects busy/duplicate ownership or exhausted session routing capacity.
+    pub fn with_mcp_contexts(
+        mut self,
+        contexts: &Arc<NativeMcpContexts>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.mcp_contexts.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.mcp_contexts = Some(
+            contexts
+                .register(&self.session)
+                .map_err(NativeConversationError::McpContext)?,
         );
         Ok(self)
     }
@@ -1045,6 +1084,15 @@ impl NativeConversation {
             }
         }
         .map_err(map_engine_error)?;
+        let mcp_context = self
+            .mcp_contexts
+            .as_ref()
+            .map(|owner| {
+                owner
+                    .begin(&self.session, &turn)
+                    .map_err(NativeConversationError::McpContext)
+            })
+            .transpose()?;
         let workspace_context = self
             .workspace
             .as_ref()
@@ -1099,6 +1147,7 @@ impl NativeConversation {
             observation_batch: None,
             permission_turn,
             permission_context,
+            mcp_context,
             workspace_context,
             done: false,
         })
@@ -1398,6 +1447,7 @@ pub struct NativeConversationTurn {
     observation_batch: Option<ObservationBatch>,
     permission_turn: Option<crate::NativePermissionTurn>,
     permission_context: Option<ContextRegistration>,
+    mcp_context: Option<McpContextRegistration>,
     workspace_context: Option<WorkspaceContextRegistration>,
     done: bool,
 }
@@ -1417,6 +1467,7 @@ impl NativeConversationTurn {
     }
 
     fn finish(&mut self) {
+        self.mcp_context.take();
         self.workspace_context.take();
         self.permission_context.take();
         self.permission_turn.take();
@@ -1434,6 +1485,7 @@ impl NativeConversationTurn {
         &mut self,
         terminal: Result<EngineEvent, NativeConversationError>,
     ) -> Result<(), NativeConversationError> {
+        self.mcp_context.take();
         self.workspace_context.take();
         self.permission_context.take();
         self.core.take();
@@ -1611,3 +1663,7 @@ fn map_engine_error(error: EngineError) -> NativeConversationError {
         _ => NativeConversationError::Engine,
     }
 }
+
+#[cfg(test)]
+#[path = "mcp/context/admission_tests.rs"]
+mod mcp_admission_tests;
