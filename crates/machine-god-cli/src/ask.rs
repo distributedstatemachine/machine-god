@@ -336,6 +336,7 @@ pub(crate) fn run_interactive(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod production {
     mod interactive;
+    mod mcp_startup;
     mod output;
     mod piped_prompt;
     mod recording_startup;
@@ -1198,14 +1199,14 @@ mod production {
     ) -> Result<PreparedConversationHost, ()> {
         let captured_environment: Vec<_> = std::env::vars_os().collect();
         let environment = skills_startup::environment(&captured_environment);
-        let user_config = machine_god_native::inspect_native_status(&environment)
-            .config_file_path()
-            .and_then(std::path::Path::parent)
-            .map(|directory| {
-                Arc::new(machine_god_native::NativeUserConfigStore::new(
-                    directory.to_owned(),
-                ))
-            });
+        let status = machine_god_native::inspect_native_status(&environment);
+        let profile_directory = status.config_file_path().and_then(std::path::Path::parent);
+        let mcp_management = mcp_startup::prepare(profile_directory)?;
+        let user_config = profile_directory.map(|directory| {
+            Arc::new(machine_god_native::NativeUserConfigStore::new(
+                directory.to_owned(),
+            ))
+        });
         let loaded_config = load_native_config(&environment).map_err(|_| ())?;
         let root_selection =
             NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
@@ -1250,16 +1251,20 @@ mod production {
             terminal_options.clone(),
             discover_skills,
         )?;
-        let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
-            .with_workspace(
-                authority,
-                Arc::new(machine_god_native::NativeWorkspaceContexts::new()),
-            )
-            .with_terminal(terminal_options)
-            .with_skills(skills)
-            .with_model_routes(model_routes.clone())
-            .with_observations(Arc::clone(&observations))
-            .with_permissions(capture_permission_options());
+        let mut options =
+            NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+                .with_workspace(
+                    authority,
+                    Arc::new(machine_god_native::NativeWorkspaceContexts::new()),
+                )
+                .with_terminal(terminal_options)
+                .with_skills(skills)
+                .with_model_routes(model_routes.clone())
+                .with_observations(Arc::clone(&observations))
+                .with_permissions(capture_permission_options());
+        if let Some(service) = mcp_management {
+            options = options.with_mcp_management(service);
+        }
         let host =
             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
                 loaded_config,

@@ -1170,6 +1170,12 @@ pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Resul
     use machine_god_native::{FileUndoError, FileUndoOutcome, NativeInteractiveControlError};
 
     match &outcome.result {
+        Ok(NativeInteractiveControlReceipt::Mcp(receipt)) => {
+            return super::mcp_receipts::render(outcome.id.get(), Ok(receipt));
+        }
+        Err(NativeInteractiveControlError::Mcp(error)) => {
+            return super::mcp_receipts::render(outcome.id.get(), Err(error));
+        }
         Ok(NativeInteractiveControlReceipt::Skills(receipt)) => {
             return super::skills_receipts::render(outcome.id.get(), Ok(receipt));
         }
@@ -1264,6 +1270,9 @@ pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Resul
         }
         Ok(NativeInteractiveControlReceipt::Skills(_)) => {
             unreachable!("skills uses its separately bounded renderer")
+        }
+        Ok(NativeInteractiveControlReceipt::Mcp(_)) => {
+            unreachable!("MCP uses its separately bounded renderer")
         }
     }
     .map_err(|_| ())?;

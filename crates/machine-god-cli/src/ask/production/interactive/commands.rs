@@ -31,7 +31,11 @@ Cmd/Super+R opens the all-workspace session picker.\n\
 /workspace [list|add PATH|remove PATH|clear]\n\
 /background [open|logs|stop [terminal-id|last]]\n\
 /skills [list|show NAME|path|create NAME|add SOURCE|install SOURCE|remove NAME]\n\
-Skill create/install replacement requires an explicit outer --replace flag.\n> ";
+Skill create/install replacement requires an explicit outer --replace flag.\n\
+/mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME]\n\
+MCP lists configured servers, not connections. Add replaces an existing name;\n\
+arguments are literal whitespace-separated tokens, not shell expressions.\n\
+MCP reload, auth/logout and resource/prompt operations are currently unavailable.\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -123,6 +127,12 @@ impl Driver {
                 Err(_) => self.note(b"\n[usage: /skills [list|show NAME|path|create NAME|add SOURCE|install SOURCE|remove NAME]]\n> "),
             },
             Command::Permissions => self.permissions_command(payload),
+            Command::Mcp => match payload.parse() {
+                Ok(command) => {
+                    self.control_command(NativeInteractiveControl::Mcp { command }, now_ms);
+                }
+                Err(_) => self.note(b"\n[usage: /mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME]; reload, auth/logout and resource/prompt operations are currently unavailable]\n> "),
+            },
             Command::Sandbox => self.sandbox_command(payload),
             Command::Model => self.model_command(payload, now_ms),
             Command::Models => self.show_models(),

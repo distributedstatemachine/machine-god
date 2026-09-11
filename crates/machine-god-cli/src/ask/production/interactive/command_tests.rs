@@ -18,6 +18,9 @@ fn executor() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+#[path = "command_tests/mcp.rs"]
+mod mcp;
+
 #[test]
 fn skills_commands_use_native_catalog_management_and_exact_receipts() {
     executor().block_on(async {
