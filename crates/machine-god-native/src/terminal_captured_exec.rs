@@ -39,6 +39,7 @@ pub const TERMINAL_CAPTURED_HELPER_ARGUMENT: &str = "--machine-god-terminal-capt
 const EXEC_DESCRIPTOR_TOKEN: u8 = 0xc1;
 const EXEC_FAILED: u8 = 0xe1;
 const CAPTURED_DEADLINE_ENV: &str = "MACHINE_GOD_CAPTURED_DEADLINE";
+const MCP_STDIN_ENV: &str = "MACHINE_GOD_CAPTURED_MCP_STDIN";
 
 /// Redacted captured-execution failure; command text and environment are never included.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -556,158 +557,26 @@ fn run_argv(request: CapturedArgv<'_>) -> Result<CapturedOutcome, TerminalCaptur
         before_commit,
         observe,
     } = request;
-    if stopped(cancellation, stop) {
-        return Err(TerminalCapturedExecError::Cancelled);
-    }
-    validate_pty_directory(&cwd).map_err(|_| TerminalCapturedExecError::Invalid)?;
-    let frame = LaunchFrame::encode(
+    let Some(GatedProcess {
+        mut process,
+        input: stderr,
+        output: stdout,
+    }) = launch_gated_argv(GatedArgv {
+        helper,
         program,
         arguments,
         environment,
-        TerminalPtyDimensions {
-            rows: 1,
-            columns: 1,
-        },
-    )
-    .map_err(|_| TerminalCapturedExecError::Invalid)?;
-    let (mut stderr, child_gate) =
-        UnixStream::pair().map_err(|_| TerminalCapturedExecError::Process)?;
-    stderr
-        .set_nonblocking(true)
-        .map_err(|_| TerminalCapturedExecError::Process)?;
-    let (stdout, child_stdout) = std::io::pipe().map_err(|_| TerminalCapturedExecError::Process)?;
-    let (exec_error, child_exec_error) =
-        std::io::pipe().map_err(|_| TerminalCapturedExecError::Process)?;
-    let flags =
-        rustix::fs::fcntl_getfl(&exec_error).map_err(|_| TerminalCapturedExecError::Process)?;
-    rustix::fs::fcntl_setfl(&exec_error, flags | OFlags::NONBLOCK)
-        .map_err(|_| TerminalCapturedExecError::Process)?;
-    let flags = rustix::fs::fcntl_getfl(&stdout).map_err(|_| TerminalCapturedExecError::Process)?;
-    rustix::fs::fcntl_setfl(&stdout, flags | OFlags::NONBLOCK)
-        .map_err(|_| TerminalCapturedExecError::Process)?;
-    let mut guard =
-        match TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline, stop) {
-            Ok(guard) => guard,
-            Err(_) if stopped(cancellation, stop) => {
-                return Err(TerminalCapturedExecError::Cancelled);
-            }
-            Err(_) if Instant::now() >= deadline => return Ok(empty_timeout(started)),
-            Err(_) => return Err(TerminalCapturedExecError::Process),
-        };
-    let original_group = keepalive.is_some();
-    if let Some(keepalive) = keepalive {
-        guard.retain_until_reaped(keepalive);
-    }
-    let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
-        Ok(stamp) => stamp,
-        Err(error) if error.kind == TerminalHelperErrorKind::Timeout => {
-            return Ok(empty_timeout(started));
-        }
-        Err(_) => return Err(TerminalCapturedExecError::Process),
-    };
-    let mut command = Command::new(helper.program());
-    command
-        .args(helper.arguments())
-        .env_clear()
-        .env("LANG", "C")
-        .env("LC_ALL", "C")
-        .env(CAPTURED_DEADLINE_ENV, helper_deadline)
-        .stdin(Stdio::from(OwnedFd::from(child_gate)))
-        .stdout(Stdio::from(child_stdout))
-        .stderr(Stdio::from(cwd));
-    if stopped(cancellation, stop) {
-        return Err(TerminalCapturedExecError::Cancelled);
-    }
-    if Instant::now() >= deadline {
-        return Ok(empty_timeout(started));
-    }
-    guard
-        .spawn(&mut command)
-        .map_err(|_| TerminalCapturedExecError::Process)?;
-    drop(command);
-    if let Err(error) =
-        send_exec_descriptor(&stderr, &child_exec_error, deadline, cancellation, stop)
-    {
-        return if stopped(cancellation, stop) {
-            Err(TerminalCapturedExecError::Cancelled)
-        } else if Instant::now() >= deadline {
-            Ok(empty_timeout(started))
-        } else {
-            Err(error)
-        };
-    }
-    drop(child_exec_error);
-    let mut gate = Gate {
-        stream: &mut stderr,
+        cwd,
+        deadline,
+        cancellation,
         stop,
-    };
-    let handshake = (|| {
-        write_gate(&mut gate, &frame, deadline, cancellation).map_err(|_| ())?;
-        let mut ready = [0];
-        read_gate(&mut gate, &mut ready, deadline, cancellation).map_err(|_| ())?;
-        if ready != [READY] {
-            return Err(());
-        }
-        Ok::<_, ()>(())
-    })();
-    if handshake.is_err() {
-        return if stopped(cancellation, stop) {
-            Err(TerminalCapturedExecError::Cancelled)
-        } else if Instant::now() >= deadline {
-            Ok(empty_timeout(started))
-        } else {
-            Err(TerminalCapturedExecError::Process)
-        };
-    }
-    let mut process = ProcessGuard {
-        process: if original_group {
-            guard.into_original_group()
-        } else {
-            guard.into_session()
-        }
-        .map_err(|_| TerminalCapturedExecError::Process)?,
-        closed: false,
-    };
-    process
-        .process
-        .activate_signal_controller()
-        .map_err(|_| TerminalCapturedExecError::Process)?;
-    if stopped(cancellation, stop) {
-        return Err(TerminalCapturedExecError::Cancelled);
-    }
-    if !before_commit()? {
+        keepalive,
+        before_commit,
+        persistent_stdin: false,
+    })?
+    else {
         return Ok(empty_timeout(started));
-    }
-    if stopped(cancellation, stop) {
-        return Err(TerminalCapturedExecError::Cancelled);
-    }
-    if write_gate(&mut gate, &[COMMIT], deadline, cancellation).is_err() {
-        return if stopped(cancellation, stop) {
-            Err(TerminalCapturedExecError::Cancelled)
-        } else if Instant::now() >= deadline {
-            Ok(empty_timeout(started))
-        } else {
-            Err(TerminalCapturedExecError::Process)
-        };
-    }
-    loop {
-        if stopped(cancellation, stop) {
-            return Err(TerminalCapturedExecError::Cancelled);
-        }
-        if Instant::now() >= deadline {
-            return Ok(empty_timeout(started));
-        }
-        let mut byte = [0];
-        match rustix::io::read(&exec_error, &mut byte) {
-            Ok(0) => break,
-            Err(rustix::io::Errno::AGAIN | rustix::io::Errno::INTR) => {}
-            Ok(_) | Err(_) => return Err(TerminalCapturedExecError::Process),
-        }
-        if Instant::now() >= deadline {
-            return Ok(empty_timeout(started));
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    };
     let mut stdout_capture = PipeCapture::default();
     let mut stderr_capture = PipeCapture::default();
     let mut total = 0u64;
@@ -791,12 +660,214 @@ fn run_argv(request: CapturedArgv<'_>) -> Result<CapturedOutcome, TerminalCaptur
     Ok(result)
 }
 
-struct ProcessGuard {
-    process: OwnedBackgroundProcess,
+/// A shared gated launch, used by captured execution and persistent MCP stdin.
+pub(crate) struct GatedArgv<'a> {
+    pub(crate) helper: &'a TerminalPtyHelper,
+    pub(crate) program: &'a str,
+    pub(crate) arguments: &'a [String],
+    pub(crate) environment: &'a ValidatedBackgroundEnvironment,
+    pub(crate) cwd: OwnedFd,
+    pub(crate) deadline: Instant,
+    pub(crate) cancellation: &'a CancellationToken,
+    pub(crate) stop: &'a [&'a CancellationToken],
+    pub(crate) keepalive: Option<Box<dyn Send>>,
+    pub(crate) before_commit: &'a mut dyn FnMut() -> Result<bool, TerminalCapturedExecError>,
+    pub(crate) persistent_stdin: bool,
+}
+
+pub(crate) struct GatedProcess {
+    pub(crate) process: ProcessGuard,
+    pub(crate) input: UnixStream,
+    pub(crate) output: std::io::PipeReader,
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep guarded launch and exec receipt in one ownership sequence."
+)]
+pub(crate) fn launch_gated_argv(
+    request: GatedArgv<'_>,
+) -> Result<Option<GatedProcess>, TerminalCapturedExecError> {
+    let GatedArgv {
+        helper,
+        program,
+        arguments,
+        environment,
+        cwd,
+        deadline,
+        cancellation,
+        stop,
+        keepalive,
+        before_commit,
+        persistent_stdin,
+    } = request;
+    if stopped(cancellation, stop) {
+        return Err(TerminalCapturedExecError::Cancelled);
+    }
+    validate_pty_directory(&cwd).map_err(|_| TerminalCapturedExecError::Invalid)?;
+    let frame = LaunchFrame::encode(
+        program,
+        arguments,
+        environment,
+        TerminalPtyDimensions {
+            rows: 1,
+            columns: 1,
+        },
+    )
+    .map_err(|_| TerminalCapturedExecError::Invalid)?;
+    let (mut stderr, child_gate) =
+        UnixStream::pair().map_err(|_| TerminalCapturedExecError::Process)?;
+    stderr
+        .set_nonblocking(true)
+        .map_err(|_| TerminalCapturedExecError::Process)?;
+    let (stdout, child_stdout) = std::io::pipe().map_err(|_| TerminalCapturedExecError::Process)?;
+    let (exec_error, child_exec_error) =
+        std::io::pipe().map_err(|_| TerminalCapturedExecError::Process)?;
+    let flags =
+        rustix::fs::fcntl_getfl(&exec_error).map_err(|_| TerminalCapturedExecError::Process)?;
+    rustix::fs::fcntl_setfl(&exec_error, flags | OFlags::NONBLOCK)
+        .map_err(|_| TerminalCapturedExecError::Process)?;
+    let flags = rustix::fs::fcntl_getfl(&stdout).map_err(|_| TerminalCapturedExecError::Process)?;
+    rustix::fs::fcntl_setfl(&stdout, flags | OFlags::NONBLOCK)
+        .map_err(|_| TerminalCapturedExecError::Process)?;
+    let mut guard =
+        match TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline, stop) {
+            Ok(guard) => guard,
+            Err(_) if stopped(cancellation, stop) => {
+                return Err(TerminalCapturedExecError::Cancelled);
+            }
+            Err(_) if Instant::now() >= deadline => return Ok(None),
+            Err(_) => return Err(TerminalCapturedExecError::Process),
+        };
+    let original_group = keepalive.is_some();
+    if let Some(keepalive) = keepalive {
+        guard.retain_until_reaped(keepalive);
+    }
+    let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
+        Ok(stamp) => stamp,
+        Err(error) if error.kind == TerminalHelperErrorKind::Timeout => {
+            return Ok(None);
+        }
+        Err(_) => return Err(TerminalCapturedExecError::Process),
+    };
+    let mut command = Command::new(helper.program());
+    command
+        .args(helper.arguments())
+        .env_clear()
+        .env("LANG", "C")
+        .env("LC_ALL", "C")
+        .env(CAPTURED_DEADLINE_ENV, helper_deadline)
+        .stdin(Stdio::from(OwnedFd::from(child_gate)))
+        .stdout(Stdio::from(child_stdout))
+        .stderr(Stdio::from(cwd));
+    if stopped(cancellation, stop) {
+        return Err(TerminalCapturedExecError::Cancelled);
+    }
+    if Instant::now() >= deadline {
+        return Ok(None);
+    }
+    if persistent_stdin {
+        command.env(MCP_STDIN_ENV, "1");
+    }
+    guard
+        .spawn(&mut command)
+        .map_err(|_| TerminalCapturedExecError::Process)?;
+    drop(command);
+    if let Err(error) =
+        send_exec_descriptor(&stderr, &child_exec_error, deadline, cancellation, stop)
+    {
+        return if stopped(cancellation, stop) {
+            Err(TerminalCapturedExecError::Cancelled)
+        } else if Instant::now() >= deadline {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    drop(child_exec_error);
+    let mut gate = Gate {
+        stream: &mut stderr,
+        stop,
+    };
+    let handshake = (|| {
+        write_gate(&mut gate, &frame, deadline, cancellation).map_err(|_| ())?;
+        let mut ready = [0];
+        read_gate(&mut gate, &mut ready, deadline, cancellation).map_err(|_| ())?;
+        if ready != [READY] {
+            return Err(());
+        }
+        Ok::<_, ()>(())
+    })();
+    if handshake.is_err() {
+        return if stopped(cancellation, stop) {
+            Err(TerminalCapturedExecError::Cancelled)
+        } else if Instant::now() >= deadline {
+            Ok(None)
+        } else {
+            Err(TerminalCapturedExecError::Process)
+        };
+    }
+    let mut process = ProcessGuard {
+        process: if original_group {
+            guard.into_original_group()
+        } else {
+            guard.into_session()
+        }
+        .map_err(|_| TerminalCapturedExecError::Process)?,
+        closed: false,
+    };
+    process
+        .process
+        .activate_signal_controller()
+        .map_err(|_| TerminalCapturedExecError::Process)?;
+    if stopped(cancellation, stop) {
+        return Err(TerminalCapturedExecError::Cancelled);
+    }
+    if !before_commit()? {
+        return Ok(None);
+    }
+    if stopped(cancellation, stop) {
+        return Err(TerminalCapturedExecError::Cancelled);
+    }
+    if write_gate(&mut gate, &[COMMIT], deadline, cancellation).is_err() {
+        return if stopped(cancellation, stop) {
+            Err(TerminalCapturedExecError::Cancelled)
+        } else if Instant::now() >= deadline {
+            Ok(None)
+        } else {
+            Err(TerminalCapturedExecError::Process)
+        };
+    }
+    loop {
+        if stopped(cancellation, stop) {
+            return Err(TerminalCapturedExecError::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        let mut byte = [0];
+        match rustix::io::read(&exec_error, &mut byte) {
+            Ok(0) => break,
+            Err(rustix::io::Errno::AGAIN | rustix::io::Errno::INTR) => {}
+            Ok(_) | Err(_) => return Err(TerminalCapturedExecError::Process),
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    Ok(Some(GatedProcess {
+        process,
+        input: stderr,
+        output: stdout,
+    }))
+}
+pub(crate) struct ProcessGuard {
+    pub(crate) process: OwnedBackgroundProcess,
     closed: bool,
 }
 impl ProcessGuard {
-    fn close(&mut self, force: bool) -> Result<(), TerminalCapturedExecError> {
+    pub(crate) fn close(&mut self, force: bool) -> Result<(), TerminalCapturedExecError> {
         self.process
             .terminal_close(force, |_| {})
             .map_err(|_| TerminalCapturedExecError::Process)?;
@@ -877,6 +948,11 @@ fn empty_timeout(started: Instant) -> CapturedOutcome {
 /// Returns a redacted error for malformed launch framing or native launch failure.
 #[doc(hidden)]
 pub fn run_terminal_captured_helper() -> Result<(), TerminalCapturedExecError> {
+    let persistent_stdin = match std::env::var_os(MCP_STDIN_ENV) {
+        None => false,
+        Some(value) if value == "1" => true,
+        Some(_) => return Err(TerminalCapturedExecError::Invalid),
+    };
     let stamp =
         std::env::var(CAPTURED_DEADLINE_ENV).map_err(|_| TerminalCapturedExecError::Invalid)?;
     let deadline = decode_helper_deadline(&stamp, MAX_TERMINAL_EXEC_DURATION)
@@ -919,8 +995,16 @@ pub fn run_terminal_captured_helper() -> Result<(), TerminalCapturedExecError> {
                 .iter()
                 .map(|(key, value)| (key, value)),
         )
-        .stdin(Stdio::null())
-        .stderr(Stdio::from(stderr));
+        .stdin(if persistent_stdin {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        })
+        .stderr(if persistent_stdin {
+            Stdio::null()
+        } else {
+            Stdio::from(stderr)
+        });
     crate::terminal_helper::check_deadline(deadline, &cancellation)
         .map_err(|_| TerminalCapturedExecError::Process)?;
     Err({
