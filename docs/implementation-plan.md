@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `combined MCP/settings component gate; then owned transports, production permission routing and CLI composition`
+- Next gate: `owned transports, production permission routing and CLI composition; focused checks before the complete feature gate`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -389,8 +389,10 @@ gates.
 Configuration/command parsing, protocol negotiation, contextual forwarding,
 endpoint validation, seven human feature-request projections, SSE framing,
 shared profile-file transactions/MCP persistence and one-shot tool submission
-are integrated. Individual focused checks and strict native Clippy passed;
-the combined MCP/settings component gate is next. Core's exact-turn cancellation
+are integrated. The combined gate at `3fdf6248` passed workspace-wide strict
+Clippy, 131 MCP unit tests, 42 shared/settings unit tests, the seven selected
+integration suites (including the subprocess fixture), and native doctests.
+Core's exact-turn cancellation
 observer passed the complete core tests, explicit doctests and strict Clippy.
 All completed component worktrees are removed; evidence and build caches remain.
 These components do not constitute a delivered runtime. Remaining composition
