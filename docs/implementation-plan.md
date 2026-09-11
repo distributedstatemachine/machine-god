@@ -386,42 +386,35 @@ gates.
   fixtures, two-session isolation, stale authority, cancellation, partial writes,
   failed reload/auth/logout, fresh-release CLI and supported platforms.
 
-Configuration/command parsing, protocol negotiation, contextual forwarding,
-endpoint validation, seven human feature-request projections, SSE framing,
-shared profile-file transactions/MCP persistence and one-shot tool submission
-are integrated. Bounded raw catalog page assembly, resolved remote headers,
-proof-bearing exact HTTP plaintext writes and owned stdio connections are now
-integrated too. The combined gate at `c9189be9` passed workspace-wide strict
-Clippy, 203 MCP unit tests, 42 shared/settings unit tests, 28 process-helper
-regressions (plus two existing ignored helper entrypoints), the seven selected
-integration suites (including the subprocess fixture), and native doctests.
-Its process fixtures used a fresh debug helper after all builds finished.
-Native profile-management controls and thin `/mcp` startup/dispatch/receipts are
-integrated; configuration saves explicitly do not activate a runtime. After
-fixing four integration lint findings without suppressions, the replacement gate
-at `b3a48750` passed formatting, strict workspace Clippy, 219 MCP and 458 CLI
-tests (six pre-existing ignored CLI tests), 13 interactive-host tests, six shared
-skills-control regressions, 16 slash tests, the seven selected integration suites
-and workspace doctests. A fresh locked canonical release passed help/version
-smokes and supplied the process helper after all builds finished. All worktrees
-are removed and the source was frozen for these checks. This is internal feature
-validation, not a new delivery or the complete workspace/platform/adversarial gate.
-Core's exact-turn cancellation
-observer passed the complete core tests, explicit doctests and strict Clippy.
-Completed component worktrees were removed; evidence and build caches remain.
-The shared transport interfaces at `5d66762c` pass 193 focused MCP unit tests
-(stdio process-runtime fixtures excluded), formatting and documentation checks.
-Owned stdio negotiation, correlated requests, raw catalog loading and bounded
-timeout snapshots are integrated, alongside the HTTP/TLS connector and streaming
-responses. Worker checks cover four non-process peer/snapshot cases and 15 HTTP
-socket cases; the combined strict, fresh-release and process gate is next.
-The CLI build includes the native HTTP adapter, but profile saves still do not
-activate servers. Component worktrees are removed after clean integration.
+Integrated components include configuration/command parsing, negotiation,
+contextual forwarding, endpoint/header admission, seven human feature-request
+projections, SSE framing, profile persistence, raw catalog assembly and one-shot
+submission. Native profile management and thin `/mcp` startup/dispatch/receipts
+are composed, but configuration saves explicitly do not activate a runtime.
+Owned stdio peers now drive negotiation, correlated requests, raw catalogs and
+bounded timeout snapshots. The CLI build also includes the owned HTTP/TLS
+connector, exact proof-bearing writes and bounded streaming responses.
+
+The frozen component commit `69fb2d73` passes exact-1.94.1 formatting, strict
+workspace all-target/all-feature Clippy, 246 MCP unit tests, all 458 CLI unit
+tests (six existing ignored helper entrypoints), and workspace doctests.
+Its fresh locked canonical release passes help/version smokes and supplies the
+helper for serial macOS process fixtures after all builds finished. An additional
+native-only no-default-feature library lint probe reports 54 dead-code errors;
+the diagnostic headers are identical on parent `0c2fa45a`, with no new MCP
+diagnostics. That extra probe is not green and does not replace the canonical
+workspace gate. Earlier shared/settings, interactive-host and selected integration
+regressions passed at `c9189be9` and `b3a48750`; core's cancellation observer
+passed its complete tests, doctests and strict Clippy. All completed component
+and diagnostic worktrees are removed; evidence and build caches remain.
+These are internal regression checks, not a new delivery or the complete
+workspace/platform/adversarial/remote feature gate.
+
 These components do not constitute a delivered runtime. Remaining composition
 must own admitted DNS, HTTP/SSE negotiation and session/listener lifecycle,
 typed feature/control authority, progress/continuation metadata, bounded
-per-conversation routing, lossless schema admission/projection and atomic catalog
-publication, authentication and CLI activation/finalization. Raw catalog pages
+per-conversation routing, lossless schema and argument/header projection, atomic
+catalog publication, authentication and CLI activation/finalization. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
