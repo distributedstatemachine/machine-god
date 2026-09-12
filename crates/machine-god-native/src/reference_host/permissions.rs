@@ -139,24 +139,44 @@ impl PermissionComposition {
         workers: crate::NativeOwnedWorkerScope,
         transport: Arc<dyn AiGatewayTransport>,
         prompter: Arc<dyn PermissionPrompter>,
+        mcp: Option<&super::mcp::Composition>,
     ) -> Result<Arc<NativePermissionController>, NativeReferenceHostBuildError> {
         let targets =
-            NativePermissionTargetAuthority::new(self.root, self.workspace, registrations)
+            NativePermissionTargetAuthority::new(self.root, self.workspace.clone(), registrations)
                 .map_err(|_| error())?;
-        let targets = Arc::new(match self.workspace_contexts {
-            Some(contexts) => targets.with_workspace_contexts(contexts),
+        let targets = Arc::new(match &self.workspace_contexts {
+            Some(contexts) => targets.with_workspace_contexts(contexts.clone()),
             None => targets,
         });
         let reviewer = Arc::new(AiGatewayPermissionReviewer::new(transport, self.clock));
         let preparer = Arc::new(NativeToolPermissionPreparer::new(
-            targets,
+            targets.clone(),
             self.files,
             self.registry,
-            self.contexts,
-            reviewer,
+            self.contexts.clone(),
+            reviewer.clone(),
             workers,
         ));
-        let controller = Arc::new(NativePermissionController::new(preparer.clone(), prompter));
+        let selected: Arc<dyn crate::NativePermissionActionPreparer> = match mcp {
+            Some(mcp) => {
+                let mcp = crate::mcp::permission::NativeMcpPermissionPreparer::new(
+                    targets,
+                    preparer.clone(),
+                    mcp.runtime.clone(),
+                    mcp.contexts.clone(),
+                    self.contexts,
+                    reviewer,
+                    &self.workspace,
+                )
+                .map_err(|_| error())?;
+                Arc::new(match self.workspace_contexts {
+                    Some(contexts) => mcp.with_workspace_contexts(contexts),
+                    None => mcp,
+                })
+            }
+            None => preparer.clone(),
+        };
+        let controller = Arc::new(NativePermissionController::new(selected, prompter));
         preparer.bind_controller(&controller).map_err(|_| error())?;
         self.sandbox
             .bind_controller(&controller)
@@ -276,6 +296,7 @@ impl ReferenceHostToolCatalog {
         resource: Option<&crate::terminal_host::NativeTerminalHostResource>,
         transport: Arc<dyn AiGatewayTransport>,
         prompter: Arc<dyn PermissionPrompter>,
+        mcp: Option<&super::mcp::Composition>,
     ) -> Result<Option<Arc<NativePermissionController>>, NativeReferenceHostBuildError> {
         setup
             .map(|setup| {
@@ -285,9 +306,28 @@ impl ReferenceHostToolCatalog {
                     workers,
                     transport,
                     prompter,
+                    mcp,
                 )
             })
             .transpose()
+    }
+
+    pub(super) fn into_builder(
+        self,
+        builder: machine_god_core::EngineBuilder,
+        permissions: Option<Arc<NativePermissionController>>,
+        prompter: Arc<dyn PermissionPrompter>,
+    ) -> machine_god_core::EngineBuilder {
+        let mut builder = match permissions {
+            Some(controller) => builder.shared_permission_handler(controller),
+            None => {
+                builder.permission_handler(crate::AskPermissionHandler::shared_prompter(prompter))
+            }
+        };
+        for tool in self.tools {
+            builder = builder.shared_tool(tool);
+        }
+        builder
     }
 
     pub(super) fn add(&mut self, tool: impl Tool, history: Option<NativeFileHistoryKind>) {

@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+mod mcp;
 mod permissions;
 pub(crate) mod workspace_binding;
+pub use mcp::NativeReferenceHostMcpOptions;
 pub use permissions::NativeReferenceHostPermissionOptions;
 use permissions::{PermissionComposition, ReferenceHostToolCatalog};
 use workspace_binding::WorkspaceBinding;
@@ -29,18 +31,18 @@ use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayLimits, AiGatewayProvider, AiGatewayToolInputLimits, AiGatewayTransport,
-    AiGatewayVisionTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
-    AskUserQuestionTool, DiscoveredAiGatewayCredential, FileSessionStore, FileUndoTracker,
-    LoadedNativeConfig, McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind,
-    McpFeaturePayload, McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool,
-    McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool,
-    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
-    NativeToolResultArchiveAdapter, NativeTransportKind, PermissionMode, PermissionPrompter,
-    PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalBackgroundCatalog,
-    TerminalBackgroundInspector, TerminalBackgroundOutputReader, TerminalBackgroundSignaler,
-    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
-    TerminalBackgroundWriter, TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits,
-    VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
+    AiGatewayVisionTransport, AiGatewayWebSearchTransport, AskUserQuestionTool,
+    DiscoveredAiGatewayCredential, FileSessionStore, FileUndoTracker, LoadedNativeConfig,
+    McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
+    McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
+    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
+    NativeProviderKind, NativeSessionLifecycle, NativeToolResultArchiveAdapter,
+    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter,
+    ReadToolResultTool, TerminalBackgroundCatalog, TerminalBackgroundInspector,
+    TerminalBackgroundOutputReader, TerminalBackgroundSignaler, TerminalBackgroundStarter,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalBackgroundWriter,
+    TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits, VisionTool,
+    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
     WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
@@ -76,6 +78,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     Provider,
     /// Explicit permission authority could not be composed.
     PermissionConfig,
+    /// Explicit native MCP archive/runtime authority could not be composed.
+    McpConfig,
     /// The provider-neutral engine could not be constructed.
     Engine,
 }
@@ -112,6 +116,9 @@ impl fmt::Display for NativeReferenceHostBuildError {
         formatter.write_str(match self.kind {
             NativeReferenceHostBuildErrorKind::PermissionConfig => {
                 "native reference-host permission configuration failed"
+            }
+            NativeReferenceHostBuildErrorKind::McpConfig => {
+                "native reference-host MCP configuration failed"
             }
             NativeReferenceHostBuildErrorKind::UnsupportedSelection => {
                 "native reference-host selection is unsupported"
@@ -275,6 +282,7 @@ struct TerminalCompositionSelection {
 /// Construction is inert and does not capture files, open roots, or start work.
 #[derive(Clone)]
 pub struct NativeReferenceHostConversationOptions {
+    mcp_runtime: Option<NativeReferenceHostMcpOptions>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
@@ -291,6 +299,7 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
         Self {
+            mcp_runtime: None,
             mcp_management: None,
             mcp_contexts: None,
             skills: None,
@@ -338,6 +347,16 @@ impl NativeReferenceHostConversationOptions {
         contexts: Arc<crate::mcp::context::NativeMcpContexts>,
     ) -> Self {
         self.mcp_contexts = Some(contexts);
+        self
+    }
+
+    /// Selects real native MCP execution with the host's shared archive and
+    /// permission controller. Requires complete terminal and permission options;
+    /// a separately selected MCP context allocation must be exactly identical.
+    /// This option itself connects no server and opens no archive or runtime.
+    #[must_use]
+    pub fn with_mcp_runtime(mut self, options: NativeReferenceHostMcpOptions) -> Self {
+        self.mcp_runtime = Some(options);
         self
     }
 
@@ -396,6 +415,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 
 #[derive(Default)]
 struct PreparedCompositionOptions {
+    mcp_runtime: Option<NativeReferenceHostMcpOptions>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
@@ -410,6 +430,7 @@ struct PreparedCompositionOptions {
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
     fn from(options: NativeReferenceHostConversationOptions) -> Self {
         Self {
+            mcp_runtime: options.mcp_runtime,
             mcp_management: options.mcp_management,
             mcp_contexts: options.mcp_contexts,
             skills: options.skills,
@@ -441,6 +462,8 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
+    mcp_runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
+    reserved_tool_names: Box<[ToolName]>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
@@ -689,7 +712,11 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
         let mcp_management = options.mcp_management.clone();
-        let mcp_contexts = options.mcp_contexts.clone();
+        let mcp_contexts = options
+            .mcp_contexts
+            .clone()
+            .or_else(|| options.mcp_runtime.as_ref().map(|mcp| mcp.contexts.clone()));
+        let mcp_options = options.mcp_runtime.clone();
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -722,6 +749,7 @@ impl NativeReferenceHost {
             model_routes.clone(),
             observations.clone(),
             permissions,
+            mcp_options,
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
@@ -829,6 +857,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -882,6 +911,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -927,6 +957,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             subagent_authority,
+            None,
             None,
             None,
             None,
@@ -978,6 +1009,7 @@ impl NativeReferenceHost {
             mcp_catalog,
             mcp_feature_authority,
             subagent_authority,
+            None,
             None,
             None,
             None,
@@ -1108,7 +1140,11 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
         let mcp_management = options.mcp_management.clone();
-        let mcp_contexts = options.mcp_contexts.clone();
+        let mcp_contexts = options
+            .mcp_contexts
+            .clone()
+            .or_else(|| options.mcp_runtime.as_ref().map(|mcp| mcp.contexts.clone()));
+        let mcp_options = options.mcp_runtime.clone();
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -1135,6 +1171,7 @@ impl NativeReferenceHost {
             model_routes.clone(),
             observations.clone(),
             permissions,
+            mcp_options,
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
@@ -1388,6 +1425,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -1410,6 +1448,7 @@ impl NativeReferenceHost {
         model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
         observations: Option<Arc<crate::NativeConversationObservations>>,
         permission_options: Option<NativeReferenceHostPermissionOptions>,
+        mcp_options: Option<NativeReferenceHostMcpOptions>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let permission_setup = permission_options
             .map(|options| PermissionComposition::new(options, &workspace_tools))
@@ -1448,13 +1487,7 @@ impl NativeReferenceHost {
             model_routes,
         )?;
         let web_fetch = compose_web_fetch()?;
-        let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
-        let SelectedTerminalComposition {
-            tool: terminal,
-            resource: host_resource,
-            archive,
-            concrete: terminal_concrete,
-        } = compose_selected_terminal(
+        let selected_terminal = compose_selected_terminal(
             authority.terminal_root,
             authority.canonical_workspace,
             authority.background_root,
@@ -1463,13 +1496,25 @@ impl NativeReferenceHost {
             terminal_selection,
             TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
+        let (mcp, mcp_catalog) = mcp::select(
+            mcp_options,
+            &selected_terminal,
+            permission_setup.as_ref(),
+            mcp_catalog,
+        )?;
+        let SelectedTerminalComposition {
+            tool: terminal,
+            resource: host_resource,
+            archive,
+            concrete: terminal_concrete,
+        } = selected_terminal;
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
         let read_tool_result = match archive {
             Some(archive) => read_tool_result.with_archive(archive),
             None => read_tool_result,
         };
-        catalog.question(ask_user_question);
+        catalog.question(AskUserQuestionTool::shared_prompter(question_prompter));
         catalog.extensions(mcp_catalog, mcp_feature_authority, subagent_authority);
         catalog.add(memory, None);
         catalog.add(read_tool_result, None);
@@ -1482,19 +1527,13 @@ impl NativeReferenceHost {
             host_resource.as_ref(),
             transport,
             Arc::clone(&permission_prompter),
+            mcp.as_ref(),
         )?;
-        let mut builder = Engine::builder()
+        let builder = Engine::builder()
             .limits(engine_limits)
             .provider(provider)
             .shared_session_store(engine_session_store);
-        builder = match &permissions {
-            Some(controller) => builder.shared_permission_handler(controller.clone()),
-            None => builder
-                .permission_handler(AskPermissionHandler::shared_prompter(permission_prompter)),
-        };
-        for tool in catalog.tools {
-            builder = builder.shared_tool(tool);
-        }
+        let builder = catalog.into_builder(builder, permissions.clone(), permission_prompter);
         Self::from_composed_builder(
             builder,
             workspace_root,
@@ -1504,6 +1543,7 @@ impl NativeReferenceHost {
             host_resource,
             permissions,
             permission_contexts,
+            mcp.as_ref().map(|composition| composition.runtime.clone()),
         )
         .map(|mut host| {
             host.workspace_binding = workspace_binding;
@@ -1521,6 +1561,7 @@ impl NativeReferenceHost {
         host_resource: Option<NativeTerminalHostResource>,
         permissions: Option<Arc<crate::NativePermissionController>>,
         permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
+        mcp_runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let terminal_shutdown = host_resource
             .as_ref()
@@ -1534,9 +1575,14 @@ impl NativeReferenceHost {
         let terminal_background = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::background_requester);
-        let builder = match host_resource {
-            Some(resource) => builder.host_resource(resource),
-            None => builder,
+        let builder = match (host_resource, &mcp_runtime) {
+            (Some(resource), Some(runtime)) => builder.host_resource(mcp::HostResource {
+                mcp: runtime.clone(),
+                _terminal: resource,
+            }),
+            (Some(resource), None) => builder.host_resource(resource),
+            (None, None) => builder,
+            (None, Some(_)) => return Err(mcp::error()),
         };
         let engine = builder.build().map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine)
@@ -1547,7 +1593,13 @@ impl NativeReferenceHost {
             )?;
 
         Ok(Self {
+            reserved_tool_names: engine
+                .tool_specs()
+                .into_iter()
+                .map(|spec| spec.name)
+                .collect(),
             engine,
+            mcp_runtime,
             mcp_management: None,
             mcp_contexts: None,
             skills: None,
@@ -2062,6 +2114,16 @@ fn validate_prepared_selections(
     loaded_config: &LoadedNativeConfig,
     options: &PreparedCompositionOptions,
 ) -> Result<(), NativeReferenceHostBuildError> {
+    if let Some(mcp) = &options.mcp_runtime
+        && (options.terminal.is_none()
+            || options.permissions.is_none()
+            || options
+                .mcp_contexts
+                .as_ref()
+                .is_some_and(|contexts| !Arc::ptr_eq(contexts, &mcp.contexts)))
+    {
+        return Err(mcp::error());
+    }
     if (options.skills.is_some() || options.mcp_management.is_some()) && options.terminal.is_none()
     {
         return Err(terminal_options_error());

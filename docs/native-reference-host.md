@@ -182,6 +182,43 @@ and grants no tool permission. Hosts without this option remain unchanged.
 Conversation finalization and retirement invalidate retained turn routes; a
 router or snapshot cannot keep the conversation or engine alive.
 
+`with_mcp_runtime(NativeReferenceHostMcpOptions)` additionally composes the real
+native MCP runtime and archived tool executor. Its inert options select one
+exact context router, injected clock and bounded runtime limits. Complete
+terminal and native permission options are required; a separately supplied
+context router must be the same allocation. Missing required options and
+mismatched routers fail before prepared roots are consumed; the runtime validates
+its finite limits during composition. Both prepared production and injected-transport
+constructors preserve this contract; existing generic extension constructors
+retain their supplied authorities unchanged.
+
+The concrete executor receives the same archive adapter allocation as terminal
+input/result publishers and `read_tool_result`, including its existing quota
+owner and native worker scope. It does not create another archive directory,
+adapter or independent quota. The runtime supplies the exact catalog shared by
+`mcp_search_tools` and `mcp_select_tool`. Native MCP permission preparation wraps
+the actual builtin target authority and preparer, uses the same reviewer and
+controller, and resolves non-builtin names only through the live exact-turn
+runtime. Unknown, foreign or retired names cannot fall back to builtin approval.
+Model-facing resource/prompt features remain explicitly unavailable until a
+separate typed feature authority is selected; no contextless fallback is added.
+
+`mcp_runtime()` returns this exact runtime without activating servers.
+`reserved_tool_names()` borrows names captured from the engine's successful
+fixed registrations, without cloning schemas or polling an extension catalog.
+Startup/reload candidate construction and atomic publication remain explicit
+caller operations. Options and host construction do not connect MCP peers or
+perform authentication, discovery, browser launch or application requests.
+
+The engine's host-resource lease invalidates MCP before terminal worker shutdown,
+including when the host is consumed with `into_engine`; retained tools or
+requesters do not extend that lease. For deliberate cleanup, call `close_mcp()`
+and await bounded `drain_mcp(deadline, cancellation)` while the host still owns
+its workers. Closing alone is not socket completion, child reaping or remote
+session deletion. Drain observations report local owned completion, and
+cancelled/unfinished cleanup remains retained for a later owned attempt. Drop
+is last-resort invalidation, not a claim that this explicit drain completed.
+
 For non-workspace file mutations, the history wrapper captures the trusted
 backend's existing read-only approval ticket when the outer execution future
 is constructed. It retains both success and denial outcomes; a later grant
@@ -316,7 +353,8 @@ symlinks fail without repair; terminal/archive preparation errors use the
 redacted terminal-configuration category.
 
 One archive allocation and adapter are shared by terminal's complete input and
-result publishers and `read_tool_result`. Large arguments are durably archived
+result publishers, `read_tool_result`, and the explicitly selected native MCP
+executor. Large arguments are durably archived
 before execution; later calls can page their original, session-incarnation-bound
 contents. The complete terminal tool advertises all twelve actions; it does not
 share the legacy background supervisor. Actual Engine, Session and lifecycle
@@ -596,7 +634,8 @@ Construction failures are fixed, redacted stage categories:
 - terminal configuration;
 - background-supervisor configuration;
 - provider;
-- permission configuration (`PermissionConfig`); or
+- permission configuration (`PermissionConfig`);
+- MCP configuration (`McpConfig`); or
 - engine.
 
 Display and debug output include only the stable stage, never a token, path,
@@ -640,8 +679,8 @@ private cancellation rather than cancelling any caller's token.
 
 The reference host does not itself supply a full interactive CLI/TUI,
 alternate provider or credential selections, remote
-or packaged skill discovery and installation, production MCP transport,
-authentication, protocol-driven catalog discovery, caching, subscriptions,
+or packaged skill discovery and installation, automatic MCP transport
+activation, authentication, protocol-driven catalog discovery, caching, subscriptions,
 ACP or persistent/background subagent management, encrypted storage, non-Unix
 root hardening, durable image
 attachments, prompt images, or CLI image flags. Those additions must preserve
