@@ -125,10 +125,14 @@ Behavior follows fx `b1774fbf6c7602b503026f96f6e960e946c692ef`, specifically
 `src/core/mcp/stdio_dispatcher.zig` (serialized writes, precommit, reader and
 shutdown ownership). Strict duplicate/JSON/resource admission, descriptor-bound
 cwd, explicit environment authority and retained native cleanup are intentional
-native boundaries. Startup is limited to 300 seconds; it does not impose that
-deadline on the connected server's lifetime. Captured PATH is limited to 8 KiB
-and 256 entries; target program paths to 4 KiB. The shared launch codec bounds
-argv and environment as documented by its terminal contracts.
+native boundaries. Direct startup is limited to 300 seconds; explicitly observed
+configured startup admits the full positive `u32` millisecond range. The selected
+MCP helper mode encodes and decodes that original absolute startup deadline
+without rebasing it or changing captured-terminal execution's 600-second cap.
+Startup does not impose that deadline on the connected server's lifetime.
+Captured PATH is limited to 8 KiB and 256 entries; target program paths to 4 KiB.
+The shared launch codec bounds argv and environment as documented by its terminal
+contracts.
 Deadlines bound controllable userspace waits, not a synchronous filesystem or
 spawn syscall, arbitrary trusted waker callback, or an uninterruptible kernel
 operation. Cancellation/deadline checks resume when that boundary returns.

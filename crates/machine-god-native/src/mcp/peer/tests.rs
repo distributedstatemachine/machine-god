@@ -130,6 +130,65 @@ while IFS= read -r line; do :; done
 "#;
 
 #[test]
+fn configured_long_stdio_deadlines_reach_immediate_modern_producer_and_reap() {
+    let mut outcomes = Vec::new();
+    for timeout in [
+        Duration::from_secs(10),
+        Duration::from_secs(1_200),
+        Duration::from_millis(u64::from(u32::MAX)),
+    ] {
+        let fixture = Fixture::new();
+        let launch = fixture.launch(MODERN);
+        let mut factory = || Ok(launch.clone());
+        let cancellation = CancellationToken::new();
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = observed.clone();
+        // This bounds diagnostic observation, not the configured startup budget.
+        // The producer responds immediately; no configured-duration wait occurs.
+        let result = fixture.runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                McpStdioPeer::connect_configured_observed(
+                    &mut factory,
+                    fixture.host.clone(),
+                    Arc::new(Timer),
+                    cancellation.clone(),
+                    timeout,
+                    Arc::new(move |completion| {
+                        capture.lock().unwrap().push(completion);
+                        true
+                    }),
+                ),
+            )
+            .await
+        });
+        let outcome = match result {
+            Ok(Ok((mut peer, _))) => {
+                let modern = peer.protocol.version == ProtocolVersion::Modern;
+                peer.close();
+                drop(peer);
+                modern
+                    .then_some(())
+                    .ok_or_else(|| "wrong protocol".to_owned())
+            }
+            Ok(Err(error)) => Err(format!("startup: {error:?}")),
+            Err(_) => Err("bounded observation elapsed".to_owned()),
+        };
+        cancellation.cancel();
+        fixture.host.close();
+        fixture.host.completion().wait_on_worker().unwrap();
+        let observed = observed.lock().unwrap();
+        assert_eq!(observed.len(), 1);
+        assert!(observed.iter().all(|value| value.is_complete()));
+        outcomes.push((timeout, outcome));
+    }
+    assert!(
+        outcomes.iter().all(|(_, result)| result.is_ok()),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
 fn actual_typed_feature_preserves_raw_result_and_honors_selected_stdio_bounds() {
     use crate::mcp::control::{
         McpFeatureOperationOptions, McpFeatureReply,

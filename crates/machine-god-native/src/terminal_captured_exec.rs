@@ -41,6 +41,16 @@ const EXEC_FAILED: u8 = 0xe1;
 const CAPTURED_DEADLINE_ENV: &str = "MACHINE_GOD_CAPTURED_DEADLINE";
 const MCP_STDIN_ENV: &str = "MACHINE_GOD_CAPTURED_MCP_STDIN";
 
+fn captured_startup_limit(persistent_stdin: bool) -> Duration {
+    if persistent_stdin {
+        // Configured MCP admits the complete positive u32 millisecond domain.
+        // Only the explicitly selected MCP helper mode uses this launch bound.
+        Duration::from_millis(u64::from(u32::MAX))
+    } else {
+        MAX_TERMINAL_EXEC_DURATION
+    }
+}
+
 /// Redacted captured-execution failure; command text and environment are never included.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalCapturedExecError {
@@ -743,13 +753,14 @@ pub(crate) fn launch_gated_argv(
     if let Some(keepalive) = keepalive {
         guard.retain_until_reaped(keepalive);
     }
-    let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
-        Ok(stamp) => stamp,
-        Err(error) if error.kind == TerminalHelperErrorKind::Timeout => {
-            return Ok(None);
-        }
-        Err(_) => return Err(TerminalCapturedExecError::Process),
-    };
+    let helper_deadline =
+        match encode_helper_deadline(deadline, captured_startup_limit(persistent_stdin)) {
+            Ok(stamp) => stamp,
+            Err(error) if error.kind == TerminalHelperErrorKind::Timeout => {
+                return Ok(None);
+            }
+            Err(_) => return Err(TerminalCapturedExecError::Process),
+        };
     let mut command = Command::new(helper.program());
     command
         .args(helper.arguments())
@@ -955,7 +966,7 @@ pub fn run_terminal_captured_helper() -> Result<(), TerminalCapturedExecError> {
     };
     let stamp =
         std::env::var(CAPTURED_DEADLINE_ENV).map_err(|_| TerminalCapturedExecError::Invalid)?;
-    let deadline = decode_helper_deadline(&stamp, MAX_TERMINAL_EXEC_DURATION)
+    let deadline = decode_helper_deadline(&stamp, captured_startup_limit(persistent_stdin))
         .map_err(|_| TerminalCapturedExecError::Invalid)?;
     let cancellation = CancellationToken::new();
     let input = std::io::stdin();
@@ -1123,6 +1134,49 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn captured_helper_deadline_modes_preserve_exact_bounds_without_extension() {
+        assert_eq!(captured_startup_limit(false), Duration::from_secs(600));
+        assert_eq!(
+            captured_startup_limit(true),
+            Duration::from_millis(u64::from(u32::MAX))
+        );
+        for persistent_stdin in [false, true] {
+            let maximum = captured_startup_limit(persistent_stdin);
+            let deadline = Instant::now() + maximum;
+            let stamp = encode_helper_deadline(deadline, maximum).unwrap();
+            let decoded = decode_helper_deadline(&stamp, maximum).unwrap();
+            assert!(decoded <= deadline, "translation cannot reset the deadline");
+            assert!(decoded > deadline - Duration::from_secs(1));
+            assert!(matches!(
+                encode_helper_deadline(Instant::now() + maximum + Duration::from_secs(1), maximum),
+                Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest
+            ));
+            let too_far =
+                crate::terminal_helper::monotonic_now().unwrap() + maximum + Duration::from_secs(1);
+            let stamp = format!("{}:{}", too_far.as_secs(), too_far.subsec_nanos());
+            assert!(matches!(
+                decode_helper_deadline(&stamp, maximum),
+                Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest
+            ));
+            assert!(matches!(
+                encode_helper_deadline(Instant::now(), maximum),
+                Err(error) if error.kind == TerminalHelperErrorKind::Timeout
+            ));
+            assert!(matches!(
+                decode_helper_deadline("0:0", maximum),
+                Err(error) if error.kind == TerminalHelperErrorKind::Timeout
+            ));
+        }
+        let deadline = Instant::now() + Duration::from_secs(1_200);
+        let stamp = encode_helper_deadline(deadline, captured_startup_limit(true)).unwrap();
+        assert!(decode_helper_deadline(&stamp, captured_startup_limit(true)).unwrap() <= deadline);
+        assert!(matches!(
+            decode_helper_deadline(&stamp, captured_startup_limit(false)),
+            Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest
+        ));
+    }
 
     #[test]
     fn direct_argv_retains_renamed_cwd_and_never_releases_work_before_commit() {
