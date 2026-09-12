@@ -2,6 +2,7 @@ use super::*;
 use crate::mcp::control::{McpFeatureReply, tests::request};
 use std::{future::Future, task::Context};
 
+mod cache;
 mod continuation;
 
 fn install(
