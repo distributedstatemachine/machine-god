@@ -119,7 +119,7 @@ fn configured_modern_retry_preserves_original_deadline_and_catalog_budget() {
             let mut socket = listener.accept().await.unwrap().0;
             // Time changes before the permitted modern retry. Its budget cannot restart.
             clock.millis.store(100, Ordering::SeqCst);
-            reply(&mut socket, 400, JSON, br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"version","data":{"supportedVersions":["2026-07-28"]}}}"#).await;
+            reply(&mut socket, 400, JSON, br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"version","data":{"requested":"2026-07-28","supported":["2026-07-28"]}}}"#).await;
             accept_reply(
                 &listener,
                 200,
