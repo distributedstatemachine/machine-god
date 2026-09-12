@@ -123,6 +123,44 @@ fn mcp_cli_startup_signal_cancels_before_activation_and_still_joins_the_host() {
 }
 
 #[test]
+fn mcp_cli_required_startup_failure_prevents_conversation_work_and_still_joins() {
+    for phase in [
+        NativeMcpStartupPhase::All,
+        NativeMcpStartupPhase::AskStartup,
+    ] {
+        let directory = ScopedTestDirectory::new(&format!("mcp-required-failure-{phase:?}"));
+        let profile = directory.path().join("profile");
+        fs::create_dir(&profile).unwrap();
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
+        let config = profile.join("mcp.json");
+        fs::write(
+            &config,
+            r#"{"mcp":{"required":{"command":"/unexecuted-server","required":true}}}"#,
+        )
+        .unwrap();
+        fs::set_permissions(config, fs::Permissions::from_mode(0o600)).unwrap();
+        let (host, transport) = host(&directory);
+        let completion = host.terminal_shutdown_completion().unwrap();
+        let (runtime, _) = TokioWebSearchDeadline::build_runtime_pair().unwrap();
+        let (_sender, receiver) = tokio::sync::mpsc::channel(1);
+        let mut signals = AskSignals::new(receiver);
+        let mut conversation_started = false;
+        assert!(
+            with_settled_terminal_host(host, &runtime, |host| {
+                runtime.block_on(mcp_startup::activate(host, phase, &mut signals))?;
+                conversation_started = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!conversation_started);
+        assert!(transport.request_bodies().is_empty());
+        assert!(signals.first_observed.is_none());
+        assert!(completion.is_complete());
+    }
+}
+
+#[test]
 fn mcp_cli_settlement_survives_operation_error_and_unwind() {
     for panic in [false, true] {
         let directory = ScopedTestDirectory::new(&format!("mcp-settlement-{panic}"));
