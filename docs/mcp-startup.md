@@ -70,6 +70,50 @@ Queue admission observes them, and the guarded submission runtime rechecks them 
 the final proof-bearing write boundary. A one-build operation token is not reused
 as a post-publication lifetime token.
 
+## Profile activation controller
+
+`NativeMcpController` shares the host's actual management service and its exact
+store identity, runtime, owned worker scope, reserved tool names and captured
+startup authorities. Construction and unpolled operations are inert. Profile
+loads and exact-source revalidation run on that worker scope; network startup is
+caller-polled asynchronously, without a second executor or worker `block_on`.
+
+Initial `All` publishes all available enabled servers subject to required-server
+readiness. `AskStartup` publishes required peers only. Its first explicit
+`activate_deferred` call coalesces optional discovery against the retained exact
+profile snapshot. Successful optional peers append once without replacing the
+required peers, registrations or existing turn pins. Empty optional sets are a
+no-op. Deferred outcomes are cached per generation, including failures; a later
+reload is needed to retry. An individual waiting caller's cancellation does not
+cancel the shared deferred loader, whose original deadline and owner still apply.
+
+`reload` reads a fresh profile and requires every selected enabled server to
+succeed before full replacement. Exact source validation precedes publication;
+the runtime compare-and-swap checks the original publication witness. Predicted
+candidate checkpoints are captured before publication, never inferred from a
+later runtime read. Failure leaves the previous configuration lifetime token and
+active publication intact. These checks do not reserve the profile against later
+external filesystem edits. Captured environment, network and authentication
+selections are reused explicitly; they are not recaptured from ambient state.
+
+Only one mutation is admitted. A positive bound of at most eight generations
+counts pending, active, retired and outstanding returned outcomes; retain four
+for an ordinary host. Reservations precede profile I/O and remain charged while
+abandoned store workers or returned receipt owners survive. Startup cleanup
+custody is installed before its first effect. Runtime completion observations
+also have a fixed retained bound, including observations returned before a
+subsequent reload fails.
+
+`close` is an irrevocable cutoff, not proof of child reaping or socket completion.
+It cancels generation and operation owners outside controller locks and retains
+abandoned jobs. `settle` uses a separate cleanup token and deadline to drive those
+jobs, drain runtime peers and observe startup peers and profile workers. A failed
+or abandoned settlement retains custody for another explicit attempt. Successful
+publication wins a concurrent caller cancellation; a close observed during its
+state commit is reported without resurrecting active state. Local cleanup never
+claims HTTP session deletion, remote revocation or reversal of application work.
+The host remains responsible for its shared worker scope's final shutdown/join.
+
 ## Explicit authentication
 
 Each selected remote server uses `Configured`, an exact `Lease`, or a selected

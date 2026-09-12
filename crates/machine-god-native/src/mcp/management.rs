@@ -115,6 +115,11 @@ impl NativeMcpManagementService {
         Self { store }
     }
 
+    /// Shares the selected observation identity; never reopens a second store.
+    pub(crate) fn config_store(&self) -> Arc<NativeMcpConfigStore> {
+        self.store.clone()
+    }
+
     /// Validates directly constructed profile commands without copying or effects.
     /// Runtime-only variants are unavailable, regardless of their input fields.
     ///

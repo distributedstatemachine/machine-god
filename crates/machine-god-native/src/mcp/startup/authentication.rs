@@ -9,11 +9,13 @@ use std::{fmt, os::unix::ffi::OsStrExt, sync::Arc, time::Instant};
 
 /// Explicit endpoint authentication choice. None of these variants can open a
 /// browser. Stored credentials may refresh through the selected native service.
+#[derive(Clone)]
 pub enum NativeMcpStartupAuthSource {
     Configured,
     Lease(Arc<McpAuthLease>),
     Stored(Arc<NativeMcpAuthService>),
 }
+#[derive(Clone)]
 pub struct NativeMcpStartupAuthentication {
     pub server: Box<str>,
     pub additional_headers: McpResolvedHeaders,
