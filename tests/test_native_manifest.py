@@ -16,6 +16,9 @@ MODEL_CATALOG_HTTP_SOURCE = (
     / "src"
     / "ai_gateway_model_catalog_http.rs"
 )
+BOUNDED_DNS_SOURCE = (
+    REPOSITORY_ROOT / "crates" / "machine-god-native" / "src" / "bounded_dns.rs"
+)
 NATIVE_LIB_SOURCE = (
     REPOSITORY_ROOT / "crates" / "machine-god-native" / "src" / "lib.rs"
 )
@@ -421,7 +424,20 @@ class NativeManifestTests(unittest.TestCase):
         self.assertNotIn("signal-hook-registry", resolved_dependencies)
 
     def test_model_catalog_android_dns_fails_closed_without_platform_api(self) -> None:
-        source = MODEL_CATALOG_HTTP_SOURCE.read_text(encoding="utf-8")
+        source = BOUNDED_DNS_SOURCE.read_text(encoding="utf-8")
+        gateway_source = MODEL_CATALOG_HTTP_SOURCE.read_text(encoding="utf-8")
+        shared_import = "use crate::bounded_dns::{"
+        self.assertIn(shared_import, gateway_source)
+        imported = gateway_source.split(shared_import, maxsplit=1)[1].split(
+            "};", maxsplit=1
+        )[0]
+        self.assertIn("load_system_resolver_snapshot,", imported)
+        self.assertIn(
+            "Self::with_sources(load_system_resolver_snapshot, "
+            "system_resolver_query_id_key)",
+            gateway_source,
+        )
+        self.assertNotIn("fn load_system_resolver_snapshot(", gateway_source)
         android_cfg = '#[cfg(target_os = "android")]\n'
         apple_windows_cfg = (
             '#[cfg(any(target_os = "windows", target_vendor = "apple"))]\n'
@@ -430,7 +446,7 @@ class NativeManifestTests(unittest.TestCase):
             '#[cfg(all(unix, not(any(target_os = "android", '
             'target_vendor = "apple"))))]\n'
         )
-        loader_signature = "fn load_system_resolver_snapshot()\n"
+        loader_signature = "pub(crate) fn load_system_resolver_snapshot()\n"
 
         self.assertEqual(source.count(generic_unix_cfg + loader_signature), 1)
         self.assertEqual(source.count(android_cfg + loader_signature), 1)
