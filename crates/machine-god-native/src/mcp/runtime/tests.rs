@@ -147,20 +147,27 @@ fn executor_dropping_unsent_calls_releases_leases_beyond_peer_capacity() {
 }
 
 #[test]
-fn constructors_contextless_catalog_and_unpolled_futures_have_no_effects() {
+fn constructors_missing_context_catalog_and_unpolled_futures_have_no_effects() {
     let runtime = standalone();
     let writes: Arc<Mutex<Vec<u8>>> = Arc::default();
     let prepared = candidate(&runtime, "calendar", &["lookup"], writes.clone());
     assert!(writes.lock().unwrap().is_empty());
     let tool = tool::RuntimeTool(prepared.publication.tools.values().next().unwrap().clone());
     runtime.publish(prepared).unwrap();
-    assert!(futures_executor::block_on(runtime.snapshot(CancellationToken::new())).is_err());
     let context = ToolContext {
         session_id: SessionId::new("missing").unwrap(),
         session_incarnation_id: SessionIncarnationId::new("missing").unwrap(),
         turn_id: TurnId::new("missing").unwrap(),
         call_id: ToolCallId::new("missing").unwrap(),
     };
+    drop(runtime.snapshot_for_turn(context.clone(), CancellationToken::new()));
+    assert!(writes.lock().unwrap().is_empty());
+    assert!(
+        futures_executor::block_on(
+            runtime.snapshot_for_turn(context.clone(), CancellationToken::new())
+        )
+        .is_err()
+    );
     drop(tool.execute_for_turn(context.clone(), json!({}), CancellationToken::new()));
     assert!(writes.lock().unwrap().is_empty());
     assert!(

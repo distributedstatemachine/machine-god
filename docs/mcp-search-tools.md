@@ -47,10 +47,10 @@ and cancellation token, and returns either:
 The context retains session, session-incarnation, turn, and call identity without
 normalization or a global current-session fallback. Context-aware catalogs must
 use their explicitly admitted live routing view and reject foreign or retired
-invocations; the context alone grants no permission. The backward-compatible
-default delegates to the existing `snapshot(cancellation)` method only when
-polled, so context-independent injected catalogs remain supported. An override
-is used exclusively; its rejection never falls back to `snapshot`.
+invocations; the context alone grants no permission. `snapshot_for_turn` is the
+only required catalog hook; there is no context-free hook or default forwarding.
+Injected static catalogs implement the same explicit contextual signature.
+Rejection never retries through another acquisition path.
 
 Calling `execute` constructs an inert future. Catalog acquisition starts only
 when that future is polled. Pre-cancellation, including cancellation observed

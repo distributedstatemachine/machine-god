@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures_util::StreamExt;
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, Engine, EngineEvent, Message, ModelEvent, Role,
-    SessionId, SessionIncarnationId, StopReason, ToolCall, ToolCallId, ToolName, ToolOutput,
-    TurnEvent,
+    SessionId, SessionIncarnationId, StopReason, ToolCall, ToolCallId, ToolContext, ToolName,
+    ToolOutput, TurnEvent,
 };
 use machine_god_native::{
     MCP_SEARCH_TOOLS_DEFAULT_LIMIT, MCP_SEARCH_TOOLS_TOOL_NAME, McpSearchToolsTool, McpToolCatalog,
@@ -33,8 +33,9 @@ impl ReadyCatalog {
 }
 
 impl McpToolCatalog for ReadyCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         Box::pin(async move {

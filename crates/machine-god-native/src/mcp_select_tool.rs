@@ -348,8 +348,9 @@ mod tests {
     struct EmptyCatalog;
 
     impl McpToolCatalog for EmptyCatalog {
-        fn snapshot(
+        fn snapshot_for_turn(
             &self,
+            _context: ToolContext,
             _cancellation: CancellationToken,
         ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
             Box::pin(async {

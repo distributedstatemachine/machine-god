@@ -46,10 +46,10 @@ re-resolve the selected entry.
 `execute_for_turn` passes its exact original `ToolContext` to the shared
 catalog's `snapshot_for_turn(context, cancellation)` hook. Session, incarnation,
 turn, and call identities are neither replaced nor inferred from global state.
-The default hook delegates to legacy `snapshot` when polled; a contextual
-override is authoritative and failures never retry through the legacy hook.
+This is the only catalog hook, including for injected static catalogs;
+failures never retry through a context-free acquisition path.
 Live routing admission belongs to the injected catalog, not model arguments.
-Raw `execute` remains closed and invokes neither catalog hook.
+Raw `execute` remains closed and never invokes the catalog hook.
 
 An entry may remain metadata-only for search. It is selectable only after the
 host attaches one `Tool` whose captured `ToolSpec.name` exactly equals the

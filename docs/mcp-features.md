@@ -79,9 +79,9 @@ Session, session-incarnation, turn, and call identities are forwarded unchanged.
 The tool neither selects a global current session nor invents missing authority.
 Context-aware authorities must establish live admission for that exact context
 and reject foreign or retired invocations; context alone grants no permission.
-The backward-compatible default delegates to the existing `call` method only
-when polled. An override is used exclusively, including on errors; rejection
-never retries through the context-independent method. This seam adds no effects,
+`call_for_turn` is the only required authority hook, including for injected
+authorities; there is no context-free hook or default forwarding. Rejection
+never retries through another authority path. This seam adds no effects,
 permission schema, or production routing by itself.
 
 An authority implementation must treat the request's server and identity as
@@ -258,7 +258,7 @@ Admitted valid raw JSON conservatively bounds its compact representation;
 numeric lexemes are preserved, not converted through floating point. The
 existing counting serializer verifies the completed projection again.
 Projection overflow fails explicitly; content is not silently truncated or
-forced through the legacy injected adapter's 64 KiB result policy.
+forced through the portable injected adapter's 64 KiB result policy.
 
 The actual shared archive retains oversized complete outputs losslessly while
 providing bounded persisted references and previews. Execution checks caller

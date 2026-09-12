@@ -1323,8 +1323,9 @@ fn subagent_round_responses() -> [Vec<u8>; 2] {
 struct ReadyMcpCatalog;
 
 impl McpToolCatalog for ReadyMcpCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         Box::pin(async {
@@ -1357,8 +1358,9 @@ impl ReadyMcpFeatureAuthority {
 }
 
 impl McpFeatureAuthority for ReadyMcpFeatureAuthority {
-    fn call(
+    fn call_for_turn(
         &self,
+        _context: ToolContext,
         request: McpFeatureRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {

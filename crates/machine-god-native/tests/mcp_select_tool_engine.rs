@@ -32,8 +32,9 @@ impl ReadyCatalog {
 }
 
 impl McpToolCatalog for ReadyCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         Box::pin(async move {

@@ -44,13 +44,6 @@ impl ContextCatalog {
 }
 
 impl McpToolCatalog for ContextCatalog {
-    fn snapshot(
-        &self,
-        _cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
-        panic!("contextual catalog must not use the legacy fallback")
-    }
-
     fn snapshot_for_turn(
         &self,
         context: ToolContext,
@@ -97,7 +90,7 @@ fn distinct_contexts() -> Vec<ToolContext> {
 }
 
 #[test]
-fn contextual_catalog_receives_each_exact_invocation_without_legacy_fallback() {
+fn contextual_catalog_receives_each_exact_invocation() {
     let catalog = ContextCatalog::new();
     let tool = McpSearchToolsTool::shared_catalog(Arc::new(catalog.clone()));
     let contexts = distinct_contexts();
@@ -193,8 +186,9 @@ impl FakeCatalog {
 }
 
 impl McpToolCatalog for FakeCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         Box::pin(async move {
@@ -212,6 +206,19 @@ impl McpToolCatalog for FakeCatalog {
 struct PendingCatalog {
     polls: Arc<AtomicUsize>,
     drops: Arc<AtomicUsize>,
+}
+
+#[test]
+fn injected_catalog_contextual_hook_is_inert_until_polled() {
+    let catalog = FakeCatalog::new(Vec::new());
+    drop(catalog.snapshot_for_turn(context(), CancellationToken::new()));
+    assert_eq!(catalog.snapshot_count(), 0);
+    assert_eq!(catalog.poll_count(), 0);
+    let snapshot =
+        poll_ready(catalog.snapshot_for_turn(context(), CancellationToken::new())).unwrap();
+    assert!(snapshot.tools().is_empty());
+    assert_eq!(catalog.snapshot_count(), 1);
+    assert_eq!(catalog.poll_count(), 1);
 }
 
 struct PendingSnapshot {
@@ -235,8 +242,9 @@ impl Drop for PendingSnapshot {
 }
 
 impl McpToolCatalog for PendingCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         Box::pin(PendingSnapshot {
@@ -255,8 +263,9 @@ enum SamePollOutcome {
 struct SamePollCancellationCatalog(SamePollOutcome);
 
 impl McpToolCatalog for SamePollCancellationCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         let outcome = self.0;
@@ -289,8 +298,9 @@ impl Wake for CountingWake {
 struct DiscoveringCatalog;
 
 impl McpToolCatalog for DiscoveringCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         Box::pin(async { Ok(McpToolCatalogSnapshot::discovering()) })

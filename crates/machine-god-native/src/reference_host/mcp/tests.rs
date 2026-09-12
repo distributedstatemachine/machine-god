@@ -176,7 +176,6 @@ fn actual_host_retains_exact_contexts_reserved_names_and_inert_conversation_enro
                         .await
                         .is_ok()
                 );
-                assert!(runtime.snapshot(CancellationToken::new()).await.is_err());
                 let foreign = ToolContext {
                     session_incarnation_id: machine_god_core::SessionIncarnationId::new("foreign")
                         .unwrap(),

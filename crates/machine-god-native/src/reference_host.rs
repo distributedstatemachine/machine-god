@@ -18,7 +18,7 @@ use workspace_binding::WorkspaceBinding;
 use machine_god_core::{
     BoxFuture, CancellationToken, Engine, EngineLimits, NetworkTarget, SessionIncarnationId,
     SessionStore, SubagentAuthority, SubagentAuthorityError, SubagentAuthorityErrorKind,
-    SubagentOutcome, SubagentRequest, SubagentTool, Tool, ToolName,
+    SubagentOutcome, SubagentRequest, SubagentTool, Tool, ToolContext, ToolName,
 };
 use rustix::fd::OwnedFd;
 
@@ -2054,8 +2054,9 @@ fn session_store_parts(
 struct EmptyMcpToolCatalog;
 
 impl McpToolCatalog for EmptyMcpToolCatalog {
-    fn snapshot(
+    fn snapshot_for_turn(
         &self,
+        _context: ToolContext,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
         Box::pin(async {
@@ -2069,8 +2070,9 @@ impl McpToolCatalog for EmptyMcpToolCatalog {
 struct EmptyMcpFeatureAuthority;
 
 impl McpFeatureAuthority for EmptyMcpFeatureAuthority {
-    fn call(
+    fn call_for_turn(
         &self,
+        _context: ToolContext,
         _request: McpFeatureRequest,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {

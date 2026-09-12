@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures_util::StreamExt;
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, Engine, EngineEvent, Message, ModelEvent, Role,
-    SessionId, SessionIncarnationId, StopReason, ToolCall, ToolCallId, ToolName, ToolOutput,
-    TurnEvent,
+    SessionId, SessionIncarnationId, StopReason, ToolCall, ToolCallId, ToolContext, ToolName,
+    ToolOutput, TurnEvent,
 };
 use machine_god_native::{
     MCP_FEATURES_TOOL_NAME, McpFeatureAuthority, McpFeatureError, McpFeaturePayload,
@@ -33,8 +33,9 @@ impl ReadyAuthority {
 }
 
 impl McpFeatureAuthority for ReadyAuthority {
-    fn call(
+    fn call_for_turn(
         &self,
+        _context: ToolContext,
         request: McpFeatureRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {

@@ -406,28 +406,20 @@ impl std::error::Error for McpFeatureError {}
 /// the tool also races it independently so a noncooperative implementation
 /// cannot delay cancellation publication.
 pub trait McpFeatureAuthority: Send + Sync + 'static {
-    fn call(
-        &self,
-        request: McpFeatureRequest,
-        cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>>;
-
     /// Executes against the exact invoking session, incarnation, turn, and call.
     /// The tool forwards its original context unchanged, without an ambient
     /// current-session fallback. Context-aware implementations must establish
     /// live admission for that identity; context alone grants no authority.
     ///
-    /// The default delegates to [`Self::call`] only when polled, preserving
-    /// existing context-independent authorities. Overrides must remain inert
-    /// before polling and preserve the trait's admission and cancellation rules.
+    /// This is the sole authority hook, including for injected authorities.
+    /// Implementations must remain inert before polling and preserve the
+    /// trait's admission and cancellation rules.
     fn call_for_turn(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         request: McpFeatureRequest,
         cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
-        Box::pin(async move { self.call(request, cancellation).await })
-    }
+    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>>;
 }
 
 /// Portable `mcp_features` tool over explicitly injected authority.

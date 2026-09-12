@@ -428,16 +428,6 @@ impl Drop for NativeMcpRuntime {
     }
 }
 impl McpToolCatalog for NativeMcpRuntime {
-    fn snapshot(
-        &self,
-        _: CancellationToken,
-    ) -> BoxFuture<'_, std::result::Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
-        Box::pin(async {
-            Err(McpToolCatalogError::new(
-                McpToolCatalogErrorKind::Unavailable,
-            ))
-        })
-    }
     fn snapshot_for_turn(
         &self,
         context: ToolContext,

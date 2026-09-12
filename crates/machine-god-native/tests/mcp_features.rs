@@ -29,14 +29,6 @@ struct ContextAuthority {
 }
 
 impl McpFeatureAuthority for ContextAuthority {
-    fn call(
-        &self,
-        _request: McpFeatureRequest,
-        _cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
-        panic!("contextual authority must not use the legacy fallback")
-    }
-
     fn call_for_turn(
         &self,
         context: ToolContext,
@@ -45,14 +37,16 @@ impl McpFeatureAuthority for ContextAuthority {
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
         self.entered.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
-            self.contexts.lock().unwrap().push(context);
+            self.contexts.lock().unwrap().push(context.clone());
             if let Some(fail) = self.cancel_on_poll {
                 cancellation.cancel();
                 if fail {
                     return Err(McpFeatureError::new(McpFeatureErrorKind::Unavailable));
                 }
             }
-            self.echo.call(request, cancellation).await
+            self.echo
+                .call_for_turn(context, request, cancellation)
+                .await
         })
     }
 }
@@ -84,8 +78,8 @@ fn distinct_contexts() -> Vec<ToolContext> {
 fn contextual_authority_receives_exact_context_and_all_seven_requests() {
     let authority = ContextAuthority::default();
     let tool = McpFeaturesTool::shared_authority(Arc::new(authority.clone()));
-    let legacy = EchoAuthority::default();
-    let legacy_tool = McpFeaturesTool::new(legacy.clone());
+    let injected = EchoAuthority::default();
+    let injected_tool = McpFeaturesTool::new(injected.clone());
     let contexts = distinct_contexts();
     let cases = [
         json!({"action":"resource_list","server":"fixture"}),
@@ -106,13 +100,13 @@ fn contextual_authority_receives_exact_context_and_all_seven_requests() {
                 CancellationToken::new(),
             ))
             .unwrap();
-            let legacy_output = execute(&legacy_tool, requested.clone()).unwrap();
-            assert_eq!(output, legacy_output);
+            let injected_output = execute(&injected_tool, requested.clone()).unwrap();
+            assert_eq!(output, injected_output);
             expected_contexts.push(context.clone());
         }
     }
     assert_eq!(*authority.contexts.lock().unwrap(), expected_contexts);
-    assert_eq!(authority.echo.requests(), legacy.requests());
+    assert_eq!(authority.echo.requests(), injected.requests());
     assert_eq!(
         authority.entered.load(Ordering::SeqCst),
         expected_contexts.len()
@@ -201,14 +195,15 @@ impl EchoAuthority {
 }
 
 impl McpFeatureAuthority for EchoAuthority {
-    fn call(
+    fn call_for_turn(
         &self,
+        _context: ToolContext,
         request: McpFeatureRequest,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        self.requests.lock().unwrap().push(request.clone());
         Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.requests.lock().unwrap().push(request.clone());
             let payload = match request.action() {
                 McpFeatureAction::ResourceList => json!({
                     "items": [{"server": request.server(), "identity": "custom://a", "name": "A", "template": false}]
@@ -246,6 +241,18 @@ fn execute(
         prepared.arguments().clone(),
         CancellationToken::new(),
     ))
+}
+
+#[test]
+fn injected_authority_contextual_hook_is_inert_until_polled() {
+    let authority = EchoAuthority::default();
+    let tool = McpFeaturesTool::new(authority.clone());
+    execute(&tool, json!({"action":"resource_list","server":"fixture"})).unwrap();
+    let request = authority.requests().pop().unwrap();
+    drop(authority.call_for_turn(context(), request.clone(), CancellationToken::new()));
+    assert_eq!(authority.call_count(), 1);
+    poll_ready(authority.call_for_turn(context(), request, CancellationToken::new())).unwrap();
+    assert_eq!(authority.call_count(), 2);
 }
 
 fn assert_error(
@@ -579,8 +586,9 @@ impl FixedAuthority {
 }
 
 impl McpFeatureAuthority for FixedAuthority {
-    fn call(
+    fn call_for_turn(
         &self,
+        _context: ToolContext,
         _request: McpFeatureRequest,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
@@ -917,8 +925,9 @@ impl Drop for PendingOperation {
 }
 
 impl McpFeatureAuthority for PendingAuthority {
-    fn call(
+    fn call_for_turn(
         &self,
+        _context: ToolContext,
         _request: McpFeatureRequest,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
@@ -1001,8 +1010,9 @@ struct SamePollAuthority {
 }
 
 impl McpFeatureAuthority for SamePollAuthority {
-    fn call(
+    fn call_for_turn(
         &self,
+        _context: ToolContext,
         request: McpFeatureRequest,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {

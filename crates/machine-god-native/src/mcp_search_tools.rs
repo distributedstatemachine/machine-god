@@ -372,28 +372,20 @@ impl fmt::Debug for McpToolCatalogSnapshot {
 /// tokenization, ordering, limiting, and projection remain owned by
 /// [`McpSearchToolsTool`].
 pub trait McpToolCatalog: Send + Sync + 'static {
-    /// Acquires one immutable bounded catalog snapshot.
-    fn snapshot(
-        &self,
-        cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>>;
-
     /// Acquires a snapshot for the exact invoking session, incarnation, turn,
     /// and call. Search and selection forward their original context unchanged.
     /// Context-aware implementations must reject missing, foreign, or retired
     /// admission rather than infer an engine-global current session. The context
     /// identifies the invocation; it is not itself a permission grant.
     ///
-    /// The default preserves context-independent catalogs by delegating to
-    /// [`Self::snapshot`] only when polled. Overrides must likewise be inert
-    /// before polling and observe the supplied cancellation token.
+    /// This is the sole snapshot hook, including for injected static catalogs.
+    /// Implementations must be inert before polling and observe the supplied
+    /// cancellation token.
     fn snapshot_for_turn(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
-        Box::pin(async move { self.snapshot(cancellation).await })
-    }
+    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>>;
 }
 
 /// Deterministic metadata-only search over an injected MCP catalog.
@@ -1164,8 +1156,9 @@ mod tests {
     }
 
     impl McpToolCatalog for StaticCatalog {
-        fn snapshot(
+        fn snapshot_for_turn(
             &self,
+            _context: ToolContext,
             _cancellation: CancellationToken,
         ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
             Box::pin(async move {
