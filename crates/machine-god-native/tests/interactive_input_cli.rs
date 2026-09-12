@@ -11,9 +11,66 @@ use std::fs::File;
 use std::io::Write as _;
 use std::io::{Seek, SeekFrom};
 use std::os::fd::OwnedFd;
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
+
+/// EPIPE observes every reference to the pipe, including unrelated children
+/// between fork/`posix_spawn` and exec. Create these scenarios' pipes only after
+/// an exact child test starts, not in the concurrently spawning parent suite.
+fn isolated_pipe_scenario(scenario: &str) -> bool {
+    const SELECTED: &str = "MACHINE_GOD_INTERACTIVE_INPUT_PIPE_SCENARIO";
+    match std::env::var(SELECTED) {
+        Ok(selected) => {
+            assert_eq!(selected, scenario, "exact child scenario selection");
+            false
+        }
+        Err(std::env::VarError::NotPresent) => {
+            let child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", scenario, "--nocapture"])
+                .env(SELECTED, scenario)
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let group = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap()).unwrap();
+            let mut owned = ScenarioChild {
+                child: Some(child),
+                group,
+            };
+            let mut status = None;
+            until(|| {
+                status = owned.child.as_mut().unwrap().try_wait().unwrap();
+                status.is_some()
+            });
+            // try_wait reaped it. Never signal this numeric PID afterward.
+            owned.child.take();
+            assert!(
+                status.unwrap().success(),
+                "isolated scenario failed: {scenario}"
+            );
+            true
+        }
+        Err(error) => panic!("invalid child scenario selection: {error}"),
+    }
+}
+
+struct ScenarioChild {
+    child: Option<Child>,
+    group: rustix::process::Pid,
+}
+impl Drop for ScenarioChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            // Timeout or parent unwind must not detach the scenario/helper.
+            // This group was created for this still-owned child, not discovered.
+            let _ = rustix::process::kill_process_group(self.group, rustix::process::Signal::KILL);
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
 
 fn helper() -> NativeInteractiveInputHelper {
     let selected = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY");
@@ -100,6 +157,11 @@ fn production_stream_helper_reads_retained_regular_file_from_offset_then_eof() {
 
 #[test]
 fn production_stream_pipe_cancels_owned_idle_helper_and_preserves_flags() {
+    if isolated_pipe_scenario(
+        "production_stream_pipe_cancels_owned_idle_helper_and_preserves_flags",
+    ) {
+        return;
+    }
     let (file, mut writer) = pipe();
     let alias = file.try_clone().unwrap();
     let original = flags(&alias);
@@ -194,6 +256,11 @@ fn production_helper_preserves_raw_chunks_eof_and_shared_pipe_flags() {
 
 #[test]
 fn production_helper_reads_only_one_credited_chunk_and_stops_without_slot_consumption() {
+    if isolated_pipe_scenario(
+        "production_helper_reads_only_one_credited_chunk_and_stops_without_slot_consumption",
+    ) {
+        return;
+    }
     let (read, mut write) = pipe();
     let alias = read.try_clone().unwrap();
     let original = flags(&alias);
@@ -226,6 +293,11 @@ fn production_helper_reads_only_one_credited_chunk_and_stops_without_slot_consum
 
 #[test]
 fn production_helper_idle_drop_and_host_cancellation_join_without_further_polls() {
+    if isolated_pipe_scenario(
+        "production_helper_idle_drop_and_host_cancellation_join_without_further_polls",
+    ) {
+        return;
+    }
     for cancel_host in [false, true] {
         let (read, mut write) = pipe();
         let alias = read.try_clone().unwrap();
