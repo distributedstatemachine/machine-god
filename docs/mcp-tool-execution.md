@@ -77,9 +77,14 @@ survive without a `Value` conversion in this wire path.
 
 There are at most eight continuations after the initial call. Further
 input-required responses produce an explicit bounded protocol-failure result,
-without another prompt or reservation. A single 30-minute interaction deadline
-starts at the first admitted input-required response; each consented exchange
-gets a fresh normal operation timeout. Turn/caller/preparation/runtime authority
+without another prompt or reservation. Each admitted input-required response
+with an actual responder and an available continuation round starts a fresh
+30-minute interaction deadline before its presenter is polled. Unresolved
+no-responder and exhausted-round results do not read a new interaction clock.
+Multiple rounds may therefore exceed 30 minutes in total. Once exact consent
+is admitted within that deadline, the queue and resumed exchange use a fresh
+normal operation timeout, not the preceding human deadline.
+Turn/caller/preparation/runtime authority
 cancellation wakes pending consent and network work. Dropping the waiting
 prompt removes its inbox ownership and cancels its token; no response is replayed.
 Native permission resets and rule-publication transitions also wake the wait;

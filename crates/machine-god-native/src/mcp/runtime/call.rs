@@ -260,15 +260,6 @@ impl NativeMcpRuntimeToolCall {
                 AdmittedResponse::ProtocolFailure(failure)
             }
             McpToolResponseDisposition::InputRequired(required) => {
-                if self.interaction_deadline.is_none() {
-                    self.interaction_deadline = Some(
-                        self.server
-                            .clock
-                            .now()
-                            .checked_add(Duration::from_secs(30 * 60))
-                            .ok_or_else(unavailable)?,
-                    );
-                }
                 AdmittedResponse::InputRequired(ContinuationInput {
                     required,
                     round: self.round.clone(),
@@ -279,6 +270,18 @@ impl NativeMcpRuntimeToolCall {
 
     pub(crate) fn continuation_limit_reached(&self) -> bool {
         self.continuations >= 8
+    }
+
+    pub(crate) fn begin_interaction(&mut self) -> Result<(), ToolError> {
+        self.revalidate()?;
+        self.interaction_deadline = Some(
+            self.server
+                .clock
+                .now()
+                .checked_add(Duration::from_secs(30 * 60))
+                .ok_or_else(unavailable)?,
+        );
+        Ok(())
     }
 
     pub(crate) fn check_interaction_deadline(&self) -> Result<(), ToolError> {
@@ -320,10 +323,13 @@ impl NativeMcpRuntimeToolCall {
             // failure/drop. A consent allocation can never authorize replay.
             self.round = Arc::new(AtomicBool::new(false));
             self.continuations += 1;
+            // Consent was admitted within this round's human deadline. The
+            // resumed exchange now has its own fresh normal operation budget.
+            self.interaction_deadline = None;
             let response = {
                 let (mut peer, _) = match select(
                     Box::pin(self.server.acquire(&self.turn, &self.cancellation)),
-                    self.interaction_cancelled(),
+                    self.cancelled(),
                 )
                 .await
                 {
@@ -331,7 +337,6 @@ impl NativeMcpRuntimeToolCall {
                     Either::Right(_) => return Err(unavailable()),
                 };
                 self.revalidate()?;
-                self.check_interaction_deadline()?;
                 let reservation = peer.peer.reserve().map_err(|_| unavailable())?;
                 let submission = self
                     .custody
@@ -349,7 +354,7 @@ impl NativeMcpRuntimeToolCall {
                 let bytes = match select(
                     Box::pin(peer.peer.call(submission, deadline)),
                     Box::pin(async {
-                        select(self.interaction_cancelled(), original_cancelled).await;
+                        select(self.cancelled(), original_cancelled).await;
                     }),
                 )
                 .await
@@ -358,7 +363,6 @@ impl NativeMcpRuntimeToolCall {
                     Either::Right(_) => return Err(unavailable()),
                 };
                 self.revalidate()?;
-                self.check_interaction_deadline()?;
                 if !written.load(Ordering::Acquire) {
                     return Err(unavailable());
                 }

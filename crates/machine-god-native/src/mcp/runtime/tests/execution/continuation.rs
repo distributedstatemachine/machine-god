@@ -382,6 +382,7 @@ fn malformed_or_wrong_id_response_never_enters_human_consent_or_replays() {
 struct AdvancingClock {
     origin: Instant,
     elapsed: std::sync::atomic::AtomicU64,
+    reads: std::sync::atomic::AtomicU64,
     waiter: futures_util::task::AtomicWaker,
 }
 impl AdvancingClock {
@@ -389,6 +390,7 @@ impl AdvancingClock {
         Self {
             origin: Instant::now(),
             elapsed: std::sync::atomic::AtomicU64::new(0),
+            reads: std::sync::atomic::AtomicU64::new(0),
             waiter: futures_util::task::AtomicWaker::new(),
         }
     }
@@ -399,6 +401,7 @@ impl AdvancingClock {
 }
 impl NativeMcpRuntimeClock for AdvancingClock {
     fn now(&self) -> Instant {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.origin + Duration::from_secs(self.elapsed.load(Ordering::SeqCst))
     }
     fn sleep_until(&self, deadline: Instant) -> BoxFuture<'_, ()> {
@@ -414,13 +417,57 @@ impl NativeMcpRuntimeClock for AdvancingClock {
 }
 
 #[test]
-fn delayed_human_consent_receives_a_fresh_operation_timeout() {
+fn input_without_a_responder_does_not_start_an_interaction_clock() {
     let archive = Archive::new();
     let clock = Arc::new(AdvancingClock::new());
+    let observed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let response_clock = clock.clone();
+    let response_observed = observed.clone();
+    let fixture = Fixture::with_executor_and_clock(
+        &[json!({})],
+        PermissionMode::Auto,
+        archive.executor.clone(),
+        archive.executor.execution_policy(),
+        false,
+        clock.clone(),
+        move |runtime, writes| {
+            scripted_candidate(
+                runtime,
+                writes,
+                &json!({"name":"lookup","inputSchema":{"type":"object"}}),
+                move |id| {
+                    response_observed.store(
+                        response_clock.reads.load(Ordering::SeqCst),
+                        Ordering::SeqCst,
+                    );
+                    envelope(id, INPUT)
+                },
+            )
+        },
+    );
+    let events = fixture.run();
+    assert_eq!(result(&events).content["resultType"], "input_required");
+    assert!(observed.load(Ordering::SeqCst) > 0);
+    assert_eq!(
+        clock.reads.load(Ordering::SeqCst),
+        observed.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
+fn consent_before_expiry_allows_response_after_old_human_deadline() {
+    let archive = Archive::new();
+    let clock = Arc::new(AdvancingClock::new());
+    let response_clock = clock.clone();
     let (fixture, mut inbox) = configured_with_clock(
         &archive,
         &[json!({})],
-        |id| {
+        move |id| {
+            if id > 1 {
+                // Response arrives after the human deadline, but only two
+                // seconds into the fresh 120-second operation budget.
+                response_clock.advance(2);
+            }
             envelope(
                 id,
                 if id == 1 {
@@ -438,7 +485,7 @@ fn delayed_human_consent_receives_a_fresh_operation_timeout() {
         .unwrap();
     let mut collect = Box::pin(turn.collect::<Vec<_>>());
     let view = queued_prompt(&mut collect, &mut inbox);
-    clock.advance(1000); // Beyond the original120-second operation timeout.
+    clock.advance(1799); // One second before this round's human expiry.
     inbox
         .reply(view.token(), answer(r#"{"action":"accept","content":{}}"#))
         .unwrap();
@@ -447,12 +494,13 @@ fn delayed_human_consent_receives_a_fresh_operation_timeout() {
         .collect::<std::result::Result<Vec<_>, _>>()
         .unwrap();
     assert!(!result(&events).is_error);
+    assert_eq!(clock.elapsed.load(Ordering::SeqCst), 1801);
     assert_eq!(wires(&fixture).len(), 2);
     assert_eq!(fixture.transport.reviews.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn interaction_deadline_is_shared_across_rounds_and_wakes_without_an_answer() {
+fn each_round_gets_a_fresh_interaction_deadline_and_expiry_wakes_without_an_answer() {
     let archive = Archive::new();
     let clock = Arc::new(AdvancingClock::new());
     let (fixture, mut inbox) = configured_with_clock(
@@ -472,19 +520,25 @@ fn interaction_deadline_is_shared_across_rounds_and_wakes_without_an_answer() {
         .reply(first.token(), answer(r#"{"action":"accept","content":{}}"#))
         .unwrap();
     let second = queued_prompt(&mut collect, &mut inbox);
-    clock.advance(801);
+    clock.advance(1000);
+    // Total human time exceeds 30 minutes, but this round is still current.
+    inbox
+        .reply(
+            second.token(),
+            answer(r#"{"action":"accept","content":{}}"#),
+        )
+        .unwrap();
+    let third = queued_prompt(&mut collect, &mut inbox);
+    clock.advance(1800);
     let events = block_on(collect)
         .into_iter()
         .collect::<std::result::Result<Vec<_>, _>>()
         .unwrap();
     assert!(result(&events).is_error);
-    assert_eq!(wires(&fixture).len(), 2);
+    assert_eq!(wires(&fixture).len(), 3);
     assert!(
         inbox
-            .reply(
-                second.token(),
-                answer(r#"{"action":"accept","content":{}}"#)
-            )
+            .reply(third.token(), answer(r#"{"action":"accept","content":{}}"#))
             .is_err()
     );
 }

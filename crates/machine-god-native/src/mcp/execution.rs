@@ -111,6 +111,7 @@ impl NativeMcpToolExecutor for NativeMcpArchivedToolExecutor {
                         if call.continuation_limit_reached() {
                             break (projection::continuation_exhausted(), false);
                         }
+                        call.begin_interaction()?;
                         match collect_form(&call, input, presenter.as_ref()).await? {
                             FormOutcome::Consented(consent) => {
                                 response = call.continue_exchange(consent).await?;
