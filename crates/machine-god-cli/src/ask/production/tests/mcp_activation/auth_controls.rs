@@ -156,6 +156,18 @@ async fn shutdown(mut session: NativeInteractiveSession) {
     .await;
 }
 
+fn assert_authentication_idle(fixture: &Fixture) {
+    let cleanup = fixture
+        .host()
+        .mcp_authentication()
+        .unwrap()
+        .cleanup_status();
+    assert_eq!(cleanup.pending_operations, 0);
+    assert_eq!(cleanup.pending_workers, 0);
+    // A live interactive host retains its service; complete means shut down.
+    assert!(!cleanup.complete);
+}
+
 #[test]
 fn mcp_auth_bare_confirms_disabled_and_failed_remote_without_credentials_or_network() {
     for required in [false, true] {
@@ -167,12 +179,13 @@ fn mcp_auth_bare_confirms_disabled_and_failed_remote_without_credentials_or_netw
             let mut signals = AskSignals::new(receiver);
             assert_eq!(mcp_startup::activate_interactive(fixture.host(), &mut signals).await.unwrap().is_some(), required);
             let mut session = fixture.session().await;
+            assert_authentication_idle(&fixture);
             let observed = management(&mut session, authenticate("remote")).await;
             assert!(!observed.failed());
             assert!(matches!(observed.result,
                 Ok(NativeInteractiveControlReceipt::McpAuthentication(NativeMcpAuthenticationReceipt::ConfirmationRequired { server })) if server.as_ref() == "remote"));
             assert_eq!(fs::read(fixture.credentials()).unwrap(), untouched);
-            assert!(fixture.host().mcp_authentication().unwrap().cleanup_status().complete);
+            assert_authentication_idle(&fixture);
             assert!(!session.is_closed());
             shutdown(session).await;
         });
