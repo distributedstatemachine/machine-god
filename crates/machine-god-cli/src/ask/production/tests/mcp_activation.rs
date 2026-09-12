@@ -14,6 +14,9 @@ use machine_god_native::{
 };
 
 mod auth_controls;
+mod configured;
+mod configured_support;
+mod configured_wire;
 
 fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTransport>) {
     host_with_capture(directory, false)
@@ -23,10 +26,24 @@ fn host_with_capture(
     directory: &ScopedTestDirectory,
     capture: bool,
 ) -> (NativeReferenceHost, Arc<OneShotTransport>) {
+    let transport = Arc::new(OneShotTransport::new(""));
+    let config = load_native_config(&NativeEnvironment::new(None, None, None)).unwrap();
+    (
+        host_with_provider(directory, capture, transport.clone(), config),
+        transport,
+    )
+}
+
+fn host_with_provider(
+    directory: &ScopedTestDirectory,
+    capture: bool,
+    transport: Arc<OneShotTransport>,
+    config: machine_god_native::LoadedNativeConfig,
+) -> NativeReferenceHost {
     let workspace = directory.path().join("workspace");
     let state = directory.path().join("state");
     for path in [&workspace, &state] {
-        fs::create_dir(path).unwrap();
+        fs::create_dir_all(path).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
     let environment = NativeEnvironment::new(None, Some(state.into_os_string()), None);
@@ -62,24 +79,21 @@ fn host_with_capture(
             NativeMcpConfigStore::new(directory.path().join("profile")).unwrap(),
         ))))
         .with_mcp_runtime(mcp);
-    let transport = Arc::new(OneShotTransport::new(""));
-    let host =
-        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
-            load_native_config(&NativeEnvironment::new(None, None, None)).unwrap(),
-            transport.clone(),
-            NetworkTarget {
-                scheme: "https".into(),
-                host: "ai-gateway.vercel.sh".into(),
-                port: None,
-            },
-            roots,
-            Arc::new(DenyPermissionPrompter),
-            Arc::new(UnavailableQuestionPrompter),
-            Arc::new(NeverWebSearchDeadline),
-            options,
-        )
-        .unwrap();
-    (host, transport)
+    NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+        config,
+        transport,
+        NetworkTarget {
+            scheme: "https".into(),
+            host: "ai-gateway.vercel.sh".into(),
+            port: None,
+        },
+        roots,
+        Arc::new(DenyPermissionPrompter),
+        Arc::new(UnavailableQuestionPrompter),
+        Arc::new(NeverWebSearchDeadline),
+        options,
+    )
+    .unwrap()
 }
 
 fn mcp_options(
