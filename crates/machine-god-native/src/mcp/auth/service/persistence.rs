@@ -72,17 +72,15 @@ impl Operation {
             guard.check(&cancellation, deadline, false)?;
             // Map before publication: an unrepresentable deadline cannot erase
             // an already-durable credential outcome. Commit latency only narrows it.
-            let lifetime = super::lease::Lifetime::new(
-                guard.inner.authority.clock.clone(),
-                credentials.expires_ms,
-            )?;
+            let issued =
+                super::lease::Issuance::new(credentials, guard.inner.authority.clock.clone())?;
             #[cfg(test)]
             guard.inner.hooks.admitted_commit();
             let mut durability =
                 guard
                     .inner
                     .store
-                    .publish(&snapshot, &guard.identity, Some(&credentials))?;
+                    .publish(&snapshot, &guard.identity, Some(&issued.credentials))?;
             if profile.is_some_and(|profile| profile.unchanged().is_err()) {
                 // A noncooperative source replacement after credential rename
                 // cannot be reported as a clean prepublication failure.
@@ -99,16 +97,19 @@ impl Operation {
                 } else {
                     Some(std::mem::replace(
                         &mut *lock(&guard.slot.generation),
-                        generation.clone(),
+                        state::Generation {
+                            token: generation.clone(),
+                            issued: Some(issued.clone()),
+                        },
                     ))
                 }
             };
             if let Some(old) = old {
-                cancel(&old);
+                cancel(&old.token);
                 contain(|| {
                     guard.inner.invalidation.invalidate(McpAuthInvalidated {
                         identity: guard.identity.clone(),
-                        generation: old,
+                        generation: old.token,
                     });
                 });
             } else {
@@ -124,12 +125,7 @@ impl Operation {
                 cancel(&generation);
                 return Err(McpAuthError::AmbiguousPublication);
             }
-            Ok(McpAuthLease {
-                credentials: Arc::new(credentials),
-                generation,
-                profile: profile.cloned(),
-                lifetime,
-            })
+            Ok(issued.lease(generation, profile.cloned()))
         })
         .await
     }

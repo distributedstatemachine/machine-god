@@ -167,6 +167,11 @@ authorization clock's domain, which must not be compared with an unrelated
 injected clock. The no-expiry sentinel remains unbounded by token time, not by
 generation or profile authority. Unrepresentable finite deadlines fail before
 credential publication rather than becoming unbounded leases.
+The bounded identity slot retains one exact credential issuance with its
+generation. Reacquiring equal credentials reuses that original deadline;
+wall-clock rollback cannot postpone refresh by issuing another lease. Changed
+stored credentials or a successful credential publication select a new issuance
+and retire the prior generation, with cancellation outside coordinator locks.
 `refresh_due` checks the original generation/profile and the pinned 60-second
 skew, returning true even after expiry; expired `access_token` calls are rejected.
 `cancelled_owned` observes the original cutoff and hard expiry using the selected

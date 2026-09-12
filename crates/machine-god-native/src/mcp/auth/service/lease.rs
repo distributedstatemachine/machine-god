@@ -1,13 +1,41 @@
 //! Issued credential lifetime, retained in the selected clock's domain.
 
 use super::{
-    Arc, BoxFuture, CancellationToken, Instant, McpAuthClock, McpAuthError, McpAuthIdentity,
-    McpAuthLease, Result,
+    Arc, BoxFuture, CancellationToken, Credentials, Instant, McpAuthClock, McpAuthError,
+    McpAuthIdentity, McpAuthLease, NativeMcpAuthProfile, Result,
 };
 use futures_util::future::select;
 use std::time::Duration;
 
 const REFRESH_SKEW_MS: u64 = 60_000;
+
+pub(super) struct Issuance {
+    pub credentials: Arc<Credentials>,
+    lifetime: Lifetime,
+}
+
+impl Issuance {
+    pub(super) fn new(credentials: Credentials, clock: Arc<dyn McpAuthClock>) -> Result<Arc<Self>> {
+        let lifetime = Lifetime::new(clock, credentials.expires_ms)?;
+        Ok(Arc::new(Self {
+            credentials: Arc::new(credentials),
+            lifetime,
+        }))
+    }
+
+    pub(super) fn lease(
+        &self,
+        generation: CancellationToken,
+        profile: Option<Arc<NativeMcpAuthProfile>>,
+    ) -> McpAuthLease {
+        McpAuthLease {
+            credentials: self.credentials.clone(),
+            generation,
+            profile,
+            lifetime: self.lifetime.clone(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct Lifetime {

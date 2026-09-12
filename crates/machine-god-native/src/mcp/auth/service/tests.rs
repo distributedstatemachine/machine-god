@@ -13,6 +13,7 @@ use std::{
     time::Duration,
 };
 
+mod lease_acquisition;
 mod profile;
 mod workers;
 
@@ -129,6 +130,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_clock(Arc::new(Clock))
+    }
+    fn with_clock(clock: Arc<dyn McpAuthClock>) -> Self {
         use std::os::unix::fs::PermissionsExt;
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let directory = std::env::temp_dir().join(format!(
@@ -143,7 +147,7 @@ impl Fixture {
         let service = NativeMcpAuthService::new(
             Arc::new(NativeMcpCredentialStore::new(directory.join("profile")).unwrap()),
             Arc::new(NoNetwork),
-            Arc::new(Clock),
+            clock,
             Arc::new(NoEntropy),
             Arc::new(Events),
             workers.clone(),

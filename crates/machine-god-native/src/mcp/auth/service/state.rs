@@ -39,9 +39,13 @@ struct Entry {
     retirement: Option<Arc<Observation>>,
 }
 pub(super) struct Slot {
-    pub generation: Mutex<CancellationToken>,
+    pub generation: Mutex<Generation>,
     pub retired: CancellationToken,
     pub cutoff: AtomicBool,
+}
+pub(super) struct Generation {
+    pub token: CancellationToken,
+    pub issued: Option<Arc<super::lease::Issuance>>,
 }
 pub(super) struct Observation {
     pub done: CancellationToken,
@@ -89,7 +93,10 @@ impl Entry {
     fn new() -> Self {
         Self {
             slot: Arc::new(Slot {
-                generation: Mutex::new(CancellationToken::new()),
+                generation: Mutex::new(Generation {
+                    token: CancellationToken::new(),
+                    issued: None,
+                }),
                 retired: CancellationToken::new(),
                 cutoff: AtomicBool::new(false),
             }),
@@ -204,7 +211,7 @@ impl Inner {
         Ok((operation, previous))
     }
     pub fn invalidate(&self, identity: &McpAuthIdentity, slot: &Slot) {
-        let generation = lock(&slot.generation).clone();
+        let generation = lock(&slot.generation).token.clone();
         cancel(&slot.retired);
         cancel(&generation);
         contain(|| {
@@ -263,6 +270,10 @@ impl Guard {
             return Err(McpAuthError::Cancelled);
         }
         let state = lock(&self.inner.state);
+        self.check_state(&state, allow_cutoff)
+    }
+
+    fn check_state(&self, state: &State, allow_cutoff: bool) -> Result<()> {
         if state.closed {
             return Err(McpAuthError::Unavailable);
         }
@@ -330,16 +341,50 @@ impl Operation {
             profile.check()?;
         }
         self.guard.check(caller, deadline, false)?;
-        let lifetime = super::lease::Lifetime::new(
-            self.guard.inner.authority.clock.clone(),
-            credentials.expires_ms,
-        )?;
-        Ok(McpAuthLease {
-            credentials: Arc::new(credentials),
-            generation: lock(&self.guard.slot.generation).clone(),
-            profile: self.profile.clone(),
-            lifetime,
-        })
+        let cached = {
+            let generation = lock(&self.guard.slot.generation);
+            generation
+                .issued
+                .as_ref()
+                .filter(|issued| issued.credentials.as_ref() == &credentials)
+                .map(|issued| (issued.clone(), generation.token.clone()))
+        };
+        if let Some((issued, generation)) = cached {
+            return Ok(issued.lease(generation, self.profile.clone()));
+        }
+        // Only genuinely different credentials map a new deadline. Reacquiring
+        // this identity after wall-clock rollback must retain its original cap.
+        let issued =
+            super::lease::Issuance::new(credentials, self.guard.inner.authority.clock.clone())?;
+        self.guard.check(caller, deadline, false)?;
+        if let Some(profile) = &self.profile {
+            profile.check()?;
+        }
+        let token = CancellationToken::new();
+        let old = {
+            let state = lock(&self.guard.inner.state);
+            self.guard.check_state(&state, false)?;
+            std::mem::replace(
+                &mut *lock(&self.guard.slot.generation),
+                Generation {
+                    token: token.clone(),
+                    issued: Some(issued.clone()),
+                },
+            )
+        };
+        cancel(&old.token);
+        if old.issued.is_some() {
+            contain(|| {
+                self.guard
+                    .inner
+                    .invalidation
+                    .invalidate(McpAuthInvalidated {
+                        identity: self.guard.identity.clone(),
+                        generation: old.token,
+                    })
+            });
+        }
+        Ok(issued.lease(token, self.profile.clone()))
     }
     pub async fn wait_previous(
         &self,

@@ -205,11 +205,9 @@ impl NativeMcpAuthService {
         let identity = &operation.guard.identity;
         let snapshot = operation.load(cancellation, deadline).await?;
         let credentials = snapshot.get(identity).ok_or(McpAuthError::Missing)?;
-        if credentials.expires_ms == i64::MAX
-            || credentials.expires_ms.saturating_sub(60_000)
-                > self.inner.authority.clock.unix_millis()
-        {
-            return operation.lease(credentials.clone(), cancellation, deadline);
+        let lease = operation.lease(credentials.clone(), cancellation, deadline)?;
+        if !lease.refresh_due()? {
+            return Ok(lease);
         }
         let replacement = operation
             .run(
