@@ -276,6 +276,31 @@ fn refresh_flattens_views_without_reopening_deferred_startup() {
 }
 
 #[test]
+fn old_zero_tool_deferred_view_remains_charged_until_its_owner_releases() {
+    let runtime = standalone();
+    install(&runtime, &[]);
+    let required_view = active(&runtime);
+    let addition = runtime
+        .prepare_addition(
+            vec![addition::server("optional", &["extra"])],
+            &[],
+            &runtime.publication_checkpoint().unwrap(),
+        )
+        .unwrap();
+    runtime.publish_addition(addition).unwrap();
+    refresh(&runtime, &["first"]).unwrap();
+    assert!(
+        super::super::refresh::retained_catalog_charge(&mut runtime.state.lock().unwrap()).unwrap()
+            > 0
+    );
+    drop(required_view);
+    assert_eq!(
+        super::super::refresh::retained_catalog_charge(&mut runtime.state.lock().unwrap()).unwrap(),
+        0
+    );
+}
+
+#[test]
 fn revoked_selected_authority_rejects_commit_before_retirement() {
     let runtime = standalone();
     let guard = CancellationToken::new();
