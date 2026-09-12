@@ -66,7 +66,7 @@ fn inert(timer: Arc<dyn McpPeerTimer>) -> McpStdioPeer {
         notifications: VecDeque::new(),
         notification_bytes: 0,
         pending_replies: routing::Replies::new(),
-        subscription: crate::mcp::peer::subscription::State::default(),
+        subscription: Box::default(),
         closed: false,
     }
 }

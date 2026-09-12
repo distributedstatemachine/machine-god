@@ -98,7 +98,7 @@ pub struct McpStdioPeer {
     notifications: VecDeque<RpcEnvelope>,
     notification_bytes: usize,
     pending_replies: routing::Replies,
-    subscription: subscription::State,
+    subscription: Box<subscription::State>,
     closed: bool,
 }
 pub(crate) struct McpStdioPeerReadiness {
@@ -269,7 +269,7 @@ impl McpStdioPeer {
     /// Retires the connection; its completion still includes deferred reap.
     pub fn close(&mut self) {
         self.closed = true;
-        self.subscription = subscription::State::default();
+        *self.subscription = subscription::State::default();
         self.reserved = McpPendingToolReservation::default();
         self.connection.close();
         self.pending_replies.clear();

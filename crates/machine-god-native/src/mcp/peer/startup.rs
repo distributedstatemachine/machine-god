@@ -213,7 +213,7 @@ fn unnegotiated(
         notifications: VecDeque::new(),
         notification_bytes: 0,
         pending_replies: super::routing::Replies::new(),
-        subscription: super::subscription::State::default(),
+        subscription: Box::default(),
         closed: false,
     }
 }

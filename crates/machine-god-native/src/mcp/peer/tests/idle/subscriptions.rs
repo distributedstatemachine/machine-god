@@ -29,6 +29,7 @@ async fn start(peer: &mut McpStdioPeer, pipe: &Pipe, deadline: Instant) -> RpcId
 
 fn feed(pipe: &mut Pipe, value: serde_json::Value) {
     let mut bytes = serde_json::to_vec(&value).unwrap();
+    drop(value);
     bytes.push(b'\n');
     pipe.feed(&bytes);
 }

@@ -128,7 +128,7 @@ pub struct NativeMcpRuntime {
     policy: NativeMcpToolExecutionPolicy,
     feature_operations: Arc<std::sync::atomic::AtomicUsize>,
     feature_input: Option<features::human::FeatureInputEndpoint>,
-    pub(super) cache_budget: Arc<catalog_state::FeatureCacheBudget>,
+    cache_budget: Arc<catalog_state::FeatureCacheBudget>,
 }
 impl fmt::Debug for NativeMcpRuntime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
