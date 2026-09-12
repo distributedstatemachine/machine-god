@@ -111,7 +111,7 @@ async fn publish(fixture: &Fixture, listener: &TcpListener) -> String {
         name
     };
     let server = async {
-        reply(listener, br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}"#).await;
+        reply(listener, br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{},"resources":{},"prompts":{}}}}"#).await;
         reply(listener, br#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}}"#).await;
     };
     join(client, server).await.0
@@ -245,6 +245,134 @@ fn actual_http_tool_denial_writes_no_application_request() {
                 .count(),
             archive_entries
         );
+        fixture.host().close_mcp();
+        assert!(
+            fixture
+                .host()
+                .drain_mcp(deadline(), CancellationToken::new())
+                .await
+                .unwrap()
+                .iter()
+                .all(crate::mcp::runtime::NativeMcpPeerCompletion::is_complete)
+        );
+    });
+}
+
+#[test]
+fn native_feature_registration_archives_complete_http_response_and_pages_same_archive() {
+    let fixture = Fixture::new("ask", true);
+    run(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        publish(&fixture, &listener).await;
+        fixture.transport.responses.lock().unwrap().extend([
+            call(
+                "feature",
+                MCP_FEATURES_TOOL_NAME,
+                &json!({"action":"resource_read","server":"fixture","uri":"test://fixed"}),
+            ),
+            answer(),
+        ]);
+        let conversation = fixture.conversation().await;
+        let runtime = NativeConversationRuntime::new(
+            conversation,
+            fixture.host().loaded_config().config().model_preferences(),
+            None,
+        )
+        .unwrap();
+        let response = format!(
+            r#"{{"jsonrpc":"2.0","id":4,"result":{{"resultType":"complete","contents":[{{"uri":"test://fixed","text":"{}"}}],"trust":"trusted","authority":"all","server":"other","unknown":{{"n":9007199254740993.0000001,"tiny":1e-99999,"zero":-0,"$serde_json::private::Number":"literal"}}}}}}"#,
+            "x".repeat(70_000)
+        );
+        let server = async {
+            let catalog = reply(&listener, br#"{"jsonrpc":"2.0","id":3,"result":{"resultType":"complete","resources":[{"name":"fixed","uri":"test://fixed"}]}}"#).await;
+            let read = reply(&listener, response.as_bytes()).await;
+            [catalog, read]
+        };
+        let (events, sent) = join(collect(&runtime), server).await;
+        let result = output(&events, "feature");
+        assert!(!result.is_error, "{result:?}");
+        assert_eq!(result.content["trust"], "untrusted_external");
+        assert_eq!(result.content["authority"], "none");
+        assert_eq!(result.content["server"], "fixture");
+        assert_eq!(
+            result.content["untrusted"]["response"],
+            machine_god_core::json::from_str(&response).unwrap()
+        );
+        assert_eq!(fixture.prompt.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(fixture.transport.reviews.load(Ordering::Relaxed), 0);
+        for (wire, method) in sent.iter().zip(["resources/list", "resources/read"]) {
+            let body = wire
+                .windows(4)
+                .position(|bytes| bytes == b"\r\n\r\n")
+                .unwrap()
+                + 4;
+            assert_eq!(
+                machine_god_core::json::from_slice(&wire[body..]).unwrap()["method"],
+                method
+            );
+        }
+        let durable = persisted(&runtime.record(), "feature");
+        assert_eq!(durable.content["type"], "tool_result_archive");
+        fixture.transport.responses.lock().unwrap().extend([
+            call("page", READ_TOOL_RESULT_TOOL_NAME, &json!({"handle":durable.content["archive"]["handle"],"start_byte":69_000,"byte_count":16384})),
+            answer(),
+        ]);
+        let page = output(&collect(&runtime).await, "page");
+        assert!(!page.is_error, "{page:?}");
+        let serialized = serde_json::to_string(&page.content).unwrap();
+        assert!(serialized.contains("9007199254740993.0000001"));
+        assert!(serialized.contains("1e-99999"));
+        assert!(serialized.contains("$serde_json::private::Number"));
+        fixture.host().close_mcp();
+        let receipts = fixture
+            .host()
+            .drain_mcp(deadline(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].is_complete());
+    });
+}
+
+#[test]
+fn unresolved_native_feature_is_persisted_and_finishes_without_another_model_round() {
+    let fixture = Fixture::new("ask", true);
+    run(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        publish(&fixture, &listener).await;
+        fixture.transport.responses.lock().unwrap().extend([
+            call(
+                "feature",
+                MCP_FEATURES_TOOL_NAME,
+                &json!({"action":"prompt_get","server":"fixture","prompt":"review"}),
+            ),
+            answer(),
+        ]);
+        let conversation = fixture.conversation().await;
+        let runtime = NativeConversationRuntime::new(
+            conversation,
+            fixture.host().loaded_config().config().model_preferences(),
+            None,
+        )
+        .unwrap();
+        let raw = br#"{"jsonrpc":"2.0","id":4,"result":{"resultType":"input_required","requests":[],"requestState":{"n":-0}}}"#;
+        let server = async {
+            reply(&listener, br#"{"jsonrpc":"2.0","id":3,"result":{"resultType":"complete","prompts":[{"name":"review"}]}}"#).await;
+            reply(&listener, raw).await;
+        };
+        let (events, ()) = join(collect(&runtime), server).await;
+        let result = output(&events, "feature");
+        assert!(result.is_error);
+        assert_eq!(
+            result.content["untrusted"]["response"],
+            machine_god_core::json::from_slice(raw).unwrap()
+        );
+        // Small complete results use the archive adapter's existing inline
+        // persistence threshold; stopping must preserve that exact evidence too.
+        assert_eq!(persisted(&runtime.record(), "feature"), result);
+        assert_eq!(fixture.transport.requests.lock().unwrap().len(), 1);
+        assert_eq!(fixture.transport.responses.lock().unwrap().len(), 1);
+        assert_eq!(fixture.prompt.calls.load(Ordering::Relaxed), 0);
         fixture.host().close_mcp();
         assert!(
             fixture

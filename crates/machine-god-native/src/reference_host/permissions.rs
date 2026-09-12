@@ -205,7 +205,7 @@ impl ReferenceHostToolCatalog {
     pub(super) fn extensions(
         &mut self,
         catalog: Arc<dyn super::McpToolCatalog>,
-        features: Arc<dyn super::McpFeatureAuthority>,
+        features: Arc<dyn Tool>,
         subagents: Arc<dyn super::SubagentAuthority>,
     ) {
         self.add(
@@ -213,7 +213,7 @@ impl ReferenceHostToolCatalog {
             None,
         );
         self.add(super::McpSelectTool::shared_catalog(catalog), None);
-        self.add(super::McpFeaturesTool::shared_authority(features), None);
+        self.add_shared(features, None);
         self.add(super::SubagentTool::shared_authority(subagents), None);
     }
 

@@ -205,8 +205,12 @@ adapter or independent quota. The runtime supplies the exact catalog shared by
 the actual builtin target authority and preparer, uses the same reviewer and
 controller, and resolves non-builtin names only through the live exact-turn
 runtime. Unknown, foreign or retired names cannot fall back to builtin approval.
-Model-facing resource/prompt features remain explicitly unavailable until a
-separate typed feature authority is selected; no contextless fallback is added.
+The native `mcp_features` registration uses this same runtime and archive adapter.
+All seven resource/prompt actions retain exact-turn authority, complete untrusted
+JSON and durable paging receipts; unresolved input-required responses finish the
+turn without replay. The registration holds only a weak runtime reference.
+Generic extension constructors retain their injected feature authority and
+portable bounds; no contextless fallback is added.
 
 `mcp_runtime()` returns this exact runtime without activating servers.
 `reserved_tool_names()` borrows names captured from the engine's successful
@@ -535,7 +539,8 @@ are independent of terminal's
 foreground-execution, read, and wait admission limits.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
-`mcp_features` uses only its explicitly injected read-only authority. It stamps
+`mcp_features` uses its explicitly selected native runtime or injected read-only
+authority. It stamps
 all returned resource and prompt data as untrusted and grants no permission or
 execution authority; its complete boundary is defined by the
 [MCP features contract](mcp-features.md).

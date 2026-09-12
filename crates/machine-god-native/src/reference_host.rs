@@ -34,16 +34,16 @@ use crate::{
     AiGatewayVisionTransport, AiGatewayWebSearchTransport, AskUserQuestionTool,
     DiscoveredAiGatewayCredential, FileSessionStore, FileUndoTracker, LoadedNativeConfig,
     McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
-    McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
-    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
-    NativeProviderKind, NativeSessionLifecycle, NativeToolResultArchiveAdapter,
-    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter,
-    ReadToolResultTool, TerminalBackgroundCatalog, TerminalBackgroundInspector,
-    TerminalBackgroundOutputReader, TerminalBackgroundSignaler, TerminalBackgroundStarter,
-    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalBackgroundWriter,
-    TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits, VisionTool,
-    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
-    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
+    McpFeatureRequest, McpSearchToolsTool, McpSelectTool, McpToolCatalog, McpToolCatalogError,
+    McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind, NativeProviderKind,
+    NativeSessionLifecycle, NativeToolResultArchiveAdapter, NativeTransportKind, PermissionMode,
+    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
+    TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundOutputReader,
+    TerminalBackgroundSignaler, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
+    TerminalBackgroundWaitDelayError, TerminalBackgroundWriter, TerminalTool, ToolResultArchive,
+    VisionDeadline, VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind,
+    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind,
+    discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -1515,7 +1515,8 @@ impl NativeReferenceHost {
             None => read_tool_result,
         };
         catalog.question(AskUserQuestionTool::shared_prompter(question_prompter));
-        catalog.extensions(mcp_catalog, mcp_feature_authority, subagent_authority);
+        let features = mcp::features(mcp.as_ref(), mcp_feature_authority);
+        catalog.extensions(mcp_catalog, features, subagent_authority);
         catalog.add(memory, None);
         catalog.add(read_tool_result, None);
         catalog.terminal(terminal, terminal_concrete)?;

@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `archived feature projection, continuation and CLI activation; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `startup/reload ownership, continuation and CLI activation; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -417,13 +417,13 @@ Exact conversation/turn routing is integrated into both CLI setup paths. Owned
 OAuth provides discovery, approved callbacks, refresh, private credentials and
 generation-bound logout receipts; runtime/CLI activation remains below.
 Typed feature/result/input codecs and exact HTTP heads compose with explicit
-DNS/TLS, startup, atomic publication, owned feature calls and consented form input.
+DNS/TLS, startup, atomic publication, archived feature calls and consented form input.
 Component checks are not full-feature gates; completed clean trees are removed.
 
 These components do not constitute a delivered runtime. Remaining composition
-must compose peer reload/finalization and archived feature projections, plus
+must compose peer reload/finalization and CLI activation, plus
 URL/legacy input custody, TTL/notification
-refresh, authentication and CLI activation/finalization. Raw pages
+refresh, authentication and CLI finalization. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition

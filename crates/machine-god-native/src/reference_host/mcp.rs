@@ -60,7 +60,7 @@ impl NativeReferenceHostMcpOptions {
         self,
         archive: Arc<NativeToolResultArchiveAdapter>,
     ) -> Result<Composition, NativeReferenceHostBuildError> {
-        let executor = NativeMcpArchivedToolExecutor::new(archive).map_err(|_| error())?;
+        let executor = NativeMcpArchivedToolExecutor::new(archive.clone()).map_err(|_| error())?;
         let executor = Arc::new(match self.form_responder {
             Some(presenter) => executor.with_form_responder(presenter),
             None => executor,
@@ -75,8 +75,13 @@ impl NativeReferenceHostMcpOptions {
         )
         .map(Arc::new)
         .map_err(|_| error())?;
+        let features = Arc::new(crate::NativeMcpFeaturesTool::new(
+            Arc::downgrade(&runtime),
+            archive,
+        ));
         Ok(Composition {
             runtime,
+            features,
             contexts: self.contexts,
         })
     }
@@ -84,7 +89,18 @@ impl NativeReferenceHostMcpOptions {
 
 pub(super) struct Composition {
     pub runtime: Arc<NativeMcpRuntime>,
+    pub features: Arc<crate::NativeMcpFeaturesTool>,
     pub contexts: Arc<NativeMcpContexts>,
+}
+
+pub(super) fn features(
+    composition: Option<&Composition>,
+    fallback: Arc<dyn crate::McpFeatureAuthority>,
+) -> Arc<dyn machine_god_core::Tool> {
+    match composition {
+        Some(composition) => composition.features.clone(),
+        None => Arc::new(crate::McpFeaturesTool::shared_authority(fallback)),
+    }
 }
 
 pub(super) fn select(
