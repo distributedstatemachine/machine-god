@@ -122,7 +122,7 @@ fn literal_read_and_get_resume_through_the_exact_command_bridge_and_modal() {
             assert_eq!(driver.owner.runtime().record(), record);
             assert!(fixture.transport.requests().is_empty());
             drop(outcome);
-            http::finish_runtime(driver, fixture).await;
+            Box::pin(http::finish_runtime(driver, fixture)).await;
         }
     });
 }
@@ -150,6 +150,6 @@ fn literal_cancel_retires_waiting_human_input_without_resuming_http() {
         assert!(fixture.transport.requests().is_empty());
         assert_eq!(driver.owner.runtime().status().queued_jobs, 0);
         drop(outcome);
-        http::finish_runtime(driver, fixture).await;
+        Box::pin(http::finish_runtime(driver, fixture)).await;
     });
 }

@@ -32,7 +32,7 @@ fn cases() -> [Case; 7] {
             native::McpFeatureAction::ResourceTemplates,
             "resources/templates/list",
             json!({}),
-            json!({"resourceTemplates":[{"uriTemplate":"test:///{id}","name":"dynamic"}],"ttlMs":300000}),
+            json!({"resourceTemplates":[{"uriTemplate":"test:///{id}","name":"dynamic"}],"ttlMs":300_000}),
         ),
         (
             "/mcp resource read fixture test://fixed",
@@ -118,6 +118,6 @@ fn seven_literal_feature_commands_use_actual_http_owner_and_exact_receipts() {
             assert_eq!(driver.owner.runtime().record(), record);
             drop(outcome);
         }
-        http::finish_runtime(driver, fixture).await;
+        Box::pin(http::finish_runtime(driver, fixture)).await;
     });
 }

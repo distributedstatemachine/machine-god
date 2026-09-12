@@ -96,7 +96,7 @@ pub(super) async fn setup() -> (support::Fixture, Driver, TcpListener) {
     };
     let server = async {
         reply(&listener, "server/discover", json!({"supportedVersions":["2026-07-28"],"capabilities":{"tools":{},"resources":{},"prompts":{},"completions":{}}})).await;
-        reply(&listener, "tools/list", json!({"tools":[],"ttlMs":300000})).await;
+        reply(&listener, "tools/list", json!({"tools":[],"ttlMs":300_000})).await;
     };
     futures_util::future::join(client, server).await;
     let driver = super::super::super::driver_with_inbox(&fixture, inbox).await;
@@ -150,10 +150,10 @@ pub(super) async fn reply(listener: &TcpListener, method: &str, mut result: Valu
 }
 
 pub(super) fn resources() -> Value {
-    json!({"resources":[{"uri":"test://fixed","name":"fixed"}],"ttlMs":300000})
+    json!({"resources":[{"uri":"test://fixed","name":"fixed"}],"ttlMs":300_000})
 }
 pub(super) fn prompts() -> Value {
-    json!({"prompts":[{"name":"review","arguments":[{"name":"topic","required":true}]}],"ttlMs":300000})
+    json!({"prompts":[{"name":"review","arguments":[{"name":"topic","required":true}]}],"ttlMs":300_000})
 }
 pub(super) async fn finish_runtime(driver: Driver, fixture: support::Fixture) {
     fixture.host.close_mcp();
@@ -162,6 +162,10 @@ pub(super) async fn finish_runtime(driver: Driver, fixture: support::Fixture) {
         .drain_mcp(deadline(), CancellationToken::new())
         .await
         .unwrap();
-    assert!(receipts.iter().all(|receipt| receipt.is_complete()));
-    super::super::super::finish(driver, fixture).await;
+    assert!(
+        receipts
+            .iter()
+            .all(machine_god_native::mcp::runtime::NativeMcpPeerCompletion::is_complete)
+    );
+    Box::pin(super::super::super::finish(driver, fixture)).await;
 }
