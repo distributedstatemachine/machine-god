@@ -1,0 +1,72 @@
+# Complete MCP CLI review history
+
+This is historical evidence for the complete MCP feature, not a live delivery
+ledger. The [implementation plan](../implementation-plan.md) owns current phase,
+delivery identifiers and the next gate. Component commits are not deliveries.
+
+## R1 candidate and local evidence
+
+Candidate: `8583cd37585d82274cdec84994147dd48e1672eb`.
+Review base: `6736070cc70ff6040cfa92275e80a0e9a5172852`.
+Scope: the complete 484-file MCP feature diff, not only its last test fixes.
+
+The exact candidate passed the full Rust 1.94.1 local gate: macOS serial and
+Linux default-concurrency workspace/doc tests, fresh release CLI smokes on both
+platforms, formatting, strict Clippy, repository Python checks, pinned upstream
+and Unicode drift, dependency audit/policy, portable compilation and unsafe
+conformance. Python reported 269 tests with 14 skips. CLI unit tests reported
+511 passes and six ignores on both platforms; CLI integrations reported 111
+passes on macOS and 116 on Linux. macOS native units reported 3,329 passes and
+12 ignores. No remote acceptance follows from these local results.
+
+Local logs were retained under `/private/tmp/mg-mcp-full-gate.hE0Sfz`, especially
+`macos-8583-complete-gate-replacement.log`, `linux-8583-complete-gate.log`,
+`linux-8583-release-smoke.log`, `python-8583-gate.log` and
+`auxiliary-8583-gate.log`. The earlier macOS log without `replacement` records
+an incorrect diagnostic binary path, not a successful gate.
+
+Earlier rejected local runs exposed stale catalog search fixture geometry,
+same-label test-directory deletion races under Linux concurrency, and an
+immediate pipe-closure assertion sensitive to unrelated concurrent spawning.
+The repairs respectively separated cardinality/retained/model budgets, used
+exclusive unique directory ownership, and isolated three immediate pipe
+assertions in bounded exact child tests without reducing parent concurrency or
+weakening the assertions. The original unrelated pipe reader was not captured;
+passing unchanged retries alone were not accepted as a repair. All three repairs
+were included in the complete successful candidate gate above.
+
+## R1 independent local review results
+
+Three fresh reviewers received isolated checkouts of the same candidate after
+the complete local gate. They were ordinary independent local reviewers, not
+Bugbot. The review covered correctness/API, lifecycle/platform and resources.
+
+| Track | Concrete finding |
+| --- | --- |
+| Correctness/API | Tool-call progress notifications accumulate across calls in the retained 64-entry peer queue. Ordinary calls and continuations need notification consumption without losing subscription invalidation. |
+| Correctness/API | HTTP tool calls retain the discovery decoder's 65,536-node cap instead of selecting the complete tool-result codec's 262,144-node capacity. |
+| Correctness/API | Human feature demand does not activate optional servers deferred by the supported native `AskStartup` phase. Ordinary interactive CLI startup uses `All`; that path was not claimed to reproduce this issue. |
+| Lifecycle/platform | Configured stdio startup accepts positive `u32` milliseconds, but the shared helper encoder and decoder impose the terminal's 600-second cap before server launch. |
+| Resources, partial | The execution contract incorrectly promises legacy URL-error input custody, although the result decoder keeps such errors as protocol failures. |
+
+The correctness and lifecycle reviewers completed source review and prepared
+coordinator-owned bounded diagnostic fixtures. Their final reports did not claim
+runtime execution. The resource reviewer ended with a tool error before a final
+report; its partial observations are not a completed third-review verdict.
+R1 therefore did not satisfy acceptance.
+
+## Remediation decisions
+
+Backward compatibility is not required. Correct the obsolete continuation
+promise rather than restoring legacy behavior. Remove context-free compatibility
+trait forwarding while preserving useful injected catalogs and feature handlers
+through required explicit-context hooks.
+
+Resource source inspection also identified repeated string-length scans and
+uncharged character-class range comparisons. Store decoded scalar counts once
+per parsed value and charge class comparisons to the existing shared pattern
+budget. Small deterministic Unicode, retained-accounting and work-bound tests
+cover these changes; no timing or measured speedup claim is made.
+
+Replacement code requires its own focused checks, complete local gate, three
+fresh completed independent reviews and exact remote evidence before delivery.

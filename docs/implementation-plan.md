@@ -463,7 +463,7 @@ human form/URL recovery, blocked-output paging, physical pipe EOF and PTY
 recording/session-transition tests pass with the exact fresh release helper.
 The 24 focused CLI tests use explicit local producers; PTY test children exercise
 the production capture/interactive host, not top-level provider discovery.
-These components are not a delivered runtime. The complete fresh-release local
+The [MCP review history](reviews/m05-mcp-cli-review-01.md) records rejected candidates. The complete fresh-release local
 gate, three fresh reviews and exact remote artifact gates remain required.
 Raw pages grant no execution authority; preserve exact-number, reference and
 server-authoritative schema semantics through the complete feature gate.
