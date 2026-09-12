@@ -1,7 +1,7 @@
 use super::{NativeInteractivePromptError as Error, NativeInteractivePromptResponse as Response};
 use crate::mcp::interaction::{
-    McpElicitationAnswer, McpElicitationPromptRequest, McpLegacyUrlCompletionAnswer,
-    McpLegacyUrlCompletionPromptRequest, McpUrlRecoveryAnswer, McpUrlRecoveryPromptRequest,
+    McpElicitationAnswer, McpElicitationPromptRequest, McpUrlRecoveryAnswer,
+    McpUrlRecoveryPromptRequest,
 };
 use crate::{
     MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES, MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES,
@@ -16,14 +16,12 @@ pub(super) enum AcceptedResponse {
     Question(QuestionPromptOutcome),
     Elicitation(McpElicitationAnswer),
     UrlRecovery(McpUrlRecoveryAnswer),
-    LegacyUrlCompletion(McpLegacyUrlCompletionAnswer),
 }
 impl AcceptedResponse {
     pub fn bytes(&self) -> Result<usize, Error> {
         match self {
             Self::Permission(_)
             | Self::UrlRecovery(_)
-            | Self::LegacyUrlCompletion(_)
             | Self::Question(
                 QuestionPromptOutcome::Cancelled | QuestionPromptOutcome::Unavailable,
             ) => Ok(64),
@@ -55,9 +53,6 @@ pub(super) enum Payload {
     UrlRecovery {
         request: McpUrlRecoveryPromptRequest,
     },
-    LegacyUrlCompletion {
-        request: McpLegacyUrlCompletionPromptRequest,
-    },
 }
 
 impl Payload {
@@ -76,10 +71,6 @@ impl Payload {
             Self::UrlRecovery { request } => (
                 &request.source().context().session_id,
                 &request.source().context().session_incarnation_id,
-            ),
-            Self::LegacyUrlCompletion { request } => (
-                &request.context().session_id,
-                &request.context().session_incarnation_id,
             ),
         };
         session == owner.session_id() && incarnation == owner.session_incarnation_id()
@@ -119,7 +110,6 @@ impl Payload {
             }
             Self::Elicitation { request } => budget.add(request.retained_byte_charge())?,
             Self::UrlRecovery { request } => budget.add(request.retained_byte_charge())?,
-            Self::LegacyUrlCompletion { request } => budget.add(request.retained_byte_charge())?,
         }
         Ok(budget.bytes)
     }
@@ -134,17 +124,14 @@ impl Payload {
             (Self::UrlRecovery { .. }, Response::UrlRecovery(answer)) => {
                 Ok(AcceptedResponse::UrlRecovery(answer))
             }
-            (Self::LegacyUrlCompletion { .. }, Response::LegacyUrlCompletion(answer)) => {
-                Ok(AcceptedResponse::LegacyUrlCompletion(answer))
-            }
             (_, response) => {
                 self.validate_response(&response)?;
                 match response {
                     Response::Permission(decision) => Ok(AcceptedResponse::Permission(decision)),
                     Response::Question(outcome) => Ok(AcceptedResponse::Question(outcome)),
-                    Response::Elicitation(_)
-                    | Response::UrlRecovery(_)
-                    | Response::LegacyUrlCompletion(_) => Err(Error::InvalidResponse),
+                    Response::Elicitation(_) | Response::UrlRecovery(_) => {
+                        Err(Error::InvalidResponse)
+                    }
                 }
             }
         }

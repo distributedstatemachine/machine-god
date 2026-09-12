@@ -303,9 +303,6 @@ impl Shared {
                 Payload::UrlRecovery { .. } => {
                     Response::UrlRecovery(crate::mcp::interaction::McpUrlRecoveryAnswer::Cancel)
                 }
-                Payload::LegacyUrlCompletion { .. } => Response::LegacyUrlCompletion(
-                    crate::mcp::interaction::McpLegacyUrlCompletionAnswer::Cancel,
-                ),
             }
         };
         self.reply(token, response)

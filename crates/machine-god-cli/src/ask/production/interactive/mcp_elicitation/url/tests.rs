@@ -60,14 +60,6 @@ fn recovery() -> McpUrlRecoveryPromptRequest {
     )
     .unwrap()
 }
-fn completion() -> McpLegacyUrlCompletionPromptRequest {
-    McpLegacyUrlCompletionPromptRequest::new(
-        context(),
-        Arc::from("server"),
-        ToolName::new("tool").unwrap(),
-    )
-    .unwrap()
-}
 fn poll<T>(future: &mut BoxFuture<'_, T>) -> Poll<T> {
     future
         .as_mut()
@@ -122,42 +114,43 @@ fn recovery_requires_acknowledged_exact_token_and_returns_only_typed_choices() {
 }
 
 #[test]
-fn legacy_manual_retry_is_distinct_and_stale_completion_ui_cannot_reply() {
+fn stale_recovery_binding_and_dropped_producer_cannot_reply() {
     let (bridge, mut inbox) = bridge();
     let mut first = bridge.recover_url(recovery(), CancellationToken::new());
     assert!(poll(&mut first).is_pending());
     let old = modal(&mut inbox).presentation_binding();
     drop(first);
     for (line, expected) in [
-        ("r", McpLegacyUrlCompletionAnswer::Retry),
-        ("c", McpLegacyUrlCompletionAnswer::Cancel),
-        ("/cancel-input", McpLegacyUrlCompletionAnswer::Cancel),
+        ("m", McpUrlRecoveryAnswer::ContinueManually),
+        ("r", McpUrlRecoveryAnswer::RetryBrowser),
+        ("c", McpUrlRecoveryAnswer::Cancel),
+        ("/cancel-input", McpUrlRecoveryAnswer::Cancel),
     ] {
-        let mut future = bridge.complete_legacy_url(completion(), CancellationToken::new());
+        let mut future = bridge.recover_url(recovery(), CancellationToken::new());
         assert!(poll(&mut future).is_pending());
         let mut modal = modal(&mut inbox);
         assert!(
             String::from_utf8(modal.render().unwrap())
                 .unwrap()
-                .contains("I completed it / Retry")
+                .contains("Retry browser")
         );
         assert!(modal.answer(line, &modal.presentation_binding()).is_err());
         modal.displayed = true;
         assert!(modal.answer(line, &old).is_err());
         let binding = modal.binding();
-        assert!(modal.answer("m", &binding).is_err());
+        assert!(modal.answer("I completed it", &binding).is_err());
         let response = modal.answer(line, &binding).unwrap().unwrap();
         assert!(
-            matches!(&response, NativeInteractivePromptResponse::LegacyUrlCompletion(actual) if *actual == expected)
+            matches!(&response, NativeInteractivePromptResponse::UrlRecovery(actual) if *actual == expected)
         );
         inbox.reply(modal.view.token(), response).unwrap();
         assert_eq!(poll(&mut future), Poll::Ready(Ok(expected)));
     }
-    let mut future = bridge.complete_legacy_url(completion(), CancellationToken::new());
+    let mut future = bridge.recover_url(recovery(), CancellationToken::new());
     assert!(poll(&mut future).is_pending());
     let mut modal = modal(&mut inbox);
     modal.displayed = true;
-    drop(future); // Notification completion wins; old retained UI is only data.
+    drop(future); // A dropped recovery producer leaves only stale UI data.
     let response = modal.answer("r", &modal.binding()).unwrap().unwrap();
     assert_eq!(
         inbox.reply(modal.view.token(), response),

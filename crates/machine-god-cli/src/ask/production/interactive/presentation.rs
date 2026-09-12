@@ -47,9 +47,6 @@ impl Modal {
         if let Some(request) = self.view.url_recovery() {
             return super::mcp_elicitation::url::render_recovery(request);
         }
-        if let Some(request) = self.view.legacy_url_completion() {
-            return super::mcp_elicitation::url::render_completion(request);
-        }
         if let Some(request) = self.view.elicitation() {
             return self.elicitation.render(
                 request.request(),
@@ -109,11 +106,6 @@ impl Modal {
         }
         if self.view.url_recovery().is_some() {
             let response = super::mcp_elicitation::url::answer_recovery(line)?;
-            self.displayed = false;
-            return Ok(Some(response));
-        }
-        if self.view.legacy_url_completion().is_some() {
-            let response = super::mcp_elicitation::url::answer_completion(line)?;
             self.displayed = false;
             return Ok(Some(response));
         }

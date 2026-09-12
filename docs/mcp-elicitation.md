@@ -36,6 +36,19 @@ stores canonical response data. Numeric lexemes are preserved. Decline and
 cancel are distinct actions; their ignored content is omitted canonically.
 URL acceptance rejects content and does not open a browser.
 
+Modern URL requests retain a separate typed recovery question when a browser
+handoff was not confirmed. Its only choices are continue manually, retry the
+browser, and cancel. Recovery retains the exact original context and request,
+uses the same inbox limits and invalidation rules, and charges 64 additional
+request bytes plus 64 bytes for an unconsumed answer. The CLI requires the exact
+acknowledged presentation token and does not repeat the authorization URL in
+the recovery display. A retry choice is data for the native effect owner, not
+permission to reopen a browser or resubmit a tool call on its own.
+
+There is no legacy URL-completion prompt, completion answer, or manual
+completion/retry API. Modern consent and recovery do not wait for legacy
+completion notifications or manufacture remote completion evidence.
+
 Validation occurs outside the inbox lock. Admission then rechecks the token,
 displayed/unanswered state, exact payload Arc, and response budget under lock.
 Wrong-kind, stale, foreign-owner, duplicate, invalid, and over-budget replies

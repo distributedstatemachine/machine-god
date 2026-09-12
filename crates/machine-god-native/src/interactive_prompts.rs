@@ -13,8 +13,8 @@ use machine_god_core::{BackgroundOutputOwner, BoxFuture, PermissionRequest, Tool
 
 use crate::mcp::interaction::{
     McpElicitationAnswer, McpElicitationAnswerInput, McpElicitationPresenter,
-    McpElicitationPromptError, McpElicitationPromptRequest, McpLegacyUrlCompletionAnswer,
-    McpLegacyUrlCompletionPromptRequest, McpUrlRecoveryAnswer, McpUrlRecoveryPromptRequest,
+    McpElicitationPromptError, McpElicitationPromptRequest, McpUrlRecoveryAnswer,
+    McpUrlRecoveryPromptRequest,
 };
 use crate::{
     PermissionPromptDecision, PermissionPromptError, PermissionPrompter, QuestionPromptError,
@@ -175,13 +175,6 @@ impl NativeInteractivePromptView {
             _ => None,
         }
     }
-    #[must_use]
-    pub fn legacy_url_completion(&self) -> Option<&McpLegacyUrlCompletionPromptRequest> {
-        match self.payload.as_ref() {
-            Payload::LegacyUrlCompletion { request } => Some(request),
-            _ => None,
-        }
-    }
     /// Whether native preparation supplied an exact-action proposal source.
     /// This observation neither validates a stale view nor creates authority.
     #[must_use]
@@ -205,7 +198,6 @@ pub enum NativeInteractivePromptResponse {
     Question(QuestionPromptOutcome),
     Elicitation(McpElicitationAnswerInput),
     UrlRecovery(McpUrlRecoveryAnswer),
-    LegacyUrlCompletion(McpLegacyUrlCompletionAnswer),
 }
 impl fmt::Debug for NativeInteractivePromptResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -322,19 +314,6 @@ impl McpElicitationPresenter for NativeInteractivePromptBridge {
         Box::pin(async move {
             match future.await? {
                 AcceptedResponse::UrlRecovery(answer) => Ok(answer),
-                _ => Err(McpElicitationPromptError::InvalidResponse),
-            }
-        })
-    }
-    fn complete_legacy_url(
-        &self,
-        request: McpLegacyUrlCompletionPromptRequest,
-        cancellation: machine_god_core::CancellationToken,
-    ) -> BoxFuture<'_, Result<McpLegacyUrlCompletionAnswer, McpElicitationPromptError>> {
-        let future = self.mcp_prompt(Payload::LegacyUrlCompletion { request }, cancellation);
-        Box::pin(async move {
-            match future.await? {
-                AcceptedResponse::LegacyUrlCompletion(answer) => Ok(answer),
                 _ => Err(McpElicitationPromptError::InvalidResponse),
             }
         })
