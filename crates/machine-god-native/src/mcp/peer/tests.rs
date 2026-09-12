@@ -1,4 +1,33 @@
 use super::*;
+
+#[test]
+fn required_readiness_observes_only_selected_stdio_lifetime_and_connection() {
+    struct FixedTimer(Instant);
+    impl McpPeerTimer for FixedTimer {
+        fn now(&self) -> Instant {
+            self.0
+        }
+        fn sleep_until(&self, _: Instant) -> BoxFuture<'_, ()> {
+            Box::pin(std::future::pending())
+        }
+    }
+    let now = Instant::now();
+    let connection = McpStdioConnection::inert_for_test();
+    let cancellation = CancellationToken::new();
+    let mut observation = McpStdioPeerReadiness {
+        connection: connection.readiness(),
+        cancellation: cancellation.clone(),
+        lifetime: McpPeerLifetime::Until(now + Duration::from_secs(1)),
+        timer: Arc::new(FixedTimer(now)),
+    };
+    assert!(observation.is_ready());
+    observation.timer = Arc::new(FixedTimer(now + Duration::from_secs(1)));
+    assert!(!observation.is_ready());
+    observation.lifetime = McpPeerLifetime::OwnerControlled;
+    assert!(observation.is_ready());
+    cancellation.cancel();
+    assert!(!observation.is_ready());
+}
 use crate::mcp::protocol::{ProtocolVersion, WireLimits, parse_envelope};
 use std::fs::File;
 use std::path::PathBuf;

@@ -51,6 +51,7 @@ pub enum NativeConversationError {
     Observation(NativeObservationError),
     PermissionContext(crate::NativePermissionContextError),
     McpContext(NativeMcpContextError),
+    McpRequiredUnavailable,
     WorkspaceContext(crate::NativeWorkspaceContextError),
     InvalidContext(NativeContextError),
     InvalidSkillContext(crate::NativeSkillPromptContextError),
@@ -73,6 +74,7 @@ impl fmt::Display for NativeConversationError {
             Self::Observation(error) => error.fmt(f),
             Self::PermissionContext(error) => error.fmt(f),
             Self::McpContext(error) => error.fmt(f),
+            Self::McpRequiredUnavailable => f.write_str("required MCP server unavailable; use /mcp to manage servers, then submit a new prompt"),
             Self::WorkspaceContext(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidSkillContext(error) => error.fmt(f),
@@ -161,7 +163,7 @@ impl Checkpoint {
 /// Owns a live core session and serializes native admission/finalization.
 ///
 /// The host retains provider, prompt, workspace and terminal resources. This
-/// owner never reads a clock or environment, and never automatically retries a
+/// owner never acquires an ambient clock or environment, and never automatically retries a
 /// provider or reexecutes a historical tool call. Other handles to the same core
 /// session still obey core's revision and turn leases.
 pub struct NativeConversation {
@@ -172,6 +174,7 @@ pub struct NativeConversation {
     permissions: Option<Arc<crate::NativePermissionSession>>,
     permission_contexts: Option<Arc<ContextSession>>,
     mcp_contexts: Option<Arc<McpContextSession>>,
+    mcp_readiness: Option<std::sync::Weak<crate::mcp::controller::NativeMcpController>>,
     workspace: Option<ConversationWorkspaceBinding>,
 }
 
@@ -306,6 +309,7 @@ impl NativeConversation {
             permissions: None,
             permission_contexts: None,
             mcp_contexts: None,
+            mcp_readiness: None,
             workspace: None,
         })
     }
@@ -366,6 +370,20 @@ impl NativeConversation {
                 .register(&self.session)
                 .map_err(NativeConversationError::McpContext)?,
         );
+        Ok(self)
+    }
+
+    /// Attaches the exact host controller without retaining its lifetime.
+    /// # Errors
+    /// Rejects busy conversations or duplicate readiness selection.
+    pub fn with_mcp_readiness(
+        mut self,
+        controller: &Arc<crate::mcp::controller::NativeMcpController>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.mcp_readiness.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.mcp_readiness = Some(Arc::downgrade(controller));
         Ok(self)
     }
 
@@ -975,6 +993,13 @@ impl NativeConversation {
         let lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
+        }
+        if let Some(controller) = &self.mcp_readiness {
+            controller
+                .upgrade()
+                .ok_or(NativeConversationError::McpRequiredUnavailable)?
+                .required_readiness()
+                .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
         }
         let workspace = match workspace {
             WorkspaceAdmission::Current => self.capture_workspace_scope()?,

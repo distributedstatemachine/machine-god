@@ -36,8 +36,29 @@ pub(super) async fn activate(
     phase: machine_god_native::mcp::startup::NativeMcpStartupPhase,
     signals: &mut super::AskSignals,
 ) -> Result<(), ()> {
+    match activate_observed(host, phase, signals).await? {
+        None => Ok(()),
+        Some(_) => Err(()),
+    }
+}
+
+/// Interactive management survives discovery failure. Native conversation
+/// admission checks required readiness independently for each new model prompt.
+pub(super) async fn activate_interactive(
+    host: &machine_god_native::NativeReferenceHost,
+    signals: &mut super::AskSignals,
+) -> Result<Option<&'static [u8]>, ()> {
+    Ok(activate_observed(host, machine_god_native::mcp::startup::NativeMcpStartupPhase::All, signals)
+        .await?.map(|_| b"MCP startup failed; management remains available via /mcp. Required servers must be ready before a new model prompt can run.\n".as_slice()))
+}
+
+async fn activate_observed(
+    host: &machine_god_native::NativeReferenceHost,
+    phase: machine_god_native::mcp::startup::NativeMcpStartupPhase,
+    signals: &mut super::AskSignals,
+) -> Result<Option<machine_god_native::mcp::controller::NativeMcpControllerFailure>, ()> {
     let Some(controller) = host.mcp_controller() else {
-        return Ok(());
+        return Ok(None);
     };
     let cancellation = machine_god_core::CancellationToken::new();
     let mut operation = controller.start_configured(phase, cancellation.clone());
@@ -48,11 +69,24 @@ pub(super) async fn activate(
         operation.as_mut().poll(cx)
     })
     .await;
-    result.map_err(|_| ())?;
     if cancellation.is_cancelled() {
         return Err(());
     }
-    Ok(())
+    match result {
+        Ok(receipt) if !receipt.closed_after_publication() => Ok(None),
+        Ok(_) => Err(()),
+        Err(failure) => {
+            use machine_god_native::mcp::controller::NativeMcpControllerError;
+            if matches!(
+                failure.kind(),
+                NativeMcpControllerError::Closed | NativeMcpControllerError::Cancelled
+            ) {
+                Err(())
+            } else {
+                Ok(Some(failure))
+            }
+        }
+    }
 }
 
 /// Runs on the existing blocking CLI worker, before dropping its host lease.

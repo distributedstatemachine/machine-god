@@ -1235,6 +1235,10 @@ impl NativeReferenceHost {
         &self,
         conversation: crate::NativeConversation,
     ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
+        let conversation = match &self.mcp_controller {
+            Some(controller) => conversation.with_mcp_readiness(controller)?,
+            None => conversation,
+        };
         match &self.mcp_contexts {
             Some(contexts) => conversation.with_mcp_contexts(contexts),
             None => Ok(conversation),

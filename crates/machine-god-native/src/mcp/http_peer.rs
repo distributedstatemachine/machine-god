@@ -115,6 +115,19 @@ struct Completion {
     closed: CancellationToken,
     exchanges: Mutex<Vec<McpHttpObservation>>,
 }
+pub(crate) struct McpHttpPeerReadiness {
+    closed: CancellationToken,
+    cancellation: CancellationToken,
+    lifetime: super::lifetime::McpPeerLifetime,
+    clock: Arc<dyn McpHttpClock>,
+}
+impl McpHttpPeerReadiness {
+    pub(crate) fn is_ready(&self) -> bool {
+        !self.closed.is_cancelled()
+            && !self.cancellation.is_cancelled()
+            && !self.lifetime.is_expired(self.clock.now())
+    }
+}
 /// Local owner completion, not evidence that remote operations were revoked.
 #[derive(Clone)]
 pub struct McpHttpPeerCompletion(Arc<Completion>);
@@ -181,6 +194,14 @@ pub struct McpHttpPeer {
     feature_authority: Option<super::control::McpFeatureControlAuthority>,
 }
 impl McpHttpPeer {
+    pub(crate) fn readiness(&self) -> McpHttpPeerReadiness {
+        McpHttpPeerReadiness {
+            closed: self.completion.0.closed.clone(),
+            cancellation: self.cancellation.clone(),
+            lifetime: self.options.lifetime,
+            clock: self.options.clock.clone(),
+        }
+    }
     /// Executes a native-selected typed feature request with exact fixed HTTP
     /// projection and guarded transport writes. No application replay occurs.
     /// # Errors

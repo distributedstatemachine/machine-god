@@ -159,6 +159,7 @@ impl NativeMcpRuntime {
                 name: server.server,
                 catalog_epoch: server.catalog_epoch,
                 protocol: peer.protocol(),
+                readiness: peer.readiness(),
                 peer: futures_util::lock::Mutex::new(peer),
                 cancellation: CancellationToken::new(),
                 pending: AtomicUsize::new(0),

@@ -21,6 +21,7 @@ use std::{
 mod authentication;
 #[cfg(feature = "mcp-http")]
 mod http;
+mod readiness;
 
 #[derive(Default)]
 struct Clock(AtomicUsize);

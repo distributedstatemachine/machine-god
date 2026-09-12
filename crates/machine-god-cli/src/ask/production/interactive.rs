@@ -194,7 +194,7 @@ fn run_interactive(
         signals,
         control,
         |host, signals, terminal| {
-            let prepared = prepare_terminal_presentation(
+            let mut prepared = prepare_terminal_presentation(
                 &runtime,
                 terminal,
                 size_reader,
@@ -208,12 +208,14 @@ fn run_interactive(
             )?;
             output.tape = prepared.tape;
             runtime.block_on(async {
-                super::mcp_startup::activate(
-                    &host,
-                    machine_god_native::mcp::startup::NativeMcpStartupPhase::All,
-                    signals,
-                )
-                .await?;
+                if let Some(notice) =
+                    super::mcp_startup::activate_interactive(&host, signals).await?
+                {
+                    prepared
+                        .notice
+                        .get_or_insert_with(Vec::new)
+                        .extend_from_slice(notice);
+                }
                 let mut options = NativeInteractiveSessionOptions::new(
                     workspace,
                     host.loaded_config().config().model_preferences(),

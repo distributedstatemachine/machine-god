@@ -21,6 +21,15 @@ impl std::fmt::Debug for NativeMcpOwnedPeer {
     }
 }
 impl NativeMcpOwnedPeer {
+    pub(super) fn readiness(&self) -> NativeMcpPeerReadiness {
+        match self {
+            #[cfg(test)]
+            Self::Script(peer) => NativeMcpPeerReadiness::Script(peer.closed.clone()),
+            Self::Stdio(peer) => NativeMcpPeerReadiness::Stdio(peer.readiness()),
+            #[cfg(feature = "mcp-http")]
+            Self::Http(peer) => NativeMcpPeerReadiness::Http(peer.readiness()),
+        }
+    }
     pub(super) async fn feature(
         &mut self,
         request: &crate::McpFeatureRequest,
@@ -134,6 +143,25 @@ impl NativeMcpOwnedPeer {
             Self::Stdio(peer) => peer.close(),
             #[cfg(feature = "mcp-http")]
             Self::Http(peer) => peer.close(),
+        }
+    }
+}
+
+pub(super) enum NativeMcpPeerReadiness {
+    #[cfg(test)]
+    Script(Arc<std::sync::atomic::AtomicBool>),
+    Stdio(crate::mcp::peer::McpStdioPeerReadiness),
+    #[cfg(feature = "mcp-http")]
+    Http(crate::mcp::http_peer::McpHttpPeerReadiness),
+}
+impl NativeMcpPeerReadiness {
+    pub(super) fn is_ready(&self) -> bool {
+        match self {
+            #[cfg(test)]
+            Self::Script(closed) => !closed.load(std::sync::atomic::Ordering::Acquire),
+            Self::Stdio(peer) => peer.is_ready(),
+            #[cfg(feature = "mcp-http")]
+            Self::Http(peer) => peer.is_ready(),
         }
     }
 }

@@ -97,6 +97,19 @@ pub struct McpStdioPeer {
     notification_bytes: usize,
     closed: bool,
 }
+pub(crate) struct McpStdioPeerReadiness {
+    connection: super::stdio::McpStdioConnectionReadiness,
+    cancellation: CancellationToken,
+    lifetime: McpPeerLifetime,
+    timer: Arc<dyn McpPeerTimer>,
+}
+impl McpStdioPeerReadiness {
+    pub(crate) fn is_ready(&self) -> bool {
+        !self.cancellation.is_cancelled()
+            && !self.lifetime.is_expired(self.timer.now())
+            && self.connection.is_ready()
+    }
+}
 impl fmt::Debug for McpStdioPeer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("McpStdioPeer")
@@ -106,6 +119,14 @@ impl fmt::Debug for McpStdioPeer {
     }
 }
 impl McpStdioPeer {
+    pub(crate) fn readiness(&self) -> McpStdioPeerReadiness {
+        McpStdioPeerReadiness {
+            connection: self.connection.readiness(),
+            cancellation: self.cancellation.clone(),
+            lifetime: self.lifetime,
+            timer: self.timer.clone(),
+        }
+    }
     /// Narrow trusted native ownership without resetting an existing expiry.
     pub(crate) fn restrict_lifetime(&mut self, lifetime: McpPeerLifetime) {
         self.lifetime = match self.lifetime {

@@ -78,7 +78,10 @@ fn peer_owner_outlives_startup_but_explicit_expiry_remains_exact() {
                     McpHttpPeer::connect(selected, CancellationToken::new(), clock.at(1000))
                         .await
                         .unwrap();
+                let readiness = peer.readiness();
+                assert!(readiness.is_ready());
                 clock.advance(2000);
+                assert_eq!(readiness.is_ready(), !expires);
                 let result = peer
                     .catalog(
                         McpCatalogKind::Tools,
@@ -94,6 +97,7 @@ fn peer_owner_outlives_startup_but_explicit_expiry_remains_exact() {
                 }
                 let completion = peer.completion();
                 peer.close();
+                assert!(!readiness.is_ready());
                 assert!(completion.is_complete());
             };
             tokio::time::timeout(Duration::from_secs(3), join(client, server))

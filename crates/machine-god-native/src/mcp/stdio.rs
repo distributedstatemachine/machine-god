@@ -126,6 +126,15 @@ pub struct McpStdioConnection {
     shared: Arc<Shared>,
     completion: NativeOwnedWorkerCompletion,
 }
+/// Observation only; does not retain a connection or its worker ownership.
+pub(crate) struct McpStdioConnectionReadiness(std::sync::Weak<Shared>);
+impl McpStdioConnectionReadiness {
+    pub(crate) fn is_ready(&self) -> bool {
+        self.0
+            .upgrade()
+            .is_some_and(|shared| shared.check().is_ok())
+    }
+}
 impl fmt::Debug for McpStdioConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("McpStdioConnection { <redacted> }")
@@ -137,6 +146,9 @@ impl Drop for McpStdioConnection {
     }
 }
 impl McpStdioConnection {
+    pub(crate) fn readiness(&self) -> McpStdioConnectionReadiness {
+        McpStdioConnectionReadiness(Arc::downgrade(&self.shared))
+    }
     #[cfg(test)]
     pub(crate) fn inert_for_test() -> Self {
         let scope = NativeOwnedWorkerScope::new();

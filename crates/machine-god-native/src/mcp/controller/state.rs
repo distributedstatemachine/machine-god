@@ -123,6 +123,9 @@ pub(super) struct Running {
 pub(super) struct State {
     pub closed: bool,
     pub active: Option<Arc<Generation>>,
+    /// Latest exact loaded source, including failed startup. Observation only;
+    /// it never replaces active publication or revives cancelled authority.
+    pub latest_observed: Option<Arc<Generation>>,
     pub generations: Vec<Arc<Generation>>,
     pub running: Option<Running>,
     #[cfg(all(feature = "mcp-http", any(test, feature = "ai-gateway-http")))]
@@ -143,13 +146,14 @@ impl Inner {
         }
     }
     pub fn close(&self) {
-        let (generations, job, active) = {
+        let (generations, job, active, observed) = {
             let mut state = lock(&self.state);
             state.closed = true;
             (
                 state.generations.clone(),
                 state.running.as_ref().map(|job| job.cancellation.clone()),
                 state.active.take(),
+                state.latest_observed.take(),
             )
         };
         #[cfg(feature = "mcp-http")]
@@ -165,6 +169,18 @@ impl Inner {
         }
         self.options.runtime.close();
         drop(active);
+        drop(observed);
+    }
+
+    pub fn observe_loaded(&self, generation: &Arc<Generation>) {
+        let previous = {
+            let mut state = lock(&self.state);
+            if state.closed {
+                return;
+            }
+            state.latest_observed.replace(generation.clone())
+        };
+        drop(previous);
     }
     pub fn check(
         &self,

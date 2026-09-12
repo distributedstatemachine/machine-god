@@ -20,6 +20,7 @@ mod features;
 mod fixture;
 mod lifecycle;
 mod publication;
+mod readiness;
 pub(super) mod script;
 use fixture::*;
 

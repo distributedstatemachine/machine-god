@@ -1,4 +1,20 @@
 use super::*;
+
+#[test]
+fn required_readiness_observation_tracks_connection_failure_and_drop_without_retention() {
+    let connection = McpStdioConnection::inert_for_test();
+    let observation = connection.readiness();
+    assert!(observation.is_ready());
+    connection.shared.finish(McpStdioError::Closed);
+    assert!(!observation.is_ready());
+    let connection = McpStdioConnection::inert_for_test();
+    let observation = connection.readiness();
+    assert!(observation.is_ready());
+    connection.close();
+    assert!(!observation.is_ready());
+    drop(connection);
+    assert!(observation.0.upgrade().is_none());
+}
 mod runtime;
 
 #[test]

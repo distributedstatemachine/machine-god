@@ -55,6 +55,7 @@ pub(super) async fn replace(
         startup: startup.clone(),
         checkpoint: None,
     });
+    check(inner, signals, deadline)?.observe_loaded(generation);
     let batch = match deadline {
         Some(deadline) => {
             startup

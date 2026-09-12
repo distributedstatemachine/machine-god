@@ -108,6 +108,18 @@ reload is needed to retry. An individual waiting caller's cancellation does not
 cancel the shared deferred loader, whose original optional deadline and owner
 still apply. Configured mode retains the same one-loader and cached-outcome rules.
 
+Interactive startup failure leaves management available, including the route to
+explicit authentication. Every newly admitted model prompt or continuation checks
+the controller's exact active publication before native tool/provider projection.
+Missing publication, disabled required servers, expired/closed required peers and
+retired authority reject that prompt; rejection never automatically requeues it.
+Peer operation occupancy is not a readiness failure. A successful later reload
+permits a newly submitted prompt; failed reload preserves the old active readiness.
+One-shot `AskStartup` still fails before conversation work on required failure.
+Signal cancellation and owner closure still stop interactive startup. The latest
+loaded source, including failed discovery, is retained as one already-budgeted
+generation for historical management observations, never as live peer authority.
+
 `reload` reads a fresh profile and requires every selected enabled server to
 succeed before full replacement. Exact source validation precedes publication;
 the runtime compare-and-swap checks the original publication witness. Predicted

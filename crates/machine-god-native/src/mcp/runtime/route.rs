@@ -30,6 +30,7 @@ pub(super) struct ServerRoute {
     pub catalog_epoch: Instant,
     pub protocol: NegotiatedProtocol,
     pub peer: Mutex<NativeMcpOwnedPeer>,
+    pub readiness: super::peer::NativeMcpPeerReadiness,
     pub cancellation: CancellationToken,
     pub pending: AtomicUsize,
     pub max_pending: usize,

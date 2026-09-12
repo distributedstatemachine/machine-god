@@ -27,6 +27,12 @@ fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTra
     .unwrap();
     let clock = Arc::new(TokioMcpClock);
     let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+        .with_model_routes(Arc::new(
+            machine_god_native::NativeConversationModelRoutes::new(),
+        ))
+        .with_observations(Arc::new(
+            machine_god_native::NativeConversationObservations::new(),
+        ))
         .with_terminal(
             NativeReferenceHostTerminalOptions::new(
                 "/explicit-unexecuted-mcp-helper".into(),
@@ -109,11 +115,9 @@ fn mcp_cli_startup_signal_cancels_before_activation_and_still_joins_the_host() {
     let mut signals = AskSignals::new(receiver);
     assert!(
         with_settled_terminal_host(host, &runtime, |host| {
-            runtime.block_on(mcp_startup::activate(
-                host,
-                NativeMcpStartupPhase::All,
-                &mut signals,
-            ))
+            runtime
+                .block_on(mcp_startup::activate_interactive(host, &mut signals))
+                .map(|_| ())
         })
         .is_err()
     );
@@ -124,40 +128,161 @@ fn mcp_cli_startup_signal_cancels_before_activation_and_still_joins_the_host() {
 
 #[test]
 fn mcp_cli_required_startup_failure_prevents_conversation_work_and_still_joins() {
-    for phase in [
-        NativeMcpStartupPhase::All,
-        NativeMcpStartupPhase::AskStartup,
-    ] {
-        let directory = ScopedTestDirectory::new(&format!("mcp-required-failure-{phase:?}"));
-        let profile = directory.path().join("profile");
-        fs::create_dir(&profile).unwrap();
-        fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
-        let config = profile.join("mcp.json");
-        fs::write(
-            &config,
-            r#"{"mcp":{"required":{"command":"/unexecuted-server","required":true}}}"#,
+    let directory = ScopedTestDirectory::new("mcp-required-ask-failure");
+    seed_required_profile(&directory);
+    let (host, transport) = host(&directory);
+    let completion = host.terminal_shutdown_completion().unwrap();
+    let (runtime, _) = TokioWebSearchDeadline::build_runtime_pair().unwrap();
+    let (_sender, receiver) = tokio::sync::mpsc::channel(1);
+    let mut signals = AskSignals::new(receiver);
+    let mut conversation_started = false;
+    assert!(
+        with_settled_terminal_host(host, &runtime, |host| {
+            runtime.block_on(mcp_startup::activate(
+                host,
+                NativeMcpStartupPhase::AskStartup,
+                &mut signals,
+            ))?;
+            conversation_started = true;
+            Ok(())
+        })
+        .is_err()
+    );
+    assert!(!conversation_started);
+    assert!(transport.request_bodies().is_empty());
+    assert!(signals.first_observed.is_none());
+    assert!(completion.is_complete());
+}
+
+fn seed_required_profile(directory: &ScopedTestDirectory) {
+    let profile = directory.path().join("profile");
+    fs::create_dir(&profile).unwrap();
+    fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
+    let config = profile.join("mcp.json");
+    fs::write(
+        &config,
+        r#"{"mcp":{"required":{"command":"/unexecuted-server","required":true}}}"#,
+    )
+    .unwrap();
+    fs::set_permissions(config, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+#[test]
+fn mcp_cli_interactive_required_failure_preserves_management_and_rejects_each_prompt() {
+    use machine_god_native::{
+        NativeConversationError, NativeConversationRuntimeError, NativeInteractiveControlReceipt,
+        NativeInteractiveInitialSession, NativeInteractiveSession, NativeInteractiveSessionOptions,
+        mcp::{commands::McpCommand, management::NativeMcpManagementReceipt},
+    };
+    let directory = ScopedTestDirectory::new("mcp-interactive-required");
+    seed_required_profile(&directory);
+    let (host, transport) = host(&directory);
+    let host = Arc::new(host);
+    let completion = host.terminal_shutdown_completion().unwrap();
+    let (runtime, _) = TokioWebSearchDeadline::build_runtime_pair().unwrap();
+    let (_sender, receiver) = tokio::sync::mpsc::channel(1);
+    let mut signals = AskSignals::new(receiver);
+    runtime.block_on(async {
+        assert!(
+            mcp_startup::activate_interactive(&host, &mut signals)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let options = NativeInteractiveSessionOptions::new(
+            host.workspace_root().to_owned(),
+            host.loaded_config().config().model_preferences(),
         )
         .unwrap();
-        fs::set_permissions(config, fs::Permissions::from_mode(0o600)).unwrap();
-        let (host, transport) = host(&directory);
-        let completion = host.terminal_shutdown_completion().unwrap();
-        let (runtime, _) = TokioWebSearchDeadline::build_runtime_pair().unwrap();
-        let (_sender, receiver) = tokio::sync::mpsc::channel(1);
-        let mut signals = AskSignals::new(receiver);
-        let mut conversation_started = false;
-        assert!(
-            with_settled_terminal_host(host, &runtime, |host| {
-                runtime.block_on(mcp_startup::activate(host, phase, &mut signals))?;
-                conversation_started = true;
-                Ok(())
-            })
-            .is_err()
-        );
-        assert!(!conversation_started);
+        let mut session = NativeInteractiveSession::open(
+            host.clone(),
+            options,
+            NativeInteractiveInitialSession::Fresh,
+            1,
+        )
+        .await
+        .unwrap();
+        let control = management(&mut session, McpCommand::List).await;
+        assert!(matches!(
+            control.result,
+            Ok(NativeInteractiveControlReceipt::Mcp(
+                NativeMcpManagementReceipt::Configured(_)
+            ))
+        ));
+        for _ in 0..2 {
+            session
+                .runtime()
+                .enqueue("blocked required prompt".into())
+                .unwrap();
+            assert!(matches!(
+                session.runtime().start_next(3).await,
+                Err(NativeConversationRuntimeError::Conversation(
+                    NativeConversationError::McpRequiredUnavailable
+                ))
+            ));
+            assert_eq!(session.runtime().status().queued_jobs, 0);
+        }
         assert!(transport.request_bodies().is_empty());
-        assert!(signals.first_observed.is_none());
-        assert!(completion.is_complete());
-    }
+        assert!(!session.is_closed());
+        // Management repairs the source through its actual native worker lane.
+        let removed = management(
+            &mut session,
+            McpCommand::Remove {
+                server: "required".into(),
+            },
+        )
+        .await;
+        assert!(!removed.failed());
+        drop(
+            host.mcp_controller()
+                .unwrap()
+                .reload_configured(CancellationToken::new())
+                .await
+                .unwrap(),
+        );
+        assert!(session.runtime().start_next(5).await.unwrap().is_none());
+        session
+            .runtime()
+            .enqueue("new explicitly submitted prompt".into())
+            .unwrap();
+        let turn = session.runtime().start_next(5).await.unwrap().unwrap();
+        assert!(transport.request_bodies().is_empty());
+        drop(turn);
+        session.request_shutdown();
+        poll_fn(|cx| {
+            let _ = session.poll_progress(cx, 6);
+            if session.is_closed() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    });
+    mcp_startup::settle(&host, &runtime).unwrap();
+    drop(host);
+    completion.wait_on_worker().unwrap();
+    assert!(completion.is_complete());
+    assert!(signals.first_observed.is_none());
+}
+
+async fn management(
+    session: &mut machine_god_native::NativeInteractiveSession,
+    command: machine_god_native::mcp::commands::McpCommand,
+) -> machine_god_native::NativeInteractiveControlOutcome {
+    session
+        .request_control(
+            machine_god_native::NativeInteractiveControl::Mcp { command },
+            2,
+        )
+        .unwrap();
+    poll_fn(|cx| {
+        let _ = session.poll_progress(cx, 2);
+        session
+            .take_control_outcome()
+            .map_or(Poll::Pending, Poll::Ready)
+    })
+    .await
 }
 
 #[test]
