@@ -62,7 +62,7 @@ impl NativeMcpOwnedPeer {
             Self::Http(peer) => peer
                 .poll_subscription(deadline)
                 .await
-                .map(|frame| frame.map(|frame| frame.envelope().clone()))
+                .map(|frame| frame.map(crate::mcp::http_peer::McpHttpPeerFrame::into_envelope))
                 .map_err(|_| Error::Unavailable),
         }
     }
