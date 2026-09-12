@@ -13,7 +13,16 @@ use machine_god_native::{
     },
 };
 
+mod auth_controls;
+
 fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTransport>) {
+    host_with_capture(directory, false)
+}
+
+fn host_with_capture(
+    directory: &ScopedTestDirectory,
+    capture: bool,
+) -> (NativeReferenceHost, Arc<OneShotTransport>) {
     let workspace = directory.path().join("workspace");
     let state = directory.path().join("state");
     for path in [&workspace, &state] {
@@ -25,7 +34,18 @@ fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTra
         NativeRootSelection::from_environment(&environment, &workspace).unwrap(),
     )
     .unwrap();
-    let clock = Arc::new(TokioMcpClock);
+    let helper = if capture {
+        let helper = PathBuf::from(
+            std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY")
+                .expect("actual auth-session tests require the freshly built release helper"),
+        );
+        assert!(helper.is_absolute() && helper.is_file());
+        helper
+    } else {
+        "/explicit-unexecuted-mcp-helper".into()
+    };
+    let terminal = NativeReferenceHostTerminalOptions::new(helper, None, vec![]).unwrap();
+    let mcp = mcp_options(&roots, &terminal, capture);
     let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
         .with_model_routes(Arc::new(
             machine_god_native::NativeConversationModelRoutes::new(),
@@ -33,14 +53,7 @@ fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTra
         .with_observations(Arc::new(
             machine_god_native::NativeConversationObservations::new(),
         ))
-        .with_terminal(
-            NativeReferenceHostTerminalOptions::new(
-                "/explicit-unexecuted-mcp-helper".into(),
-                None,
-                vec![],
-            )
-            .unwrap(),
-        )
+        .with_terminal(terminal)
         .with_permissions(NativeReferenceHostPermissionOptions::new(
             Arc::new(NativePermissionContexts::new()),
             Arc::new(TokioPermissionReviewClock),
@@ -48,20 +61,7 @@ fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTra
         .with_mcp_management(Arc::new(NativeMcpManagementService::new(Arc::new(
             NativeMcpConfigStore::new(directory.path().join("profile")).unwrap(),
         ))))
-        .with_mcp_runtime(
-            NativeReferenceHostMcpOptions::new(Arc::new(NativeMcpContexts::new()), clock.clone())
-                .with_controller_startup(NativeMcpControllerStartupOptions {
-                    captured_environment: vec![],
-                    stdio: None,
-                    clock,
-                    catalog_epoch: Instant::now(),
-                    owner_cancellation: CancellationToken::new(),
-                    network: None,
-                    authentication: vec![],
-                    peer_lifetime: McpPeerLifetime::OwnerControlled,
-                    max_retained_bytes: 1024 * 1024,
-                }),
-        );
+        .with_mcp_runtime(mcp);
     let transport = Arc::new(OneShotTransport::new(""));
     let host =
         NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
@@ -80,6 +80,33 @@ fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTra
         )
         .unwrap();
     (host, transport)
+}
+
+fn mcp_options(
+    roots: &PreparedNativeRoots,
+    terminal: &NativeReferenceHostTerminalOptions,
+    capture: bool,
+) -> NativeReferenceHostMcpOptions {
+    let contexts = Arc::new(NativeMcpContexts::new());
+    if capture {
+        // Actual production auth/store/worker composition, with no process or
+        // socket started by capture. These fixtures never activate stdio.
+        return NativeReferenceHostMcpOptions::capture_startup(roots, terminal, contexts).unwrap();
+    }
+    let clock = Arc::new(TokioMcpClock);
+    NativeReferenceHostMcpOptions::new(contexts, clock.clone()).with_controller_startup(
+        NativeMcpControllerStartupOptions {
+            captured_environment: vec![],
+            stdio: None,
+            clock,
+            catalog_epoch: Instant::now(),
+            owner_cancellation: CancellationToken::new(),
+            network: None,
+            authentication: vec![],
+            peer_lifetime: McpPeerLifetime::OwnerControlled,
+            max_retained_bytes: 1024 * 1024,
+        },
+    )
 }
 
 #[test]
