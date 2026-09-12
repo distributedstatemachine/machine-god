@@ -27,8 +27,12 @@ use serde_json::Value;
 use super::protocol::{RpcId, RpcKind, WireLimits, parse_envelope};
 use crate::NativePermissionExecutionProof;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod continuation;
 mod reservation;
 mod runtime;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use continuation::McpContinuationCustody;
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
 pub(crate) use reservation::McpPendingToolReservation;
 pub use reservation::{MAX_MCP_PEER_RESERVATIONS, McpToolReservation};
@@ -107,7 +111,7 @@ impl Slot {
 }
 struct Ready {
     data: Data,
-    proof: NativePermissionExecutionProof,
+    proof: Arc<NativePermissionExecutionProof>,
 }
 struct Data {
     permission: PermissionRequest,
@@ -407,9 +411,11 @@ impl McpSubmissionRegistry {
             };
             let submission = McpSubmission {
                 registry,
-                ready,
+                ready: ready.into(),
                 cancellation,
                 attempted: false,
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                written: Arc::new(AtomicBool::new(false)),
             };
             submission.checkpoint()?;
             Ok(submission)
@@ -627,7 +633,7 @@ impl PreparedMcpSubmission {
         McpSubmissionAdmission {
             ready: Box::new(Ready {
                 data: self.data,
-                proof,
+                proof: Arc::new(proof),
             }),
         }
     }
@@ -696,9 +702,11 @@ impl McpSubmissionAdmission {
 /// identity while queued. Dropping it never makes its call reusable.
 pub struct McpSubmission {
     registry: Arc<McpSubmissionRegistry>,
-    ready: Box<Ready>,
+    ready: Arc<Ready>,
     cancellation: CancellationToken,
     attempted: bool,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    written: Arc<AtomicBool>,
 }
 impl McpSubmission {
     #[cfg(any(test, target_os = "linux", target_os = "macos"))]
@@ -750,11 +758,15 @@ impl McpSubmission {
         let preparation = self.ready.data.cancellation.cancelled();
         let turn = self.registry.cancelled_owned();
         let runtime = self.ready.data.runtime.cancelled_owned();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let proof = self.ready.proof.clone();
         Box::pin(async move {
             let mut execution = std::pin::pin!(execution);
             let mut preparation = std::pin::pin!(preparation);
             let mut turn = std::pin::pin!(turn);
             let mut runtime = std::pin::pin!(runtime);
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let mut proof = proof.invalidated();
             poll_fn(|cx| {
                 if execution.as_mut().poll(cx).is_ready()
                     || preparation.as_mut().poll(cx).is_ready()
@@ -763,6 +775,10 @@ impl McpSubmission {
                 {
                     Poll::Ready(())
                 } else {
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    if proof.as_mut().poll(cx).is_ready() {
+                        return Poll::Ready(());
+                    }
                     Poll::Pending
                 }
             })
@@ -851,6 +867,8 @@ struct WriteGuard {
     terminal: bool,
     cancellations: Option<[Cancelled; 4]>,
     runtime_cancellation: Option<runtime::McpRuntimeCancellation>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    permission_cancellation: Option<BoxFuture<'static, ()>>,
 }
 impl WriteGuard {
     fn new(submission: McpSubmission) -> Self {
@@ -861,18 +879,31 @@ impl WriteGuard {
             submission.registry.handle.cancelled(),
         ]);
         let runtime_cancellation = Some(submission.ready.data.runtime.cancelled_owned());
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let permission_cancellation = {
+            let proof = submission.ready.proof.clone();
+            Some(Box::pin(async move {
+                proof.invalidated().await;
+            }) as BoxFuture<'static, ()>)
+        };
         Self {
             submission,
             offset: 0,
             terminal: false,
             cancellations,
             runtime_cancellation,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            permission_cancellation,
         }
     }
     fn stop(&mut self) {
         self.terminal = true;
         self.cancellations = None;
         self.runtime_cancellation = None;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            self.permission_cancellation = None;
+        }
     }
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if self.terminal {
@@ -889,6 +920,15 @@ impl WriteGuard {
         {
             self.stop();
             return Err(McpSubmissionError::Cancelled);
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if self
+            .permission_cancellation
+            .as_mut()
+            .is_some_and(|waiter| waiter.as_mut().poll(cx).is_ready())
+        {
+            self.stop();
+            return Err(McpSubmissionError::Denied);
         }
         self.checkpoint()
     }
@@ -942,6 +982,8 @@ impl WriteGuard {
             }
             Poll::Ready(Ok(())) => {
                 if self.offset == self.submission.ready.data.wire.len() {
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    self.submission.written.store(true, Ordering::Release);
                     self.stop();
                 } else {
                     self.terminal = false;

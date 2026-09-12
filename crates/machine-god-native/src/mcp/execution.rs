@@ -1,14 +1,13 @@
 //! Concrete MCP exchange, exact result admission and explicitly owned archives.
 
 use super::{
+    continuation::{AdmittedResponse, FormOutcome, collect_form},
+    interaction::McpElicitationPresenter,
     runtime::{
         NativeMcpRuntimeToolCall, NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy,
         NativeMcpToolExecutor,
     },
-    tool_result::{
-        McpToolResponseContext, McpToolResponseDisposition, McpToolResultError,
-        McpToolResultLimits, NativeMcpToolResultAdmission,
-    },
+    tool_result::{McpToolResultError, McpToolResultLimits, NativeMcpToolResultAdmission},
 };
 use crate::native_tool_result_archive::{
     NativeToolArgumentsArchiveLimits, NativeToolResultArchiveAdapter, NativeToolResultArchiveLimits,
@@ -47,10 +46,12 @@ const POLICY: NativeMcpToolExecutionPolicy = NativeMcpToolExecutionPolicy {
 
 /// Required native archive authority and immutable complete-response admission.
 /// Construction performs no I/O, spawning, clock reads or runtime discovery.
-/// This owner does not retain an engine/runtime or advertise an input responder.
+/// This owner does not retain an engine/runtime. Responder support requires
+/// explicitly supplying the actual human endpoint before selecting its policy.
 pub struct NativeMcpArchivedToolExecutor {
     archive: Arc<NativeToolResultArchiveAdapter>,
     admission: NativeMcpToolResultAdmission,
+    form_responder: Option<Arc<dyn McpElicitationPresenter>>,
 }
 impl std::fmt::Debug for NativeMcpArchivedToolExecutor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -65,13 +66,26 @@ impl NativeMcpArchivedToolExecutor {
         Ok(Self {
             archive,
             admission: NativeMcpToolResultAdmission::new(McpToolResultLimits::default())?,
+            form_responder: None,
         })
     }
 
     /// Matching runtime policy; never infer responder support from remote hints.
     #[must_use]
     pub const fn execution_policy(&self) -> NativeMcpToolExecutionPolicy {
-        POLICY
+        NativeMcpToolExecutionPolicy {
+            form: self.form_responder.is_some(),
+            ..POLICY
+        }
+    }
+
+    /// Supplies the actual human presentation endpoint. Construction is inert;
+    /// only this explicitly configured owner advertises modern form support.
+    /// URL, sampling, roots and legacy retries remain unsupported.
+    #[must_use]
+    pub fn with_form_responder(mut self, presenter: Arc<dyn McpElicitationPresenter>) -> Self {
+        self.form_responder = Some(presenter);
+        self
     }
 }
 
@@ -82,33 +96,30 @@ impl NativeMcpToolExecutor for NativeMcpArchivedToolExecutor {
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
         Box::pin(async move {
             call.revalidate()?;
-            let response = call.first_exchange().await?;
-            call.revalidate()?;
-            let context = McpToolResponseContext::new(
-                call.context().clone(),
-                call.tool_name().clone(),
-                Arc::from(call.server_name()),
-                call.descriptor().clone(),
-                call.runtime().clone(),
-                response.protocol(),
-                response.request_id().clone(),
-            )
-            .map_err(|_| invalid_response())?;
-            let admitted = self
-                .admission
-                .admit(context, response.bytes())
-                .map_err(|_| invalid_response())?;
-            drop(response);
-            // The original invocation/options and exact live route remain owned
-            // by call. Response provenance alone never grants another exchange.
-            call.revalidate()?;
-            let (output, finish) = match admitted {
-                McpToolResponseDisposition::Complete(output) => (output, false),
-                McpToolResponseDisposition::ProtocolFailure(failure) => {
-                    (projection::protocol_failure(&failure)?, false)
-                }
-                McpToolResponseDisposition::InputRequired(required) => {
-                    (projection::input_required(&required)?, true)
+            let mut response = call.first_exchange().await?;
+            let (output, finish) = loop {
+                let admitted = call.admit_response(response, &self.admission)?;
+                match admitted {
+                    AdmittedResponse::Complete(output) => break (output, false),
+                    AdmittedResponse::ProtocolFailure(failure) => {
+                        break (projection::protocol_failure(&failure)?, false);
+                    }
+                    AdmittedResponse::InputRequired(input) => {
+                        let Some(presenter) = &self.form_responder else {
+                            break (projection::input_required(&input.required)?, true);
+                        };
+                        if call.continuation_limit_reached() {
+                            break (projection::continuation_exhausted(), false);
+                        }
+                        match collect_form(&call, input, presenter.as_ref()).await? {
+                            FormOutcome::Consented(consent) => {
+                                response = call.continue_exchange(consent).await?;
+                            }
+                            FormOutcome::Unresolved(input) => {
+                                break (projection::input_required(&input.required)?, true);
+                            }
+                        }
+                    }
                 }
             };
             call.revalidate()?;

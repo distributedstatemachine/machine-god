@@ -156,7 +156,7 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub fn new(values: &[Value], mode: PermissionMode, skip: usize) -> Self {
-        Self::configured(values, mode, skip, None, false, |runtime, writes| {
+        Self::configured(values, mode, skip, None, false, None, |runtime, writes| {
             candidate(runtime, "calendar", &["lookup"], writes)
         })
     }
@@ -168,7 +168,34 @@ impl Fixture {
         batch: bool,
         prepare: impl FnOnce(&NativeMcpRuntime, Arc<Mutex<Vec<u8>>>) -> NativeMcpRuntimeCandidate,
     ) -> Self {
-        Self::configured(values, mode, 0, Some((executor, policy)), batch, prepare)
+        Self::configured(
+            values,
+            mode,
+            0,
+            Some((executor, policy)),
+            batch,
+            None,
+            prepare,
+        )
+    }
+    pub fn with_executor_and_clock(
+        values: &[Value],
+        mode: PermissionMode,
+        executor: Arc<dyn NativeMcpToolExecutor>,
+        policy: NativeMcpToolExecutionPolicy,
+        batch: bool,
+        clock: Arc<dyn NativeMcpRuntimeClock>,
+        prepare: impl FnOnce(&NativeMcpRuntime, Arc<Mutex<Vec<u8>>>) -> NativeMcpRuntimeCandidate,
+    ) -> Self {
+        Self::configured(
+            values,
+            mode,
+            0,
+            Some((executor, policy)),
+            batch,
+            Some(clock),
+            prepare,
+        )
     }
     fn configured(
         values: &[Value],
@@ -176,6 +203,7 @@ impl Fixture {
         skip: usize,
         custom: Option<(Arc<dyn NativeMcpToolExecutor>, NativeMcpToolExecutionPolicy)>,
         batch: bool,
+        runtime_clock: Option<Arc<dyn NativeMcpRuntimeClock>>,
         prepare: impl FnOnce(&NativeMcpRuntime, Arc<Mutex<Vec<u8>>>) -> NativeMcpRuntimeCandidate,
     ) -> Self {
         let contexts = Arc::new(NativeMcpContexts::new());
@@ -188,7 +216,7 @@ impl Fixture {
         let runtime = Arc::new(
             NativeMcpRuntime::new(
                 contexts.clone(),
-                clock.clone(),
+                runtime_clock.unwrap_or_else(|| clock.clone()),
                 selected_executor,
                 selected_policy,
                 NativeMcpRuntimeLimits::default(),

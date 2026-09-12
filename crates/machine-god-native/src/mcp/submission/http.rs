@@ -16,6 +16,7 @@ use super::{
 use crate::mcp::endpoint::McpEndpoint;
 
 const MAX_HEAD_BYTES: usize = 1024 * 1024;
+#[cfg(test)]
 const MAX_HTTP_WIRE_BYTES: usize = MAX_HEAD_BYTES + MAX_MCP_SUBMISSION_REQUEST_BYTES;
 const MAX_HEADERS: usize = 256;
 const MAX_HEADER_FIELD_BYTES: usize = 768 * 1024;
@@ -109,6 +110,15 @@ impl McpSubmissionHttpHead {
     }
 
     pub(crate) fn encode(&self, payload: &[u8]) -> Result<Box<[u8]>> {
+        self.encode_bounded(payload, MAX_MCP_SUBMISSION_REQUEST_BYTES)
+    }
+
+    #[cfg(any(test, feature = "mcp-http"))]
+    pub(super) fn encode_continuation(&self, payload: &[u8]) -> Result<Box<[u8]>> {
+        self.encode_bounded(payload, super::continuation::MAX_CONTINUATION_BYTES)
+    }
+
+    fn encode_bounded(&self, payload: &[u8], limit: usize) -> Result<Box<[u8]>> {
         // Every append is charged before allocation. The endpoint and custom
         // fields were validated before ownership; no reparsing or ambient input.
         let mut bytes = Vec::new();
@@ -128,18 +138,19 @@ impl McpSubmissionHttpHead {
         append(&mut bytes, b"\r\n")?;
         // Payload was semantically validated by copy_request; framing also
         // explicitly checks the independent body and complete wire byte caps.
-        frame(&bytes, payload)
+        frame_bounded(&bytes, payload, limit)
     }
 }
+#[cfg(test)]
 fn frame(head: &[u8], payload: &[u8]) -> Result<Box<[u8]>> {
+    frame_bounded(head, payload, MAX_MCP_SUBMISSION_REQUEST_BYTES)
+}
+fn frame_bounded(head: &[u8], payload: &[u8], limit: usize) -> Result<Box<[u8]>> {
     let total = head
         .len()
         .checked_add(payload.len())
         .ok_or(McpSubmissionError::Limit)?;
-    if head.len() > MAX_HEAD_BYTES
-        || payload.len() > MAX_MCP_SUBMISSION_REQUEST_BYTES
-        || total > MAX_HTTP_WIRE_BYTES
-    {
+    if head.len() > MAX_HEAD_BYTES || payload.len() > limit || total > MAX_HEAD_BYTES + limit {
         return Err(McpSubmissionError::Limit);
     }
     let mut framed = Vec::with_capacity(total);

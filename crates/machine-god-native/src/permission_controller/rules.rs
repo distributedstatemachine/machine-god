@@ -313,12 +313,19 @@ impl<'a> RuleOperation<'a> {
         }
         let editor = state.active.as_ref().map(|attempt| attempt.editor.clone());
         state.changing_rules = true;
-        Ok(Self {
+        let changed = std::mem::replace(
+            &mut state.changed,
+            machine_god_core::CancellationToken::new(),
+        );
+        let operation = Self {
             owner,
             editor,
             armed: false,
             _permit: Some(permit),
-        })
+        };
+        drop(state);
+        changed.cancel();
+        Ok(operation)
     }
 
     fn arm(&mut self, proposal: &NativePermissionRuleProposal) -> Result<(), PermissionError> {
@@ -332,6 +339,12 @@ impl<'a> RuleOperation<'a> {
         self.armed = true;
         state.uncertain_rules = true;
         state.rules_epoch = state.rules_epoch.checked_add(1).ok_or_else(unavailable)?;
+        let changed = std::mem::replace(
+            &mut state.changed,
+            machine_god_core::CancellationToken::new(),
+        );
+        drop(state);
+        changed.cancel();
         Ok(())
     }
 

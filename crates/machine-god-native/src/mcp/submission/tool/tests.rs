@@ -1,4 +1,7 @@
 use super::*;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "continuation_tests.rs"]
+mod continuation_tests;
 use crate::mcp::{
     protocol::{NegotiatedProtocol, ProtocolVersion, TransportKind},
     schema::{McpSchema, McpSchemaLimits},

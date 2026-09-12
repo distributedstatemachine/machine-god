@@ -233,6 +233,7 @@ impl NativePermissionController {
                 retired: false,
                 policy,
                 epoch: 1,
+                changed: CancellationToken::new(),
                 rules_epoch: 1,
                 active: None,
                 grants: Vec::new(),
@@ -294,6 +295,7 @@ struct State {
     retired: bool,
     policy: NativePermissionPolicySnapshot,
     epoch: u64,
+    changed: CancellationToken,
     rules_epoch: u64,
     active: Option<Arc<Attempt>>,
     grants: Vec<Grant>,
@@ -490,6 +492,9 @@ impl NativePermissionSession {
         state.epoch = state.epoch.checked_add(1).ok_or_else(unavailable)?;
         state.grants.clear();
         state.policy.mode = PermissionMode::Ask;
+        let changed = std::mem::replace(&mut state.changed, CancellationToken::new());
+        drop(state);
+        changed.cancel();
         Ok(())
     }
 
@@ -645,6 +650,40 @@ impl fmt::Debug for NativePermissionExecutionProof {
 }
 
 impl NativePermissionExecutionProof {
+    /// Notification-only observation; does not mint or extend execution rights.
+    /// Capture before revalidation prevents a reset between checking and wait
+    /// registration from being lost. Yolo proofs ignore resets they still admit.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn invalidated(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            loop {
+                let Some(owner) = self.owner.upgrade() else {
+                    return;
+                };
+                let changed = lock(&owner.state).changed.cancelled();
+                drop(owner);
+                let Some(attempt) = self.attempt.upgrade() else {
+                    return;
+                };
+                let closed = attempt.cancellation.cancelled();
+                let turn = attempt.handle.cancelled();
+                drop(attempt);
+                if self.revalidate().is_err() {
+                    return;
+                }
+                let lifecycle = Box::pin(async {
+                    futures_util::future::select(closed, turn).await;
+                });
+                if matches!(
+                    futures_util::future::select(changed, lifecycle).await,
+                    futures_util::future::Either::Right(_)
+                ) {
+                    return;
+                }
+            }
+        })
+    }
+
     /// Bounded synchronous final policy check; it performs no prompt or I/O.
     /// # Errors
     /// Rejects closed turns, reset authority and changed applicable saved rules.

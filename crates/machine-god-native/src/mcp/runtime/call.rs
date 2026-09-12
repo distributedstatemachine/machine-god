@@ -5,13 +5,23 @@ use super::{
 use crate::mcp::{
     catalog::McpToolDescriptor,
     context::NativeMcpTurnContext,
+    continuation::{AdmittedResponse, ContinuationConsent, ContinuationInput},
     protocol::{NegotiatedProtocol, RpcId},
-    submission::{McpSubmission, McpSubmissionRuntime, McpToolCallOptions},
+    submission::{McpContinuationCustody, McpSubmission, McpSubmissionRuntime, McpToolCallOptions},
+    tool_result::{
+        McpToolResponseContext, McpToolResponseDisposition, NativeMcpToolResultAdmission,
+    },
 };
 use futures_util::future::{Either, select};
 use machine_god_core::{BoxFuture, CancellationToken, ToolContext, ToolError, ToolName};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 /// Native-owned original invocation and its one-shot claimed permission proof.
 /// No public constructor, raw writer, peer handle or replay method is exposed.
@@ -25,6 +35,11 @@ pub struct NativeMcpRuntimeToolCall {
     pending: Option<McpSubmission>,
     options: McpToolCallOptions,
     request_id: RpcId,
+    custody: McpContinuationCustody,
+    round: Arc<AtomicBool>,
+    response_pending: bool,
+    continuations: u8,
+    interaction_deadline: Option<Instant>,
 }
 impl NativeMcpRuntimeToolCall {
     pub(super) async fn claim(
@@ -57,6 +72,10 @@ impl NativeMcpRuntimeToolCall {
             .map_err(|_| unavailable())?;
         let options = submission.tool_options().ok_or_else(unavailable)?;
         let request_id = submission.rpc_id().clone();
+        let custody = submission
+            .continuation_custody()
+            .map_err(|_| unavailable())?;
+        let round = submission.write_completion();
         let call = Self {
             tool,
             server,
@@ -67,6 +86,11 @@ impl NativeMcpRuntimeToolCall {
             pending: Some(submission),
             options,
             request_id,
+            custody,
+            round,
+            response_pending: false,
+            continuations: 0,
+            interaction_deadline: None,
         };
         call.revalidate()?;
         Ok(call)
@@ -113,6 +137,7 @@ impl NativeMcpRuntimeToolCall {
     /// # Errors
     /// Rejects cancelled or replaced exact ownership.
     pub fn revalidate(&self) -> Result<(), ToolError> {
+        self.custody.revalidate().map_err(|_| unavailable())?;
         self.turn.revalidate().map_err(|_| unavailable())?;
         self.tool.binding.live().map_err(|_| unavailable())?;
         if self.cancellation.is_cancelled() || self.server.cancellation.is_cancelled() {
@@ -127,6 +152,7 @@ impl NativeMcpRuntimeToolCall {
         let turn = self.turn.cancelled();
         let route = self.server.cancellation.cancelled();
         let binding = self.tool.binding.cancelled_owned();
+        let custody = self.custody.cancelled_owned();
         let invalid = self.tool.binding.live().is_err();
         Box::pin(async move {
             if invalid {
@@ -137,7 +163,13 @@ impl NativeMcpRuntimeToolCall {
                     select(caller, turn).await;
                 }),
                 Box::pin(async {
-                    select(route, Box::pin(binding)).await;
+                    select(
+                        route,
+                        Box::pin(async {
+                            select(Box::pin(binding), custody).await;
+                        }),
+                    )
+                    .await;
                 }),
             )
             .await;
@@ -181,10 +213,166 @@ impl NativeMcpRuntimeToolCall {
                 Either::Right(_) => return Err(unavailable()),
             };
             self.revalidate()?;
+            if !self.round.load(Ordering::Acquire) {
+                return Err(unavailable());
+            }
+            self.response_pending = true;
             Ok(NativeMcpRuntimeToolResponse {
                 bytes: response,
                 request_id: self.request_id.clone(),
                 protocol: self.server.protocol,
+                round: self.round.clone(),
+            })
+        })
+    }
+
+    pub(crate) fn admit_response(
+        &mut self,
+        response: NativeMcpRuntimeToolResponse,
+        admission: &NativeMcpToolResultAdmission,
+    ) -> Result<AdmittedResponse, ToolError> {
+        self.revalidate()?;
+        if !self.response_pending
+            || !Arc::ptr_eq(&self.round, &response.round)
+            || !self.round.load(Ordering::Acquire)
+        {
+            return Err(unavailable());
+        }
+        self.response_pending = false;
+        let context = McpToolResponseContext::new(
+            self.context.clone(),
+            self.tool.name.clone(),
+            self.server.name.clone(),
+            self.tool.descriptor.clone(),
+            self.tool.binding.clone(),
+            self.server.protocol,
+            self.request_id.clone(),
+        )
+        .map_err(|_| unavailable())?;
+        let bytes = response.into_bytes();
+        let admitted = admission
+            .admit(context, &bytes)
+            .map_err(|_| unavailable())?;
+        self.revalidate()?;
+        Ok(match admitted {
+            McpToolResponseDisposition::Complete(output) => AdmittedResponse::Complete(output),
+            McpToolResponseDisposition::ProtocolFailure(failure) => {
+                AdmittedResponse::ProtocolFailure(failure)
+            }
+            McpToolResponseDisposition::InputRequired(required) => {
+                if self.interaction_deadline.is_none() {
+                    self.interaction_deadline = Some(
+                        self.server
+                            .clock
+                            .now()
+                            .checked_add(Duration::from_secs(30 * 60))
+                            .ok_or_else(unavailable)?,
+                    );
+                }
+                AdmittedResponse::InputRequired(ContinuationInput {
+                    required,
+                    round: self.round.clone(),
+                })
+            }
+        })
+    }
+
+    pub(crate) fn continuation_limit_reached(&self) -> bool {
+        self.continuations >= 8
+    }
+
+    pub(crate) fn check_interaction_deadline(&self) -> Result<(), ToolError> {
+        if self
+            .interaction_deadline
+            .is_none_or(|deadline| self.server.clock.now() >= deadline)
+        {
+            Err(unavailable())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn interaction_cancelled(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let Some(deadline) = self.interaction_deadline else {
+                return;
+            };
+            select(self.cancelled(), self.server.clock.sleep_until(deadline)).await;
+        })
+    }
+
+    pub(crate) fn continue_exchange(
+        &mut self,
+        consent: ContinuationConsent,
+    ) -> BoxFuture<'_, Result<NativeMcpRuntimeToolResponse, ToolError>> {
+        Box::pin(async move {
+            self.revalidate()?;
+            self.check_interaction_deadline()?;
+            if self.continuation_limit_reached()
+                || self.pending.is_some()
+                || self.response_pending
+                || !Arc::ptr_eq(&self.round, &consent.input.round)
+                || !self.round.load(Ordering::Acquire)
+            {
+                return Err(unavailable());
+            }
+            // Consume this round before the first suspension, including queue
+            // failure/drop. A consent allocation can never authorize replay.
+            self.round = Arc::new(AtomicBool::new(false));
+            self.continuations += 1;
+            let response = {
+                let (mut peer, _) = match select(
+                    Box::pin(self.server.acquire(&self.turn, &self.cancellation)),
+                    self.interaction_cancelled(),
+                )
+                .await
+                {
+                    Either::Left((peer, observer)) => (peer.map_err(|_| unavailable())?, observer),
+                    Either::Right(_) => return Err(unavailable()),
+                };
+                self.revalidate()?;
+                self.check_interaction_deadline()?;
+                let reservation = peer.peer.reserve().map_err(|_| unavailable())?;
+                let submission = self
+                    .custody
+                    .prepare(
+                        reservation,
+                        &consent.responses,
+                        consent.input.required.required().request_state_json(),
+                    )
+                    .map_err(|_| unavailable())?;
+                let written = submission.write_completion();
+                let options = submission.tool_options().ok_or_else(unavailable)?;
+                let id = submission.rpc_id().clone();
+                let original_cancelled = submission.cancelled_owned();
+                let deadline = peer.deadline;
+                let bytes = match select(
+                    Box::pin(peer.peer.call(submission, deadline)),
+                    Box::pin(async {
+                        select(self.interaction_cancelled(), original_cancelled).await;
+                    }),
+                )
+                .await
+                {
+                    Either::Left((bytes, _)) => bytes.map_err(|_| unavailable())?,
+                    Either::Right(_) => return Err(unavailable()),
+                };
+                self.revalidate()?;
+                self.check_interaction_deadline()?;
+                if !written.load(Ordering::Acquire) {
+                    return Err(unavailable());
+                }
+                (bytes, written, options, id)
+            };
+            self.round = response.1;
+            self.options = response.2;
+            self.request_id = response.3;
+            self.response_pending = true;
+            Ok(NativeMcpRuntimeToolResponse {
+                bytes: response.0,
+                request_id: self.request_id.clone(),
+                protocol: self.server.protocol,
+                round: self.round.clone(),
             })
         })
     }
@@ -196,6 +384,7 @@ pub struct NativeMcpRuntimeToolResponse {
     bytes: Box<[u8]>,
     request_id: RpcId,
     protocol: NegotiatedProtocol,
+    round: Arc<AtomicBool>,
 }
 impl NativeMcpRuntimeToolResponse {
     #[must_use]

@@ -90,6 +90,16 @@ cancellation at publication, claim and actual writer checkpoints. Queue waiting
 cannot bypass later revocation. No consequential partially written request is
 automatically replayed.
 
+Native proof observers capture a generation notification before revalidating
+and awaiting it. Permission resets and native rule-publication transitions wake
+queued MCP writes, response reads and human-input waits without timer polling;
+notification and waker callbacks run after releasing permission-state locks.
+The observer loops only on actual changes and rechecks the existing proof, so
+Yolo proofs retain their existing reset behavior. It provides no proof clone,
+grant minting or broader authority. Direct external edits through core metadata
+remain visible at synchronous proof checkpoints; they are not native owner
+notifications and are not claimed to wake an otherwise idle native wait.
+
 `close_turn` retires only the selected session/incarnation/turn, including an
 already-cancelled turn whose public snapshot is unavailable. Retirement drops
 proofs and wakes waiters outside router/session locks. Other turns remain live,

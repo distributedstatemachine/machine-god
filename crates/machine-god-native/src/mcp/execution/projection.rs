@@ -1,6 +1,13 @@
 use super::{ToolError, ToolOutput, Value, invalid_response};
 use crate::mcp::tool_result::{McpToolInputRequired, McpToolProtocolFailure};
 
+pub(super) fn continuation_exhausted() -> ToolOutput {
+    ToolOutput {
+        content: serde_json::json!({"resultType":"protocol_failure", "error":{"message":"MCP protocol failure: input-required continuation limit exceeded"}}),
+        is_error: true,
+    }
+}
+
 pub(super) fn protocol_failure(failure: &McpToolProtocolFailure) -> Result<ToolOutput, ToolError> {
     let error = machine_god_core::json::from_str(failure.raw_json().get())
         .map_err(|_| invalid_response())?;

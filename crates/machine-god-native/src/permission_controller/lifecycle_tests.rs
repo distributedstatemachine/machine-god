@@ -1,4 +1,7 @@
 use super::*;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "observer_tests.rs"]
+mod observer_tests;
 use crate::{NativePermissionRuleChange, NativePermissionRuleKind, PermissionPromptError};
 use futures_executor::block_on;
 use machine_god_core::{

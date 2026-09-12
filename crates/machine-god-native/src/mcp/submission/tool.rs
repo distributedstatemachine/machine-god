@@ -28,6 +28,25 @@ pub struct McpToolCallOptions {
     url: bool,
 }
 impl McpToolCallOptions {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn renewed(self, request_id: i64) -> Result<Self> {
+        let mut next = Self::new(self.protocol, request_id)?.with_elicitation(self.form, self.url);
+        if self.progress_token.is_some() {
+            next.progress_token =
+                Some(u64::try_from(request_id).map_err(|_| McpSubmissionError::Invalid)?);
+        }
+        Ok(next)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn metadata(self) -> Option<McpClientMetadata> {
+        McpClientMetadata::for_protocol(
+            self.protocol.version,
+            self.progress_token,
+            self.form,
+            self.url,
+        )
+    }
     /// Uses a peer-reserved ID and an admitted protocol/transport combination.
     ///
     /// # Errors

@@ -4,6 +4,8 @@ use futures_executor::block_on;
 use futures_util::StreamExt;
 use std::{os::unix::fs::DirBuilderExt, path::PathBuf};
 
+mod continuation;
+
 struct Archive {
     path: PathBuf,
     storage: Arc<ToolResultArchive>,

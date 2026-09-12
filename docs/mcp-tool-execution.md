@@ -4,16 +4,18 @@
 implementation for already selected dynamic tools. Its constructor requires an
 explicit `NativeToolResultArchiveAdapter`; it does not discover directories,
 prepare storage, start workers, acquire a peer or retain an engine/runtime.
-The matching `execution_policy()` advertises no form or URL responder. Progress
-metadata remains constructor-selected and preserves the actual reserved ID.
+The default `execution_policy()` advertises no form or URL responder.
+`with_form_responder` explicitly retains an actual `McpElicitationPresenter`
+(normally the native interactive prompt bridge) and enables form advertisement.
+URL support remains false. Progress metadata uses the actual peer-reserved ID.
 
 ## Admission and distinct results
 
 Execution retains the original `NativeMcpRuntimeToolCall`, arguments, options and
-exact native ownership throughout the sole `first_exchange`. That exchange
-consumes the existing permission proof and peer-minted reservation, serializes
-actual peer access and races cancellation/deadlines. No raw write, second attempt,
-automatic retry or response-derived authority is exposed.
+exact native ownership throughout `first_exchange`. That exchange consumes the
+existing peer-minted reservation, retains the original permission proof,
+serializes actual peer access and races cancellation/deadlines. The public call
+API exposes no raw write, second attempt or automatic retry.
 
 After revalidation, original correlated response bytes enter
 `NativeMcpToolResultAdmission` with the actual descriptor, protocol, request ID,
@@ -34,10 +36,61 @@ redacted tool error, never a fabricated successful result.
   event. Later sibling calls retain unknown placeholders; no further provider
   round or sibling preparation, permission or execution occurs.
 
-No browser, form interaction, sampling, roots request or continuation runs here.
-Typed input data is not consent. A future continuation owner must retain the
-actual original call, validate typed responses and acquire a fresh exact grant;
-serialized result/state or context IDs cannot reconstruct authority.
+## Consented modern form continuation
+
+Only the concrete native executor's private sealed-response path can continue.
+Each response carries the exact round allocation. Its writer-completion marker
+is set only after every exact request byte is acknowledged, the final flush
+succeeds and the final original-proof checkpoint passes. Partial writes,
+intermediate flushes, errors, dropped futures, malformed envelopes and ambiguous
+responses cannot open another round. Calling the public result parser on arbitrary
+bytes cannot manufacture this private custody.
+
+The native call keeps one immutable original grant allocation, canonical
+arguments, options, turn, schema/configuration/authentication/runtime binding and
+original projected HTTP head. The registry's original call remains claimed;
+continuation neither reopens its slot nor asks the model for fresh permission.
+The retained original proof is revalidated before and after human input, queue
+acquisition, response admission and every synchronous writer boundary.
+
+With an explicitly supplied form presenter, a correlated modern input-required
+result presents its exact typed requests through the native inbox. Every request
+must be a supported form before presentation begins. Answers must match the
+entire original request-key set and schema; accept, decline and cancel remain
+distinct wire actions. A form cancel supplies explicit cancel actions for the
+remaining forms without further prompts, matching the pinned responder.
+An empty request map, including state-only input, remains unresolved: the pinned
+`elicitation_interaction.zig` responder rejects zero requests. Unsupported URL,
+sampling, roots and legacy requests, or an unavailable presenter, keep the
+explicit input-required projection and stop-after-tool behavior above.
+
+Actual answers and their exact round produce non-clone native consent custody.
+Consuming it acquires a fresh serialized peer lane and peer-minted RPC ID;
+progress IDs also renew when enabled. Only `inputResponses` and `requestState`
+are added as `params` siblings to the unchanged original arguments/name, with
+the original client capability policy. HTTP reuses the exact projected head
+allocation, recomputing only body framing/length. Initial and raw requests retain
+their 128 KiB cap; this typed continuation path has an independent 384 KiB cap
+for 64 KiB arguments, 128 KiB state, 128 KiB aggregate answers and metadata.
+Exact numeric lexemes, null-versus-absent state and private-looking JSON keys
+survive without a `Value` conversion in this wire path.
+
+There are at most eight continuations after the initial call. Further
+input-required responses produce an explicit bounded protocol-failure result,
+without another prompt or reservation. A single 30-minute interaction deadline
+starts at the first admitted input-required response; each consented exchange
+gets a fresh normal operation timeout. Turn/caller/preparation/runtime authority
+cancellation wakes pending consent and network work. Dropping the waiting
+prompt removes its inbox ownership and cancels its token; no response is replayed.
+Native permission resets and rule-publication transitions also wake the wait;
+the notification-only observer revalidates the original proof without changing
+Yolo policy. Permission is checked again after an answer, so a revoked original
+grant cannot submit a continuation. External core metadata changes retain their
+existing synchronous-checkpoint boundary, not a new native notification claim.
+
+This owner does not launch browsers, perform URL/legacy completion retries,
+sampling or roots operations. Those need separate actual native responders and
+typed custody; server data and serialized context IDs never supply authority.
 
 ## Archive bounds and completion ownership
 
