@@ -113,7 +113,10 @@ async fn publish(fixture: &Fixture, listener: &TcpListener) -> String {
     };
     let server = async {
         reply(listener, br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{},"resources":{},"prompts":{}}}}"#).await;
-        reply(listener, br#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}}"#).await;
+        // These permission/archive scenarios select a fresh catalog for the
+        // existing ten-second peer lifetime. Missing modern TTL means expired
+        // and would correctly require a separate tools/list before turn pinning.
+        reply(listener, br#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","ttlMs":10000,"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}}"#).await;
     };
     join(client, server).await.0
 }
@@ -356,7 +359,7 @@ fn unresolved_native_feature_is_persisted_and_finishes_without_another_model_rou
             None,
         )
         .unwrap();
-        let raw = br#"{"jsonrpc":"2.0","id":4,"result":{"resultType":"input_required","requests":[],"requestState":{"n":-0}}}"#;
+        let raw = br#"{"jsonrpc":"2.0","id":4,"result":{"resultType":"input_required","inputRequests":{},"requestState":{"n":-0}}}"#;
         let server = async {
             reply(&listener, br#"{"jsonrpc":"2.0","id":3,"result":{"resultType":"complete","prompts":[{"name":"review"}]}}"#).await;
             reply(&listener, raw).await;
