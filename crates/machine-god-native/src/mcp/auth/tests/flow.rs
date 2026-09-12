@@ -263,13 +263,17 @@ fn actual_browser_token_persistence_refresh_and_two_token_logout() {
         let browser = Browser::new(true);
         let client = async {
             let lease = fixture.service.authenticate(&fixture.config, &McpAuthChallenge::default(), &browser, &CancellationToken::new(), deadline()).await.unwrap();
-            assert_eq!(lease.access_token().unwrap(), b"first-secret");
+            // Publication succeeds, but expires_in=0 grants no usable lease.
+            assert!(matches!(lease.access_token(), Err(McpAuthError::Rejected)));
+            assert!(!lease.generation().is_cancelled());
+            assert_eq!(fixture.store.load().unwrap().get(fixture.config.identity()).unwrap().access.bytes(), b"first-secret");
             assert!(fixture.service.status(fixture.config.identity()).unwrap());
             assert_eq!(fs::metadata(fixture.store.path()).unwrap().permissions().mode() & 0o777, 0o600);
             let refreshed = fixture.service.access_token(fixture.config.identity(), &CancellationToken::new(), deadline()).await.unwrap();
             assert_eq!(refreshed.access_token().unwrap(), b"second-secret");
             assert!(fixture.store.load().unwrap().get(fixture.config.identity()).unwrap().scope.is_empty());
-            assert!(lease.access_token().is_err());
+            assert!(matches!(lease.access_token(), Err(McpAuthError::Conflict)));
+            assert!(lease.generation().is_cancelled());
             let receipt = fixture.service.logout(fixture.config.identity(), &CancellationToken::new(), deadline()).await.unwrap();
             assert_eq!(receipt, McpAuthLogoutReceipt { local: McpAuthLocalRemoval::Removed, remote: McpAuthRemoteRevocation::Confirmed });
             assert!(refreshed.access_token().is_err());
@@ -284,9 +288,11 @@ fn actual_browser_token_persistence_refresh_and_two_token_logout() {
             assert!(first.contains("code_verifier=")); assert!(first.contains("grant_type=authorization_code"));
             let refresh = reply(&listener, 200, serde_json::json!({"access_token":"second-secret","scope":"","expires_in":3600})).await;
             assert!(String::from_utf8(refresh).unwrap().contains("grant_type=refresh_token"));
-            for hint in ["refresh_token", "access_token"] {
+            for (hint, token) in [("refresh_token", "refresh-secret"), ("access_token", "second-secret")] {
                 let request = reply(&listener, 200, serde_json::json!({})).await;
-                assert!(String::from_utf8(request).unwrap().contains(&format!("token_type_hint={hint}")));
+                let request = String::from_utf8(request).unwrap();
+                assert!(request.contains(&format!("token_type_hint={hint}")));
+                assert!(request.contains(&format!("token={token}")));
             }
         };
         join(client, server).await;
