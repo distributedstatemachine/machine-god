@@ -122,6 +122,12 @@ reports local removal and remote revocation independently, without implicit
 runtime reload. Secret-bearing authorization URLs go directly to the retained
 native launcher and are never placed in recorded CLI output.
 
+Authentication may reuse the latest failed startup's challenge bytes only after
+freshly validating that observation's exact profile source. This is a new
+explicit command selection, not revival of the failed startup's cancelled
+authority. A changed source discards historical challenges; credential workers
+still revalidate the newly selected profile before loading or publishing.
+
 ## Credentials and generations
 
 The explicitly selected directory owns `mcp-credentials.json`, with separate

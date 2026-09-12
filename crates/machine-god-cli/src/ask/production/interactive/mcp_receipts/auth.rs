@@ -59,7 +59,7 @@ pub(crate) fn render(
             .map_err(|_| ())?;
         }
         Err(NativeMcpAuthenticationError::Authorization(error)) => {
-            authorization_error(&mut text, *error)?
+            authorization_error(&mut text, *error)?;
         }
     }
     text.write_str("> ").map_err(|_| ())?;

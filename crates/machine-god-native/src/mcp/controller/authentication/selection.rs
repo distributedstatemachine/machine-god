@@ -192,13 +192,12 @@ fn reserve(
             generation: None,
         })?;
     fence.check().map_err(|_| failure(Error::Cancelled))?;
-    // Capture historical data before pruning completed jobs. The readiness lane
-    // also retains its latest observation independently of successful activation.
+    // The latest exact observation survives failed-startup cleanup. These bytes
+    // are historical data; loading revalidates their profile before reusing them.
     let historical = lock(&inner.state)
-        .generations
-        .iter()
-        .rev()
-        .find_map(|generation| {
+        .latest_observed
+        .as_ref()
+        .and_then(|generation| {
             lock(&generation.loaded)
                 .as_ref()
                 .map(|loaded| (loaded.snapshot.clone(), loaded.startup.clone()))

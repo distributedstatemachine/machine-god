@@ -229,12 +229,7 @@ impl NativeInteractiveSession {
         let mut cancellation = None;
         let future = match control {
             NativeInteractiveControl::Mcp { command } => {
-                let (token, future) = mcp::prepare(
-                    runtime,
-                    &self.host,
-                    command,
-                    self.mcp_browser_launcher.clone(),
-                )?;
+                let (token, future) = self.prepare_mcp_control(runtime, command)?;
                 cancellation = Some(token);
                 future
             }
@@ -313,6 +308,19 @@ impl NativeInteractiveSession {
         });
         self.notify();
         Ok(id)
+    }
+
+    fn prepare_mcp_control(
+        &self,
+        runtime: Arc<NativeConversationRuntime>,
+        command: crate::mcp::commands::McpCommand,
+    ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
+        mcp::prepare(
+            runtime,
+            &self.host,
+            command,
+            self.mcp_browser_launcher.clone(),
+        )
     }
 
     fn prepare_skills_control(

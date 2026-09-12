@@ -1928,3 +1928,16 @@ fn blocked_historical_output_cannot_keep_its_snapshot_or_native_host_alive_on_sh
     let mut tail = dispose(harness, fixture, result);
     let _ = runtime.block_on(finish_tail(&mut tail));
 }
+#[test]
+fn required_mcp_rejection_explains_management_and_no_retry() {
+    let outcome = machine_god_native::NativeInteractiveOutcome::Turn(Err(
+        machine_god_native::NativeInteractiveError::Conversation(
+            machine_god_native::NativeConversationError::McpRequiredUnavailable,
+        ),
+    ));
+    let output = String::from_utf8(super::render_outcome(&outcome).unwrap()).unwrap();
+    assert!(output.contains("required MCP server unavailable"));
+    assert!(output.contains("/mcp management remains available"));
+    assert!(output.contains("no automatic retry"));
+    assert!(!output.contains("turn completed"));
+}

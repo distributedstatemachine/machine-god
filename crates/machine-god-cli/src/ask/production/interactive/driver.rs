@@ -1088,6 +1088,10 @@ fn render_outcome(outcome: &NativeInteractiveOutcome) -> Result<Vec<u8>, ()> {
             text.write_str(
                 if result.as_ref().is_ok_and(|event| !terminal_failed(event)) {
                     "\n[turn completed]\n> "
+                } else if matches!(result, Err(machine_god_native::NativeInteractiveError::Conversation(
+                    machine_god_native::NativeConversationError::McpRequiredUnavailable
+                ))) {
+                    "\n[turn rejected: required MCP server unavailable; /mcp management remains available; no automatic retry]\n> "
                 } else {
                     "\n[turn failed; no automatic retry]\n> "
                 },

@@ -418,12 +418,12 @@ OAuth services share actual host workers and selected profile credentials;
 startup/reload guards stored auth with exact profile snapshots and retains challenges.
 Typed feature/input codecs compose with DNS/TLS, archived calls, consented forms
 and URL prompts. CLI startup/reload/settlement retain exact profile and cleanup
-custody; required startup precedes conversation work, with turn-authorized deferred
-discovery. Component checks are not full-feature gates; clean trees are removed.
+custody; required readiness blocks prompts while interactive management stays open.
+Explicit auth/logout controls share native browser ownership and separate receipts.
 
 These components do not constitute a delivered runtime. Remaining composition
 must compose URL/legacy input custody, TTL/notification refresh,
-authentication commands/lifetime refresh and their CLI ownership. Raw pages
+authentication end-to-end evidence/lifetime refresh and CLI ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
