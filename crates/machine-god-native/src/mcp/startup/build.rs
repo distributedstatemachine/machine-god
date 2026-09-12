@@ -216,6 +216,7 @@ async fn server(
             configuration: identity,
             authentication,
             catalogs,
+            refresh: None,
             catalog_epoch: startup.catalog_epoch,
             peer,
             operation_timeout: Duration::from_millis(u64::from(

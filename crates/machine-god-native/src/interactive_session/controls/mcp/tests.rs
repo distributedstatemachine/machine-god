@@ -131,6 +131,7 @@ fn install(
                 configuration: Arc::from(&b"config"[..]),
                 authentication: Arc::from(&b"auth"[..]),
                 catalogs: vec![catalog],
+                refresh: None,
                 catalog_epoch: epoch,
                 peer: NativeMcpOwnedPeer::Script(ScriptPeer::new(writes).with_response(response)),
                 operation_timeout: Duration::from_secs(60),

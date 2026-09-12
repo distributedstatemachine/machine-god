@@ -98,6 +98,7 @@ async fn publish(fixture: &Fixture, listener: &TcpListener) -> String {
                     configuration: Arc::from(&b"configuration"[..]),
                     authentication: Arc::from(&b"authentication"[..]),
                     catalogs: vec![catalog],
+                    refresh: None,
                     peer: NativeMcpOwnedPeer::Http(Box::new(peer)),
                     operation_timeout: Duration::from_secs(5),
                     authority_cancellations: Arc::from([]),
