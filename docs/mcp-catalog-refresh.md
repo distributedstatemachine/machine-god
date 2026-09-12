@@ -92,6 +92,31 @@ JSON again, and cannot substitute for the separate acknowledgement or create
 subscription authority. Transports retain their own cancellation and late-response
 ownership rules.
 
+## Native composition
+
+Startup installs advertised modern list-change subscriptions after eager tools
+discovery and requires the exact acknowledgement before readiness. The native
+runtime retains that state with the original peer, catalog epoch and configuration
+partition. Caller-driven polling drains at most 64 ready notifications before
+catalog admission; a larger ready backlog rejects that attempt instead of claiming
+a fresh cache hit. Partial transport reads remain peer-owned across observations.
+
+Before a new turn is pinned or a human feature selects its publication, due tools
+refresh on the same serialized peer. Exact unchanged descriptors update freshness
+without rebinding or retaining duplicate payloads. Changed descriptors use a
+conditional publication transaction, including the controller's exact publication
+witness, without reopening peers or replaying older requests. Existing pinned
+operations never silently select the replacement generation.
+
+Lazy resource/template/prompt discovery for dependent feature actions uses the
+same partition's TTL and failure backoff. A shared extra cache budget is capped
+at 16 MiB and further limited by the selected runtime retained-byte ceiling.
+Cache pressure preserves old metadata and backoff while the current operation may
+use its separately bounded fresh response. Cache retention never prolongs command,
+turn, configuration, authentication or peer authority. Direct list commands still
+perform their explicit requested exchange; response/content caching and selected
+resource-URI expansion are separate runtime composition work.
+
 ## Pinned behavior
 
 Behavior is based on fx `b1774fbf6c7602b503026f96f6e960e946c692ef`:

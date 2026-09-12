@@ -77,6 +77,10 @@ impl NativeMcpRuntime {
         }
         // No new publication is pinned until the original turn and registry
         // have survived the asynchronous boundary and caller cancellation.
+        if !pinned {
+            revalidate(context, registry, cancellation)?;
+            self.refresh_for_turn(context, cancellation).await?;
+        }
         revalidate(context, registry, cancellation)
     }
 }

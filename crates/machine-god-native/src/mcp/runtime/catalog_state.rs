@@ -14,6 +14,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+#[cfg(test)]
+mod tests;
+
 pub(super) struct FeatureCacheBudget {
     bytes: AtomicUsize,
     maximum: usize,
@@ -161,6 +164,25 @@ impl NativeMcpCatalogState {
             _charge: charge,
         });
         Ok(true)
+    }
+
+    pub(super) fn finish_tools(
+        &mut self,
+        ticket: McpRefreshTicket,
+        catalog: &McpDescriptorCatalog,
+        now: u64,
+        changed: bool,
+    ) -> Result<()> {
+        if changed {
+            self.finish(ticket, catalog, now)?;
+        } else {
+            // The old publication still owns the executable descriptor payload.
+            // Refresh only timestamps, not a second uncharged allocation.
+            self.policy
+                .finish(ticket, catalog, now)
+                .map_err(|_| Error::Unavailable)?;
+        }
+        Ok(())
     }
 }
 

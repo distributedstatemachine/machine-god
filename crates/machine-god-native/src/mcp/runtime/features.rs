@@ -150,6 +150,9 @@ impl NativeMcpHumanCommand {
                 }
             }
         }
+        runtime
+            .refresh_for_human(request.server(), &self.cancellation, &cancellation)
+            .await?;
         let publication = runtime.feature_publication()?;
         let server = selected_server(&publication, request.server())?;
         let authority = McpFeatureControlAuthority::for_human(
@@ -241,7 +244,8 @@ impl NativeMcpRuntime {
         source: Option<&BackgroundOutputOwner>,
     ) -> Result<NativeMcpFeatureResult> {
         // Native feature admission has a separate finite transient budget. No
-        // result/cache queue is retained after returning caller-owned data.
+        // result queue is retained after returning caller-owned data. Lazy
+        // catalog caching has its own shared finite retained-byte budget.
         let maximum = self.limits.max_pending_operations.min(2);
         self.feature_operations
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {

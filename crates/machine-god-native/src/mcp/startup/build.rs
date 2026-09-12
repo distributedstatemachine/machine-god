@@ -11,7 +11,10 @@ use crate::mcp::{
     config::{McpConfig, McpServerConfig, McpTransportConfig},
     pagination::{McpCatalogKind, McpCatalogLimits},
     peer::{McpPeerError, McpStdioPeer},
-    runtime::{NativeMcpCatalogState, NativeMcpOwnedPeer, NativeMcpPeerCompletion, NativeMcpServerCandidate},
+    runtime::{
+        NativeMcpCatalogState, NativeMcpOwnedPeer, NativeMcpPeerCompletion,
+        NativeMcpServerCandidate,
+    },
 };
 use machine_god_core::CancellationToken;
 use std::{
@@ -165,16 +168,17 @@ async fn server(
             #[cfg(feature = "mcp-http")]
             {
                 *attempts = 1;
-                let (peer, catalogs, refresh, authentication, generations, selected_lease) = remote_server(
-                    startup,
-                    &configuration,
-                    remote,
-                    guards,
-                    owner,
-                    deadline,
-                    maximum - minimum,
-                )
-                .await?;
+                let (peer, catalogs, refresh, authentication, generations, selected_lease) =
+                    remote_server(
+                        startup,
+                        &configuration,
+                        remote,
+                        guards,
+                        owner,
+                        deadline,
+                        maximum - minimum,
+                    )
+                    .await?;
                 lease = selected_lease;
                 (peer, catalogs, refresh, authentication, generations)
             }
@@ -236,7 +240,11 @@ async fn stdio_server(
     attempts: &mut u16,
     deadline: Option<Instant>,
     maximum: usize,
-) -> Result<(NativeMcpOwnedPeer, Vec<McpDescriptorCatalog>, NativeMcpCatalogState)> {
+) -> Result<(
+    NativeMcpOwnedPeer,
+    Vec<McpDescriptorCatalog>,
+    NativeMcpCatalogState,
+)> {
     let McpTransportConfig::Stdio(config) = configuration.transport() else {
         return Err(Error::Invalid);
     };
