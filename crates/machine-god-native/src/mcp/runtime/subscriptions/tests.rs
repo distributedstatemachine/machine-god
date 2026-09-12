@@ -10,13 +10,13 @@ use serde_json::{Value, json};
 #[cfg(feature = "mcp-http")]
 mod http;
 
-fn envelope(value: Value) -> RpcEnvelope {
-    parse_envelope(&serde_json::to_vec(&value).unwrap(), WireLimits::default()).unwrap()
+fn envelope(value: &Value) -> RpcEnvelope {
+    parse_envelope(&serde_json::to_vec(value).unwrap(), WireLimits::default()).unwrap()
 }
 
 fn capabilities() -> McpPeerCapabilities {
     McpPeerCapabilities::admit(
-        &envelope(json!({"jsonrpc":"2.0","id":1,"result":{
+        &envelope(&json!({"jsonrpc":"2.0","id":1,"result":{
             "resultType":"complete","capabilities":{
                 "resources":{"listChanged":true,"subscribe":true},"prompts":{"listChanged":true}
             }
@@ -26,9 +26,9 @@ fn capabilities() -> McpPeerCapabilities {
     .unwrap()
 }
 
-fn ack(id: i64, filters: Value) -> RpcEnvelope {
+fn ack(id: i64, filters: &Value) -> RpcEnvelope {
     envelope(
-        json!({"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged",
+        &json!({"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged",
         "params":{"_meta":{"io.modelcontextprotocol/subscriptionId":id},"notifications":filters}}),
     )
 }
@@ -87,9 +87,9 @@ fn terminal_policy_expires_results_once_and_rejects_old_listener_end() {
 #[test]
 fn unsupported_or_cancelled_listener_stops_without_admitting_late_ack() {
     for terminal in [
-        ack(2, json!({"resourcesListChanged":true})),
+        ack(2, &json!({"resourcesListChanged":true})),
         envelope(
-            json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}),
+            &json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}),
         ),
     ] {
         let mut state = selected();
@@ -108,7 +108,7 @@ fn unsupported_or_cancelled_listener_stops_without_admitting_late_ack() {
             !state
                 .observe(&ack(
                     2,
-                    json!({"resourcesListChanged":true,"promptsListChanged":true})
+                    &json!({"resourcesListChanged":true,"promptsListChanged":true})
                 ))
                 .unwrap()
         );
@@ -126,7 +126,7 @@ fn result_epochs_keep_prompt_and_resource_invalidations_separate() {
     state
         .observe(&ack(
             2,
-            json!({"resourcesListChanged":true,"promptsListChanged":true}),
+            &json!({"resourcesListChanged":true,"promptsListChanged":true}),
         ))
         .unwrap();
     for (method, expected) in [
@@ -134,9 +134,11 @@ fn result_epochs_keep_prompt_and_resource_invalidations_separate() {
         ("notifications/resources/list_changed", (1, 1)),
     ] {
         state
-            .observe(&envelope(json!({"jsonrpc":"2.0","method":method,"params":{
-                "_meta":{"io.modelcontextprotocol/subscriptionId":2}
-            }})))
+            .observe(&envelope(
+                &json!({"jsonrpc":"2.0","method":method,"params":{
+                    "_meta":{"io.modelcontextprotocol/subscriptionId":2}
+                }}),
+            ))
             .unwrap();
         assert_eq!(
             state

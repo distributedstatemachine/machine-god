@@ -130,7 +130,7 @@ fn filters(uris: &[&str]) -> Value {
     value
 }
 
-fn ack_bytes(id: i64, notifications: Value) -> Vec<u8> {
+fn ack_bytes(id: i64, notifications: &Value) -> Vec<u8> {
     format!("data: {}\n\n", json!({"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged",
         "params":{"_meta":{"io.modelcontextprotocol/subscriptionId":id},"notifications":notifications}})).into_bytes()
 }
@@ -164,7 +164,7 @@ fn direct_demand_resumes_partial_ack_then_expands_exact_uri_union() {
         let finished = CancellationToken::new();
         let wire = async {
             let mut socket = listen(&listener, 2, filters(&[])).await;
-            let ack = ack_bytes(2, filters(&[]));
+            let ack = ack_bytes(2, &filters(&[]));
             let split = ack.len() / 2;
             socket.write_all(&ack[..split]).await.unwrap();
             partial.cancel();
@@ -182,13 +182,13 @@ fn direct_demand_resumes_partial_ack_then_expands_exact_uri_union() {
                 assert!(reads > 0 && prompts > 0);
             }
             socket
-                .write_all(&ack_bytes(3, filters(&["file:///a"])))
+                .write_all(&ack_bytes(3, &filters(&["file:///a"])))
                 .await
                 .unwrap();
             assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
             let mut socket = listen(&listener, 4, filters(&["file:///a", "file:///b"])).await;
             socket
-                .write_all(&ack_bytes(4, filters(&["file:///a", "file:///b"])))
+                .write_all(&ack_bytes(4, &filters(&["file:///a", "file:///b"])))
                 .await
                 .unwrap();
             finished.cancelled().await;
@@ -250,7 +250,7 @@ fn failed_ack_closes_listener_and_disables_automatic_restart() {
         let wire = async {
             let mut socket = listen(&listener, 2, filters(&[])).await;
             socket
-                .write_all(&ack_bytes(2, json!({"promptsListChanged":true})))
+                .write_all(&ack_bytes(2, &json!({"promptsListChanged":true})))
                 .await
                 .unwrap();
             let mut byte = [0];
@@ -281,13 +281,13 @@ fn exact_listener_completion_invalidates_before_later_demand_restarts() {
         let done = CancellationToken::new();
         let wire = async {
             let mut socket = listen(&listener, 2, filters(&[])).await;
-            socket.write_all(&ack_bytes(2, filters(&[]))).await.unwrap();
+            socket.write_all(&ack_bytes(2, &filters(&[]))).await.unwrap();
             finish.cancelled().await;
             socket.write_all(b"data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"resultType\":\"complete\",\"_meta\":{\"io.modelcontextprotocol/subscriptionId\":2}}}\n\n").await.unwrap();
             let mut byte = [0];
             assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
             let mut next = listen(&listener, 3, filters(&[])).await;
-            next.write_all(&ack_bytes(3, filters(&[]))).await.unwrap();
+            next.write_all(&ack_bytes(3, &filters(&[]))).await.unwrap();
             done.cancelled().await;
         };
         let client = async {
@@ -321,7 +321,7 @@ fn uri_expansion_observes_ordinary_stream_cancellation_before_handoff() {
         let server = route(&listener).await;
         let wire = async {
             let mut subscription = listen(&listener, 2, filters(&[])).await;
-            subscription.write_all(&ack_bytes(2, filters(&[]))).await.unwrap();
+            subscription.write_all(&ack_bytes(2, &filters(&[]))).await.unwrap();
             let (mut catalog, _) = listener.accept().await.unwrap();
             let received = request(&mut catalog).await;
             assert!(String::from_utf8_lossy(&received).contains("resources/list"));
