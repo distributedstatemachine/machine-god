@@ -75,6 +75,7 @@ impl NativeMcpRuntime {
         )
         .map_err(|_| Error::Unavailable)?;
         let mut lane = server.acquire_feature(&authority).await?;
+        let deadline = lane.deadline;
         let caller = BorrowedRefreshCaller::Human(command, cancellation);
         match select(
             authority.cancelled(),
@@ -87,7 +88,7 @@ impl NativeMcpRuntime {
                 let changed = result?;
                 caller.check()?;
                 server.check_authority()?;
-                if (!changed && !authority.is_live()) || server.clock.now() >= lane.deadline {
+                if (!changed && !authority.is_live()) || server.clock.now() >= deadline {
                     return Err(Error::Cancelled);
                 }
                 Ok(())
