@@ -1589,11 +1589,7 @@ impl NativeReferenceHost {
             concrete: terminal_concrete,
         } = selected_terminal;
         let session_store = Arc::new(session_store);
-        let (engine_session_store, read_tool_result) = session_store_components(&session_store);
-        let read_tool_result = match archive {
-            Some(archive) => read_tool_result.with_archive(archive),
-            None => read_tool_result,
-        };
+        let (engine_session_store, read_tool_result) = session_store_parts(&session_store, archive);
         catalog.question(AskUserQuestionTool::shared_prompter(question_prompter));
         let features = mcp::features(mcp.as_ref(), mcp_feature_authority);
         catalog.extensions(mcp_catalog, features, subagent_authority);
@@ -2041,11 +2037,16 @@ fn compose_web_fetch() -> Result<WebFetchTool, NativeReferenceHostBuildError> {
     })
 }
 
-fn session_store_components(
+fn session_store_parts(
     session_store: &Arc<FileSessionStore>,
+    archive: Option<Arc<NativeToolResultArchiveAdapter>>,
 ) -> (Arc<dyn SessionStore>, ReadToolResultTool) {
     let erased = Arc::clone(session_store) as Arc<dyn SessionStore>;
     let reader = ReadToolResultTool::shared_session_store(Arc::clone(&erased));
+    let reader = match archive {
+        Some(archive) => reader.with_archive(archive),
+        None => reader,
+    };
     (erased, reader)
 }
 

@@ -7,7 +7,8 @@ prepare storage, start workers, acquire a peer or retain an engine/runtime.
 The default `execution_policy()` advertises no form or URL responder.
 `with_form_responder` explicitly retains an actual `McpElicitationPresenter`
 (normally the native interactive prompt bridge) and enables form advertisement.
-URL support remains false. Progress metadata uses the actual peer-reserved ID.
+URL support additionally requires the native host's explicitly composed shared
+browser launcher. Progress metadata uses the actual peer-reserved ID.
 
 ## Admission and distinct results
 
@@ -36,7 +37,7 @@ redacted tool error, never a fabricated successful result.
   event. Later sibling calls retain unknown placeholders; no further provider
   round or sibling preparation, permission or execution occurs.
 
-## Consented modern form continuation
+## Consented modern input continuation
 
 Only the concrete native executor's private sealed-response path can continue.
 Each response carries the exact round allocation. Its writer-completion marker
@@ -53,14 +54,15 @@ continuation neither reopens its slot nor asks the model for fresh permission.
 The retained original proof is revalidated before and after human input, queue
 acquisition, response admission and every synchronous writer boundary.
 
-With an explicitly supplied form presenter, a correlated modern input-required
+With an explicitly supplied presenter, a correlated modern input-required
 result presents its exact typed requests through the native inbox. Every request
-must be a supported form before presentation begins. Answers must match the
+must be a supported form or URL before presentation begins; URL requests also
+require the actual native launcher. Answers must match the
 entire original request-key set and schema; accept, decline and cancel remain
-distinct wire actions. A form cancel supplies explicit cancel actions for the
-remaining forms without further prompts, matching the pinned responder.
+distinct wire actions. A cancel supplies explicit cancel actions for the
+remaining requests without further prompts, matching the pinned responder.
 An empty request map, including state-only input, remains unresolved: the pinned
-`elicitation_interaction.zig` responder rejects zero requests. Unsupported URL,
+`elicitation_interaction.zig` responder rejects zero requests. Unconfigured URL,
 sampling, roots and legacy requests, or an unavailable presenter, keep the
 explicit input-required projection and stop-after-tool behavior above.
 
@@ -93,9 +95,22 @@ Yolo policy. Permission is checked again after an answer, so a revoked original
 grant cannot submit a continuation. External core metadata changes retain their
 existing synchronous-checkpoint boundary, not a new native notification claim.
 
-This owner does not launch browsers, perform URL/legacy completion retries,
-sampling or roots operations. Those need separate actual native responders and
-typed custody; server data and serialized context IDs never supply authority.
+Accepted URL answers permit one native browser handoff. Decline and cancel never
+launch. Failed or indeterminate handoffs offer at most three explicit recovery
+questions: continue manually, retry browser, or cancel. Exhausted recovery
+returns the canonical cancel action. Recovery shares the original interaction
+deadline; it does not restart the human budget. Browser exit or manual acceptance
+records consent, not remote completion: the originating modern request decides
+completion after its separately admitted continuation.
+
+The browser worker retains and rechecks the original native grant, turn, runtime,
+caller/server cancellation and interaction deadline before admission, after queue
+wait, and immediately before OS spawn. That custody remains retained through the
+direct child's actual reap, including when observation is abandoned. No browser
+process gets independent tool execution or continuation authority. The shared
+launcher's existing single-child bound and ten-second handoff ceiling still apply.
+Legacy completion retries, sampling and roots are not provided by this modern
+collector; server data and serialized context IDs never supply their authority.
 
 ## Archive bounds and completion ownership
 

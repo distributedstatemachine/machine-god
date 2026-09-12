@@ -1,7 +1,8 @@
 //! Concrete MCP exchange, exact result admission and explicitly owned archives.
 
 use super::{
-    continuation::{AdmittedResponse, FormOutcome, collect_form},
+    browser_launcher::NativeMcpBrowserLauncher,
+    continuation::{AdmittedResponse, InputOutcome, collect_input},
     interaction::McpElicitationPresenter,
     runtime::{
         NativeMcpRuntimeToolCall, NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy,
@@ -52,6 +53,7 @@ pub struct NativeMcpArchivedToolExecutor {
     archive: Arc<NativeToolResultArchiveAdapter>,
     admission: NativeMcpToolResultAdmission,
     form_responder: Option<Arc<dyn McpElicitationPresenter>>,
+    url_launcher: Option<NativeMcpBrowserLauncher>,
 }
 impl std::fmt::Debug for NativeMcpArchivedToolExecutor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -67,6 +69,7 @@ impl NativeMcpArchivedToolExecutor {
             archive,
             admission: NativeMcpToolResultAdmission::new(McpToolResultLimits::default())?,
             form_responder: None,
+            url_launcher: None,
         })
     }
 
@@ -75,16 +78,24 @@ impl NativeMcpArchivedToolExecutor {
     pub const fn execution_policy(&self) -> NativeMcpToolExecutionPolicy {
         NativeMcpToolExecutionPolicy {
             form: self.form_responder.is_some(),
+            url: self.form_responder.is_some() && self.url_launcher.is_some(),
             ..POLICY
         }
     }
 
     /// Supplies the actual human presentation endpoint. Construction is inert;
     /// only this explicitly configured owner advertises modern form support.
-    /// URL, sampling, roots and legacy retries remain unsupported.
+    /// URL support additionally requires the native host's actual shared launcher.
+    /// Sampling, roots and legacy retries remain unsupported.
     #[must_use]
     pub fn with_form_responder(mut self, presenter: Arc<dyn McpElicitationPresenter>) -> Self {
         self.form_responder = Some(presenter);
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_url_launcher(mut self, launcher: NativeMcpBrowserLauncher) -> Self {
+        self.url_launcher = Some(launcher);
         self
     }
 }
@@ -112,11 +123,18 @@ impl NativeMcpToolExecutor for NativeMcpArchivedToolExecutor {
                             break (projection::continuation_exhausted(), false);
                         }
                         call.begin_interaction()?;
-                        match collect_form(&call, input, presenter.as_ref()).await? {
-                            FormOutcome::Consented(consent) => {
+                        match collect_input(
+                            &call,
+                            input,
+                            presenter.as_ref(),
+                            self.url_launcher.as_ref(),
+                        )
+                        .await?
+                        {
+                            InputOutcome::Consented(consent) => {
                                 response = call.continue_exchange(consent).await?;
                             }
-                            FormOutcome::Unresolved(input) => {
+                            InputOutcome::Unresolved(input) => {
                                 break (projection::input_required(&input.required)?, true);
                             }
                         }

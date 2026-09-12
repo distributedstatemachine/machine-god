@@ -2,6 +2,7 @@
 //! cannot construct a public continuation capability.
 
 use super::{
+    browser_launcher::NativeMcpBrowserLauncher,
     interaction::{
         McpElicitationPresenter, McpElicitationPromptError, McpElicitationPromptRequest,
     },
@@ -11,6 +12,8 @@ use super::{
     runtime::NativeMcpRuntimeToolCall,
     tool_result::{McpToolInputRequired, McpToolProtocolFailure},
 };
+
+mod url;
 use futures_util::future::{Either, select};
 use machine_god_core::{CancellationToken, ToolError, ToolErrorKind, ToolOutput};
 use serde_json::value::RawValue;
@@ -32,7 +35,7 @@ pub(crate) struct ContinuationConsent {
     pub(crate) input: ContinuationInput,
     pub(crate) responses: McpValidatedResponses,
 }
-pub(crate) enum FormOutcome {
+pub(crate) enum InputOutcome {
     Consented(ContinuationConsent),
     Unresolved(ContinuationInput),
 }
@@ -44,11 +47,12 @@ impl Drop for PromptCancellation {
     }
 }
 
-pub(crate) async fn collect_form(
+pub(crate) async fn collect_input(
     call: &NativeMcpRuntimeToolCall,
     input: ContinuationInput,
     presenter: &dyn McpElicitationPresenter,
-) -> Result<FormOutcome, ToolError> {
+    launcher: Option<&NativeMcpBrowserLauncher>,
+) -> Result<InputOutcome, ToolError> {
     call.revalidate()?;
     call.check_interaction_deadline()?;
     let requests = input.required.required().requests();
@@ -56,9 +60,9 @@ pub(crate) async fn collect_form(
     // Preflight all methods/modes before displaying any partial interaction.
     if call.protocol().version != super::protocol::ProtocolVersion::Modern
         || requests.is_empty()
-        || requests.iter().any(|request| !matches!(request.payload(), McpInputRequestPayload::Elicitation(form) if form.mode() == McpElicitationMode::Form))
+        || requests.iter().any(|request| !matches!(request.payload(), McpInputRequestPayload::Elicitation(form) if form.mode() == McpElicitationMode::Form || launcher.is_some()))
     {
-        return Ok(FormOutcome::Unresolved(input));
+        return Ok(InputOutcome::Unresolved(input));
     }
     let mut responses = BTreeMap::<&str, Box<RawValue>>::new();
     // Nonempty object: braces plus commas contribute one more byte than the
@@ -74,13 +78,7 @@ pub(crate) async fn collect_form(
         let answer = if cancelled {
             RawValue::from_string("{\"action\":\"cancel\"}".into()).expect("fixed JSON")
         } else {
-            let prompt = McpElicitationPromptRequest::new(
-                call.context().clone(),
-                Arc::from(call.server_name()),
-                call.tool_name().clone(),
-                form.clone(),
-            )
-            .map_err(|_| rejected())?;
+            let prompt = prompt(call, form.clone())?;
             let cancellation = PromptCancellation(CancellationToken::new());
             let answer = match select(
                 presenter.present(prompt, cancellation.0.clone()),
@@ -95,11 +93,30 @@ pub(crate) async fn collect_form(
             call.check_interaction_deadline()?;
             match answer {
                 Ok(answer) => {
+                    let answer = if form.mode() == McpElicitationMode::Url
+                        && answer.action() == McpElicitationAction::Accept
+                    {
+                        let Some(answer) = url::complete(
+                            call,
+                            &input,
+                            form,
+                            &answer,
+                            presenter,
+                            launcher.ok_or_else(rejected)?,
+                        )
+                        .await?
+                        else {
+                            return Ok(InputOutcome::Unresolved(input));
+                        };
+                        answer
+                    } else {
+                        answer
+                    };
                     cancelled = answer.action() == McpElicitationAction::Cancel;
                     answer.canonical_json().to_owned()
                 }
                 Err(McpElicitationPromptError::Cancelled) => return Err(rejected()),
-                Err(_) => return Ok(FormOutcome::Unresolved(input)),
+                Err(_) => return Ok(InputOutcome::Unresolved(input)),
             }
         };
         // Charge the actual bounded escaped key before assembling the aggregate
@@ -124,10 +141,23 @@ pub(crate) async fn collect_form(
         .map_err(|_| rejected())?;
     call.revalidate()?;
     call.check_interaction_deadline()?;
-    Ok(FormOutcome::Consented(ContinuationConsent {
+    Ok(InputOutcome::Consented(ContinuationConsent {
         input,
         responses,
     }))
+}
+
+fn prompt(
+    call: &NativeMcpRuntimeToolCall,
+    request: Arc<super::mrtr::McpElicitationRequest>,
+) -> Result<McpElicitationPromptRequest, ToolError> {
+    McpElicitationPromptRequest::new(
+        call.context().clone(),
+        Arc::from(call.server_name()),
+        call.tool_name().clone(),
+        request,
+    )
+    .map_err(|_| rejected())
 }
 
 fn rejected() -> ToolError {

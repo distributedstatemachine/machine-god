@@ -153,9 +153,39 @@ impl NativeMcpBrowserLauncher {
         deadline: Instant,
     ) -> BoxFuture<'static, Result<NativeMcpBrowserLaunchOutcome, NativeMcpBrowserLaunchError>>
     {
-        let operation =
-            self.launcher
-                .open(LauncherUrl::Mcp(url.0), cancellation, owner, Some(deadline));
+        self.launch_selected(url, cancellation, owner, deadline, None)
+    }
+
+    pub(crate) fn launch_guarded(
+        &self,
+        url: NativeMcpBrowserUrl,
+        cancellation: CancellationToken,
+        owner: CancellationToken,
+        deadline: Instant,
+        checkpoint: std::sync::Arc<dyn crate::background_url_opener::launcher::LauncherGuard>,
+    ) -> BoxFuture<'static, Result<NativeMcpBrowserLaunchOutcome, NativeMcpBrowserLaunchError>>
+    {
+        self.launch_selected(url, cancellation, owner, deadline, Some(checkpoint))
+    }
+
+    fn launch_selected(
+        &self,
+        url: NativeMcpBrowserUrl,
+        cancellation: CancellationToken,
+        owner: CancellationToken,
+        deadline: Instant,
+        checkpoint: Option<
+            std::sync::Arc<dyn crate::background_url_opener::launcher::LauncherGuard>,
+        >,
+    ) -> BoxFuture<'static, Result<NativeMcpBrowserLaunchOutcome, NativeMcpBrowserLaunchError>>
+    {
+        let operation = self.launcher.open_guarded(
+            LauncherUrl::Mcp(url.0),
+            cancellation,
+            owner,
+            Some(deadline),
+            checkpoint,
+        );
         Box::pin(async move {
             Ok(match operation.await? {
                 NativeBackgroundOpenOutcome::Opened => NativeMcpBrowserLaunchOutcome::Opened,

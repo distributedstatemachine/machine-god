@@ -161,11 +161,11 @@ impl FixtureExtension {
 
 impl Fixture {
     pub fn new() -> Self {
-        Self::with_host_options(|options| options)
+        Self::with_prompter(Arc::new(AllowPrompter))
     }
 
     pub fn with_prompter(prompter: Arc<dyn PermissionPrompter>) -> Self {
-        Self::configured(false, FixtureExtension::None, prompter)
+        Self::with_host_options(|options| options, Some(prompter))
     }
 
     pub fn new_with_workspace() -> Self {
@@ -192,11 +192,12 @@ impl Fixture {
         select: impl FnOnce(
             NativeReferenceHostConversationOptions,
         ) -> NativeReferenceHostConversationOptions,
+        prompter: Option<Arc<dyn PermissionPrompter>>,
     ) -> Self {
         Self::configured_with_options(
             false,
             FixtureExtension::None,
-            Arc::new(AllowPrompter),
+            prompter.unwrap_or_else(|| Arc::new(AllowPrompter)),
             select,
         )
     }

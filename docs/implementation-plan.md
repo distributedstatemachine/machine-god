@@ -419,10 +419,10 @@ startup/reload guards stored auth with exact profile snapshots and retains chall
 Typed feature/input codecs compose with DNS/TLS, archived calls, consented forms
 and URL prompts. CLI startup/reload/settlement retain exact profile and cleanup
 custody; required readiness blocks prompts while interactive management stays open.
-Explicit auth/logout controls share native browser ownership and separate receipts.
+Explicit auth/logout and modern URL recovery share native browser ownership.
 
 These components do not constitute a delivered runtime. Remaining composition
-must compose URL/legacy input custody, TTL/notification refresh,
+must compose legacy input custody, TTL/notification refresh,
 authentication end-to-end evidence/lifetime refresh and CLI ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.

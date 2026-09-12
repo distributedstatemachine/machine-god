@@ -127,11 +127,12 @@ deadline, changed-auth handling, browser consent and continuation submission
 remain separate native responsibilities. These data codecs neither consume
 their request nor grant execution authority when called repeatedly.
 
-The [native archived executor](mcp-tool-execution.md#consented-modern-form-continuation)
-separately composes correlated modern form requests with the real typed prompt
-inbox, original native proof custody and fresh bounded submissions. Its private
-round allocation is not obtainable from these public codecs. URL/legacy retry,
-sampling and roots remain outside that form continuation path.
+The [native archived executor](mcp-tool-execution.md#consented-modern-input-continuation)
+separately composes correlated modern form and explicitly configured URL requests
+with the real typed prompt inbox, original native proof custody and fresh bounded
+submissions. Its private
+round allocation is not obtainable from these public codecs. Legacy completion
+retry, sampling and roots remain outside that modern continuation path.
 
 ## Native legacy completion observations
 

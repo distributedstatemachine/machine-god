@@ -3,6 +3,8 @@ use crate::mcp::interaction::McpElicitationAnswerInput;
 use futures_util::future::{Either, select};
 use std::task::{Context, Poll, Waker};
 
+mod url;
+
 const INPUT: &str = r#""result":{"resultType":"input_required","inputRequests":{"confirm":{"method":"elicitation/create","params":{"message":"Confirm","requestedSchema":{"type":"object","properties":{"number":{"type":"number"}}}}}},"requestState":{"exact":1e-99999,"zero":-0,"$serde_json::private::Number":{"$serde_json::private::RawValue":"literal"}}}"#;
 
 fn configured(
@@ -18,6 +20,15 @@ fn configured_with_clock(
     response: impl Fn(i64) -> Box<[u8]> + Send + Sync + 'static,
     clock: Option<Arc<dyn NativeMcpRuntimeClock>>,
 ) -> (Fixture, NativeInteractivePromptInbox) {
+    configured_with_launcher(archive, arguments, response, clock, None)
+}
+fn configured_with_launcher(
+    archive: &Archive,
+    arguments: &[Value],
+    response: impl Fn(i64) -> Box<[u8]> + Send + Sync + 'static,
+    clock: Option<Arc<dyn NativeMcpRuntimeClock>>,
+    launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
+) -> (Fixture, NativeInteractivePromptInbox) {
     let (bridge, mut inbox) =
         NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
     inbox
@@ -26,15 +37,18 @@ fn configured_with_clock(
             SessionIncarnationId::new("life").unwrap(),
         ))
         .unwrap();
-    let executor = Arc::new(
-        NativeMcpArchivedToolExecutor::new(Arc::new(NativeToolResultArchiveAdapter::new(
-            archive.storage.clone(),
-        )))
-        .unwrap()
-        .with_form_responder(bridge),
-    );
+    let executor = NativeMcpArchivedToolExecutor::new(Arc::new(
+        NativeToolResultArchiveAdapter::new(archive.storage.clone()),
+    ))
+    .unwrap()
+    .with_form_responder(bridge);
+    let supports_url = launcher.is_some();
+    let executor = Arc::new(match launcher {
+        Some(launcher) => executor.with_url_launcher(launcher),
+        None => executor,
+    });
     assert!(executor.execution_policy().form);
-    assert!(!executor.execution_policy().url);
+    assert_eq!(executor.execution_policy().url, supports_url);
     let prepare = move |runtime: &NativeMcpRuntime, writes| {
         scripted_candidate(
             runtime,

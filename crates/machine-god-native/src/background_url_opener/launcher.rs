@@ -22,6 +22,12 @@ use std::{
 };
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Native effect checkpoint retained through the direct child's actual reap.
+/// External URLs cannot construct this additional authority.
+pub(crate) trait LauncherGuard: Send + Sync {
+    fn check(&self) -> Result<(), NativeBackgroundOpenError>;
+}
+
 /// Each caller moves its own admitted representation without copying URL bytes.
 pub(crate) enum LauncherUrl {
     Background(BackgroundServerUrl),
@@ -82,6 +88,17 @@ impl OwnedUrlLauncher {
         revoked: CancellationToken,
         deadline: Option<Instant>,
     ) -> BoxFuture<'static, Result<NativeBackgroundOpenOutcome, NativeBackgroundOpenError>> {
+        self.open_guarded(url, cancellation, revoked, deadline, None)
+    }
+
+    pub(crate) fn open_guarded(
+        &self,
+        url: LauncherUrl,
+        cancellation: CancellationToken,
+        revoked: CancellationToken,
+        deadline: Option<Instant>,
+        checkpoint: Option<Arc<dyn LauncherGuard>>,
+    ) -> BoxFuture<'static, Result<NativeBackgroundOpenOutcome, NativeBackgroundOpenError>> {
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
             if cancellation.is_cancelled() || revoked.is_cancelled() {
@@ -95,6 +112,9 @@ impl OwnedUrlLauncher {
             if now >= deadline {
                 return Err(NativeBackgroundOpenError::TimedOut);
             }
+            if let Some(checkpoint) = &checkpoint {
+                checkpoint.check()?;
+            }
             inner
                 .active
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -107,6 +127,7 @@ impl OwnedUrlLauncher {
                 revoked,
                 abandoned,
                 deadline,
+                checkpoint,
             };
             let workers = inner.workers.clone();
             let result = workers
@@ -139,6 +160,7 @@ struct Operation {
     revoked: CancellationToken,
     abandoned: CancellationToken,
     deadline: Instant,
+    checkpoint: Option<Arc<dyn LauncherGuard>>,
 }
 
 struct LauncherSpawnFailure(NativeBackgroundOpenError);
@@ -158,7 +180,9 @@ impl Operation {
         } else if Instant::now() >= self.deadline {
             Err(NativeBackgroundOpenError::TimedOut)
         } else {
-            Ok(())
+            self.checkpoint
+                .as_ref()
+                .map_or(Ok(()), |guard| guard.check())
         }
     }
 }
@@ -193,7 +217,7 @@ fn launch(
         operation.check().map_err(LauncherSpawnFailure)
     })
     .map_err(|failure| failure.0)?;
-    child.retain_until_reaped(Box::new((admission, inner)));
+    child.retain_until_reaped(Box::new((admission, inner, operation.checkpoint.clone())));
     drop(command);
     // Once spawn begins, cancellation cannot promise that the URL was not opened.
     let mut interval = Duration::from_millis(2);

@@ -70,9 +70,10 @@ fn existing_optional_capture_composes_both_paths_without_inspecting_the_launcher
 fn session_inherits_host_desktop_selection_without_a_second_capture() {
     executor().block_on(async {
         for invalid in [false, true] {
-            let fixture = Fixture::with_host_options(|options| {
-                options.with_background_url_opener(executable(), environment(invalid))
-            });
+            let fixture = Fixture::with_host_options(
+                |options| options.with_background_url_opener(executable(), environment(invalid)),
+                None,
+            );
             let session = owner(&fixture).await;
             assert!(session.host.has_background_url_selection());
             assert_eq!(session.host.background_url_opener().is_some(), !invalid);
@@ -88,9 +89,10 @@ fn session_inherits_host_desktop_selection_without_a_second_capture() {
 fn conflicting_explicit_desktop_selections_fail_before_conversation_preparation() {
     executor().block_on(async {
         for invalid in [false, true] {
-            let fixture = Fixture::with_host_options(|options| {
-                options.with_background_url_opener(executable(), environment(invalid))
-            });
+            let fixture = Fixture::with_host_options(
+                |options| options.with_background_url_opener(executable(), environment(invalid)),
+                None,
+            );
             let options = NativeInteractiveSessionOptions::new(
                 fixture.workspace.clone(),
                 NativeModelPreferences::default(),

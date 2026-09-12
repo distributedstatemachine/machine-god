@@ -217,7 +217,13 @@ async fn reconnect_server(
         resumed.write_all(NOTICE).await.unwrap();
         resumed.write_all(b"\n\n").await.unwrap();
     }
-    assert_eq!(resumed.read(&mut [0]).await.unwrap(), 0);
+    match resumed.read(&mut [0]).await {
+        Ok(0) => {}
+        // Expiry may retire the socket with the partial response still unread.
+        // This is closure, not another GET; the successful path requires EOF.
+        Err(error) if expire && error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("expected retired reconnect socket, observed {other:?}"),
+    }
 }
 
 #[test]

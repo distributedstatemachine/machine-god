@@ -23,19 +23,21 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod url;
+
 /// Native-owned original invocation and its one-shot claimed permission proof.
 /// No public constructor, raw writer, peer handle or replay method is exposed.
 pub struct NativeMcpRuntimeToolCall {
     tool: Arc<ToolRoute>,
     server: Arc<ServerRoute>,
-    turn: NativeMcpTurnContext,
+    turn: Arc<NativeMcpTurnContext>,
     context: ToolContext,
     arguments: Value,
     cancellation: CancellationToken,
     pending: Option<McpSubmission>,
     options: McpToolCallOptions,
     request_id: RpcId,
-    custody: McpContinuationCustody,
+    custody: Arc<McpContinuationCustody>,
     round: Arc<AtomicBool>,
     response_pending: bool,
     continuations: u8,
@@ -79,14 +81,14 @@ impl NativeMcpRuntimeToolCall {
         let call = Self {
             tool,
             server,
-            turn,
+            turn: Arc::new(turn),
             context,
             arguments,
             cancellation,
             pending: Some(submission),
             options,
             request_id,
-            custody,
+            custody: Arc::new(custody),
             round,
             response_pending: false,
             continuations: 0,
