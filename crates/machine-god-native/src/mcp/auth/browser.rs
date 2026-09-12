@@ -17,6 +17,9 @@ use tokio::{
 };
 const CALLBACK_BODY: &str = "Authorization received. Return to machine-god.";
 
+#[cfg(test)]
+mod tests;
+
 impl Authority {
     pub(super) async fn authorize(
         &self,
@@ -27,12 +30,6 @@ impl Authority {
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<Credentials> {
-        let deadline = deadline.min(
-            self.clock
-                .now()
-                .checked_add(Duration::from_secs(5 * 60))
-                .ok_or(McpAuthError::Deadline)?,
-        );
         self.check(cancellation, deadline)?;
         let discovery = self
             .discover(config, challenge, previous, cancellation, deadline)
@@ -176,11 +173,20 @@ impl Authority {
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<Secret> {
+        // The interactive wait begins after browser handoff. Discovery,
+        // registration and consent do not consume it; accepted socket I/O and
+        // the later token exchange retain their own finite network budgets.
+        let callback_deadline = deadline.min(
+            self.clock
+                .now()
+                .checked_add(Duration::from_secs(5 * 60))
+                .ok_or(McpAuthError::Deadline)?,
+        );
         let (mut stream, address) = self
             .bounded(
                 async { listener.accept().await.map_err(|_| McpAuthError::Network) },
                 cancellation,
-                deadline,
+                callback_deadline,
             )
             .await?;
         if !address.ip().is_loopback() {

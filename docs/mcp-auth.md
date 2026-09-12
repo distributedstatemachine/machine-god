@@ -112,10 +112,14 @@ remain outside this native file contract.
 
 ## Cancellation and cleanup
 
-Every exchange uses the shorter selected deadline or 30 seconds. Interactive
-authorization uses at most five minutes, and accepted callback I/O at most
-30 seconds. Cancellation or dropping a polled future releases its owned socket
-and listener without replay. Constructors and unpolled futures remain inert.
+Every exchange uses the shorter selected overall deadline or 30 seconds. The
+five-minute interactive callback wait begins after successful browser handoff;
+discovery, registration and consent do not consume that window. Accepted callback
+I/O receives its own at-most-30-second budget, and the subsequent token exchange
+uses its own network budget, not the callback-wait cutoff. The caller's original
+overall deadline and cancellation constrain every phase. Cancellation or dropping
+a polled future releases its owned socket and listener without replay.
+Constructors and unpolled futures remain inert.
 Constructing the service or an unpolled operation starts no worker. Once polled,
 persistence jobs retain their admission and result custody through the selected
 host worker collector, including when the caller drops its future. An admitted
