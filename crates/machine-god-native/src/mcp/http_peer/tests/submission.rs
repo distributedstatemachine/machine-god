@@ -9,7 +9,9 @@ fn staged_runtime_whitelist_is_inert_until_commit_and_returns_retired_allocation
             listener.local_addr().unwrap(),
             TransportKind::StreamableHttp,
         );
-        let server = accept_reply(&listener, 200, JSON, &modern(1));
+        let server = async {
+            accept_reply(&listener, 200, JSON, &modern(1)).await;
+        };
         let client = async {
             let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
                 .await
