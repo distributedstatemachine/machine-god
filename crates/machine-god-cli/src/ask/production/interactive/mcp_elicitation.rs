@@ -3,7 +3,10 @@
 use super::presentation::escaped;
 use machine_god_native::NativeInteractivePromptResponse;
 use machine_god_native::mcp::{
-    interaction::{MAX_MCP_ELICITATION_ANSWER_BYTES as RESPONSE_BYTES, McpElicitationAnswerInput},
+    interaction::{
+        MAX_MCP_ELICITATION_ANSWER_BYTES as RESPONSE_BYTES, McpElicitationAnswerInput,
+        McpElicitationPromptSource,
+    },
     mrtr::{
         McpElicitationMode, McpElicitationRequest, McpFormField, McpFormFieldKind, McpMrtrLimits,
     },
@@ -38,7 +41,7 @@ impl ElicitationModal {
         &self,
         request: &McpElicitationRequest,
         server: &str,
-        tool: &str,
+        origin: &McpElicitationPromptSource,
     ) -> Result<Vec<u8>, ()> {
         let source = self.stage_text(request)?;
         let (start, end) = page_span(&source, self.page).ok_or(())?;
@@ -46,8 +49,7 @@ impl ElicitationModal {
         write!(output, "\n[MCP input — page {}]\n", self.page + 1).map_err(|_| ())?;
         output.write_str("Server: ").map_err(|_| ())?;
         escaped(&mut output, server)?;
-        output.write_str("\nTool: ").map_err(|_| ())?;
-        escaped(&mut output, tool)?;
+        render_source(&mut output, origin)?;
         output.write_char('\n').map_err(|_| ())?;
         escaped(&mut output, &source[start..end])?;
         output.write_char('\n').map_err(|_| ())?;
@@ -64,10 +66,12 @@ impl ElicitationModal {
             output.write_str(" /back to reread.").map_err(|_| ())?;
         }
         output
-            .write_str(
-                "\n/decline or /cancel-input dismisses this request; /cancel stops the turn.\n> ",
-            )
+            .write_str("\n/decline or /cancel-input dismisses this request; ")
             .map_err(|_| ())?;
+        output
+            .write_str(cancellation_notice(origin))
+            .map_err(|_| ())?;
+        output.write_str("\n> ").map_err(|_| ())?;
         Ok(output.finish().into_bytes())
     }
 
@@ -217,6 +221,29 @@ impl ElicitationModal {
             }
         }
         Ok(text.finish())
+    }
+}
+
+fn render_source(
+    output: &mut crate::bounded_output::BoundedOutput,
+    source: &McpElicitationPromptSource,
+) -> Result<(), ()> {
+    match source {
+        McpElicitationPromptSource::ModelTool { tool, .. } => {
+            output.write_str("\nTool: ").map_err(|_| ())?;
+            escaped(output, tool.as_str())
+        }
+        McpElicitationPromptSource::HumanFeature { action, .. } => {
+            output.write_str("\nHuman feature: ").map_err(|_| ())?;
+            escaped(output, action.as_str())
+        }
+    }
+}
+
+fn cancellation_notice(source: &McpElicitationPromptSource) -> &'static str {
+    match source {
+        McpElicitationPromptSource::ModelTool { .. } => "/cancel stops the turn.",
+        McpElicitationPromptSource::HumanFeature { .. } => "/cancel cancels the current operation.",
     }
 }
 

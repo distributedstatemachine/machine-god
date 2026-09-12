@@ -64,14 +64,8 @@ impl Payload {
             Self::Question { context, .. } => {
                 (&context.session_id, &context.session_incarnation_id)
             }
-            Self::Elicitation { request } => (
-                &request.context().session_id,
-                &request.context().session_incarnation_id,
-            ),
-            Self::UrlRecovery { request } => (
-                &request.source().context().session_id,
-                &request.source().context().session_incarnation_id,
-            ),
+            Self::Elicitation { request } => return request.source().belongs_to(owner),
+            Self::UrlRecovery { request } => return request.source().source().belongs_to(owner),
         };
         session == owner.session_id() && incarnation == owner.session_incarnation_id()
     }

@@ -48,11 +48,9 @@ impl Modal {
             return super::mcp_elicitation::url::render_recovery(request);
         }
         if let Some(request) = self.view.elicitation() {
-            return self.elicitation.render(
-                request.request(),
-                request.server(),
-                request.tool().as_str(),
-            );
+            return self
+                .elicitation
+                .render(request.request(), request.server(), request.source());
         }
         let mut text = crate::ask::production::interactive::bounded_output();
         if let Some(request) = self.view.permission() {

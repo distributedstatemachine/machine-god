@@ -2,16 +2,64 @@
 //! Answers are validated data, never browser/continuation/execution authority.
 
 use super::mrtr::{McpElicitationAction, McpElicitationRequest};
-use machine_god_core::{BoxFuture, CancellationToken, ToolContext, ToolName};
+use crate::McpFeatureAction;
+use machine_god_core::{
+    BackgroundOutputOwner, BoxFuture, CancellationToken, ToolContext, ToolName,
+};
 use serde_json::value::RawValue;
 use std::{fmt, sync::Arc};
 
 pub const MAX_MCP_ELICITATION_ANSWER_BYTES: usize = 128 * 1024;
 
+/// Captured prompt provenance, not permission or continuation authority.
+pub enum McpElicitationPromptSource {
+    ModelTool {
+        context: ToolContext,
+        tool: ToolName,
+    },
+    HumanFeature {
+        owner: BackgroundOutputOwner,
+        action: McpFeatureAction,
+    },
+}
+impl McpElicitationPromptSource {
+    pub(crate) fn belongs_to(&self, expected: &BackgroundOutputOwner) -> bool {
+        match self {
+            Self::ModelTool { context, .. } => {
+                &context.session_id == expected.session_id()
+                    && &context.session_incarnation_id == expected.session_incarnation_id()
+            }
+            Self::HumanFeature { owner, .. } => owner == expected,
+        }
+    }
+    fn retained_byte_charge(&self) -> usize {
+        let strings: &[&str] = match self {
+            Self::ModelTool { context, tool } => &[
+                context.session_id.as_str(),
+                context.session_incarnation_id.as_str(),
+                context.turn_id.as_str(),
+                context.call_id.as_str(),
+                tool.as_str(),
+            ],
+            Self::HumanFeature { owner, .. } => &[
+                owner.session_id().as_str(),
+                owner.session_incarnation_id().as_str(),
+            ],
+        };
+        strings
+            .iter()
+            .fold(0usize, |total, text| total.saturating_add(text.len()))
+    }
+}
+impl fmt::Debug for McpElicitationPromptSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("McpElicitationPromptSource { .. }")
+    }
+}
+
 pub struct McpElicitationPromptRequest {
-    context: ToolContext,
+    source: McpElicitationPromptSource,
     server: Arc<str>,
-    tool: ToolName,
     request: Arc<McpElicitationRequest>,
 }
 impl McpElicitationPromptRequest {
@@ -26,13 +74,45 @@ impl McpElicitationPromptRequest {
         tool: ToolName,
         request: Arc<McpElicitationRequest>,
     ) -> Result<Self, McpElicitationPromptError> {
+        Self::with_source(
+            McpElicitationPromptSource::ModelTool { context, tool },
+            server,
+            request,
+        )
+    }
+    /// Inert human-command provenance. No model turn/call identity is invented.
+    /// # Errors
+    /// Rejects actions other than resource read and prompt get, and empty or
+    /// over-256-byte server identities. The caller supplies the actual owner.
+    pub fn new_human_feature(
+        owner: BackgroundOutputOwner,
+        server: Arc<str>,
+        action: McpFeatureAction,
+        request: Arc<McpElicitationRequest>,
+    ) -> Result<Self, McpElicitationPromptError> {
+        if !matches!(
+            action,
+            McpFeatureAction::ResourceRead | McpFeatureAction::PromptGet
+        ) {
+            return Err(McpElicitationPromptError::InvalidSource);
+        }
+        Self::with_source(
+            McpElicitationPromptSource::HumanFeature { owner, action },
+            server,
+            request,
+        )
+    }
+    fn with_source(
+        source: McpElicitationPromptSource,
+        server: Arc<str>,
+        request: Arc<McpElicitationRequest>,
+    ) -> Result<Self, McpElicitationPromptError> {
         if server.is_empty() || server.len() > 256 {
             return Err(McpElicitationPromptError::InvalidSource);
         }
         Ok(Self {
-            context,
+            source,
             server,
-            tool,
             request,
         })
     }
@@ -41,12 +121,8 @@ impl McpElicitationPromptRequest {
         &self.server
     }
     #[must_use]
-    pub const fn tool(&self) -> &ToolName {
-        &self.tool
-    }
-    #[must_use]
-    pub const fn context(&self) -> &ToolContext {
-        &self.context
+    pub const fn source(&self) -> &McpElicitationPromptSource {
+        &self.source
     }
     #[must_use]
     pub const fn request(&self) -> &Arc<McpElicitationRequest> {
@@ -56,19 +132,11 @@ impl McpElicitationPromptRequest {
     pub fn retained_byte_charge(&self) -> usize {
         // Count all retained identifiers. Saturation cannot admit an
         // overflow because every inbox limit is strictly below usize::MAX.
-        [
-            self.context.session_id.as_str(),
-            self.context.session_incarnation_id.as_str(),
-            self.context.turn_id.as_str(),
-            self.context.call_id.as_str(),
-            self.server(),
-            self.tool.as_str(),
-        ]
-        .iter()
-        .fold(
-            self.request.retained_byte_charge().saturating_add(256),
-            |total, text| total.saturating_add(text.len()),
-        )
+        self.request
+            .retained_byte_charge()
+            .saturating_add(256)
+            .saturating_add(self.source.retained_byte_charge())
+            .saturating_add(self.server.len())
     }
 }
 impl fmt::Debug for McpElicitationPromptRequest {

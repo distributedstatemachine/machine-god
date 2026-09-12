@@ -8,6 +8,7 @@ use crate::mcp::{
     protocol::ProtocolVersion,
 };
 use serde_json::value::RawValue;
+mod human;
 
 fn raw(text: &str) -> Box<RawValue> {
     RawValue::from_string(text.into()).unwrap()
@@ -62,9 +63,16 @@ fn real_inbox_preserves_context_shared_request_and_every_form_kind() {
     let view = view(&mut inbox);
     assert!(view.permission().is_none() && view.question().is_none());
     let actual = view.elicitation().unwrap();
-    assert_eq!(actual.context(), &context());
+    let McpElicitationPromptSource::ModelTool {
+        context: actual_context,
+        tool,
+    } = actual.source()
+    else {
+        panic!("actual model tool source");
+    };
+    assert_eq!(actual_context, &context());
     assert_eq!(actual.server(), "selected-server");
-    assert_eq!(actual.tool().as_str(), "mcp_selected_tool");
+    assert_eq!(tool.as_str(), "mcp_selected_tool");
     assert!(Arc::ptr_eq(actual.request(), &request));
     assert_eq!(actual.request().form_schema().unwrap().fields().len(), 6);
     inbox.reply(view.token(), input(r#"{"action":"accept","content":{"name":"Alice","large":9007199254740993.0,"ratio":0.3000000000000000000,"enabled":true,"color":"red","tags":["a","b"]},"ignored":1e400}"#)).unwrap();

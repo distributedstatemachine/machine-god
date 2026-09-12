@@ -1,5 +1,6 @@
 use super::super::super::{input_lines::InputBinding, presentation::Modal};
 use super::*;
+mod human;
 use machine_god_core::{
     BackgroundOutputOwner, BoxFuture, CancellationToken, SessionId, SessionIncarnationId,
     ToolCallId, ToolContext, ToolName, TurnId,
@@ -88,6 +89,7 @@ fn recovery_requires_acknowledged_exact_token_and_returns_only_typed_choices() {
         assert!(modal.answer(line, &modal.presentation_binding()).is_err());
         let rendered = String::from_utf8(modal.render().unwrap()).unwrap();
         assert!(rendered.contains("Continue manually") && rendered.contains("Retry browser"));
+        assert!(rendered.contains("/cancel stops the turn."));
         assert!(!rendered.contains("secret-not-for-recovery"));
         assert!(!rendered.contains('\u{1b}') && !rendered.contains('\u{202e}'));
         modal.displayed = true; // Existing driver sets this only after exact flush ack.

@@ -13,10 +13,17 @@ server identity, exposed `ToolName`, and an `Arc<McpElicitationRequest>`. Server
 identity is nonempty and at most 256 bytes; the tool identity retains the
 core's 128-byte `ToolName` admission. The executor
 supplies these identities from selection, not server text.
-Views expose all identities for the host to render safely; Debug is redacted.
-The context retains session, incarnation, turn, and call identity. Admission
-checks the inbox's active session/incarnation and scope captured when the
-presenter is called, including for futures not yet polled.
+`McpElicitationPromptSource::ModelTool` retains that exact context and tool.
+`new_human_feature` instead accepts the actual `BackgroundOutputOwner`, selected
+server, and either `ResourceRead` or `PromptGet`; all other actions are rejected.
+Its `HumanFeature` source retains session/incarnation and feature action without
+inventing a model turn, call or tool name. Both constructors are inert provenance
+admission, not feature execution or continuation authority.
+
+Views expose the source enum through `source()`; there is no unconditional
+model-only context/tool getter. Debug is redacted. Inbox admission compares the
+real source session/incarnation with its active owner and checks the scope
+captured when the presenter is called, including for futures not yet polled.
 
 The original admitted elicitation object is shared unchanged. Nested MRTR forms
 therefore retain their inherited 256-field limit rather than being reparsed
@@ -38,7 +45,7 @@ URL acceptance rejects content and does not open a browser.
 
 Modern URL requests retain a separate typed recovery question when a browser
 handoff was not confirmed. Its only choices are continue manually, retry the
-browser, and cancel. Recovery retains the exact original context and request,
+browser, and cancel. Recovery retains the exact original source and request,
 uses the same inbox limits and invalidation rules, and charges 64 additional
 request bytes plus 64 bytes for an unconsumed answer. The CLI requires the exact
 acknowledged presentation token and does not repeat the authorization URL in
@@ -67,7 +74,8 @@ text is interpreted as human input.
 The existing pending-count and aggregate request-byte limits also cover
 elicitation. A stored conservative MRTR charge accounts for each admitted
 request's raw data, typed fields, and container overhead, including Arc control
-storage. Inbox charging adds context/source strings and 256 bytes of prompt
+storage. Inbox charging adds the actual source's retained identity strings,
+the selected server and 256 bytes of prompt
 bookkeeping. Shared request bytes are charged for each queued prompt, even when
 the Arc storage is shared. Saturating overflow cannot fit the finite inbox cap.
 Returned views are ordinary caller-owned references; retaining them after a

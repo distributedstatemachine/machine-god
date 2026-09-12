@@ -39,7 +39,9 @@ fn typed_choices_are_not_interchangeable_with_json_or_each_other() {
         assert!(poll(&mut future).is_pending());
         let view = view(&mut inbox);
         let request = view.url_recovery().unwrap();
-        assert_eq!(request.source().context(), &context());
+        assert!(
+            matches!(request.source().source(), McpElicitationPromptSource::ModelTool { context: actual, .. } if actual == &context())
+        );
         assert!(view.elicitation().is_none());
         for response in [
             NativeInteractivePromptResponse::Question(QuestionPromptOutcome::Cancelled),

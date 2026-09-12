@@ -109,7 +109,13 @@ fn run_answered(
                     .expect("live inbox");
                 let elicitation = view.elicitation().expect("form, not permission prompt");
                 assert_eq!(elicitation.server(), "calendar");
-                assert_eq!(elicitation.context().call_id.as_str(), "call-0");
+                let crate::mcp::interaction::McpElicitationPromptSource::ModelTool {
+                    context, ..
+                } = elicitation.source()
+                else {
+                    panic!("actual model tool prompt source");
+                };
+                assert_eq!(context.call_id.as_str(), "call-0");
                 prompts += 1;
                 inbox.reply(view.token(), answer(reply)).unwrap();
             }

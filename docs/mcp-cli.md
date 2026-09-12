@@ -93,7 +93,10 @@ ambiguous result. Management-only hosts without native runtime/auth authority
 still reject auth/logout as unavailable.
 
 The interactive modal presents an explicitly queued native MCP elicitation,
-including its selected server and exposed tool identity. Server messages, URLs,
+including its selected server and captured origin. Model-tool prompts show the
+exposed tool identity; human resource-read and prompt-get prompts show their
+exact feature action, never a fabricated model tool/turn identity. Form and URL
+recovery presentation use the same origin and acknowledgement rules. Server messages, URLs,
 field schemas, choices and answer previews are terminal-escaped. Source text is
 paged in UTF-8-safe 8 KiB pieces within the existing 64 KiB output bound; long
 accepted messages and schemas are not silently truncated. Each page and field
@@ -110,8 +113,9 @@ fields. The complete answers are shown for a separate final `y` confirmation,
 under an independent 128 KiB response bound. The native inbox independently
 validates the entire response against the exact queued request.
 
-`/decline` and `/cancel-input` return distinct protocol actions; `/cancel` retains
-its existing whole-turn cancellation meaning. URL approval is explicit consent
+`/decline` and `/cancel-input` return distinct protocol actions; `/cancel` stops
+the active model turn or cancels the current human feature operation, as labeled
+for the captured source. URL approval is explicit consent
 only: this presentation code does not launch a browser, infer authentication
 completion, or resubmit a tool call. Browser execution, exact continuation
 authority remain native responsibilities. Legacy completion is not supported.

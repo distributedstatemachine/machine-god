@@ -1,5 +1,20 @@
 use super::*;
+use machine_god_core::{
+    SessionId, SessionIncarnationId, ToolCallId, ToolContext, ToolName, TurnId,
+};
 use machine_god_native::mcp::{mrtr::McpElicitationAction, protocol::ProtocolVersion};
+
+fn model_source(tool: &str) -> McpElicitationPromptSource {
+    McpElicitationPromptSource::ModelTool {
+        context: ToolContext {
+            session_id: SessionId::new("session").unwrap(),
+            session_incarnation_id: SessionIncarnationId::new("incarnation").unwrap(),
+            turn_id: TurnId::new("turn").unwrap(),
+            call_id: ToolCallId::new("call").unwrap(),
+        },
+        tool: ToolName::new(tool).unwrap(),
+    }
+}
 
 fn request(params: &str) -> McpElicitationRequest {
     McpElicitationRequest::parse(
@@ -48,7 +63,7 @@ fn every_form_kind_keeps_exact_values_until_explicit_final_confirmation() {
     }
     let text = String::from_utf8(
         modal
-            .render(&request, "actual-server", "actual-tool")
+            .render(&request, "actual-server", &model_source("actual-tool"))
             .unwrap(),
     )
     .unwrap();
@@ -114,7 +129,7 @@ fn source_pages_are_unicode_safe_bounded_and_require_reading_before_approval() {
     let request = request(&params.to_string());
     let mut modal = ElicitationModal::default();
     let first = modal
-        .render(&request, "actual\u{1b}server", "actual\u{202e}tool")
+        .render(&request, "actual\u{1b}server", &model_source("actual-tool"))
         .unwrap();
     assert!(first.len() <= super::super::MAX_PRESENTATION_OUTPUT_BYTES);
     let first = String::from_utf8(first).unwrap();
@@ -186,7 +201,11 @@ fn nested_forms_are_not_limited_to_the_question_tools_four_fields() {
     let mut modal = ElicitationModal::default();
     modal.answer(request, "/next").unwrap();
     for _ in 0..256 {
-        assert!(modal.render(request, "server", "tool").is_ok());
+        assert!(
+            modal
+                .render(request, "server", &model_source("tool"))
+                .is_ok()
+        );
         assert!(modal.answer(request, "/skip").unwrap().is_none());
     }
     let response = modal.answer(request, "y").unwrap().unwrap();
