@@ -6,6 +6,7 @@ mod authentication;
 pub(crate) use authentication::{ControlFence, Selection as NativeMcpAuthSelection};
 #[cfg(feature = "mcp-http")]
 pub use authentication::{NativeMcpAuthenticationError, NativeMcpAuthenticationReceipt};
+mod catalog;
 mod cleanup;
 mod configuration;
 mod operation;

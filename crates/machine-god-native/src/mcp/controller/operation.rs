@@ -100,6 +100,9 @@ fn select_job(
     if state.closed {
         return Err(failure(NativeMcpControllerError::Closed));
     }
+    if state.catalog_handoff {
+        return Err(failure(NativeMcpControllerError::Busy));
+    }
     if inner.settling.load(Ordering::Acquire) {
         return Err(failure(NativeMcpControllerError::Busy));
     }

@@ -208,6 +208,7 @@ fn reserve(
         return Err(failure(Error::Closed));
     }
     if inner.settling.load(Ordering::Acquire)
+        || state.catalog_handoff
         || state.running.is_some()
         || state.authenticating.upgrade().is_some()
     {

@@ -147,6 +147,30 @@ fn unchanged_catalog_preserves_publication_binding_and_retention_budget() {
 }
 
 #[test]
+fn refresh_retains_original_builtin_reservations_without_a_controller() {
+    let runtime = standalone();
+    let unnamed = runtime
+        .prepare_candidate(vec![addition::server("selected", &["lookup"])], &[])
+        .unwrap();
+    let builtin = unnamed.descriptors().tools()[0].name().to_owned();
+    drop(unnamed);
+    runtime
+        .publish(
+            runtime
+                .prepare_candidate(vec![addition::server("selected", &["lookup"])], &[&builtin])
+                .unwrap(),
+        )
+        .unwrap();
+    let before = active(&runtime);
+    let original_name = before.tools.keys().next().unwrap().clone();
+    assert_ne!(original_name.as_str(), builtin);
+    refresh(&runtime, &["lookup", "new"]).unwrap();
+    let after = active(&runtime);
+    assert!(after.tools.contains_key(&original_name));
+    assert!(after.tools.keys().all(|name| name.as_str() != builtin));
+}
+
+#[test]
 fn empty_server_refresh_retains_original_configuration_and_authentication() {
     let runtime = standalone();
     install(&runtime, &[]);

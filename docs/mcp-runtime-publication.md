@@ -151,6 +151,22 @@ pruned only when those owners disappear; draining peers cannot reset these
 catalog charges. Repeated refresh therefore remains finite even when a caller
 holds an old registration or unsent submission.
 
+Publications retain the original bounded builtin-name reservations, including
+direct runtimes without a controller. Refresh cannot reclaim a builtin's name
+merely because its caller did not resupply the original list. Deferred addition
+preserves those reservations independently of existing dynamic tool names.
+
+When a runtime is controller-bound, a short catalog handoff reserves the exact
+active configuration generation and its expected checkpoint. Concurrent reload,
+deferred activation, authentication and catalog handoffs are rejected while it
+is reserved; readiness reports busy rather than observing a half-updated pair.
+No controller mutex spans transport validation or runtime retirement callbacks.
+Successful publication advances that same generation's checkpoint to the exact
+committed view, without rereading or adopting another runtime publication.
+Failure or abandonment clears the reservation without changing selection.
+Reentrant close remains permitted and cannot turn a successful commit into an
+unreported rollback or reactivate the closed controller.
+
 Each candidate retains its explicitly selected monotonic catalog timestamp origin.
 `catalog_epoch(server)` exposes that origin without reading a clock or deciding
 freshness. Published server ownership preserves it, so relative fetched/expiry

@@ -54,6 +54,14 @@ impl NativeMcpRuntime {
         }
         let previous = self.addition_base(expected)?;
         validate_servers(&previous, &servers, self.limits.max_servers)?;
+        let mut builtin_names: BTreeSet<_> = previous.reserved.iter().map(AsRef::as_ref).collect();
+        builtin_names.extend(reserved.iter().copied());
+        let mut reserved_charge = 0;
+        let retained_reserved = super::candidate::retain_reserved(
+            &builtin_names.into_iter().collect::<Vec<_>>(),
+            &mut reserved_charge,
+            self.limits.max_retained_bytes,
+        )?;
         let reserved = reserved_names(&previous, reserved)?;
         let prepared = self.prepare_candidate(servers, &reserved)?;
         let next = prepared.publication;
@@ -68,9 +76,10 @@ impl NativeMcpRuntime {
             .checked_add(next.retained_bytes)
             .and_then(|bytes| bytes.checked_mul(2))
             .and_then(|bytes| bytes.checked_add(4096))
+            .and_then(|bytes| bytes.checked_add(reserved_charge))
             .filter(|bytes| *bytes <= self.limits.max_retained_bytes)
             .ok_or(Error::Limit)?;
-        let publication = merge(previous, &next, retained_bytes)?;
+        let publication = merge(previous, &next, retained_bytes, retained_reserved)?;
         Ok(NativeMcpRuntimeAddition {
             publication: Arc::new(publication),
             expected: expected.clone(),
@@ -172,6 +181,7 @@ fn merge(
     previous: Arc<Publication>,
     next: &Publication,
     retained_bytes: usize,
+    reserved: Arc<[Box<str>]>,
 ) -> Result<Publication> {
     let snapshot = McpToolCatalogSnapshot::new(
         previous
@@ -207,6 +217,7 @@ fn merge(
             .collect(),
         previous: Some(previous),
         deferred_sealed: true,
+        reserved,
         retained_bytes,
     })
 }

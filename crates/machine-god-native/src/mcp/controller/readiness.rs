@@ -12,6 +12,9 @@ impl NativeMcpController {
     pub fn required_readiness(&self) -> Result<()> {
         let generation = {
             let state = lock(&self.inner.state);
+            if state.catalog_handoff {
+                return Err(failure(NativeMcpControllerError::Busy));
+            }
             if state.closed || self.inner.options.startup.owner_cancellation.is_cancelled() {
                 return Err(failure(NativeMcpControllerError::Closed));
             }

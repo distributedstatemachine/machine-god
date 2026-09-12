@@ -86,6 +86,7 @@ pub(super) struct Publication {
     pub previous: Option<Arc<Publication>>,
     /// Independent of retained views: refresh must not reopen deferred startup.
     pub deferred_sealed: bool,
+    pub reserved: Arc<[Box<str>]>,
     pub retained_bytes: usize,
 }
 impl Publication {
@@ -139,6 +140,7 @@ impl NativeMcpRuntime {
         reserved: &[&str],
     ) -> Result<NativeMcpRuntimeCandidate> {
         let (descriptors, mut charge) = self.admit_descriptors(&servers, reserved)?;
+        let reserved = retain_reserved(reserved, &mut charge, self.limits.max_retained_bytes)?;
         let mut owners = Vec::with_capacity(servers.len());
         let mut tools = BTreeMap::new();
         let mut metadata = Vec::with_capacity(descriptors.tools().len());
@@ -207,6 +209,7 @@ impl NativeMcpRuntime {
                 descriptors: Box::new([descriptors]),
                 previous: None,
                 deferred_sealed: false,
+                reserved,
                 retained_bytes: charge,
             }),
         })
@@ -390,6 +393,19 @@ pub(super) fn add_charge(total: &mut usize, amount: usize, maximum: usize) -> Re
     } else {
         Ok(())
     }
+}
+pub(super) fn retain_reserved(
+    names: &[&str],
+    charge: &mut usize,
+    maximum: usize,
+) -> Result<Arc<[Box<str>]>> {
+    if names.len() > McpDescriptorLimits::default().max_reserved_names {
+        return Err(Error::Limit);
+    }
+    for name in names {
+        add_charge(charge, name.len() + 32, maximum)?;
+    }
+    Ok(names.iter().map(|name| Box::<str>::from(*name)).collect())
 }
 fn model_value_charge(value: &serde_json::Value) -> Result<usize> {
     let mut stack = vec![value];

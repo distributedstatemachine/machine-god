@@ -19,6 +19,17 @@ impl fmt::Debug for NativeMcpPublicationCheckpoint {
     }
 }
 impl NativeMcpPublicationCheckpoint {
+    pub(crate) fn same_selection(&self, other: &Self) -> bool {
+        self.same_runtime(other)
+            && match (&self.publication, &other.publication) {
+                (None, None) => true,
+                (Some(left), Some(right)) => left.ptr_eq(right),
+                _ => false,
+            }
+    }
+    pub(crate) fn same_runtime(&self, other: &Self) -> bool {
+        self.runtime.ptr_eq(&other.runtime)
+    }
     pub(super) fn for_publication(publication: &Arc<Publication>) -> Self {
         Self {
             runtime: Arc::downgrade(&publication.identity),

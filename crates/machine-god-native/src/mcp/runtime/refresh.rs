@@ -159,6 +159,13 @@ impl NativeMcpRuntime {
             .cloned()
             .collect();
         let mut charge = 4096;
+        let mut builtin_names: BTreeSet<_> = previous.reserved.iter().map(AsRef::as_ref).collect();
+        builtin_names.extend(reserved.iter().copied());
+        let retained_reserved = super::candidate::retain_reserved(
+            &builtin_names.into_iter().collect::<Vec<_>>(),
+            &mut charge,
+            self.limits.max_retained_bytes,
+        )?;
         for route in &previous.servers {
             let selected = Arc::ptr_eq(route, server);
             let segment = if selected {
@@ -235,6 +242,7 @@ impl NativeMcpRuntime {
             descriptors: segments.into_boxed_slice(),
             previous: None,
             deferred_sealed: previous.deferred_sealed,
+            reserved: retained_reserved,
             retained_bytes: charge,
         }));
         Ok(prepared)
@@ -338,6 +346,7 @@ fn reserved_for<'a>(
         return Err(Error::Limit);
     }
     let mut names: BTreeSet<_> = reserved.iter().copied().collect();
+    names.extend(previous.reserved.iter().map(AsRef::as_ref));
     names.extend(
         previous
             .tools
