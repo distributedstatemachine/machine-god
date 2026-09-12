@@ -28,6 +28,15 @@ revision changes. Modification-time observations exclude access time, so reads
 do not invalidate themselves. This is conservative observation evidence, not
 proof against a malicious writer with authority to modify the same namespace.
 
+`validate_unchanged(snapshot)` exposes that same exact-observation check without
+applying a mutation. It performs bounded synchronous filesystem observation on
+the caller's owned worker, creates no directory, lock or temp, and rejects
+foreign snapshots and changed ancestor/root/source identities, revisions or
+bytes. Still-missing safe namespaces remain valid. Success is a point-in-time
+observation, not a reservation against subsequent writers or a runtime activation
+receipt. Disk changes do not themselves revoke a separately retained active
+runtime configuration; failed reload must leave that runtime generation intact.
+
 `apply(snapshot, mutation)` accepts explicit `Insert`, `Replace` and `Remove`.
 Insertion never silently replaces an alias. Replacement preserves an existing
 position and appends absent aliases. Removal selects an exact validated alias;

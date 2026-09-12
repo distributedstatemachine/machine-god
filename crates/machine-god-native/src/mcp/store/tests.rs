@@ -4,6 +4,8 @@ use std::fs;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod validation;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     base: PathBuf,

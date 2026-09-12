@@ -160,6 +160,23 @@ impl NativeMcpConfigStore {
         Ok(NativeMcpConfigSnapshot { config, observed })
     }
 
+    /// Revalidates an exact observation without writing or acquiring a writer lock.
+    /// Run this bounded synchronous filesystem work on the caller's owned worker.
+    /// Success is a point-in-time observation, not a reservation against later
+    /// writes or runtime activation/revocation authority.
+    ///
+    /// # Errors
+    /// Rejects foreign snapshots, replaced ancestors/roots, changed source-file
+    /// identity, revision or bytes, and entries failing the existing private-file
+    /// policy. Still-missing safe namespaces remain valid and are not created.
+    pub fn validate_unchanged(
+        &self,
+        snapshot: &NativeMcpConfigSnapshot,
+    ) -> Result<(), NativeMcpConfigStoreError> {
+        self.file.validate_unchanged(&snapshot.observed)?;
+        Ok(())
+    }
+
     /// Applies one exact-snapshot mutation. This borrowed future is inert until
     /// polled, then executes one input-bounded synchronous owned transaction. It
     /// starts no detached worker; no-op edits create no directories, locks or temps.
