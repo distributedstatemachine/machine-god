@@ -142,6 +142,26 @@ remote JSON and equal generation numbers cannot recreate it. Native routing must
 open the window before submitting the originating operation and register every
 exact elicitation ID atomically before presenting browser consent.
 
+Private native routing can first `register_candidates` into a non-clone opaque
+ticket, then consume that exact ticket with `bind` immediately before consent.
+The registration timestamp only expires/promotes the early-notification journal;
+it is not a human deadline. No placeholder deadline, timer or task is created.
+The finite human budget begins at binding and covers consent plus completion
+waiting without being reset. Notifications received between the two stages stay
+correlated to the complete registered ID set, including when all IDs complete
+before binding. Source, window and cancellation checks still apply at binding.
+This follows the pinned `mcp_runtime.zig` ordering: `observeLegacyResponse`
+registers candidates before `callToolFromSnapshot` selects `elicitationDeadline` and
+`handleLegacyUrlRequiredInteraction` binds the waiter before the consent callback.
+
+Tickets reserve the same waiter, candidate and byte capacity as bound waiters.
+Successful consuming transfer preserves the original registration allocation;
+it does not cancel or re-register IDs. Abandonment or failed binding removes the
+waiter reservation while retaining bounded source-wide duplicate tombstones.
+Unbound handles retain their byte charge even after source/window removal.
+The public `register_ids` API composes these stages while retaining its existing
+effect-free expired-deadline preflight and all-or-nothing ID admission.
+
 Unknown early notifications are retained in every matching open window, never
 only the first. Registration promotes matching records from its own window.
 Duplicates do not extend the ten-minute early-record lifetime; records at the

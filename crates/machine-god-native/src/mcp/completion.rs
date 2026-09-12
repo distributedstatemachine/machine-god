@@ -12,7 +12,7 @@ use machine_god_core::{BoxFuture, CancellationToken};
 use std::{
     fmt,
     sync::{
-        Arc, Mutex, PoisonError, Weak,
+        Arc, Mutex, OnceLock, PoisonError, Weak,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
@@ -245,7 +245,22 @@ impl McpCompletionWindow {
         now: Instant,
         deadline: Instant,
     ) -> Result<McpCompletionWaiter> {
-        state::register(self, ids, now, deadline)
+        // Preserve this API's validation order and effect-free expired preflight.
+        state::validate_ids(ids)?;
+        if now >= deadline {
+            return Err(McpCompletionError::Deadline);
+        }
+        self.register_candidates(ids, now)?.bind(now, deadline)
+    }
+
+    /// Admit the complete candidate set before selecting the human budget.
+    /// `observed_at` only expires/promotes the early-notification journal.
+    pub(crate) fn register_candidates(
+        &self,
+        ids: &[&str],
+        observed_at: Instant,
+    ) -> Result<McpCompletionTicket> {
+        state::register(self, ids, observed_at)
     }
 }
 impl Drop for McpCompletionWindow {
@@ -264,11 +279,41 @@ struct Waiter {
     id: u64,
     window: Arc<Window>,
     ids: Box<[Arc<str>]>,
-    deadline: Instant,
+    deadline: OnceLock<Instant>,
     status: AtomicU8,
     waiting: AtomicBool,
     changed: CancellationToken,
     _charge: Charge,
+}
+
+/// A non-clone observation registration, not consent or retry authority. Its
+/// private waiter reservation correlates notifications before deadline binding.
+/// Dropping an unbound ticket cancels that reservation and retains tombstones.
+pub(crate) struct McpCompletionTicket {
+    waiter: McpCompletionWaiter,
+}
+impl McpCompletionTicket {
+    /// Consumes this exact registration into one finite human-phase waiter.
+    /// Selecting the budget belongs immediately before consent, not registration.
+    /// Any failed binding abandons the registration; it cannot be replayed.
+    pub(crate) fn bind(self, now: Instant, deadline: Instant) -> Result<McpCompletionWaiter> {
+        let inner = self
+            .waiter
+            .inner
+            .upgrade()
+            .ok_or(McpCompletionError::Cancelled)?;
+        check_waiter(&inner, &self.waiter.data, now)?;
+        if now >= deadline {
+            return Err(McpCompletionError::Deadline);
+        }
+        self.waiter
+            .data
+            .deadline
+            .set(deadline)
+            .map_err(|_| McpCompletionError::Duplicate)?;
+        // This wrapper has no Drop: moving its only owner must not cancel it.
+        Ok(self.waiter)
+    }
 }
 
 struct Waiting(Arc<Waiter>);
@@ -323,6 +368,7 @@ impl McpCompletionWaiter {
             let window = data.window.changed.cancelled();
             let operation = data.window.cancellation.cancelled();
             check_waiter(&inner, &data, clock.now())?;
+            let deadline = *data.deadline.get().ok_or(McpCompletionError::Unavailable)?;
             if data.status.load(Ordering::Acquire) != COMPLETE {
                 let cancellation = Box::pin(async {
                     select(
@@ -333,7 +379,7 @@ impl McpCompletionWaiter {
                 });
                 let notification = Box::pin(async { select(changed, cancellation).await });
                 if matches!(
-                    select(notification, clock.sleep_until(data.deadline)).await,
+                    select(notification, clock.sleep_until(deadline)).await,
                     Either::Right(_)
                 ) {
                     return Err(McpCompletionError::Deadline);
@@ -398,7 +444,11 @@ fn check_waiter(inner: &Inner, waiter: &Waiter, now: Instant) -> Result<()> {
     if waiter.status.load(Ordering::Acquire) == CANCELLED {
         return Err(McpCompletionError::Cancelled);
     }
-    if now >= waiter.deadline {
+    if waiter
+        .deadline
+        .get()
+        .is_some_and(|deadline| now >= *deadline)
+    {
         return Err(McpCompletionError::Deadline);
     }
     Ok(())
@@ -417,6 +467,7 @@ redacted!(
     McpCompletionSource,
     McpCompletionRegistry,
     McpCompletionWindow,
+    McpCompletionTicket,
     McpCompletionWaiter,
     McpCompletionObservation
 );

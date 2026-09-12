@@ -1,14 +1,14 @@
 use super::{
     COMPLETE, Charge, EARLY_TTL, Inner, MAX_ID_BYTES, MAX_IDS, McpCompletionError,
-    McpCompletionLimits, McpCompletionRoute, McpCompletionSource, McpCompletionWaiter,
-    McpCompletionWindow, McpLegacyCompletionNotification, PENDING, Result, Waiter, Window,
-    check_waiter, check_window,
+    McpCompletionLimits, McpCompletionRoute, McpCompletionSource, McpCompletionTicket,
+    McpCompletionWaiter, McpCompletionWindow, McpLegacyCompletionNotification, PENDING, Result,
+    Waiter, Window, check_waiter, check_window,
 };
 use machine_god_core::CancellationToken;
 use std::{
     collections::VecDeque,
     sync::{
-        Arc, PoisonError,
+        Arc, OnceLock, PoisonError,
         atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::Instant,
@@ -160,7 +160,7 @@ pub(super) fn open(
     })
 }
 
-fn validate_ids(ids: &[&str]) -> Result<()> {
+pub(super) fn validate_ids(ids: &[&str]) -> Result<()> {
     if ids.is_empty() || ids.len() > MAX_IDS {
         return Err(McpCompletionError::Limit);
     }
@@ -179,12 +179,8 @@ pub(super) fn register(
     window: &McpCompletionWindow,
     ids: &[&str],
     now: Instant,
-    deadline: Instant,
-) -> Result<McpCompletionWaiter> {
+) -> Result<McpCompletionTicket> {
     validate_ids(ids)?;
-    if now >= deadline {
-        return Err(McpCompletionError::Deadline);
-    }
     let inner = window
         .inner
         .upgrade()
@@ -219,7 +215,7 @@ pub(super) fn register(
         id: next,
         window: window.data.clone(),
         ids: owned,
-        deadline,
+        deadline: OnceLock::new(),
         status: AtomicU8::new(if done { COMPLETE } else { PENDING }),
         waiting: AtomicBool::new(false),
         changed: CancellationToken::new(),
@@ -244,9 +240,11 @@ pub(super) fn register(
     if done {
         data.changed.cancel();
     }
-    Ok(McpCompletionWaiter {
-        inner: Arc::downgrade(&inner),
-        data,
+    Ok(McpCompletionTicket {
+        waiter: McpCompletionWaiter {
+            inner: Arc::downgrade(&inner),
+            data,
+        },
     })
 }
 

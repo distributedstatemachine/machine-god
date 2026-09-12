@@ -2,6 +2,8 @@ use super::*;
 use futures_executor::block_on;
 use std::task::{Context, Poll, Waker};
 
+mod tickets;
+
 fn registry() -> McpCompletionRegistry {
     McpCompletionRegistry::new(McpCompletionLimits::default()).unwrap()
 }
