@@ -189,6 +189,15 @@ fn workspace_slash_uses_actual_native_authority_and_reports_independent_receipts
     });
 }
 async fn driver(fixture: &support::Fixture) -> Driver {
+    let (_, inbox) =
+        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    driver_with_inbox(fixture, inbox).await
+}
+
+async fn driver_with_inbox(
+    fixture: &support::Fixture,
+    inbox: native::NativeInteractivePromptInbox,
+) -> Driver {
     let owner = NativeInteractiveSession::open(
         fixture.host.clone(),
         NativeInteractiveSessionOptions::new(
@@ -210,8 +219,6 @@ async fn driver(fixture: &support::Fixture) -> Driver {
         ),
         CancellationToken::new(),
     );
-    let (_, inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
     let (work, _) = tokio::sync::mpsc::channel(1);
     let (_, acknowledgements) = tokio::sync::mpsc::channel(1);
     let mut driver = Driver::new(

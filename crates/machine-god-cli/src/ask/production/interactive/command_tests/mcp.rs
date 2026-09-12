@@ -5,6 +5,9 @@ use native::mcp::{
 };
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "mcp/runtime.rs"]
+mod runtime;
+
 #[test]
 fn mcp_slash_recognition_and_help_preserve_the_global_envelope() {
     for command in [
