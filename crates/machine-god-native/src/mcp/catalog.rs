@@ -109,6 +109,10 @@ impl fmt::Debug for McpDescriptorCatalog {
     }
 }
 impl McpDescriptorCatalog {
+    pub(crate) fn same_allocation(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     /// Admits every descriptor before publishing any result, retaining original JSON.
     ///
     /// # Errors
