@@ -26,6 +26,7 @@ pub struct NativeReferenceHostMcpOptions {
     pub(super) contexts: Arc<NativeMcpContexts>,
     clock: Arc<dyn NativeMcpRuntimeClock>,
     limits: NativeMcpRuntimeLimits,
+    form_responder: Option<Arc<dyn crate::mcp::interaction::McpElicitationPresenter>>,
 }
 impl NativeReferenceHostMcpOptions {
     #[must_use]
@@ -34,6 +35,7 @@ impl NativeReferenceHostMcpOptions {
             contexts,
             clock,
             limits: NativeMcpRuntimeLimits::default(),
+            form_responder: None,
         }
     }
 
@@ -44,11 +46,25 @@ impl NativeReferenceHostMcpOptions {
         self
     }
 
+    /// Selects the actual host-owned form endpoint, without prompting or I/O.
+    #[must_use]
+    pub fn with_form_responder(
+        mut self,
+        presenter: Arc<dyn crate::mcp::interaction::McpElicitationPresenter>,
+    ) -> Self {
+        self.form_responder = Some(presenter);
+        self
+    }
+
     pub(super) fn compose(
         self,
         archive: Arc<NativeToolResultArchiveAdapter>,
     ) -> Result<Composition, NativeReferenceHostBuildError> {
-        let executor = Arc::new(NativeMcpArchivedToolExecutor::new(archive).map_err(|_| error())?);
+        let executor = NativeMcpArchivedToolExecutor::new(archive).map_err(|_| error())?;
+        let executor = Arc::new(match self.form_responder {
+            Some(presenter) => executor.with_form_responder(presenter),
+            None => executor,
+        });
         let policy = executor.execution_policy();
         let runtime = NativeMcpRuntime::new(
             self.contexts.clone(),

@@ -192,6 +192,11 @@ its finite limits during composition. Both prepared production and injected-tran
 constructors preserve this contract; existing generic extension constructors
 retain their supplied authorities unchanged.
 
+`NativeReferenceHostMcpOptions::with_form_responder` retains the actual human
+presentation endpoint and supplies it to the concrete executor before its runtime
+policy is selected. Without that endpoint, form support is not advertised.
+Selecting it is inert and does not advertise URL completion support.
+
 The concrete executor receives the same archive adapter allocation as terminal
 input/result publishers and `read_tool_result`, including its existing quota
 owner and native worker scope. It does not create another archive directory,

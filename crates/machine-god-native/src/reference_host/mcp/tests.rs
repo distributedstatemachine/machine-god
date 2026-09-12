@@ -22,6 +22,45 @@ mod fixture;
 mod http;
 use fixture::*;
 
+#[derive(Default)]
+struct CountingPresenter(AtomicUsize);
+impl crate::mcp::interaction::McpElicitationPresenter for CountingPresenter {
+    fn present(
+        &self,
+        _: crate::mcp::interaction::McpElicitationPromptRequest,
+        _: machine_god_core::CancellationToken,
+    ) -> BoxFuture<
+        '_,
+        Result<
+            crate::mcp::interaction::McpElicitationAnswer,
+            crate::mcp::interaction::McpElicitationPromptError,
+        >,
+    > {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Box::pin(std::future::pending())
+    }
+}
+
+#[test]
+fn form_responder_selection_retains_the_actual_endpoint_without_prompting() {
+    let presenter = Arc::new(CountingPresenter::default());
+    let erased: Arc<dyn crate::mcp::interaction::McpElicitationPresenter> = presenter.clone();
+    let options = NativeReferenceHostMcpOptions::new(
+        Arc::new(NativeMcpContexts::new()),
+        Arc::new(Clock::default()),
+    )
+    .with_form_responder(erased.clone());
+    assert!(Arc::ptr_eq(
+        options.form_responder.as_ref().unwrap(),
+        &erased
+    ));
+    assert!(Arc::ptr_eq(
+        options.clone().form_responder.as_ref().unwrap(),
+        &erased
+    ));
+    assert_eq!(presenter.0.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn runtime_options_are_inert_and_require_exact_context_permission_and_terminal_selection() {
     let contexts = Arc::new(NativeMcpContexts::new());

@@ -417,12 +417,12 @@ Exact conversation/turn routing is integrated into both CLI setup paths. Owned
 OAuth provides discovery, approved callbacks, refresh, private credentials and
 generation-bound logout receipts; runtime/CLI activation remains below.
 Typed feature/result/input codecs and exact HTTP heads compose with explicit
-DNS/TLS, startup, atomic publication, owned feature calls and CLI input pages.
+DNS/TLS, startup, atomic publication, owned feature calls and consented form input.
 Component checks are not full-feature gates; completed clean trees are removed.
 
 These components do not constitute a delivered runtime. Remaining composition
 must compose peer reload/finalization and archived feature projections, plus
-input/continuation custody, TTL/notification
+URL/legacy input custody, TTL/notification
 refresh, authentication and CLI activation/finalization. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.

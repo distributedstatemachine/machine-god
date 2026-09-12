@@ -119,8 +119,10 @@ core's existing archive contract and never normalize original JSON. Form/URL
 advertisements assert an actual supplied responder, and default to false.
 
 Raw response data, `revalidate`, and context IDs never authorize another request.
-There is deliberately no resend or continuation API: a continuation requires a
-separately typed predecessor transition, real consent and fresh native proof.
+There is no raw resend API. The private modern form continuation path requires a
+sealed correlated predecessor, real consent, original proof custody and a fresh
+peer reservation; see [tool execution](mcp-tool-execution.md). Public response
+data cannot mint that transition.
 Host startup, CLI activation and result/consent composition remain separate
 native responsibilities rather than being inferred from publication.
 
