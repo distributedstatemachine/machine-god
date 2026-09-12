@@ -17,13 +17,56 @@ unpolled requests acquire no network resources.
 `McpPeerLifetime::OwnerControlled` retains peer ownership until close or
 cancellation; `Until(Instant)` adds an exact host-selected expiry. Startup and
 each application request still have independent finite deadlines. The lifetime
-policy never promotes a response body beyond its original request deadline.
+policy never promotes an ordinary response body beyond its original request
+deadline. Modern subscriptions select their distinct bounded lifetime below.
 
 There is one serialized application lane. All socket work is caller-polled;
 there is no listener task, GET connection or background reconnect. Dropping a
 polled application operation closes the peer. Completed responses release their
 socket owners, while separately retained completion observations preserve
 cleanup evidence.
+
+## Modern subscriptions
+
+`start_subscription` sends exactly one modern `subscriptions/listen` POST using
+the shared typed filters and a fresh peer-reserved ID. It validates an SSE
+response head and retains the actual response socket, body decoder, partial
+line and buffered tail. It does not return subscription readiness: the runtime
+installs that exact ID and filters in `McpCatalogRefresh`, then drives and admits
+the matching acknowledgement before relying on notification coverage. No raw
+notification creates authority, selects filters or publishes a catalog.
+
+The finite startup deadline covers connection, request submission and response
+head admission. Only that typed subscription body receives a distinct lifetime:
+`u32::MAX` milliseconds from actual start, constrained by the original selected
+peer expiry. It retains the same selected clock, owner cancellation and issued
+authentication lease through every body read and envelope decode. A lease is
+never refreshed or replaced inside the stream. Ordinary application bodies keep
+their original deadlines unchanged.
+
+`poll_subscription` drives at most one admitted envelope. Its caller-supplied
+deadline bounds that observation, not the listener lifetime. Timeout or an
+abandoned poll preserves the exact pending read; no POST is repeated and no
+partial parser state is discarded. `active_subscription` distinguishes a quiet
+or timed-out active listener from a closed one. Application exchanges can use
+their separate socket while the listener retains a partial read. Work remains
+caller-driven, with no detached reader or automatic reconnect.
+
+Only notifications are returned for shared policy admission. A terminal response
+must match the original ID, modern `resultType: complete` and identical
+`result._meta` subscription ID. It closes that listener. Malformed input,
+unsupported server requests, foreign/error responses, incomplete EOF and stream
+budget exhaustion report failure and close only the listener; owner/authentication
+retirement closes the peer. `close_subscription` releases only its retained local
+socket and never writes cancellation, DELETE, GET or replacement requests.
+
+Subscription frames have the pin's independent 64 KiB bound and at most 8,192
+JSON nodes. SSE lines, buffered chunks and partial events remain bounded, with
+1,024 events and 64 MiB raw SSE bytes per retained stream; connector body/wire
+budgets also remain cumulative. Observation timeouts and operation completion
+never reset those quotas. A pending event held across a deadline consumes one
+additional bounded frame slot. The same eight-exchange cleanup bound includes
+the retained subscription, and peer close drops it before signalling completion.
 
 ## Discovery and response streams
 

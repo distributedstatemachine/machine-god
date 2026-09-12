@@ -12,6 +12,7 @@ mod lifecycle;
 mod observed;
 mod owned_lifetime;
 mod submission;
+mod subscription;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpListener,

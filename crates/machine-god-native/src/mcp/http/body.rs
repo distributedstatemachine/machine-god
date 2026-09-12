@@ -28,6 +28,14 @@ impl fmt::Debug for McpHttpBody {
     }
 }
 impl McpHttpBody {
+    // Only the owned modern subscription lane may select its independently
+    // bounded response lifetime after admitting the response head. The same
+    // socket, selected clock, cancellation and credential lease stay retained.
+    pub(crate) fn subscription_deadline(&mut self, deadline: std::time::Instant) {
+        if let Some(io) = &mut self.io {
+            io.subscription_deadline(deadline);
+        }
+    }
     pub(super) fn new(io: Buffered, framing: Framing, limits: McpHttpLimits) -> Self {
         Self {
             io: if matches!(framing, Framing::Done) {

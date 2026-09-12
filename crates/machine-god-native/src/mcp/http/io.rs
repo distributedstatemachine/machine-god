@@ -400,6 +400,9 @@ pub(super) struct Buffered {
     remaining_wire: u64,
 }
 impl Buffered {
+    pub(super) fn subscription_deadline(&mut self, deadline: Instant) {
+        self.lifetime.deadline = deadline;
+    }
     fn new(
         stream: Stream,
         lifetime: Lifetime,

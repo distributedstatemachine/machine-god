@@ -34,6 +34,7 @@ fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result
         response_limits: super::WireLimits::default(),
         feature_authority: None,
         authentication: None,
+        subscription: None,
     })
 }
 

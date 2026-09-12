@@ -14,6 +14,15 @@ impl fmt::Debug for McpHttpControl {
     }
 }
 impl McpHttpControl {
+    pub(crate) fn subscription(
+        id: &crate::mcp::protocol::RpcId,
+        filters: &crate::mcp::catalog_refresh::McpSubscriptionFilters,
+        version: crate::mcp::protocol::ProtocolVersion,
+    ) -> Result<Self> {
+        McpStdioControl::subscription(id, filters, version)
+            .map(|value| Self(Kind::Protocol(value)))
+            .map_err(|_| McpHttpError::Invalid)
+    }
     pub(crate) fn feature(
         exchange: &crate::mcp::feature::McpFeatureExchange,
         guard: crate::mcp::control::McpFeatureControlAuthority,

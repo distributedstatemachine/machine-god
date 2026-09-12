@@ -30,6 +30,7 @@ mod head;
 mod routing;
 mod startup;
 mod stream;
+mod subscription;
 #[cfg(test)]
 mod tests;
 
@@ -183,6 +184,7 @@ pub struct McpHttpPeer {
     response_limits: WireLimits,
     feature_authority: Option<super::control::McpFeatureControlAuthority>,
     authentication: Option<Arc<super::auth::McpAuthLease>>,
+    subscription: Option<subscription::Subscription>,
 }
 impl McpHttpPeer {
     pub(crate) fn readiness(&self) -> McpHttpPeerReadiness {
@@ -329,6 +331,7 @@ impl McpHttpPeer {
     /// Stops local streams and invalidates reservations without network effects.
     pub fn close(&mut self) {
         self.closed = true;
+        self.close_subscription();
         self.reserved = McpPendingToolReservation::default();
         self.runtimes.clear();
         self.notifications.clear();
@@ -415,6 +418,39 @@ impl McpHttpPeer {
         let frame = self.notifications.pop_front()?;
         self.notification_bytes -= frame.bytes.len();
         Some(frame)
+    }
+    /// Starts one modern POST subscription, retaining the actual SSE stream.
+    /// The returned ID is not readiness: the owner must install it in the shared
+    /// refresh policy and admit its exact acknowledgement before relying on it.
+    /// # Errors
+    /// Rejects an existing listener, stale authority or failed request/head.
+    pub async fn start_subscription(
+        &mut self,
+        filters: &super::catalog_refresh::McpSubscriptionFilters,
+        deadline: Instant,
+    ) -> Result<RpcId> {
+        subscription::start(self, filters, deadline).await
+    }
+    /// Polls one envelope without replacing or replaying the listen request.
+    /// A caller deadline returns `None` with the original read still retained;
+    /// `active_subscription` distinguishes this from terminal completion.
+    /// Dropping this future also retains the exact partial read and socket.
+    /// # Errors
+    /// Rejects retired authority, malformed events or finite stream exhaustion.
+    pub async fn poll_subscription(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<McpHttpPeerFrame>> {
+        subscription::poll(self, deadline).await
+    }
+    /// The retained request identity, including while awaiting acknowledgement.
+    #[must_use]
+    pub fn active_subscription(&self) -> Option<RpcId> {
+        self.subscription.as_ref().map(|state| state.id.clone())
+    }
+    /// Releases only the subscription socket, without any network request.
+    pub fn close_subscription(&mut self) {
+        self.subscription = None;
     }
     fn check(&self, deadline: Instant) -> Result<()> {
         self.check_owner()?;
