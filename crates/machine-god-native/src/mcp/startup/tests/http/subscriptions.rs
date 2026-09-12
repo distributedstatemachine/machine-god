@@ -241,13 +241,24 @@ fn issued_authentication_expiry_closes_a_pending_partial_subscription_read() {
     }
 }
 
-struct StartupClock(Arc<AuthClock>);
+struct StartupClock {
+    clock: Arc<AuthClock>,
+    subscription_read: CancellationToken,
+}
 impl NativeMcpRuntimeClock for StartupClock {
     fn now(&self) -> Instant {
-        McpHttpClock::now(&*self.0)
+        McpHttpClock::now(&*self.clock)
     }
     fn sleep_until(&self, deadline: Instant) -> BoxFuture<'_, ()> {
-        McpHttpClock::sleep_until(&*self.0, deadline)
+        Box::pin(async move {
+            // Only the promoted subscription body has a timer beyond this
+            // fixture's five-second startup budget. Observe its first poll,
+            // not mere head arrival, before advancing the attempt to expiry.
+            if deadline.saturating_duration_since(self.clock.now()) > Duration::from_secs(5) {
+                self.subscription_read.cancel();
+            }
+            McpHttpClock::sleep_until(&*self.clock, deadline).await;
+        })
     }
 }
 
@@ -256,8 +267,12 @@ fn subscription_ack_wait_retains_the_original_startup_attempt_deadline() {
     run(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let clock = Arc::new(AuthClock::new());
+        let subscription_read = CancellationToken::new();
         let mut selected = http_options(listener.local_addr().unwrap());
-        selected.clock = Arc::new(StartupClock(clock.clone()));
+        selected.clock = Arc::new(StartupClock {
+            clock: clock.clone(),
+            subscription_read: subscription_read.clone(),
+        });
         selected.catalog_epoch = clock.now();
         selected.peer_lifetime = McpPeerLifetime::OwnerControlled;
         selected.network = Some(Arc::new(
@@ -276,6 +291,7 @@ fn subscription_ack_wait_retains_the_original_startup_attempt_deadline() {
             discovery(&listener, true, false).await;
             clock.advance(Duration::from_secs(3), 0);
             let (mut socket, _, _) = listen(&listener, true, false).await;
+            subscription_read.cancelled().await;
             clock.advance(Duration::from_secs(2), 0);
             closed(&mut socket).await;
         };
