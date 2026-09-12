@@ -70,6 +70,31 @@ refresh token, scope or token type.
 Expired credentials without a refresh token require explicit reauthorization;
 they are not reported as missing credentials or bypassed anonymously.
 
+## Owned browser launcher
+
+`NativeMcpBrowserLauncher` binds a retained executable, explicitly captured
+environment and the host's actual `NativeOwnedWorkerScope`. Construction and
+unpolled requests perform no browser or environment effects. Its separate
+32 KiB HTTP(S) URL representation retains exact input bytes, rejects credentials,
+missing hosts, backslashes and whitespace/control characters, and redacts debug
+output. This does not widen the background server detector's 2 KiB URL bound.
+
+The shared background/direct-child launcher path passes one URL argument without
+shell interpolation, clears ambient environment, uses null standard streams and
+a fixed root working directory, and revalidates the retained executable identity.
+The host must protect the executable installation throughout its lifetime.
+Original caller and owner cancellation are checked through worker admission,
+after reaper reservation immediately before OS spawn, and through observation.
+The original deadline is capped at ten seconds from
+first poll; the existing background ten-second contract is unchanged. No retry
+is automatic and no separate runtime or cleanup owner is created.
+
+Clones retain one admission until actual direct-child reap. Cancellation, expiry
+or dropped observation after spawn preserves owned cleanup and may report an
+indeterminate handoff. A successful launcher exit is only `Opened`; a failed
+exit does not prove no browser opened. Neither URL admission nor any launch
+receipt is user consent, OAuth success, completion notification or retry proof.
+
 ## Credentials and generations
 
 The explicitly selected directory owns `mcp-credentials.json`, with separate

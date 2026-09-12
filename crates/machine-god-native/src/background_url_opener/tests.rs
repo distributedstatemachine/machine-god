@@ -1,12 +1,16 @@
 use super::{
-    BackgroundServerUrl, BoxFuture, CancellationToken, Duration, File, Instant,
-    NativeBackgroundOpenError as Error, NativeBackgroundOpenOutcome as Outcome,
-    NativeBackgroundUrlOpener, NativeOwnedWorkerScope, Ordering, PathBuf,
+    BackgroundServerUrl, BoxFuture, CancellationToken, File, NativeBackgroundOpenError as Error,
+    NativeBackgroundOpenOutcome as Outcome, NativeBackgroundUrlOpener, NativeOwnedWorkerScope,
+    PathBuf,
 };
 use crate::background_commands::url::{BackgroundUrlCaptureEnd, detect_server_url};
 use futures_executor::block_on;
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 
 struct Fixture {
     opener: NativeBackgroundUrlOpener,
@@ -35,7 +39,7 @@ impl Fixture {
             scope.clone(),
         )
         .unwrap();
-        Arc::get_mut(&mut opener.inner).unwrap().arguments =
+        Arc::get_mut(&mut opener.launcher.inner).unwrap().arguments =
             vec!["-c".into(), script.into(), "--".into()];
         Self {
             opener,
@@ -53,7 +57,7 @@ impl Fixture {
         self.scope.close();
         self.scope.completion().wait_on_worker().unwrap();
         assert!(self.scope.completion().is_complete());
-        assert!(!self.opener.inner.active.load(Ordering::Acquire));
+        assert!(!self.opener.launcher.inner.active.load(Ordering::Acquire));
     }
 }
 
@@ -92,7 +96,7 @@ fn unpolled_construction_and_clone_do_not_launch_or_admit() {
     let fixture = Fixture::new("exit 9");
     let future = fixture.open();
     let clone = fixture.opener.clone();
-    assert!(!fixture.opener.inner.active.load(Ordering::Acquire));
+    assert!(!fixture.opener.launcher.inner.active.load(Ordering::Acquire));
     assert!(!fixture.directory.join("output").exists());
     drop((future, clone));
     fixture.settle();
@@ -109,7 +113,7 @@ fn exact_single_url_argument_without_shell_interpolation_and_explicit_environmen
         std::fs::read(fixture.directory.join("output")).unwrap(),
         url().as_str().as_bytes()
     );
-    assert!(!fixture.opener.inner.active.load(Ordering::Acquire));
+    assert!(!fixture.opener.launcher.inner.active.load(Ordering::Acquire));
 }
 
 #[test]
@@ -133,7 +137,7 @@ fn cancellation_or_revocation_before_poll_never_admits() {
             block_on(fixture.opener.open(url(), cancellation, revoked)),
             Err(Error::Cancelled)
         );
-        assert!(!fixture.opener.inner.active.load(Ordering::Acquire));
+        assert!(!fixture.opener.launcher.inner.active.load(Ordering::Acquire));
     }
 }
 
@@ -169,8 +173,9 @@ fn abandoned_request_does_not_cancel_the_callers_token_or_abandon_cleanup() {
 #[test]
 fn mismatched_retained_executable_fails_before_launch() {
     let mut fixture = Fixture::new("exit 9");
-    Arc::get_mut(&mut fixture.opener.inner).unwrap().executable =
-        Arc::new(File::open(&fixture.directory).unwrap());
+    Arc::get_mut(&mut fixture.opener.launcher.inner)
+        .unwrap()
+        .executable = Arc::new(File::open(&fixture.directory).unwrap());
     assert_eq!(block_on(fixture.open()), Err(Error::Unavailable));
     assert!(!fixture.directory.join("output").exists());
 }

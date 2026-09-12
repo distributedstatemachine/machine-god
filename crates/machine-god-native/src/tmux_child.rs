@@ -23,10 +23,20 @@ pub(crate) struct TmuxChild {
 
 impl TmuxChild {
     pub(crate) fn spawn(command: &mut Command) -> Result<Self, BackgroundProcessError> {
+        Self::spawn_checked(command, || Ok::<(), BackgroundProcessError>(()))
+    }
+
+    /// Rechecks caller-owned admission after reserving reap custody, immediately
+    /// before the OS spawn. Rejection releases the unused reservation.
+    pub(crate) fn spawn_checked<E: From<BackgroundProcessError>>(
+        command: &mut Command,
+        pre_spawn: impl FnOnce() -> Result<(), E>,
+    ) -> Result<Self, E> {
         // Admission precedes the only requested spawn. No auxiliary process or
         // per-child worker is needed to reserve eventual cleanup ownership.
         let mut permit = reserve_child_reap_authority()?;
         permit.kill_pending = true;
+        pre_spawn()?;
         let child = command.spawn().map_err(|_| spawn_error())?;
         Ok(Self {
             #[cfg(test)]
@@ -159,8 +169,8 @@ impl Drop for TmuxChild {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        GROUP_SNAPSHOT_TEST_LOCK, TRY_WAIT_ERRNO, TRY_WAIT_FAILURE_PID, TRY_WAIT_FAILURES,
-        inject_failures, reap_quarantined_direct,
+        ACTIVE_CHILD_REAP_AUTHORITIES, GROUP_SNAPSHOT_TEST_LOCK, TRY_WAIT_ERRNO,
+        TRY_WAIT_FAILURE_PID, TRY_WAIT_FAILURES, inject_failures, reap_quarantined_direct,
     };
     use super::*;
     use std::num::NonZeroU32;
@@ -172,6 +182,21 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "exit 7"]).env_clear();
         TmuxChild::spawn(&mut command).unwrap()
+    }
+
+    #[test]
+    fn final_guard_rejects_after_reaper_admission_before_os_spawn() {
+        // An attempted OS spawn for an empty program would return Spawn, not
+        // this distinct guard error. No executable or process fixture is needed.
+        let mut command = Command::new("");
+        let mut checked = false;
+        let result = TmuxChild::spawn_checked(&mut command, || {
+            assert!(ACTIVE_CHILD_REAP_AUTHORITIES.load(Ordering::Acquire) > 0);
+            checked = true;
+            Err(cleanup_error())
+        });
+        assert!(checked);
+        assert_eq!(result.err(), Some(cleanup_error()));
     }
 
     #[test]

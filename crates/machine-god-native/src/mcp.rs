@@ -6,6 +6,8 @@
 
 #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
 pub mod auth;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod browser_launcher;
 pub mod catalog;
 #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
 pub mod clock;
