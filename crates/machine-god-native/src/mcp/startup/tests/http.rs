@@ -273,9 +273,10 @@ struct Credentials {
     directory: PathBuf,
     service: Arc<NativeMcpAuthService>,
     store: Arc<NativeMcpCredentialStore>,
+    workers: crate::NativeOwnedWorkerScope,
 }
 impl Credentials {
-    fn new(network: Arc<NativeMcpNetwork>) -> Self {
+    fn new(network: Arc<NativeMcpNetwork>, workers: crate::NativeOwnedWorkerScope) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "mg-mcp-startup-{}-{}",
@@ -292,11 +293,13 @@ impl Credentials {
             Arc::new(Clock::default()),
             Arc::new(Entropy),
             Arc::new(Events),
+            workers.clone(),
         ));
         Self {
             directory,
             service,
             store,
+            workers,
         }
     }
     fn seed(&self, config: &McpAuthConfig, expires_ms: i64) {
@@ -323,6 +326,9 @@ impl Credentials {
 }
 impl Drop for Credentials {
     fn drop(&mut self) {
+        self.service.close();
+        self.workers.close();
+        self.workers.completion().wait_on_worker().unwrap();
         fs::remove_dir_all(&self.directory).unwrap();
     }
 }
@@ -339,7 +345,10 @@ fn stored_refresh_is_real_and_resource_headers_never_reach_token_endpoint() {
     run(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let mut selected = http_options(listener.local_addr().unwrap());
-        let credentials = Credentials::new(selected.network.as_ref().unwrap().clone());
+        let credentials = Credentials::new(
+            selected.network.as_ref().unwrap().clone(),
+            selected.workers.clone(),
+        );
         selected
             .authentication
             .push(authentication(NativeMcpStartupAuthSource::Stored(
@@ -376,7 +385,13 @@ fn stored_refresh_is_real_and_resource_headers_never_reach_token_endpoint() {
         let generation = batch.servers()[0].authority_cancellations[3].clone();
         credentials
             .service
-            .retire(startup.authentication_config("remote").unwrap().identity());
+            .retire(
+                startup.authentication_config("remote").unwrap().identity(),
+                &CancellationToken::new(),
+                deadline(),
+            )
+            .await
+            .unwrap();
         assert!(generation.is_cancelled());
         let failure = batch
             .prepare(&runtime(), &[], NativeMcpStartupRequirement::Required)
@@ -390,7 +405,10 @@ fn foreign_endpoint_or_changed_header_selection_cannot_reuse_an_oauth_lease() {
     run(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let original = http_options(listener.local_addr().unwrap());
-        let credentials = Credentials::new(original.network.as_ref().unwrap().clone());
+        let credentials = Credentials::new(
+            original.network.as_ref().unwrap().clone(),
+            original.workers.clone(),
+        );
         let original = NativeMcpStartup::new(original).unwrap();
         let identity = original.authentication_config("remote").unwrap();
         credentials.seed(&identity, i64::MAX);
@@ -454,7 +472,10 @@ fn missing_stored_credentials_allow_configured_bearer_but_corruption_never_does(
         config["mcp"]["remote"]["bearer_token_env"] = json!("TOKEN");
         selected.configuration =
             Arc::new(McpConfig::decode(&serde_json::to_vec(&config).unwrap()).unwrap());
-        let credentials = Credentials::new(selected.network.as_ref().unwrap().clone());
+        let credentials = Credentials::new(
+            selected.network.as_ref().unwrap().clone(),
+            selected.workers.clone(),
+        );
         selected
             .authentication
             .push(authentication(NativeMcpStartupAuthSource::Stored(

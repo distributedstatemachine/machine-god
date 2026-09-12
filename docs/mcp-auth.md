@@ -74,9 +74,24 @@ The stored resource, issuer and registered client remain part of the admitted
 record. Equal-byte file replacement by another inode conflicts. A stale refresh
 cannot overwrite a changed cooperative store observation.
 
-One service serializes authorization/refresh for each identity. Logout removes
-the exact live incarnation and cancels its credential generation before storage
-or network effects; an older operation cannot republish after that retirement.
+One service serializes authorization/refresh for each identity and retains at
+most 64 identities and 128 pending operation reservations, including retired
+operations and worker results that have not been consumed. Async credential
+loads and publications run on the injected actual host worker scope; OAuth and
+browser futures stay on the existing caller runtime. `status_owned` provides
+worker-owned read-only status. Synchronous `status` is only for an explicitly
+selected caller worker, not an async polling thread.
+
+Logout cuts off the exact live incarnation on first poll, then waits for older
+admitted operations before deleting credentials. `retire` is likewise an
+acknowledged async operation: it cuts off authority immediately, but success
+proves that older admitted publications have finished. Retirement introduces no
+store mutation or OAuth request of its own. A publication admitted before the
+cutoff may finish and retain its actual durability outcome, but its returned
+lease cannot supply credentials after retirement. Same-identity admission stays
+busy while retired predecessor work remains unresolved; cancellation does not
+release a running worker's reservation early. No coordinator mutex is held
+during filesystem I/O or while invoking cancellation wakeups.
 Successful refresh retires the previous lease. Typed invalidation events and
 lease cancellation observers let the runtime retire the matching executable
 allocations. Hooks and cancellation wakeups run outside coordinator locks.
@@ -101,8 +116,20 @@ Every exchange uses the shorter selected deadline or 30 seconds. Interactive
 authorization uses at most five minutes, and accepted callback I/O at most
 30 seconds. Cancellation or dropping a polled future releases its owned socket
 and listener without replay. Constructors and unpolled futures remain inert.
-The bounded synchronous filesystem transaction starts no detached worker;
-filesystem syscall latency is not a hard wall-clock deadline guarantee.
+Constructing the service or an unpolled operation starts no worker. Once polled,
+persistence jobs retain their admission and result custody through the selected
+host worker collector, including when the caller drops its future. An admitted
+publication is not selected away when cancellation races its completion, and
+an accepted local logout outcome is not erased by later revocation cancellation.
+Filesystem syscall latency is not a hard wall-clock deadline guarantee.
+
+`close` is an immediate service admission/credential cutoff, not a completion
+claim. `settle` uses an independent cleanup token and selected-clock deadline to
+observe pending auth operations and worker bodies; interrupted observation leaves
+the same obligations available through `cleanup_status` and later settlement.
+Neither operation closes or joins the shared host worker scope. The actual host
+separately performs its final worker join, including thread-local destruction and
+collector cleanup, before releasing host resources.
 
 Debug/display omit endpoint, issuer, identity, challenge, callback and credential
 contents. Owned secret strings and serialized store buffers are overwritten on

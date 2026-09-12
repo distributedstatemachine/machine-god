@@ -1,52 +1,37 @@
 use super::{
     Authority, McpAuthBrowser, McpAuthChallenge, McpAuthClock, McpAuthConfig, McpAuthEntropy,
-    McpAuthError, McpAuthIdentity, McpAuthInvalidated, McpAuthInvalidation, McpAuthLocalRemoval,
-    McpAuthLogoutReceipt, McpAuthNetwork, McpAuthRemoteRevocation, NativeMcpCredentialStore,
-    Result, codec::Credentials, redacted,
+    McpAuthError, McpAuthIdentity, McpAuthInvalidation, McpAuthLocalRemoval, McpAuthLogoutReceipt,
+    McpAuthNetwork, McpAuthRemoteRevocation, NativeMcpCredentialStore, Result, codec::Credentials,
+    redacted,
 };
-use crate::bounded_profile_file::PublicationDurability;
-use futures_util::future::{Either, select};
+use crate::NativeOwnedWorkerScope;
 use machine_god_core::{BoxFuture, CancellationToken};
-use std::{
-    collections::BTreeMap,
-    fmt,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::{fmt, sync::Arc, time::Instant};
 
-/// One host-owned credential coordinator. Constructors perform no I/O.
+mod lifetime;
+mod persistence;
+mod state;
+#[cfg(test)]
+mod tests;
+use state::{Inner, Operation};
+
+/// One host-owned credential coordinator. Construction performs no I/O and
+/// never creates or closes the injected host worker scope.
 pub struct NativeMcpAuthService {
-    store: Arc<NativeMcpCredentialStore>,
-    authority: Authority,
-    invalidation: Arc<dyn McpAuthInvalidation>,
-    slots: Mutex<BTreeMap<McpAuthIdentity, Arc<Slot>>>,
+    inner: Arc<Inner>,
 }
-struct Slot {
-    retired: CancellationToken,
-    state: Mutex<SlotState>,
+
+/// Auth-operation completion only. The actual host separately joins its shared
+/// worker scope, including thread-local destruction and collector completion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeMcpAuthCleanup {
+    pub complete: bool,
+    pub pending_operations: usize,
+    pub pending_workers: usize,
 }
-struct SlotState {
-    busy: bool,
-    generation: CancellationToken,
-}
-struct Operation<'a> {
-    service: &'a NativeMcpAuthService,
-    identity: McpAuthIdentity,
-    slot: Arc<Slot>,
-    cancellation: CancellationToken,
-}
-impl Drop for Operation<'_> {
-    fn drop(&mut self) {
-        self.slot
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .busy = false;
-        self.cancellation.cancel();
-    }
-}
-/// Exact retained credential generation. A cancelled lease may not supply a
-/// header; callers also retain its cancellation observer through runtime writes.
+
+/// Exact retained credential generation. A successful publication may return a
+/// cancelled lease when retirement won before its completion was observed.
 pub struct McpAuthLease {
     credentials: Arc<Credentials>,
     generation: CancellationToken,
@@ -58,7 +43,7 @@ impl McpAuthLease {
         &self.credentials.identity
     }
     /// # Errors
-    /// Rejects a generation invalidated by refresh, logout or owner drop.
+    /// Rejects a generation invalidated by refresh, logout or owner cutoff.
     pub fn access_token(&self) -> Result<&[u8]> {
         if self.generation.is_cancelled() {
             Err(McpAuthError::Conflict)
@@ -84,25 +69,46 @@ impl NativeMcpAuthService {
         clock: Arc<dyn McpAuthClock>,
         entropy: Arc<dyn McpAuthEntropy>,
         invalidation: Arc<dyn McpAuthInvalidation>,
+        workers: NativeOwnedWorkerScope,
     ) -> Self {
         Self {
-            store,
-            authority: Authority {
-                network,
-                clock,
-                entropy,
-            },
-            invalidation,
-            slots: Mutex::new(BTreeMap::new()),
+            inner: Arc::new(Inner::new(
+                store,
+                Authority {
+                    network,
+                    clock,
+                    entropy,
+                },
+                invalidation,
+                workers,
+            )),
         }
     }
-    /// Read-only persisted status; it does not refresh or activate credentials.
+
+    /// Synchronous read-only status for an explicitly selected caller worker.
+    /// Never call this on an async polling thread; use [`Self::status_owned`].
     /// # Errors
     /// Invalid selected stores remain errors, never anonymous fallback.
     pub fn status(&self, identity: &McpAuthIdentity) -> Result<bool> {
-        Ok(self.store.load()?.get(identity).is_some())
+        Ok(self.inner.store.load()?.get(identity).is_some())
     }
-    /// Actual discovery, registration, approved browser callback and token flow.
+
+    /// Caller-polled, worker-owned status. No worker starts before poll.
+    /// # Errors
+    /// Reports closed/busy admission, cancellation, bounds or store errors.
+    pub async fn status_owned(
+        &self,
+        identity: &McpAuthIdentity,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<bool> {
+        let operation = self.inner.begin(identity, cancellation, deadline)?;
+        let snapshot = operation.load(cancellation, deadline).await?;
+        Ok(snapshot.get(identity).is_some())
+    }
+
+    /// Actual discovery, approved callback and token flow. Only persistence runs
+    /// on workers; network and browser futures stay on the caller runtime.
     /// # Errors
     /// Returns redacted authority, protocol, cancellation and publication errors.
     pub async fn authenticate(
@@ -113,280 +119,113 @@ impl NativeMcpAuthService {
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<McpAuthLease> {
-        self.authority.check(cancellation, deadline)?;
-        let operation = self.begin(&config.identity)?;
-        let snapshot = self.store.load()?;
-        let previous = snapshot.get(&config.identity).map(|c| c.scope.as_ref());
+        let operation = self
+            .inner
+            .begin(config.identity(), cancellation, deadline)?;
+        let snapshot = operation.load(cancellation, deadline).await?;
+        let previous = snapshot.get(config.identity()).map(|c| c.scope.as_ref());
         let credentials = operation
             .run(
-                self.authority.authorize(
+                self.inner.authority.authorize(
                     config,
                     challenge,
                     previous,
                     browser,
-                    &operation.cancellation,
+                    &operation.guard.cancellation,
                     deadline,
                 ),
                 cancellation,
                 deadline,
             )
             .await?;
-        operation.commit(&snapshot, credentials, cancellation, deadline)
+        operation
+            .commit(snapshot, credentials, cancellation, deadline)
+            .await
     }
-    /// Loads exact selected credentials and refreshes only when within the pinned
-    /// 60-second expiry skew. A refresh POST is never replayed automatically.
+
+    /// Refreshes within the pinned 60-second expiry skew, without POST replay.
     /// # Errors
-    /// Concurrent work returns busy; stale generation/store observations conflict.
-    /// Missing means no matching record; expired credentials without a refresh
-    /// token are unavailable, never an anonymous-fallback signal.
+    /// Missing means no matching record. Expired credentials without refresh
+    /// authority, busy and malformed stores are not anonymous fallback.
     pub async fn access_token(
         &self,
         identity: &McpAuthIdentity,
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<McpAuthLease> {
-        self.authority.check(cancellation, deadline)?;
-        let operation = self.begin(identity)?;
-        let snapshot = self.store.load()?;
+        let operation = self.inner.begin(identity, cancellation, deadline)?;
+        let snapshot = operation.load(cancellation, deadline).await?;
         let credentials = snapshot.get(identity).ok_or(McpAuthError::Missing)?;
-        if credentials.expires_ms.saturating_sub(60_000) > self.authority.clock.unix_millis() {
+        if credentials.expires_ms.saturating_sub(60_000) > self.inner.authority.clock.unix_millis()
+        {
             return operation.lease(credentials.clone(), cancellation, deadline);
         }
         let replacement = operation
             .run(
-                self.authority
-                    .refresh(credentials, &operation.cancellation, deadline),
+                self.inner
+                    .authority
+                    .refresh(credentials, &operation.guard.cancellation, deadline),
                 cancellation,
                 deadline,
             )
             .await?;
-        operation.commit(&snapshot, replacement, cancellation, deadline)
+        operation
+            .commit(snapshot, replacement, cancellation, deadline)
+            .await
     }
-    /// Invalidates cached/live authority before attempting local deletion and
-    /// optional remote revocation. These independent effects get separate receipts.
+
+    /// First poll cuts off live authority. Deletion follows acknowledged prior
+    /// work, so older publication cannot finish after successful logout.
     /// # Errors
-    /// Rejects already cancelled/expired requests before any effects.
+    /// A failed wait after cutoff cannot claim completed local deletion.
     pub async fn logout(
         &self,
         identity: &McpAuthIdentity,
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<McpAuthLogoutReceipt> {
-        self.authority.check(cancellation, deadline)?;
-        let in_flight = self.retire_active(identity);
-        let Ok(snapshot) = self.store.load() else {
-            return Ok(McpAuthLogoutReceipt {
-                local: McpAuthLocalRemoval::Failed,
-                remote: if in_flight {
-                    McpAuthRemoteRevocation::Ambiguous
-                } else {
-                    McpAuthRemoteRevocation::NotAttempted
-                },
-            });
-        };
-        let credentials = snapshot.get(identity).cloned();
-        let local = match self.store.publish(&snapshot, identity, None) {
-            Ok(PublicationDurability::Confirmed) if credentials.is_some() => {
-                McpAuthLocalRemoval::Removed
-            }
-            Ok(PublicationDurability::Confirmed) => McpAuthLocalRemoval::Unchanged,
-            Ok(PublicationDurability::Ambiguous) => McpAuthLocalRemoval::Ambiguous,
-            Err(_) => McpAuthLocalRemoval::Failed,
-        };
+        let (operation, previous) = self.inner.cutoff(identity, cancellation, deadline)?;
+        let in_flight = !previous.is_empty();
+        operation
+            .wait_previous(&previous, cancellation, deadline)
+            .await?;
+        let (local, credentials) = operation.remove(cancellation, deadline).await?;
         let remote = match credentials {
-            Some(credentials) => {
-                self.authority
-                    .revoke(&credentials, cancellation, deadline)
-                    .await
-            }
+            Some(credentials) => operation.revoke(&credentials, cancellation, deadline).await,
             None => McpAuthRemoteRevocation::NotAttempted,
         };
-        let remote = if in_flight {
-            McpAuthRemoteRevocation::Ambiguous
-        } else {
-            remote
-        };
-        Ok(McpAuthLogoutReceipt { local, remote })
-    }
-    /// Retires a superseded selected identity without changing persisted data or
-    /// contacting OAuth. Runtime reload/removal releases its coordinator slot.
-    pub fn retire(&self, identity: &McpAuthIdentity) {
-        self.retire_active(identity);
-    }
-    fn retire_active(&self, identity: &McpAuthIdentity) -> bool {
-        let slot = self
-            .slots
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(identity);
-        if let Some(slot) = slot {
-            let (in_flight, generation) = {
-                let state = slot
-                    .state
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                (state.busy, state.generation.clone())
-            };
-            slot.retired.cancel();
-            generation.cancel();
-            self.invalidation.invalidate(McpAuthInvalidated {
-                identity: identity.clone(),
-                generation,
-            });
-            in_flight
-        } else {
-            false
-        }
-    }
-    fn begin(&self, identity: &McpAuthIdentity) -> Result<Operation<'_>> {
-        let mut slots = self
-            .slots
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !slots.contains_key(identity) && slots.len() >= 64 {
-            return Err(McpAuthError::Limit);
-        }
-        let slot = slots
-            .entry(identity.clone())
-            .or_insert_with(|| {
-                Arc::new(Slot {
-                    retired: CancellationToken::new(),
-                    state: Mutex::new(SlotState {
-                        busy: false,
-                        generation: CancellationToken::new(),
-                    }),
-                })
-            })
-            .clone();
-        let mut state = slot
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.busy {
-            return Err(McpAuthError::Busy);
-        }
-        state.busy = true;
-        drop(state);
-        Ok(Operation {
-            service: self,
-            identity: identity.clone(),
-            slot,
-            cancellation: CancellationToken::new(),
+        Ok(McpAuthLogoutReceipt {
+            local,
+            remote: if in_flight {
+                McpAuthRemoteRevocation::Ambiguous
+            } else {
+                remote
+            },
         })
+    }
+
+    /// Acknowledged local-only retirement. First poll cuts off live leases;
+    /// success proves prior admitted work cannot later publish. Retirement itself
+    /// introduces no store mutation or network request.
+    /// # Errors
+    /// Cancellation/deadline may end observation without undoing the cutoff.
+    pub async fn retire(
+        &self,
+        identity: &McpAuthIdentity,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<()> {
+        let (operation, previous) = self.inner.cutoff(identity, cancellation, deadline)?;
+        operation
+            .wait_previous(&previous, cancellation, deadline)
+            .await?;
+        self.inner.release_retired(&operation.guard);
+        Ok(())
     }
 }
-impl Operation<'_> {
-    async fn run<T>(
-        &self,
-        future: impl std::future::Future<Output = Result<T>>,
-        caller: &CancellationToken,
-        deadline: Instant,
-    ) -> Result<T> {
-        self.service
-            .authority
-            .bounded(
-                async {
-                    if self.slot.retired.is_cancelled() {
-                        return Err(McpAuthError::Conflict);
-                    }
-                    match select(Box::pin(self.slot.retired.cancelled()), Box::pin(future)).await {
-                        Either::Right((result, _)) => result,
-                        Either::Left(_) => Err(McpAuthError::Conflict),
-                    }
-                },
-                caller,
-                deadline,
-            )
-            .await
-    }
-    fn lease(
-        &self,
-        credentials: Credentials,
-        caller: &CancellationToken,
-        deadline: Instant,
-    ) -> Result<McpAuthLease> {
-        self.service.authority.check(caller, deadline)?;
-        if self.slot.retired.is_cancelled() {
-            return Err(McpAuthError::Conflict);
-        }
-        let generation = self
-            .slot
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .generation
-            .clone();
-        Ok(McpAuthLease {
-            credentials: Arc::new(credentials),
-            generation,
-        })
-    }
-    fn commit(
-        &self,
-        snapshot: &super::store::Snapshot,
-        credentials: Credentials,
-        caller: &CancellationToken,
-        deadline: Instant,
-    ) -> Result<McpAuthLease> {
-        self.service.authority.check(caller, deadline)?;
-        let slots = self
-            .service
-            .slots
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if caller.is_cancelled() {
-            return Err(McpAuthError::Cancelled);
-        }
-        if !slots
-            .get(&self.identity)
-            .is_some_and(|slot| Arc::ptr_eq(slot, &self.slot))
-        {
-            return Err(McpAuthError::Conflict);
-        }
-        let durability =
-            self.service
-                .store
-                .publish(snapshot, &self.identity, Some(&credentials))?;
-        let mut state = self
-            .slot
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let old = std::mem::replace(&mut state.generation, CancellationToken::new());
-        let generation = state.generation.clone();
-        drop(state);
-        drop(slots);
-        old.cancel();
-        self.service.invalidation.invalidate(McpAuthInvalidated {
-            identity: self.identity.clone(),
-            generation: old,
-        });
-        if durability == PublicationDurability::Ambiguous {
-            generation.cancel();
-            return Err(McpAuthError::AmbiguousPublication);
-        }
-        Ok(McpAuthLease {
-            credentials: Arc::new(credentials),
-            generation,
-        })
-    }
-}
+
 impl Drop for NativeMcpAuthService {
     fn drop(&mut self) {
-        let slots = std::mem::take(
-            self.slots
-                .get_mut()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        for (_, slot) in slots {
-            slot.retired.cancel();
-            let generation = slot
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .generation
-                .clone();
-            generation.cancel();
-        }
+        self.inner.close();
     }
 }

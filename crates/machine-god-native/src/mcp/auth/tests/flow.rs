@@ -144,6 +144,7 @@ struct Fixture {
     service: NativeMcpAuthService,
     config: McpAuthConfig,
     origin: String,
+    workers: crate::NativeOwnedWorkerScope,
 }
 impl Fixture {
     fn new(address: SocketAddr) -> Self {
@@ -157,12 +158,14 @@ impl Fixture {
         let base = fs::canonicalize(base).unwrap();
         let store = Arc::new(NativeMcpCredentialStore::new(base.join("profile")).unwrap());
         let events = Arc::new(Events::default());
+        let workers = crate::NativeOwnedWorkerScope::new();
         let service = NativeMcpAuthService::new(
             store.clone(),
             Arc::new(Network(address)),
             Arc::new(Clock),
             Arc::new(Entropy),
             events.clone(),
+            workers.clone(),
         );
         let origin = format!("http://127.0.0.1:{}", address.port());
         let config = config(&format!("{origin}/mcp"), b"selected");
@@ -173,6 +176,7 @@ impl Fixture {
             service,
             config,
             origin,
+            workers,
         }
     }
     fn credentials(&self, expires_ms: i64) -> codec::Credentials {
@@ -206,6 +210,9 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        self.service.close();
+        self.workers.close();
+        self.workers.completion().wait_on_worker().unwrap();
         fs::remove_dir_all(&self.base).unwrap();
     }
 }
@@ -591,7 +598,15 @@ fn local_retirement_releases_capacity_without_deleting_credentials() {
             )
             .await
             .unwrap();
-        fixture.service.retire(fixture.config.identity());
+        fixture
+            .service
+            .retire(
+                fixture.config.identity(),
+                &CancellationToken::new(),
+                deadline(),
+            )
+            .await
+            .unwrap();
         assert!(lease.access_token().is_err());
         assert!(fixture.service.status(fixture.config.identity()).unwrap());
         for index in 0..70 {
@@ -606,7 +621,11 @@ fn local_retirement_releases_capacity_without_deleting_credentials() {
                     .await,
                 Err(McpAuthError::Missing)
             ));
-            fixture.service.retire(selected.identity());
+            fixture
+                .service
+                .retire(selected.identity(), &CancellationToken::new(), deadline())
+                .await
+                .unwrap();
         }
     });
 }

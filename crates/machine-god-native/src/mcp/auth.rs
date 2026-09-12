@@ -15,7 +15,7 @@ mod tests;
 mod token;
 
 pub use codec::{McpAuthChallenge, McpAuthConfig, McpAuthIdentity};
-pub use service::{McpAuthLease, NativeMcpAuthService};
+pub use service::{McpAuthLease, NativeMcpAuthCleanup, NativeMcpAuthService};
 pub use store::NativeMcpCredentialStore;
 
 const DOCUMENT_LIMIT: usize = 256 * 1024;
