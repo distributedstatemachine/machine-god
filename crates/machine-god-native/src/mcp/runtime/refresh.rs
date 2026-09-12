@@ -27,6 +27,37 @@ use std::{
     },
 };
 
+/// Exact original caller observations whose checks never upgrade owners, lock
+/// context state or invoke callbacks. Capture a model registry outside all locks.
+pub(super) enum BorrowedRefreshCaller<'a> {
+    Turn(
+        &'a crate::mcp::submission::McpSubmissionRegistry,
+        &'a machine_god_core::CancellationToken,
+    ),
+    Human(
+        &'a machine_god_core::CancellationToken,
+        &'a machine_god_core::CancellationToken,
+    ),
+}
+impl BorrowedRefreshCaller<'_> {
+    pub(super) fn check(&self) -> Result<()> {
+        match self {
+            Self::Turn(registry, operation) => {
+                registry.revalidate().map_err(|_| Error::Cancelled)?;
+                if operation.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+            }
+            Self::Human(command, operation) => {
+                if command.is_cancelled() || operation.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 pub(super) struct NativeMcpToolRefresh {
     expected: NativeMcpPublicationCheckpoint,
     previous: Arc<Publication>,
@@ -148,7 +179,18 @@ impl NativeMcpRuntime {
         if unchanged {
             return Ok(prepared);
         }
+        self.assemble_tool_refresh(&mut prepared, &selected_segment, reserved)?;
+        Ok(prepared)
+    }
+
+    fn assemble_tool_refresh(
+        &self,
+        prepared: &mut NativeMcpToolRefresh,
+        selected_segment: &McpCatalogCandidate,
+        reserved: &[&str],
+    ) -> Result<()> {
         let previous = &prepared.previous;
+        let server = &prepared.server;
         let mut segments = Vec::with_capacity(previous.servers.len());
         let mut tools = previous.tools.clone();
         tools.retain(|_, tool| !tool.server.ptr_eq(&Arc::downgrade(server)));
@@ -246,34 +288,64 @@ impl NativeMcpRuntime {
             reserved: retained_reserved,
             retained_bytes: charge,
         }));
-        Ok(prepared)
+        Ok(())
     }
 
     /// No I/O and no suspension. Every fallible step precedes retirement. The
     /// transport guard supplies an infallible exact whitelist swap; callbacks
     /// and retired owner destruction occur only after the publication lock.
+    #[cfg(test)]
     pub(super) fn commit_tool_refresh(
+        &self,
+        refresh: NativeMcpToolRefresh,
+        peer: &mut PeerGuard<'_>,
+    ) -> Result<NativeMcpPublicationCheckpoint> {
+        self.commit_tool_refresh_inner(refresh, peer, None)
+    }
+
+    pub(super) fn commit_tool_refresh_guarded(
+        &self,
+        refresh: NativeMcpToolRefresh,
+        peer: &mut PeerGuard<'_>,
+        caller: &BorrowedRefreshCaller<'_>,
+    ) -> Result<NativeMcpPublicationCheckpoint> {
+        self.commit_tool_refresh_inner(refresh, peer, Some(caller))
+    }
+
+    fn commit_tool_refresh_inner(
         &self,
         mut refresh: NativeMcpToolRefresh,
         peer: &mut PeerGuard<'_>,
+        caller: Option<&BorrowedRefreshCaller<'_>>,
     ) -> Result<NativeMcpPublicationCheckpoint> {
         if !std::ptr::eq(peer.server, Arc::as_ptr(&refresh.server)) {
             return Err(Error::Invalid);
         }
         let prospective = refresh.publication_checkpoint();
         if refresh.replacement.is_none() {
+            if peer.server.clock.now() >= peer.deadline {
+                return Err(Error::Cancelled);
+            }
             let state = self.state.lock().map_err(|_| Error::Unavailable)?;
             if state.closed {
                 return Err(Error::Unavailable);
             }
             refresh.expected.check(self, &state)?;
             refresh.server.check_authority()?;
+            if let Some(caller) = caller {
+                caller.check()?;
+            }
             return Ok(prospective);
         }
         let replacement = refresh.replacement.take().ok_or(Error::Invalid)?;
         let staged = peer
             .peer
             .prepare_runtime_set(std::mem::take(&mut refresh.runtimes))?;
+        // Selected clocks can invoke host code. Observe before publication lock,
+        // then recheck the inert original caller at the final cutover below.
+        if peer.server.clock.now() >= peer.deadline {
+            return Err(Error::Cancelled);
+        }
         let mut deferred = Vec::with_capacity(refresh.replaced.len());
         let mut state = self.state.lock().map_err(|_| Error::Unavailable)?;
         if state.closed {
@@ -297,6 +369,9 @@ impl NativeMcpRuntime {
             .retired_catalogs
             .try_reserve(1)
             .map_err(|_| Error::Limit)?;
+        if let Some(caller) = caller {
+            caller.check()?;
+        }
         // From here onward every operation is infallible and allocation-free.
         for tool in &refresh.replaced {
             deferred.push(tool.owner.retire_deferred());

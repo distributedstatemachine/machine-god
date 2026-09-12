@@ -1,4 +1,5 @@
 use super::*;
+mod catalog;
 mod feature;
 use crate::mcp::submission::{
     McpPendingToolReservation, McpSubmission, McpSubmissionRuntime, McpSubmissionWriter,
@@ -11,6 +12,7 @@ use std::{
 };
 
 type Response = dyn Fn(i64) -> Box<[u8]> + Send + Sync;
+type CatalogResponse = dyn Fn(i64) -> BoxFuture<'static, Result<Box<[u8]>>> + Send + Sync;
 
 /// Test-only concrete peer. Exercises real marker custody and native proof
 /// writing, without exposing an arbitrary production peer/callback interface.
@@ -22,6 +24,7 @@ pub struct ScriptPeer {
     pub(in crate::mcp::runtime) closed: Arc<AtomicBool>,
     writes: Arc<Mutex<Vec<u8>>>,
     response: Option<Arc<Response>>,
+    catalog_response: Option<Arc<CatalogResponse>>,
     feature_identity: Arc<()>,
 }
 impl std::fmt::Debug for ScriptPeer {
@@ -39,6 +42,7 @@ impl ScriptPeer {
             closed: Arc::new(AtomicBool::new(false)),
             writes,
             response: None,
+            catalog_response: None,
             feature_identity: Arc::new(()),
         }
     }
@@ -47,6 +51,13 @@ impl ScriptPeer {
         response: impl Fn(i64) -> Box<[u8]> + Send + Sync + 'static,
     ) -> Self {
         self.response = Some(Arc::new(response));
+        self
+    }
+    pub(crate) fn with_catalog_response(
+        mut self,
+        response: impl Fn(i64) -> BoxFuture<'static, Result<Box<[u8]>>> + Send + Sync + 'static,
+    ) -> Self {
+        self.catalog_response = Some(Arc::new(response));
         self
     }
     pub(in crate::mcp::runtime) fn reserve(&mut self) -> Result<McpToolReservation> {

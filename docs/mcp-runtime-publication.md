@@ -132,6 +132,12 @@ replaced tools fail their existing final binding checks, including write suffixe
 Commit checks the exact peer-lane owner, expected publication, every retained
 server authority and active-plus-retired byte limits. The staged transport table
 is locked/validated before any mutation; abandoned staging leaves it untouched.
+The final cutover also checks the original model registry and caller token, or
+the original human command and operation tokens, after transport validation and
+all injected clock observations. These final checks are inert token/registry
+observations, not context-owner upgrades or arbitrary host callbacks under the
+publication lock. Cancellation during a ready response cannot publish first and
+only report cancellation afterward.
 After all fallible preparation, old bindings are marked retired, the exact
 whitelist is swapped and the prepared publication becomes visible without a
 fallible step or suspension. Deferred cancellation, old whitelist storage and

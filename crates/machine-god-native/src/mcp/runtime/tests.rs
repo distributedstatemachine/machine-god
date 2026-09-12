@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 mod addition;
+mod catalog_driver;
 mod checkpoint;
 mod deferred;
 mod execution;
