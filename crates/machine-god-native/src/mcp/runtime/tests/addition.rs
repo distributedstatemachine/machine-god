@@ -401,7 +401,13 @@ fn full_replacement_retires_both_views_and_drains_each_unique_peer_once() {
 fn original_feature_witness_survives_addition_but_not_whole_replacement() {
     let runtime = Arc::new(standalone());
     let mut required = server("required", &[]);
-    required.catalog_epoch = runtime.clock.now();
+    // The shared producer admitted this catalog at millisecond 19. Its epoch
+    // must place that receipt at, not after, the runtime's frozen observation.
+    required.catalog_epoch = runtime
+        .clock
+        .now()
+        .checked_sub(Duration::from_millis(required.catalogs[0].fetched_at_ms()))
+        .unwrap();
     required.peer = NativeMcpOwnedPeer::Script(script::ScriptPeer::new(Arc::default()).with_response(|id| {
         format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","resources":[]}}}}"#).into_bytes().into()
     }));

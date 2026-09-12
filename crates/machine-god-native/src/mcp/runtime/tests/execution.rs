@@ -126,7 +126,9 @@ fn scripted_candidate(
                 authentication: Arc::from(&b"credential"[..]),
                 catalogs: vec![catalog],
                 refresh: None,
-                catalog_epoch: Instant::now(),
+                // Match the zero-millisecond catalog receipt to the selected
+                // runtime clock, including the advancing continuation clock.
+                catalog_epoch: runtime.clock.now(),
                 operation_timeout: Duration::from_secs(120),
                 authority_cancellations: Arc::from([]),
                 peer: NativeMcpOwnedPeer::Script(

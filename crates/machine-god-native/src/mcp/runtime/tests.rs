@@ -207,7 +207,9 @@ fn candidate(
                 authentication: Arc::from(&b"credential"[..]),
                 catalogs: vec![catalog],
                 refresh: None,
-                catalog_epoch: Instant::now(),
+                // Admission above observed zero on this selected clock. An
+                // ambient epoch would be later than the fixture's frozen now.
+                catalog_epoch: runtime.clock.now(),
                 peer: NativeMcpOwnedPeer::Script(script::ScriptPeer::new(writes)),
                 operation_timeout: std::time::Duration::from_secs(120),
                 authority_cancellations: Arc::from([]),
