@@ -15,6 +15,10 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 mod command;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod native;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use native::NativeMcpFeaturesTool;
 
 /// Registered name of [`McpFeaturesTool`].
 pub const MCP_FEATURES_TOOL_NAME: &str = "mcp_features";
@@ -457,30 +461,11 @@ impl fmt::Debug for McpFeaturesTool {
 
 impl Tool for McpFeaturesTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: tool_name(),
-            description: DESCRIPTION.to_owned(),
-            input_schema: input_schema(),
-        }
+        tool_spec()
     }
 
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
-        let ToolCall {
-            name, arguments, ..
-        } = call;
-        let arguments = IterativeJsonValue::new(arguments);
-        if name != tool_name() {
-            return Err(invalid_arguments());
-        }
-        validate_json_structure_and_raw_bytes(
-            arguments.get(),
-            MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
-        )
-        .map_err(|()| resource_limit())?;
-        let request = decode_request(arguments.get())?;
-        let canonical = request.as_json();
-        ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
-        Ok(PreparedToolCall::without_authority(canonical))
+        prepare_request(call)
     }
 
     fn execute(
@@ -492,19 +477,7 @@ impl Tool for McpFeaturesTool {
         let arguments = IterativeJsonValue::new(arguments);
         Box::pin(async move {
             check_cancellation(&cancellation)?;
-            validate_json_structure_and_raw_bytes(
-                arguments.get(),
-                MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
-            )
-            .map_err(|()| resource_limit())?;
-            let request = decode_request(arguments.get())?;
-            let canonical = request.as_json();
-            ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
-            if canonical != *arguments.get() {
-                return Err(invalid_arguments());
-            }
-
-            drop(canonical);
+            let request = decode_canonical(arguments.get())?;
             drop(arguments);
             let publication = McpFeaturePublication::from(&request);
             check_cancellation(&cancellation)?;
@@ -517,6 +490,44 @@ impl Tool for McpFeaturesTool {
             }
         })
     }
+}
+
+fn tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: tool_name(),
+        description: DESCRIPTION.to_owned(),
+        input_schema: input_schema(),
+    }
+}
+
+fn prepare_request(call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+    let ToolCall {
+        name, arguments, ..
+    } = call;
+    let arguments = IterativeJsonValue::new(arguments);
+    if name != tool_name() {
+        return Err(invalid_arguments());
+    }
+    validate_json_structure_and_raw_bytes(
+        arguments.get(),
+        MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
+    )
+    .map_err(|()| resource_limit())?;
+    let canonical = decode_request(arguments.get())?.as_json();
+    ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
+    Ok(PreparedToolCall::without_authority(canonical))
+}
+
+fn decode_canonical(arguments: &Value) -> Result<McpFeatureRequest, ToolError> {
+    validate_json_structure_and_raw_bytes(arguments, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)
+        .map_err(|()| resource_limit())?;
+    let request = decode_request(arguments)?;
+    let canonical = request.as_json();
+    ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
+    if canonical != *arguments {
+        return Err(invalid_arguments());
+    }
+    Ok(request)
 }
 
 fn tool_name() -> ToolName {
@@ -772,6 +783,15 @@ fn publish_payload(
     let Value::Object(payload) = payload.into_value() else {
         unreachable!("payload constructor guarantees an object")
     };
+    let mut envelope = trust_envelope(request);
+    envelope.extend(payload);
+    let output = ToolOutput::success(Value::Object(envelope));
+    ensure_serialized(&output, MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES)?;
+    check_cancellation(cancellation)?;
+    Ok(output)
+}
+
+fn trust_envelope(request: &McpFeaturePublication) -> Map<String, Value> {
     let mut envelope = Map::new();
     envelope.insert(
         "trust".to_owned(),
@@ -786,11 +806,7 @@ fn publish_payload(
         "server".to_owned(),
         Value::String(request.server.to_string()),
     );
-    envelope.extend(payload);
-    let output = ToolOutput::success(Value::Object(envelope));
-    ensure_serialized(&output, MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES)?;
-    check_cancellation(cancellation)?;
-    Ok(output)
+    envelope
 }
 
 fn validate_payload_for_request(

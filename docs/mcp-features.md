@@ -1,4 +1,4 @@
-# Injected `mcp_features`
+# `mcp_features`
 
 `mcp_features` exposes bounded MCP resources, resource templates, prompts, and
 argument completion through one explicitly injected native authority. It is an
@@ -6,9 +6,10 @@ ordinary provider-neutral engine tool: core owns preparation, cancellation,
 events, result persistence, and the following model round, while the native
 authority owns admitted MCP feature data and any later transport implementation.
 
-This slice implements the complete pinned seven-action tool surface without
-adding production MCP discovery, transport, authentication, or connection
-management.
+The portable injected adapter and the production runtime-backed adapter share
+the seven-action schema and canonical input decoder. The injected adapter's
+64 KiB result contract remains unchanged. The separately selected production
+adapter is described under [native runtime projection](#native-runtime-projection).
 
 ## Actions and canonical input
 
@@ -189,8 +190,8 @@ An input-required authority result preserves the pinned terminal error payload:
 {"error":"McpInputRequired"}
 ```
 
-It is returned with `is_error: true` and conveys no approval. This slice does
-not implement elicitation or continuation.
+It is returned with `is_error: true` and conveys no approval. The injected
+adapter does not implement elicitation or continuation.
 
 ## Lifecycle and failures
 
@@ -224,7 +225,58 @@ Fixed redacted failures are:
 failure contains a server, URI, prompt, argument, value, content, provider
 diagnostic, credential, or generation witness.
 
-## Reference host and remaining boundary
+## Native runtime projection
+
+On Linux and macOS, `NativeMcpFeaturesTool` accepts a weak reference to one
+`NativeMcpRuntime` and the actual shared `NativeToolResultArchiveAdapter` used
+by the host's other tools and `read_tool_result`. It does not instantiate a
+second archive or acquire runtime authority during construction/preparation.
+Canonical inputs are identical to the injected adapter, including its 64 KiB
+input ceiling. The runtime's `feature_for_turn` route receives the exact
+`ToolContext`, verifies the original publication and server, and returns a
+non-forgeable result witness retaining its bounded operation slot. The adapter
+checks that same witness before projection and before archive publication;
+it never resolves a replacement runtime to publish an old response.
+
+Production results use a trusted outer envelope with `trust`, `authority`,
+`action`, `server`, and applicable exact `identity`/`argument`. All remotely
+supplied data is nested inside a single `untrusted` member. A read, prompt get,
+or completion retains the complete original correlated JSON-RPC response in
+`untrusted.response`, including unknown fields and exact numeric lexemes.
+A catalog retains the admitted descriptor items in `untrusted.items`, with
+`untrusted.catalog_kind`; it does not claim to preserve pagination envelopes
+or discarded page metadata. Remote fields named `trust`, `authority`, `action`,
+`server`, or `identity` remain nested data and cannot override the outer values.
+Literal JSON keys resembling a decoder's private representation remain keys.
+
+The complete output bound is 16 MiB plus 512 KiB of envelope allowance plus
+the 29-byte `ToolOutput` wrapper, with 262,144 source value nodes plus 64
+envelope nodes and at most 64 container levels. Before copying any raw JSON
+into a `Value` tree, projection checks aggregate source bytes, the compact
+escaped trusted envelope, added nesting, and aggregate value-node counts.
+Admitted valid raw JSON conservatively bounds its compact representation;
+numeric lexemes are preserved, not converted through floating point. The
+existing counting serializer verifies the completed projection again.
+Projection overflow fails explicitly; content is not silently truncated or
+forced through the legacy injected adapter's 64 KiB result policy.
+
+The actual shared archive retains oversized complete outputs losslessly while
+providing bounded persisted references and previews. Execution checks caller
+cancellation and the original runtime witness before handing off publication.
+Once completed-result publication is polled, it owns completion; a later
+cancellation does not erase the durable receipt or make replay permissible.
+The prepared tool opts into core's completion-wins lifecycle for that reason.
+A correlated protocol failure sets `is_error`; an unresolved input-required
+response additionally stamps `stop: "McpInputRequired"` and requests explicit
+`finish_turn`, without inventing consent or another exchange.
+
+Malformed canonical input retains the shared input errors. An unavailable
+runtime reports the redacted `mcp_features_native_unavailable` error; bounded
+native operation or projection overflow reports
+`mcp_features_native_projection_limit`. Neither is retryable. Runtime/caller
+cancellation, including a retired result witness, retains `mcp_features_cancelled`.
+
+## Injected reference-host seam
 
 The native reference host always advertises `mcp_features`. Its ordinary
 production composition supplies an inert empty authority that performs no MCP
@@ -232,9 +284,9 @@ I/O and fails unavailable. The explicit MCP composition seam accepts one
 shared feature authority alongside the existing shared tool catalog. Host
 composition stores the allocations but never polls or snapshots either one.
 
-Later M05 slices own stdio/HTTP transport discovery, JSON-RPC framing,
-pagination, OAuth and credential rotation, cache TTL/stale behavior,
-subscriptions, reconnection, production connection management, resource
-template expansion, elicitation/continuation, `/mcp`, ACP/TUI integration,
-subagent propagation, and MCP-specific persistence. None of those concerns is
-implemented or implicitly authorized here.
+Transport, catalog admission and production runtime routing are separate native
+owners; see [feature exchanges](mcp-feature-runtime.md) and
+[runtime publication](mcp-runtime-publication.md). The injected seam alone
+does not authorize those effects. CLI activation, authentication, continuation
+and lifecycle composition must explicitly select their corresponding native
+owners rather than interpreting returned content as authority.
