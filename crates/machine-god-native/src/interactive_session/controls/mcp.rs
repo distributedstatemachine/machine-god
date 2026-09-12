@@ -1,4 +1,10 @@
-//! MCP profile management shares the exact runtime fence and owned worker scope.
+//! MCP controls retain exact conversation admission and native effect owners.
+
+mod feature;
+mod reload;
+#[cfg(test)]
+mod tests;
+pub use feature::NativeMcpHumanFeatureReceipt;
 
 use super::{
     ControlFuture, NativeInteractiveControlError as Error,
@@ -18,6 +24,23 @@ pub(super) fn prepare(
     command: McpCommand,
 ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
     let token = CancellationToken::new();
+    let command = match command {
+        McpCommand::Reload => {
+            let Some(controller) = host.mcp_controller() else {
+                return Ok((token, unavailable()));
+            };
+            return Ok((token.clone(), reload::run(runtime, controller, token)));
+        }
+        McpCommand::Feature(command) => {
+            let request = crate::McpFeatureRequest::try_from(command)
+                .map_err(|_| NativeInteractiveError::Configuration)?;
+            let Some(mcp) = host.mcp_runtime() else {
+                return Ok((token, unavailable()));
+            };
+            return Ok((token.clone(), feature::run(runtime, mcp, request, token)));
+        }
+        command => command,
+    };
     match NativeMcpManagementService::validate_command(&command) {
         Ok(()) => {}
         Err(NativeMcpManagementError::RuntimeUnavailable) => {
@@ -47,4 +70,41 @@ pub(super) fn prepare(
         },
     );
     Ok((token, future))
+}
+
+fn unavailable() -> ControlFuture {
+    Box::pin(async { Err(Error::Mcp(NativeMcpManagementError::RuntimeUnavailable)) })
+}
+
+struct CancelOnDrop(CancellationToken);
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        contain_release(|| {
+            self.0.cancel();
+        });
+    }
+}
+
+/// Admission release can wake a caller. A panicking waiter cannot erase an
+/// already-completed receipt or cause a second unwind while dropping a future.
+struct ControlPermit(Option<crate::conversation_lifecycle::LifecyclePermit>);
+impl ControlPermit {
+    fn acquire(runtime: &NativeConversationRuntime) -> Result<Self, Error> {
+        runtime
+            .acquire_file_control()
+            .map(|permit| Self(Some(permit)))
+            .map_err(Error::Runtime)
+    }
+}
+impl Drop for ControlPermit {
+    fn drop(&mut self) {
+        if let Some(permit) = self.0.take() {
+            contain_release(|| drop(permit));
+        }
+    }
+}
+fn contain_release(operation: impl FnOnce()) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
+        std::mem::forget(payload);
+    }
 }

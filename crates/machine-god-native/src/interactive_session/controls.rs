@@ -86,6 +86,8 @@ pub enum NativeInteractiveControlError {
     Background(crate::NativeBackgroundControlError),
     Skills(crate::NativeSkillsServiceError),
     Mcp(crate::mcp::management::NativeMcpManagementError),
+    McpReload(crate::mcp::controller::NativeMcpControllerFailure),
+    McpFeature(crate::mcp::runtime::NativeMcpFeatureError),
     Unavailable,
 }
 impl fmt::Debug for NativeInteractiveControlError {
@@ -119,6 +121,8 @@ pub enum NativeInteractiveControlReceipt {
     Background(crate::NativeBackgroundControlReceipt),
     Skills(crate::NativeSkillsServiceResult),
     Mcp(crate::mcp::management::NativeMcpManagementReceipt),
+    McpReload(crate::mcp::controller::NativeMcpControllerReceipt),
+    McpFeature(NativeMcpHumanFeatureReceipt),
 }
 impl fmt::Debug for NativeInteractiveControlReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -149,6 +153,13 @@ impl NativeInteractiveControlOutcome {
             Ok(NativeInteractiveControlReceipt::Background(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Skills(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Mcp(receipt)) => receipt.failed(),
+            Ok(NativeInteractiveControlReceipt::McpReload(receipt)) => {
+                receipt.closed_after_publication()
+                    || receipt
+                        .startup()
+                        .is_some_and(crate::mcp::startup::NativeMcpStartupReceipt::has_failures)
+            }
+            Ok(NativeInteractiveControlReceipt::McpFeature(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Workspace(receipt)) => !matches!(
                 receipt.reconciliation,
                 crate::NativeWorkspaceReconciliation::CachedBusy
@@ -504,6 +515,7 @@ async fn execute(
 }
 
 mod mcp;
+pub use mcp::NativeMcpHumanFeatureReceipt;
 mod owned_operation;
 mod skills;
 pub(super) mod undo;

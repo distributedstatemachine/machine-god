@@ -33,6 +33,10 @@ authority to retry or roll back a mutation.
   Whitespace separates literal tokens; no shell evaluation or quote grouping
   occurs. Replacement of an existing alias follows the pinned add behavior.
 - `/mcp remove NAME` removes the exact configured alias.
+- `/mcp reload` requests an all-selected runtime replacement through the actual
+  host controller. Failure preserves the previously active generation.
+- The seven `/mcp resource` and `/mcp prompt` actions use the actual selected
+  native runtime and return bounded, observed external data.
 
 Mutation receipts separately report confirmed or ambiguous save durability,
 changed or unchanged configuration, and runtime activation not attempted.
@@ -41,11 +45,35 @@ save does not establish a successful connection or reload. Executable arguments,
 environment values, remote URLs, headers and credentials are never included in
 configuration-list receipts.
 
-Reload, authentication/logout and resource/prompt forms remain recognized by the
-native grammar but unavailable through this management-only service. They report
-the native unavailable error without effects, prompt fallback or automatic retry.
-Help advertises usable profile-management forms and explicitly marks those
-runtime operations unavailable.
+Reload and resource/prompt actions require selected runtime authority separately
+from profile-management authority. Authentication/logout remain recognized but
+unavailable in this host. Missing authority reports the native unavailable error
+without effects, prompt fallback or automatic retry.
+
+## Native runtime controls
+
+The native interactive owner dispatches reload and all seven resource/prompt
+actions separately from profile management. These operations use only the actual
+host controller/runtime; absent runtime authority and authentication/logout
+remain unavailable, without prompt fallback. Saves still do not activate peers.
+
+On first poll each runtime control acquires the exact accepted conversation's
+file-control lifecycle permit and retains it until the operation returns its
+receipt. Reload uses a 60-second outer deadline from the controller's explicitly
+selected monotonic clock, with each configured peer timeout independently bounded
+by it. Profile work uses the controller's retained workers; network/peer futures
+are polled asynchronously by the interactive owner, never blocked on a worker.
+An accepted reload returns the actual typed controller publication or failure
+receipt even when cancellation races publication; it is not automatically retried.
+
+Feature commands pass through the existing bounded request conversion and select
+an exact native human-command lifetime, not a fabricated model turn. Successful
+receipts retain that owner, its cancellation token and the original bounded
+feature result through presentation. Borrowed data access does not assert current
+authority; `revalidate` checks the original selection, never a replacement.
+Protocol failures and unresolved input-required handoffs are failed/incomplete
+actions, not permission to continue. Resource and prompt data are not enqueued as
+model input or published through a fabricated model archive context.
 
 ## Presentation bounds
 
@@ -54,12 +82,26 @@ parser has a larger raw-input limit. Invalid syntax and oversized commands are
 rejected locally, not submitted as model prompts. Pending control receipts keep
 the existing busy admission behavior.
 
-Rendering uses the shared 64 KiB bounded output and returns no partial output on
-overflow. Configured metadata admits at most 64 rows and 128 bytes per nonempty
+Rendering uses the shared 64 KiB bounded output. Configured metadata admits at
+most 64 rows and 128 bytes per nonempty
 name. Path conversion is preceded by a raw-byte check of 4096 directory bytes
 plus `/mcp.json`. Names and paths use terminal-safe escaping. Save and error
 messages expose only fixed native receipt categories, not configuration bodies.
 
-These profile controls do not implement transport activation, tool permission
-preparation, OAuth, catalog publication or the complete MCP feature. The
+Feature presentation retains one exact native result and an acknowledged paging
+cursor. Each frame borrows at most 8 KiB of raw JSON on UTF-8 boundaries before
+terminal escaping and stays within the 64 KiB output bound. The cursor advances
+only after flush acknowledgement and transfers unchanged through shutdown
+presentation. There is no cloned full-result JSON or queue of rendered pages.
+Blocked writes cannot replay a feature request or an acknowledged page.
+
+External descriptor and response text is labelled observed data, never enqueued
+as a model prompt. Protocol failures expose only a fixed category and numeric
+code, not the peer's error message or data. Unresolved input reports required
+interaction and no automatic retry. Reload rendering separately reports
+publication/unchanged/closed-after-publication, per-server startup facts and
+local cleanup observations; it does not claim remote revocation or infer runtime
+success from a configuration save.
+
+These controls do not grant model tool permissions or implement OAuth. The
 [implementation plan](implementation-plan.md) remains the live delivery ledger.

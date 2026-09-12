@@ -78,6 +78,12 @@ startup authorities. Construction and unpolled operations are inert. Profile
 loads and exact-source revalidation run on that worker scope; network startup is
 caller-polled asynchronously, without a second executor or worker `block_on`.
 
+`deadline_after` explicitly observes this controller's selected monotonic clock
+and checked-adds a positive caller-selected duration. Zero is rejected before
+reading the clock; overflow is a bounded error. Callers invoke it on the first
+operation poll, never during inert host/future construction. It also works after
+close so finalization can select a fresh cleanup window without ambient time.
+
 Initial `All` publishes all available enabled servers subject to required-server
 readiness. `AskStartup` publishes required peers only. Its first explicit
 `activate_deferred` call coalesces optional discovery against the retained exact

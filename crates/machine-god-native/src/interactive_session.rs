@@ -23,7 +23,7 @@ pub use clipboard::{
 };
 pub use controls::{
     NativeInteractiveControl, NativeInteractiveControlError, NativeInteractiveControlId,
-    NativeInteractiveControlOutcome, NativeInteractiveControlReceipt,
+    NativeInteractiveControlOutcome, NativeInteractiveControlReceipt, NativeMcpHumanFeatureReceipt,
 };
 mod driver;
 #[cfg(test)]

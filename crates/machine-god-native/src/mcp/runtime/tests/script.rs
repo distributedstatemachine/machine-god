@@ -29,7 +29,7 @@ impl std::fmt::Debug for ScriptPeer {
     }
 }
 impl ScriptPeer {
-    pub(super) fn new(writes: Arc<Mutex<Vec<u8>>>) -> Self {
+    pub(crate) fn new(writes: Arc<Mutex<Vec<u8>>>) -> Self {
         Self {
             tools: true,
             runtimes: vec![],
@@ -40,7 +40,7 @@ impl ScriptPeer {
             response: None,
         }
     }
-    pub(super) fn with_response(
+    pub(crate) fn with_response(
         mut self,
         response: impl Fn(i64) -> Box<[u8]> + Send + Sync + 'static,
     ) -> Self {

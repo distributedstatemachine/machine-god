@@ -15,7 +15,12 @@ use super::{
 };
 use crate::{NativeOwnedWorkerScope, background_process::ValidatedBackgroundEnvironment};
 use machine_god_core::{BoxFuture, CancellationToken, ToolName};
-use std::{ffi::OsString, fmt, sync::Arc, time::Instant};
+use std::{
+    ffi::OsString,
+    fmt,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// Reusable captured startup authorities. Configuration and its lifetime token
 /// come from each exact native store observation, never from this template.
@@ -140,6 +145,24 @@ pub struct NativeMcpController {
 type Result<T> = std::result::Result<T, NativeMcpControllerFailure>;
 
 impl NativeMcpController {
+    /// Observes the explicitly selected monotonic clock now, not at construction.
+    /// Call from the first operation poll. This remains available after close so
+    /// a caller can select a fresh bounded cleanup deadline.
+    /// # Errors
+    /// Rejects zero before observing time, and unrepresentable deadline addition.
+    pub fn deadline_after(&self, timeout: Duration) -> Result<Instant> {
+        if timeout.is_zero() {
+            return Err(state::failure(NativeMcpControllerError::Invalid));
+        }
+        self.inner
+            .options
+            .startup
+            .clock
+            .now()
+            .checked_add(timeout)
+            .ok_or_else(|| state::failure(NativeMcpControllerError::Limit))
+    }
+
     /// Construction is inert, including no clock read or worker admission.
     /// # Errors
     /// Rejects invalid resource limits, duplicate reserved names and malformed

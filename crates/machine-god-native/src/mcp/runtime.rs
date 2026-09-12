@@ -10,6 +10,8 @@ mod peer;
 mod route;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::script::ScriptPeer;
 mod tool;
 
 pub use addition::NativeMcpRuntimeAddition;

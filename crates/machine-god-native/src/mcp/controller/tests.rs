@@ -120,6 +120,53 @@ impl Drop for Fixture {
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(10)
 }
+
+#[test]
+fn selected_clock_deadlines_reject_zero_and_overflow_and_work_after_close() {
+    struct FixedClock {
+        instant: Instant,
+        reads: AtomicUsize,
+    }
+    impl NativeMcpRuntimeClock for FixedClock {
+        fn now(&self) -> Instant {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.instant
+        }
+        fn sleep_until(&self, _: Instant) -> BoxFuture<'_, ()> {
+            Box::pin(std::future::pending())
+        }
+    }
+    let mut fixture = Fixture::new();
+    let clock = Arc::new(FixedClock {
+        instant: Instant::now(),
+        reads: AtomicUsize::new(0),
+    });
+    fixture.options.startup.clock = clock.clone();
+    let controller = fixture.controller();
+    assert_eq!(clock.reads.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        controller
+            .deadline_after(Duration::ZERO)
+            .unwrap_err()
+            .kind(),
+        NativeMcpControllerError::Invalid
+    );
+    assert_eq!(clock.reads.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        controller.deadline_after(Duration::from_secs(3)).unwrap(),
+        clock.instant + Duration::from_secs(3)
+    );
+    assert_eq!(
+        controller.deadline_after(Duration::MAX).unwrap_err().kind(),
+        NativeMcpControllerError::Limit
+    );
+    controller.close();
+    assert_eq!(
+        controller.deadline_after(Duration::from_secs(7)).unwrap(),
+        clock.instant + Duration::from_secs(7)
+    );
+    assert_eq!(clock.reads.load(Ordering::Relaxed), 3);
+}
 fn run(future: impl std::future::Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
