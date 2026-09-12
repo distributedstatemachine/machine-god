@@ -1,49 +1,37 @@
 # Owned MCP stdio peer
 
-`machine_god_native::mcp::peer` drives actual stdio discovery, initialization,
+`machine_god_native::mcp::peer` drives actual modern stdio discovery,
 response correlation and raw catalog loading over the [owned connection](mcp-stdio.md).
 It is not a second wire codec or an executable catalog publication service.
 
-The caller explicitly supplies a factory authorized to reopen the same selected
-server/configuration, the host worker scope, lifecycle cancellation, asynchronous
-timer, overall deadline and discovery subdeadline. Construction and unpolled
-startup perform no launch or timer work. Factories must not switch server identity
-between attempts. Timers must remain inert before polling and retain ownership
-of any abandoned timer work; the peer creates no detached tasks or timer threads.
-Native monotonic `Instant` observations bound controllable asynchronous waits.
+The caller explicitly supplies a factory for the same selected server/configuration,
+the host worker scope, lifecycle cancellation, asynchronous timer, overall
+deadline and discovery subdeadline. Construction and unpolled startup perform no
+launch or timer work. One startup invokes the factory at most once: the peer
+never switches versions or relaunches after discovery failure. Timers remain inert
+before polling and retain ownership of abandoned timer work; no detached tasks or
+timer threads are created. Native monotonic `Instant` observations bound
+controllable asynchronous waits.
 
-Startup drives the existing [negotiation machine](mcp-runtime.md) with exact
-integer IDs, modern metadata and pinned legacy initialization. Modern successful
-discovery must be complete and advertise supported versions. Known capability
-objects and optional boolean flags are validated before selecting fallback or
-readiness. Missing legacy capabilities mean none; malformed capabilities do not
-become a successful downgrade. Legacy readiness includes acknowledged submission
-of `notifications/initialized`. Sampling, roots and elicitation support are not
+Startup drives the modern [negotiation machine](mcp-runtime.md) with exact integer
+IDs and modern metadata. Successful discovery must be complete, advertise the
+modern version and contain a capabilities object. Known capability objects and
+optional boolean flags are validated before readiness. Missing or malformed
+capabilities cannot become successful readiness. Initialization and initialized
+notifications are not supported. Sampling, roots and elicitation support are not
 advertised by this peer.
 
-Every admitted restart closes and awaits positive completion of the old process
-connection, including deferred reap, before invoking the factory again. An
-owned host worker observes cleanup; cancellation or overall expiry may abandon
-that observation but cannot detach cleanup or authorize a restart. Old-generation
-notifications are discarded when the replacement connection starts.
-
-Discovery subdeadline expiry requests a transport-owned bounded snapshot only
-after the discovery write and unsupported replies have completed. The worker
-stops write admission, checks cancellation, consumes any retained read tail and
-at most four 16 KiB nonblocking reads, with at most 16 interrupted-read retries.
-Any complete queued frame, partial frame, active write, flood or exhausted budget
-rejects timeout fallback. A would-block observation with an empty decoder is
-recorded as `DiscoveryTimeoutQuiescent`, distinctly from observed clean EOF.
-This is a defined snapshot cutoff: later bytes do not become retrospectively
-observed bytes. It does not claim EOF. Only settled quiescence or clean EOF while
-overall control remains live permits the pinned oldest-legacy discovery fallback.
-Initialize fallback still requires the negotiation machine's admitted response
-or clean-EOF evidence; initialize timeout is terminal.
+Discovery deadline, clean EOF, incomplete framing, protocol errors and offers of
+older versions are terminal. No timeout snapshot or close evidence grants
+downgrade/relaunch authority. Failed or abandoned startup closes its connection;
+the host's retained workers and observed completion still own cleanup, including
+deferred reap. The startup composer must settle prior ownership before a separate
+configured complete-startup retry; that policy is not a peer negotiation retry.
 
 ## Requests and bounded routing
 
 One mutable request lane owns at most one response expectation. Integer IDs
-increase monotonically across the complete peer lifetime, including restarts;
+increase monotonically across the complete peer lifetime, without reconnects;
 exhaustion rejects without wrapping. A tool ID is reserved before native proof
 preparation. The submitted non-clone proof-bearing request must carry that exact
 ID and belong to an explicitly registered runtime allocation. Discarded unsent
@@ -59,7 +47,7 @@ these unsent requests. Dropping an unprepared request, unpolled preparation, den
 or unsubmitted claimed value makes the unsent slot available again, without I/O
 or reusing its ID. A call must retain that exact allocation; matching the number
 alone is insufficient. Dropping a stale reservation cannot clear a replacement.
-The older `reserve_tool_id` interface remains single-exclusive and cannot mix
+The manual `reserve_tool_id` interface remains single-exclusive and cannot mix
 with live owned reservations. `discard_tool_id` clears only that manual slot and
 does not accept or discard another request's lease. Already attempted calls retain the existing
 no-replay and connection-cleanup rules.
@@ -117,8 +105,8 @@ behavior. Full descriptor/schema admission, atomic executable publication, runti
 permissions, callback authority, refresh subscriptions and CLI activation remain
 native runtime composition responsibilities.
 
-Compatibility follows fx `b1774fbf6c7602b503026f96f6e960e946c692ef`, especially
-`mcp_runtime.zig` request metadata, capability parsing and stdio startup, and
-`protocol_negotiation.zig`. The native bounded snapshot, strict duplicate-free
-wire admission and explicit authority/cleanup boundaries are intentional native
+Modern behavior is informed by fx `b1774fbf6c7602b503026f96f6e960e946c692ef`,
+especially `mcp_runtime.zig` request metadata, capability parsing and modern
+stdio discovery, and `protocol_negotiation.zig`. Strict duplicate-free wire
+admission and explicit authority/cleanup boundaries are intentional native
 constraints. Feature delivery and acceptance status belong only in the plan.

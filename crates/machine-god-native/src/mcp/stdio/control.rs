@@ -52,7 +52,6 @@ impl McpStdioControl {
                 envelope.method(),
                 Some(
                     "server/discover"
-                        | "initialize"
                         | "tools/list"
                         | "resources/list"
                         | "resources/templates/list"
@@ -61,34 +60,6 @@ impl McpStdioControl {
             )
         {
             return Err(McpStdioError::Invalid);
-        }
-        Self::framed(bytes)
-    }
-
-    /// Legacy initialized and request-cancellation notifications only. The
-    /// runtime is responsible for the generation/request being cancelled.
-    ///
-    /// # Errors
-    /// Rejects other notifications or malformed/bounded framing.
-    pub fn notification(bytes: &[u8]) -> Result<Self> {
-        let envelope = admit(bytes)?;
-        if envelope.kind() != RpcKind::Notification
-            || !matches!(
-                envelope.method(),
-                Some("notifications/initialized" | "notifications/cancelled")
-            )
-        {
-            return Err(McpStdioError::Invalid);
-        }
-        if envelope.method() == Some("notifications/cancelled") {
-            let params = envelope
-                .params()
-                .and_then(serde_json::Value::as_object)
-                .ok_or(McpStdioError::Invalid)?;
-            let id = params.get("requestId").ok_or(McpStdioError::Invalid)?;
-            if !(id.as_i64().is_some() || id.as_str().is_some_and(|value| value.len() <= 1024)) {
-                return Err(McpStdioError::Invalid);
-            }
         }
         Self::framed(bytes)
     }

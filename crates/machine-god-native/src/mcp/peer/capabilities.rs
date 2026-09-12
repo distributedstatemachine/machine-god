@@ -41,23 +41,17 @@ impl McpPeerCapabilities {
     pub const fn completions(self) -> bool {
         self.flags & 128 != 0
     }
-    pub(crate) fn admit(response: &RpcEnvelope, version: ProtocolVersion) -> Result<Self> {
+    pub(crate) fn admit(response: &RpcEnvelope, _version: ProtocolVersion) -> Result<Self> {
         let result = response
             .result()
             .and_then(Value::as_object)
             .ok_or(McpPeerError::InvalidResult)?;
-        if let Some(value) = result.get("resultType") {
-            if value.as_str() != Some("complete") {
-                return Err(McpPeerError::InvalidResult);
-            }
-        } else if version == ProtocolVersion::Modern {
+        if result.get("resultType").and_then(Value::as_str) != Some("complete") {
             return Err(McpPeerError::InvalidResult);
         }
-        let Some(capabilities) = result.get("capabilities") else {
-            return Ok(Self::default());
-        };
-        let capabilities = capabilities
-            .as_object()
+        let capabilities = result
+            .get("capabilities")
+            .and_then(Value::as_object)
             .ok_or(McpPeerError::InvalidResult)?;
         let mut admitted = Self::default();
         for (name, present, flags) in [

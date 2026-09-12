@@ -58,7 +58,7 @@ internal immutable template. Both paths use the same byte-preserving resolver.
 
 On macOS, startup explicitly selects one inert inventory-service registration
 before creating any factory. Repeated registration on the same startup authority
-is rejected. Every server factory and negotiation restart shares the same helper
+is rejected. Every server factory and separately configured startup attempt shares the same helper
 allocation and inventory registration. Creating a factory or cloning a launch
 does not register or start another service. The existing helper owner retains
 actual service startup, query, lease and cleanup behavior.
@@ -69,12 +69,12 @@ configuration/schema parsing or executable lookup occurs during factory cloning.
 The exact retained snapshot can outlive the startup builder without recapturing
 ambient state. A separately selected startup authority remains independent.
 
-The existing peer drives negotiation/fallback and waits for old connection
-cleanup before an admitted restart. The transport owns worker enrollment,
-deadlines, cancellation, child lifetime and retained cleanup; the factory adds no
-task, finalizer or detached work. Debug/errors omit commands, arguments,
-environment, helper paths and cwd. Production host/CLI composition and the full
-feature gates remain in the [implementation plan](implementation-plan.md).
+The peer drives one modern discovery without protocol fallback or relaunch.
+The transport owns worker enrollment, deadlines, cancellation, child lifetime
+and retained cleanup; the factory adds no task, finalizer or detached work.
+Debug/errors omit commands, arguments, environment, helper paths and cwd.
+Production host/CLI composition and the full feature gates remain in the
+[implementation plan](implementation-plan.md).
 
 ## Observed configured startup
 
@@ -104,16 +104,15 @@ retaining the full finite configured budget for each admitted attempt. It does
 not implement an infinite attempt or a far-future timestamp. Explicit-deadline
 callers retain their existing outer cutoff. Cancelled owner admission fails
 before the launch factory or observation callback. Native inter-attempt cleanup
-has a separate 30-second bound when no overall deadline was selected; legacy
-disconnect/relaunch also remains inside that legacy attempt's budget. Unsettled
-cleanup rejects restart and retains the existing worker/completion ownership.
+has a separate 30-second bound when no overall deadline was selected.
+Unsettled cleanup rejects a separate configured startup attempt and retains
+the existing worker/completion ownership.
 
-The pinned `connectionAttemptControl` gives modern discovery one configured
-attempt, then modern-to-legacy fallback a fresh attempt. All subsequent legacy
-version retries share that legacy deadline; they do not each reset it. The
-outer deadline and cancellation remain live during cleanup and fallback.
-Positive, settled old-connection evidence is still required before reopening;
-malformed success and ambiguous application operations do not authorize it.
+Each peer performs one modern discovery under its selected finite attempt
+budget. No older-version offer, error, EOF or discovery timeout authorizes
+initialize, downgrade or relaunch. The composer owns any explicitly configured
+complete-startup retry and must settle the previous observed connection first.
+Outer deadline and cancellation remain live throughout that composition.
 
 The launch companion invokes its observer on first poll after creating an inert
 child scope and before admitting a host worker, resolving paths or spawning a
@@ -125,7 +124,7 @@ ownership retains child and deferred-reap cleanup after cancellation or dropped
 futures. Observation adds no worker, waiter task or detached finalizer.
 
 Observers must use a finite receipt ledger, pruning only positively complete
-entries. Each fallback is observed separately; a full ledger rejects before new
+entries. Each complete-startup attempt is observed separately; a full ledger rejects before new
 effects. Hosts must wait for previous observed cleanup before full-startup
 retries and keep the finite ledger across all 256 configured attempts. Observation is
 cleanup data, not execution authority or proof of remote effect reversal.

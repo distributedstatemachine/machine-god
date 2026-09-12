@@ -87,15 +87,13 @@ fn control_lane_rejects_application_calls_and_frame_smuggling() {
         b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n",
     ] {
         assert!(McpStdioControl::discovery(bytes).is_err());
-        assert!(McpStdioControl::notification(bytes).is_err());
     }
 }
 
 #[test]
-fn startup_discovery_and_lifecycle_have_separate_exact_methods() {
+fn modern_discovery_and_catalog_controls_reject_old_startup_methods() {
     for method in [
         "server/discover",
-        "initialize",
         "tools/list",
         "resources/list",
         "resources/templates/list",
@@ -106,11 +104,17 @@ fn startup_discovery_and_lifecycle_have_separate_exact_methods() {
         assert_eq!(frame.bytes.last(), Some(&b'\n'));
         #[cfg(feature = "mcp-http")]
         assert_eq!(frame.json_bytes(), bytes.as_bytes());
-        assert!(McpStdioControl::notification(bytes.as_bytes()).is_err());
     }
     let bytes = br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-    assert!(McpStdioControl::notification(bytes).is_ok());
     assert!(McpStdioControl::discovery(bytes).is_err());
+    for method in [
+        "initialize",
+        "notifications/initialized",
+        "notifications/cancelled",
+    ] {
+        let bytes = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}"}}"#);
+        assert!(McpStdioControl::discovery(bytes.as_bytes()).is_err());
+    }
     assert!(McpStdioControl::unsupported(&super::super::protocol::RpcId::Null).is_err());
 }
 
@@ -122,35 +126,6 @@ fn response_completion_is_once_even_after_consumption() {
     assert_eq!(futures_executor::block_on(response.wait()), Ok(7));
     response.complete(Err(McpStdioError::Process));
     assert!(response.value.lock().unwrap().is_none());
-}
-
-#[test]
-fn discovery_timeout_freezes_admission_without_inventing_close_evidence() {
-    let scope = NativeOwnedWorkerScope::new();
-    let shared = Arc::new(Shared::new(WireLimits::default(), CancellationToken::new()));
-    let connection = McpStdioConnection {
-        shared: shared.clone(),
-        completion: scope.completion(),
-    };
-    let bytes = br#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#;
-    let waiting = connection.control(
-        McpStdioControl::discovery(bytes).unwrap(),
-        Instant::now() + std::time::Duration::from_secs(1),
-    );
-    connection.close_after_discovery_timeout();
-    assert!(!shared.stop.is_cancelled());
-    assert_eq!(
-        futures_executor::block_on(waiting),
-        Err(McpStdioError::Deadline)
-    );
-    assert_eq!(
-        connection.admit_runtimes(Vec::new()),
-        Err(McpStdioError::Deadline)
-    );
-    assert!(connection.close_observation().is_none());
-    assert_eq!(shared.state.lock().unwrap().admitted, 0);
-    assert!(shared.state.lock().unwrap().read_end.is_none());
-    scope.close();
 }
 
 #[test]
@@ -222,7 +197,7 @@ fn queue_is_bounded_and_abandonment_remains_cancellation() {
 #[test]
 fn debug_and_errors_omit_contents() {
     let control = McpStdioControl::discovery(
-        br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"secret":"credential"}}"#,
+        br#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"secret":"credential"}}"#,
     )
     .unwrap();
     assert!(!format!("{control:?}").contains("credential"));

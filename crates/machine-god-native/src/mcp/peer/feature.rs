@@ -75,7 +75,6 @@ pub(super) async fn execute(
                 peer.connection.control(outgoing, deadline),
                 &exchange.request_id(),
                 deadline,
-                false,
             ),
         )
         .await

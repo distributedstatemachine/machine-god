@@ -1,4 +1,5 @@
 use super::*;
+use crate::mcp::stdio::McpStdioError;
 mod lifetime;
 
 #[test]
@@ -19,7 +20,7 @@ fn every_configured_restart_retains_a_fresh_maximum_attempt_budget() {
 }
 
 #[test]
-fn configured_deadlines_are_checked_bounded_and_independent_of_legacy_defaults() {
+fn configured_deadlines_are_checked_bounded_and_independent_of_direct_defaults() {
     let now = Instant::now();
     let maximum = Duration::from_millis(u64::from(u32::MAX));
     let mut startup = Startup {
@@ -73,18 +74,10 @@ fn configured_attempts_keep_the_full_timeout_without_an_overall_cap() {
         startup.attempt_deadline(after_previous_attempt).unwrap(),
         after_previous_attempt + maximum
     );
-    assert_eq!(
-        startup.cleanup_deadline(origin).unwrap(),
-        origin + Duration::from_secs(30)
-    );
     let bounded = Startup {
         deadline: Some(origin),
         ..startup
     };
-    assert_eq!(
-        bounded.cleanup_deadline(after_previous_attempt).unwrap(),
-        origin
-    );
     assert_eq!(
         bounded.attempt_deadline(after_previous_attempt).unwrap(),
         origin

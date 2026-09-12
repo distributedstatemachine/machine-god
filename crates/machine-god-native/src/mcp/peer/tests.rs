@@ -128,14 +128,6 @@ case "$line" in *server/discover*) : ;; *) exit 4 ;; esac
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{},"resources":{},"prompts":{}}}}'
 while IFS= read -r line; do :; done
 "#;
-const LEGACY: &str = r#"
-IFS= read -r line
-case "$line" in *initialize*) : ;; *) exit 4 ;; esac
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2024-11-05","capabilities":{}}}'
-IFS= read -r line
-case "$line" in *notifications/initialized*) : ;; *) exit 5 ;; esac
-while IFS= read -r line; do :; done
-"#;
 
 #[test]
 fn actual_typed_feature_preserves_raw_result_and_honors_selected_stdio_bounds() {
@@ -249,81 +241,54 @@ while IFS= read -r line; do :; done
 }
 
 #[test]
-fn ordinary_discovery_error_restarts_only_after_old_child_settles() {
+fn discovery_errors_old_offers_eof_and_timeout_never_relaunch() {
     let fixture = Fixture::new();
-    let first = r#"IFS= read -r line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no"}}'; while IFS= read -r line; do :; done"#;
-    let (peer, attempts) = fixture.connect(&[first, LEGACY], Duration::from_secs(2));
-    let mut peer = peer.unwrap();
-    assert_eq!(attempts, 2);
-    assert_eq!(peer.protocol().version, ProtocolVersion::Legacy20241105);
-    peer.close();
-}
-
-#[test]
-fn observed_fallback_retains_each_completion_before_launch_and_refreshes_only_attempt() {
-    let fixture = Fixture::new();
-    let first = r#"IFS= read -r line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no"}}'; while IFS= read -r line; do :; done"#;
-    for allow_fallback in [false, true] {
-        let mut launches = VecDeque::from([fixture.launch(first), fixture.launch(LEGACY)]);
-        let observed = Arc::new(std::sync::Mutex::new(
-            Vec::<NativeOwnedWorkerCompletion>::new(),
-        ));
-        let capture = observed.clone();
-        let admit = Arc::new(move |completion: NativeOwnedWorkerCompletion| {
-            let mut values = capture.lock().unwrap();
-            assert!(values.iter().all(NativeOwnedWorkerCompletion::is_complete));
-            let admitted = values.is_empty() || allow_fallback;
-            values.push(completion);
-            admitted
-        });
-        let start = Instant::now();
-        let timeout = Duration::from_secs(2);
-        let result = fixture.runtime.block_on(McpStdioPeer::connect_observed(
-            &mut || launches.pop_front().ok_or(McpStdioError::Invalid),
-            fixture.host.clone(),
-            Arc::new(Timer),
-            CancellationToken::new(),
-            start + Duration::from_secs(20),
-            timeout,
-            admit,
-        ));
-        if allow_fallback {
-            let (mut peer, attempt) = result.unwrap();
-            assert!(attempt > start + timeout);
-            assert!(attempt <= Instant::now() + timeout);
-            peer.close();
-            let completion = peer.completion();
-            completion.wait_on_worker().unwrap();
-        } else {
-            assert!(matches!(
-                result,
-                Err(McpPeerError::Transport(McpStdioError::Capacity))
-            ));
-        }
-        let values = observed.lock().unwrap();
-        assert_eq!(values.len(), 2);
-        assert!(values.iter().all(NativeOwnedWorkerCompletion::is_complete));
-    }
-}
-
-#[test]
-fn discovery_timeout_snapshot_restarts_but_partial_or_malformed_output_does_not() {
-    let fixture = Fixture::new();
-    let silent = "while IFS= read -r line; do :; done";
-    let (peer, attempts) = fixture.connect(&[silent, LEGACY], Duration::from_millis(100));
-    let mut peer = peer.unwrap();
-    assert_eq!(attempts, 2);
-    assert_eq!(peer.protocol().version, ProtocolVersion::Legacy20241105);
-    peer.close();
-    drop(peer);
     for script in [
+        r#"IFS= read -r line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no"}}'; while IFS= read -r line; do :; done"#,
+        r#"IFS= read -r line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2025-11-25"],"capabilities":{}}}'; while IFS= read -r line; do :; done"#,
+        "IFS= read -r line; exit 0",
+        "while IFS= read -r line; do :; done",
         "IFS= read -r line; printf '{'; while IFS= read -r line; do :; done",
         "IFS= read -r line; printf 'invalid\\n'; while IFS= read -r line; do :; done",
     ] {
-        let (result, attempts) = fixture.connect(&[script, LEGACY], Duration::from_millis(100));
+        let (result, attempts) = fixture.connect(&[script, MODERN], Duration::from_millis(100));
         assert!(result.is_err());
         assert_eq!(attempts, 1);
     }
+}
+
+#[test]
+fn failed_observed_discovery_retains_one_owned_completion_without_relaunch() {
+    let fixture = Fixture::new();
+    let first = r#"IFS= read -r line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no"}}'; while IFS= read -r line; do :; done"#;
+    let mut launches = VecDeque::from([fixture.launch(first), fixture.launch(MODERN)]);
+    let observed = Arc::new(std::sync::Mutex::new(
+        Vec::<NativeOwnedWorkerCompletion>::new(),
+    ));
+    let capture = observed.clone();
+    let result = fixture.runtime.block_on(McpStdioPeer::connect_observed(
+        &mut || launches.pop_front().ok_or(McpStdioError::Invalid),
+        fixture.host.clone(),
+        Arc::new(Timer),
+        CancellationToken::new(),
+        Instant::now() + Duration::from_secs(20),
+        Duration::from_secs(2),
+        Arc::new(move |completion| {
+            capture.lock().unwrap().push(completion);
+            true
+        }),
+    ));
+    assert!(matches!(
+        result,
+        Err(McpPeerError::Negotiation(
+            NegotiationFailure::ProtocolError(-32601)
+        ))
+    ));
+    assert_eq!(launches.len(), 1);
+    let values = observed.lock().unwrap();
+    assert_eq!(values.len(), 1);
+    values[0].wait_on_worker().unwrap();
+    assert!(values[0].is_complete());
 }
 
 #[test]
@@ -337,7 +302,7 @@ fn malformed_success_and_foreign_response_never_authorize_restart() {
         let script = format!(
             "IFS= read -r line; printf '%s\\n' '{response}'; while IFS= read -r line; do :; done"
         );
-        let (result, attempts) = fixture.connect(&[&script, LEGACY], Duration::from_secs(2));
+        let (result, attempts) = fixture.connect(&[&script, MODERN], Duration::from_secs(2));
         assert!(result.is_err());
         assert_eq!(attempts, 1);
     }
@@ -378,24 +343,29 @@ fn startup_future_and_cancelled_startup_do_not_call_launch_factory() {
 }
 
 #[test]
-fn capability_shapes_follow_pinned_optional_legacy_flags() {
+fn modern_capability_shapes_require_complete_and_validate_optional_flags() {
     for (result, valid) in [
-        (json!({"protocolVersion":"2024-11-05"}), true),
+        (json!({"protocolVersion":"2024-11-05"}), false),
+        (json!({"resultType":"complete"}), false),
+        (json!({"resultType":"complete","capabilities":{}}), true),
         (
-            json!({"capabilities":{"resources":{"subscribe":true},"completions":{}}}),
+            json!({"resultType":"complete","capabilities":{"resources":{"subscribe":true},"completions":{}}}),
             true,
         ),
         (
-            json!({"capabilities":{"resources":{"subscribe":null}}}),
+            json!({"resultType":"complete","capabilities":{"resources":{"subscribe":null}}}),
             false,
         ),
-        (json!({"capabilities":{"prompts":false}}), false),
-        (json!({"capabilities":null}), false),
+        (
+            json!({"resultType":"complete","capabilities":{"prompts":false}}),
+            false,
+        ),
+        (json!({"resultType":"complete","capabilities":null}), false),
     ] {
         let bytes = serde_json::to_vec(&json!({"jsonrpc":"2.0","id":1,"result":result})).unwrap();
         let response = parse_envelope(&bytes, WireLimits::default()).unwrap();
         assert_eq!(
-            McpPeerCapabilities::admit(&response, ProtocolVersion::Legacy20241105).is_ok(),
+            McpPeerCapabilities::admit(&response, ProtocolVersion::Modern).is_ok(),
             valid
         );
     }

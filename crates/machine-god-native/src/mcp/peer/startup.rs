@@ -1,16 +1,15 @@
 use serde_json::json;
 
 use super::McpStdioCompletionObserver;
-use super::routing::{CloseOnDrop, Exchange, bounded, check, exchange, request};
+use super::routing::{Exchange, check, exchange, request};
 use super::{
     Arc, CancellationToken, Duration, Instant, McpPeerCapabilities, McpPeerError, McpPeerTimer,
-    McpStdioError, McpStdioLaunchFactory, McpStdioPeer, NativeOwnedWorkerScope, NegotiatedProtocol,
-    Result, VecDeque,
+    McpStdioLaunchFactory, McpStdioPeer, NativeOwnedWorkerScope, NegotiatedProtocol, Result,
+    VecDeque,
 };
 use crate::mcp::protocol::{
-    HttpDiscoveryStatus, Negotiation, NegotiationAction, ProtocolVersion, RpcKind, TransportKind,
+    HttpDiscoveryStatus, Negotiation, NegotiationAction, ProtocolVersion, TransportKind,
 };
-use crate::mcp::stdio::{McpStdioControl, McpStdioReadEnd};
 
 #[cfg(test)]
 mod tests;
@@ -102,17 +101,8 @@ impl Startup {
             None => Ok(()),
         }
     }
-    fn cleanup_deadline(&self, now: Instant) -> Result<Instant> {
-        self.deadline.map_or_else(
-            || {
-                now.checked_add(Duration::from_secs(30))
-                    .ok_or(McpPeerError::Capacity)
-            },
-            Ok,
-        )
-    }
-    fn exchange_deadline(&self, now: Instant, selected: Instant, modern: bool) -> Result<Instant> {
-        if modern && self.observer.is_none() {
+    fn exchange_deadline(&self, now: Instant, selected: Instant) -> Result<Instant> {
+        if self.observer.is_none() {
             let discovery = now
                 .checked_add(self.timeout)
                 .ok_or(McpPeerError::Capacity)?;
@@ -168,95 +158,36 @@ async fn connect_inner(
     cancellation: CancellationToken,
     startup: Startup,
 ) -> Result<(McpStdioPeer, Instant)> {
-    let (mut peer, mut selected_deadline) = startup
-        .initial_peer(factory, host.clone(), timer, cancellation)
+    let (mut peer, selected_deadline) = startup
+        .initial_peer(factory, host, timer, cancellation)
         .await?;
-    let (mut negotiation, mut action) = Negotiation::new(TransportKind::Stdio);
-    let mut was_modern = true;
-    loop {
-        startup.live(&peer.cancellation, &*peer.timer)?;
-        let version = match action {
-            NegotiationAction::SendDiscover => ProtocolVersion::Modern,
-            NegotiationAction::RestartInitialize(version) => {
-                if was_modern {
-                    selected_deadline = startup.attempt_deadline(peer.timer.now())?;
-                }
-                // Pinned legacy connection control starts before disconnecting
-                // the previous child; cleanup consumes this attempt's budget.
-                let cleanup_deadline = startup
-                    .cleanup_deadline(peer.timer.now())?
-                    .min(selected_deadline);
-                settle(&mut peer, &host, cleanup_deadline, true).await?;
-                live(&peer.cancellation, &*peer.timer, selected_deadline)?;
-                peer.connection = startup
-                    .launch(
-                        factory,
-                        host.clone(),
-                        peer.cancellation.clone(),
-                        selected_deadline,
-                    )
-                    .await?;
-                // Notifications cannot acquire a new connection generation.
-                peer.notifications.clear();
-                peer.notification_bytes = 0;
-                version
-            }
-            NegotiationAction::Ready(protocol) => {
-                peer.protocol = protocol;
-                if protocol.needs_initialized_notification() {
-                    initialized(&mut peer, selected_deadline).await?;
-                }
-                live(&peer.cancellation, &*peer.timer, selected_deadline)?;
-                return Ok((peer, selected_deadline));
-            }
-            NegotiationAction::Failed(error) => return Err(McpPeerError::Negotiation(error)),
-            NegotiationAction::Initialize(_) => return Err(McpPeerError::InvalidResult),
-        };
-        let modern = version == ProtocolVersion::Modern;
-        was_modern = modern;
-        let attempt_deadline =
-            startup.exchange_deadline(peer.timer.now(), selected_deadline, modern)?;
-        let id = peer.allocate()?;
-        let (method, params) = startup_params(version);
-        let control = request(&id, method, params, version)?;
-        let response = exchange(
-            Exchange {
-                connection: &peer.connection,
-                notifications: &mut peer.notifications,
-                notification_bytes: &mut peer.notification_bytes,
-                pending_replies: &mut peer.pending_replies,
-                timer: &peer.timer,
-                cancellation: &peer.cancellation,
-            },
-            peer.connection.control(control, attempt_deadline),
-            &id,
-            attempt_deadline,
-            modern
-                && startup
-                    .deadline
-                    .is_none_or(|deadline| attempt_deadline < deadline),
-        )
-        .await;
-        match response {
-            Ok(frame) => {
-                if frame.envelope().kind() == RpcKind::Success {
-                    peer.capabilities = McpPeerCapabilities::admit(frame.envelope(), version)?;
-                }
-                action = negotiation.response(frame.envelope(), &id, HttpDiscoveryStatus::Ordinary);
-            }
-            Err(error) => {
-                let cleanup_deadline = startup.cleanup_deadline(peer.timer.now())?;
-                action = unavailable(
-                    &mut peer,
-                    &host,
-                    &mut negotiation,
-                    modern,
-                    error,
-                    cleanup_deadline,
-                )
-                .await?;
-            }
+    let (mut negotiation, _) = Negotiation::new(TransportKind::Stdio);
+    let deadline = startup.exchange_deadline(peer.timer.now(), selected_deadline)?;
+    let id = peer.allocate()?;
+    let control = request(&id, "server/discover", json!({}), ProtocolVersion::Modern)?;
+    let frame = exchange(
+        Exchange {
+            connection: &peer.connection,
+            notifications: &mut peer.notifications,
+            notification_bytes: &mut peer.notification_bytes,
+            pending_replies: &mut peer.pending_replies,
+            timer: &peer.timer,
+            cancellation: &peer.cancellation,
+        },
+        peer.connection.control(control, deadline),
+        &id,
+        deadline,
+    )
+    .await?;
+    match negotiation.response(frame.envelope(), &id, HttpDiscoveryStatus::Ordinary) {
+        NegotiationAction::Ready(protocol) => {
+            peer.capabilities = McpPeerCapabilities::admit(frame.envelope(), protocol.version)?;
+            peer.protocol = protocol;
+            live(&peer.cancellation, &*peer.timer, selected_deadline)?;
+            Ok((peer, selected_deadline))
         }
+        NegotiationAction::Failed(error) => Err(McpPeerError::Negotiation(error)),
+        NegotiationAction::SendDiscover => Err(McpPeerError::InvalidResult),
     }
 }
 
@@ -281,95 +212,6 @@ fn unnegotiated(
         notification_bytes: 0,
         pending_replies: super::routing::Replies::new(),
         closed: false,
-    }
-}
-
-fn startup_params(version: ProtocolVersion) -> (&'static str, serde_json::Value) {
-    if version == ProtocolVersion::Modern {
-        ("server/discover", json!({}))
-    } else {
-        (
-            "initialize",
-            json!({"protocolVersion":version.as_str(), "capabilities":{},
-            "clientInfo":{"name":"machine-god", "version":env!("CARGO_PKG_VERSION")}}),
-        )
-    }
-}
-
-async fn initialized(peer: &mut McpStdioPeer, deadline: Instant) -> Result<()> {
-    let mut guard = CloseOnDrop(Some(&peer.connection));
-    let notification = McpStdioControl::notification(
-        br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-    )?;
-    // This fixed notification fits one pipe write; no peer response is required.
-    bounded(
-        peer.connection.control(notification, deadline),
-        &*peer.timer,
-        &peer.cancellation,
-        deadline,
-    )
-    .await??
-    .outcome?;
-    guard.0 = None;
-    Ok(())
-}
-
-async fn settle(
-    peer: &mut McpStdioPeer,
-    host: &NativeOwnedWorkerScope,
-    deadline: Instant,
-    close: bool,
-) -> Result<()> {
-    if close {
-        peer.connection.close();
-    }
-    let completion = peer.connection.completion();
-    bounded(
-        host.run(move || completion.wait_on_worker()),
-        &*peer.timer,
-        &peer.cancellation,
-        deadline,
-    )
-    .await?
-    .map_err(|_| McpPeerError::Closed)?
-    .map_err(|_| McpPeerError::Closed)?;
-    live(&peer.cancellation, &*peer.timer, deadline)
-}
-
-async fn unavailable(
-    peer: &mut McpStdioPeer,
-    host: &NativeOwnedWorkerScope,
-    negotiation: &mut Negotiation,
-    modern: bool,
-    error: McpPeerError,
-    deadline: Instant,
-) -> Result<NegotiationAction> {
-    live(&peer.cancellation, &*peer.timer, deadline)?;
-    if !matches!(
-        error,
-        McpPeerError::Deadline | McpPeerError::Transport(McpStdioError::Closed)
-    ) {
-        return Err(error);
-    }
-    // Timeout exchange has requested the worker's freeze; cancelling here would
-    // erase that observation. EOF is already closed. Both retain cleanup owners.
-    settle(peer, host, deadline, false).await?;
-    let observation = peer
-        .connection
-        .close_observation()
-        .ok_or(McpPeerError::Closed)?;
-    if observation.buffered_partial_frame || observation.unconsumed_complete_frames != 0 {
-        return Err(McpPeerError::InvalidResult);
-    }
-    match (observation.read_end, observation.reason, modern) {
-        (McpStdioReadEnd::CleanEof, McpStdioError::Closed, true)
-        | (McpStdioReadEnd::DiscoveryTimeoutQuiescent, McpStdioError::Deadline, true) => {
-            Ok(negotiation.stdio_discovery_unavailable())
-        }
-        (McpStdioReadEnd::CleanEof, McpStdioError::Closed, false) => {
-            Ok(negotiation.stdio_initialize_closed())
-        }
-        _ => Err(error),
     }
 }
 

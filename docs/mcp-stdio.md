@@ -72,7 +72,7 @@ or output floods from hiding shutdown. Stderr is discarded, matching the pin.
 
 The existing [NDJSON parser](mcp-runtime.md) owns framing limits: default 8 MiB,
 hard maximum 16 MiB per frame, depth 64 and bounded JSON nodes. Partial EOF is a
-protocol error, not clean discovery-close evidence. `receive` validates the
+protocol error, not a successful discovery result. `receive` validates the
 complete JSON-RPC envelope using that parser; malformed JSON closes the connection.
 Already complete queued frames remain observable before the terminal error.
 Pending writes receive explicit failure receipts, and pending receivers wake on
@@ -94,13 +94,6 @@ kernel/read-tail bytes remain unclassified. Queued complete frames must be drain
 and validated before interpreting close evidence. Malformed queued JSON upgrades
 the terminal reason to protocol failure. This observer makes no fallback decision.
 
-`close_after_discovery_timeout` freezes new write admission and requests an owned
-worker snapshot before cleanup, without manufacturing EOF or cancelling the
-snapshot itself. `DiscoveryTimeoutQuiescent` denotes a distinct bounded-input
-cutoff observation, not EOF. Only settled worker evidence can admit a negotiation
-fallback; requesting the snapshot alone cannot. Explicit connection or host
-cancellation still takes priority.
-
 `admit_runtimes` registers at most 2,048 exact native runtime allocations after
 catalog admission. It grants no permission. `submit` requires a non-clone
 [`McpSubmission`](mcp-submission.md) belonging to an explicitly registered
@@ -118,13 +111,14 @@ follow a possible partial JSON prefix. Accepted prefixes are never restarted.
 No transport-level retry or consequential request replay is provided.
 
 `McpStdioControl` is separate typed protocol data under explicitly owned connection
-authority. Its bounded constructors admit only discovery/initialize and read-only
-catalog methods, initialized/cancelled notifications, or a fixed unsupported-method
-error reply. They reject `tools/call`, resource reads, prompt gets and arbitrary
+authority. Its bounded constructors admit only modern discovery, read-only
+catalog methods or a fixed unsupported-method error reply. Legacy initialize and
+initialized/cancelled notification controls are not available. They reject
+`tools/call`, resource reads, prompt gets and arbitrary
 successful server-request replies. Application features and elicitation require
 their separate native admission; no arbitrary raw-frame escape exists here.
 
-## Compatibility and composition
+## Modern behavior and composition
 
 Behavior follows fx `b1774fbf6c7602b503026f96f6e960e946c692ef`, specifically
 `src/core/mcp/mcp_runtime.zig` (`spawnStdioServer`) and
@@ -142,5 +136,6 @@ operation. Cancellation/deadline checks resume when that boundary returns.
 Runtime composition remains responsible for exact connection generations, unique
 wire IDs, stale/null-ID correlation, full result-shape validation, negotiation,
 permission preparation, catalog refresh, bounded callback routing and CLI ownership.
-Closing and awaiting an old connection precedes an admitted negotiation restart.
+The peer performs one modern discovery with no negotiation restart; any separate
+configured complete-startup retry must first settle its prior observed connection.
 This component does not claim complete MCP feature acceptance or benchmark gains.

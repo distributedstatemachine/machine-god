@@ -75,13 +75,11 @@ pub(super) fn request(
     let RpcId::Integer(id) = id else {
         return Err(McpPeerError::Correlation);
     };
-    if version == ProtocolVersion::Modern {
-        params["_meta"] = json!({
-            "io.modelcontextprotocol/protocolVersion": version.as_str(),
-            "io.modelcontextprotocol/clientInfo": {"name":"machine-god", "version":env!("CARGO_PKG_VERSION")},
-            "io.modelcontextprotocol/clientCapabilities": {}
-        });
-    }
+    params["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": version.as_str(),
+        "io.modelcontextprotocol/clientInfo": {"name":"machine-god", "version":env!("CARGO_PKG_VERSION")},
+        "io.modelcontextprotocol/clientCapabilities": {}
+    });
     let bytes =
         serde_json::to_vec(&json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}))
             .map_err(|_| McpPeerError::InvalidResult)?;
@@ -136,7 +134,6 @@ pub(super) async fn exchange(
     writer: Write,
     expected: &RpcId,
     deadline: Instant,
-    discovery_timeout: bool,
 ) -> Result<McpStdioFrame> {
     let connection = context.connection;
     let timer = context.timer;
@@ -177,20 +174,7 @@ pub(super) async fn exchange(
             cancellation,
             deadline,
         )
-        .await;
-        let event = match event {
-            Err(McpPeerError::Deadline)
-                if discovery_timeout
-                    && writer.is_none()
-                    && response.is_none()
-                    && replies.is_empty() =>
-            {
-                connection.close_after_discovery_timeout();
-                guard.0 = None;
-                return Err(McpPeerError::Deadline);
-            }
-            other => other?,
-        };
+        .await?;
         match event {
             Event::Written(receipt) => {
                 validate_receipt(receipt)?;
@@ -305,7 +289,6 @@ pub(super) async fn call(
         peer.connection.submit(submission, deadline),
         &id,
         deadline,
-        false,
     )
     .await?;
     peer.closed = false;
@@ -355,7 +338,6 @@ pub(super) async fn catalog(
             peer.connection.control(control, deadline),
             &id,
             deadline,
-            false,
         )
         .await?;
         peer.closed = false;

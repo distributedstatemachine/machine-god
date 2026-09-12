@@ -84,7 +84,7 @@ fn producer_remote_oauth_and_header_environment_example() {
 }
 
 #[test]
-fn producer_sse_and_explicit_loopback_ports() {
+fn modern_http_and_explicit_loopback_ports_reject_deprecated_sse() {
     for url in [
         "https://mcp.example.com/rpc?workspace=one",
         "http://localhost:4321/mcp",
@@ -92,11 +92,12 @@ fn producer_sse_and_explicit_loopback_ports() {
         "http://[::1]:4321/mcp",
     ] {
         let config =
-            decode(serde_json::json!({"mcp":{"remote":{"type":"sse","url":url}}})).unwrap();
+            decode(serde_json::json!({"mcp":{"remote":{"type":"http","url":url}}})).unwrap();
         assert!(matches!(
             config.server("remote").unwrap().transport(),
-            McpTransportConfig::Sse(_)
+            McpTransportConfig::Http(_)
         ));
+        assert!(decode(serde_json::json!({"mcp":{"remote":{"type":"sse","url":url}}})).is_err());
     }
 }
 

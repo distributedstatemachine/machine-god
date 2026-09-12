@@ -6,10 +6,10 @@ a server, grant execution permission or retry an application operation. Native
 transport adapters must separately own connection generations, deadlines,
 cancellation, aggregate queues, request submission and cleanup.
 
-Compatibility follows fx `b1774fbf6c7602b503026f96f6e960e946c692ef`, especially
-`src/core/mcp/protocol_negotiation.zig`, `mcp_runtime.zig`,
-`streamable_http.zig` and `legacy_streamable_http.zig`. Complete-feature delivery
-status belongs only in the implementation plan.
+Modern behavior is informed by fx `b1774fbf6c7602b503026f96f6e960e946c692ef`,
+especially `src/core/mcp/protocol_negotiation.zig`, `mcp_runtime.zig` and
+`streamable_http.zig`. Older versions and deprecated transports are intentionally
+unsupported. Complete-feature delivery status belongs only in the implementation plan.
 
 ## Wire admission
 
@@ -43,60 +43,44 @@ Errors and debug output omit message content and credentials.
 Response correlation requires the exact expected ID. Null-ID errors are allowed
 only when the caller explicitly selects the HTTP `server/discover` exception,
 including its single admitted modern retry. Null success, stale non-null IDs,
-and null-ID initialize or ordinary tool responses are not accepted. Generic
+and null-ID ordinary tool responses are not accepted. Generic
 envelope admission is not validation of a method's complete result, capabilities,
 schema, authentication or authority.
 
 ## Startup negotiation
 
-Configured transport families remain distinct; version fallback never changes
-Streamable HTTP into deprecated HTTP+SSE.
+Only stdio and Streamable HTTP are admitted, both using `2026-07-28`.
+The configuration codec rejects `type: "sse"`; configuration aliases such as
+`local`/`stdio` and `env`/`environment` remain part of the current grammar.
 
-| Configured family | Modern version | Legacy versions |
-| --- | --- | --- |
-| Stdio | `2026-07-28` | `2025-11-25`, `2025-06-18`, `2024-11-05` |
-| Streamable HTTP | `2026-07-28` | `2025-11-25`, `2025-06-18`, `2025-03-26` |
-| Deprecated HTTP+SSE | none | `2024-11-05` |
+`Negotiation` emits discovery, ready or failure actions. Successful discovery
+must be complete, carry a capabilities object and include the modern version
+in an all-string supported-version list. Other offered versions do not select an
+older mode. Initialization, initialized notifications and downgrade/restart
+actions do not exist. Errors, EOF, timeouts and HTTP 404/405 cannot authorize
+another protocol or deprecated transport.
 
-`Negotiation` emits explicit discovery, initialization, old-connection restart,
-ready or failure actions. A version decision does not itself create or retire
-a connection. Stdio legacy restart progresses monotonically downward; the
-transport must finish ownership of the old attempt before the requested restart.
-Legacy readiness still requires `notifications/initialized` at the transport.
+Streamable HTTP permits one same-modern discovery retry only for HTTP 400 with
+code `-32022`, exact `requested: "2026-07-28"` and an all-string `supported`
+array containing that version. The retry retains transport-owned finite
+deadlines and exact new-ID correlation. Repeated evidence, an ordinary successful
+payload with HTTP 400, or evidence under HTTP 200 does not authorize this retry.
+Stdio has no discovery retry. Neither path can retry an application operation.
 
-Well-formed ordinary stdio discovery errors start the newest legacy attempt;
-stdio `-32021` remains a terminal modern failure. Explicit discovery timeout or
-clean connection-close evidence may select the oldest stdio legacy version,
-but only while the overall operation remains live. Cancellation, overall
-deadline expiry, malformed success, and partial framing are not that evidence.
-
-HTTP fallback follows its separate response/status rules. A supported-version
-error carrying the exact admitted modern-version signal permits at most one
-modern retry. The corresponding ordinary successful discovery payload is not
-retry evidence. HTTP discovery `-32021` follows the pinned ordinary-error
-fallback path, unlike stdio. All supplied supported-version entries must have
-the admitted shape; malformed metadata is not silently ignored.
-
-Only legacy `2025-03-26` Streamable HTTP omits the protocol header, and only
-legacy `2025-11-25` allows the pinned empty priming/poll-close behavior.
-Deprecated SSE endpoint discovery and connection lifecycle remain separate
-transport responsibilities.
-
-[SSE framing](mcp-sse.md) provides the separate bounded Modern/Legacy decoders;
-event IDs and endpoint text remain uncommitted observations until the transport
-validates the owning connection and generation.
+Modern HTTP includes the protocol header and still supports bounded
+[SSE response framing](mcp-sse.md). Event IDs do not authorize reconnect, resume
+or replay. Protocol selection remains separate from capability, schema and
+execution admission.
 
 ## Runtime integration obligations
 
 ### HTTP endpoint syntax and origin policy
 
 On Linux/macOS, `mcp::endpoint::McpEndpoint` uses the established `url` parser
-for complete endpoint syntax, request-target construction and same-origin SSE
-message-endpoint resolution. It is immutable data, not network or credential
-authority. Configured URLs are bounded to 4 KiB before parsing; deprecated SSE
-endpoint events to 8 KiB before resolution; canonical retained URLs to 16 KiB.
-Relative events inherit the admitted discovery origin. Absolute/network-path
-events must independently meet endpoint policy and remain on the same origin.
+for complete endpoint syntax and request-target construction. It is immutable
+data, not network or credential authority. Configured URLs are bounded to 4 KiB
+before parsing and canonical retained URLs to 16 KiB. Deprecated SSE endpoint
+events are not an alternate destination-selection path.
 
 HTTPS is supported; HTTP requires an explicit port and exactly `localhost`,
 `127.0.0.1` or `[::1]` in the submitted authority. Numeric and expanded loopback
@@ -107,8 +91,8 @@ backslashes and malformed percent escapes are rejected. Canonical host/IDNA,
 path and default-port normalization follow `url`; same-origin comparison uses
 the parsed scheme, host and effective port, never a string-prefix test.
 
-These checks follow the pinned `streamable_http.zig` endpoint policy and
-`legacy_http_sse.zig` resolution boundary, with explicit native input limits and
+These checks follow the modern `streamable_http.zig` endpoint policy, with
+explicit native input limits and
 stricter rejection of silent parser repairs. Query strings remain potentially
 secret: debug/errors redact them. URL parsing does not resolve DNS, follow
 redirects, authorize OAuth or release header credentials. The owned connector

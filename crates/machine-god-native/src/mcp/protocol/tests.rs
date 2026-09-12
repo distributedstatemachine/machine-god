@@ -297,54 +297,96 @@ fn debug_and_errors_never_echo_wire_data() {
 }
 
 #[test]
-fn producer_derived_modern_and_legacy_discovery_selection() {
-    // fx tests/e2e/mcp-stdio.test.ts:1198, 1231, 1297; protocol_negotiation.zig.
-    for code in [-32601, -32602, -32603, 1] {
-        let (mut machine, first) = Negotiation::new(TransportKind::Stdio);
-        assert_eq!(first, NegotiationAction::SendDiscover);
-        assert_eq!(
-            reply(&mut machine, &error(code, Value::Null)),
-            NegotiationAction::RestartInitialize(ProtocolVersion::Legacy20251125)
-        );
-    }
-    let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-    assert_eq!(
-        reply(
-            &mut machine,
-            &discover(json!(["2024-11-05", "2025-06-18", "2025-11-25"]))
-        ),
-        NegotiationAction::RestartInitialize(ProtocolVersion::Legacy20251125)
-    );
+fn only_modern_discovery_is_selected_for_each_transport() {
     for transport in [TransportKind::Stdio, TransportKind::StreamableHttp] {
+        for versions in [
+            json!(["2026-07-28"]),
+            json!(["2025-11-25", "2026-07-28", "future"]),
+        ] {
+            let (mut machine, action) = Negotiation::new(transport);
+            assert_eq!(action, NegotiationAction::SendDiscover);
+            assert_eq!(
+                reply(&mut machine, &discover(versions)),
+                selected(transport, ProtocolVersion::Modern)
+            );
+            assert_eq!(
+                reply(&mut machine, &discover(json!(["2026-07-28"]))),
+                NegotiationAction::Failed(NegotiationFailure::WrongState)
+            );
+        }
+        for version in [
+            "2025-11-25",
+            "2025-06-18",
+            "2025-03-26",
+            "2024-11-05",
+            "future",
+        ] {
+            assert_eq!(ProtocolVersion::parse_for(transport, version), None);
+            let (mut machine, _) = Negotiation::new(transport);
+            assert_eq!(
+                reply(&mut machine, &discover(json!([version]))),
+                NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
+            );
+        }
+        assert_eq!(
+            ProtocolVersion::parse_for(transport, "2026-07-28"),
+            Some(ProtocolVersion::Modern)
+        );
         let (mut machine, _) = Negotiation::new(transport);
         assert_eq!(
-            reply(&mut machine, &discover(json!(["2025-11-25", "2026-07-28"]))),
-            selected(transport, ProtocolVersion::Modern)
-        );
-        assert_eq!(
-            reply(&mut machine, &discover(json!(["2026-07-28"]))),
-            NegotiationAction::Failed(NegotiationFailure::WrongState)
+            reply(&mut machine, &discover(json!([]))),
+            NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
         );
     }
 }
 
 #[test]
-fn malformed_discovery_success_never_downgrades() {
-    for result in [
-        Value::Null,
-        json!({}),
-        json!({"resultType":"input_required","supportedVersions":["2025-11-25"],"capabilities":{}}),
-        json!({"resultType":"complete","supportedVersions":["2026-07-28",null],"capabilities":{}}),
-        json!({"resultType":"complete","supportedVersions":[],"capabilities":[]}),
-    ] {
-        for transport in [TransportKind::Stdio, TransportKind::StreamableHttp] {
+fn malformed_discovery_success_is_terminal() {
+    for transport in [TransportKind::Stdio, TransportKind::StreamableHttp] {
+        for result in [
+            json!(null),
+            json!({}),
+            json!({"protocolVersion":"2024-11-05", "capabilities":{}}),
+            json!({"resultType":"input_required","supportedVersions":["2026-07-28"],"capabilities":{}}),
+            json!({"resultType":"complete","supportedVersions":["2026-07-28"]}),
+            json!({"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":null}),
+            json!({"resultType":"complete","supportedVersions":["2026-07-28",42],"capabilities":{}}),
+            json!({"resultType":"complete","supportedVersions":"2026-07-28","capabilities":{}}),
+        ] {
             let (mut machine, _) = Negotiation::new(transport);
             assert_eq!(
-                reply(&mut machine, &success(result.clone())),
+                reply(&mut machine, &success(result)),
                 NegotiationAction::Failed(NegotiationFailure::InvalidDiscovery)
             );
+        }
+    }
+}
+
+#[test]
+fn errors_and_old_version_hints_never_initialize_or_restart() {
+    for transport in [TransportKind::Stdio, TransportKind::StreamableHttp] {
+        for code in [-32601, -32602, -32021, -32022] {
+            let (mut machine, _) = Negotiation::new(transport);
             assert_eq!(
-                machine.stdio_discovery_unavailable(),
+                reply(
+                    &mut machine,
+                    &error(
+                        code,
+                        json!({"requested":"2026-07-28","supported":["2025-11-25","2024-11-05"]})
+                    )
+                ),
+                NegotiationAction::Failed(NegotiationFailure::ProtocolError(code))
+            );
+        }
+        for failure in [
+            NegotiationFailure::Deadline,
+            NegotiationFailure::Transport,
+            NegotiationFailure::Cancelled,
+        ] {
+            let (mut machine, _) = Negotiation::new(transport);
+            assert_eq!(machine.abort(failure), NegotiationAction::Failed(failure));
+            assert_eq!(
+                reply(&mut machine, &discover(json!(["2026-07-28"]))),
                 NegotiationAction::Failed(NegotiationFailure::WrongState)
             );
         }
@@ -352,298 +394,40 @@ fn malformed_discovery_success_never_downgrades() {
 }
 
 #[test]
-fn stdio_protocol_error_evidence_requires_exact_requested_and_all_string_versions() {
-    let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-    assert_eq!(
-        reply(
-            &mut machine,
-            &error(
-                -32021,
-                json!({"supported":["2025-11-25"],"requested":"2026-07-28"})
-            )
-        ),
-        NegotiationAction::Failed(NegotiationFailure::ProtocolError(-32021))
-    );
-    for data in [
-        Value::Null,
-        json!({"supported":["2025-11-25"],"requested":"wrong"}),
-        json!({"supported":["2025-11-25", 1],"requested":"2026-07-28"}),
-        json!({"supported":["2026-07-28"],"requested":"2026-07-28"}),
-    ] {
-        let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-        assert_eq!(
-            reply(&mut machine, &error(-32022, data)),
-            NegotiationAction::Failed(NegotiationFailure::ProtocolError(-32022))
-        );
-    }
-    let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-    assert_eq!(
-        reply(
-            &mut machine,
-            &error(
-                -32022,
-                json!({"requested":"2026-07-28","supported":["2024-11-05","2025-06-18"]})
-            )
-        ),
-        NegotiationAction::RestartInitialize(ProtocolVersion::Legacy20250618)
-    );
-}
-
-#[test]
-fn exhaustive_stdio_initialize_transition_matrix() {
-    let versions = [
-        ProtocolVersion::Legacy20251125,
-        ProtocolVersion::Legacy20250618,
-        ProtocolVersion::Legacy20241105,
-    ];
-    for (offered_index, offered) in versions.iter().copied().enumerate() {
-        for (hint_index, hint) in versions.iter().copied().enumerate() {
-            let mut machine = stdio_offer(offered);
-            let response = error(
-                -32022,
-                json!({"requested":offered.as_str(), "supported":[hint.as_str()]}),
-            );
-            let expected = if hint_index > offered_index {
-                NegotiationAction::RestartInitialize(hint)
-            } else {
-                NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
-            };
-            assert_eq!(reply(&mut machine, &response), expected);
-            // Accepted versions may be newer than the offered version at the pin.
-            let mut machine = stdio_offer(offered);
-            assert_eq!(
-                reply(
-                    &mut machine,
-                    &success(json!({"protocolVersion":hint.as_str()}))
-                ),
-                selected(TransportKind::Stdio, hint)
-            );
-        }
-        for closed in [true, false] {
-            let mut machine = stdio_offer(offered);
-            let action = if closed {
-                machine.stdio_initialize_closed()
-            } else {
-                reply(&mut machine, &error(-32022, Value::Null))
-            };
-            let expected = versions.get(offered_index + 1).map_or(
-                NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion),
-                |v| NegotiationAction::RestartInitialize(*v),
-            );
-            assert_eq!(action, expected);
-        }
-    }
-}
-
-fn stdio_offer(offered: ProtocolVersion) -> Negotiation {
-    let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-    assert_eq!(
-        reply(&mut machine, &discover(json!([offered.as_str()]))),
-        NegotiationAction::RestartInitialize(offered)
-    );
-    machine
-}
-
-#[test]
-fn legacy_initialize_invalid_params_requires_a_downward_hint() {
-    for (data, expected) in [
-        (
-            Value::Null,
-            NegotiationAction::Failed(NegotiationFailure::ProtocolError(-32602)),
-        ),
-        (
-            json!({"requested":"2025-11-25","supported":["2024-11-05"]}),
-            NegotiationAction::RestartInitialize(ProtocolVersion::Legacy20241105),
-        ),
-        (
-            json!({"requested":"2026-07-28","supported":["2024-11-05"]}),
-            NegotiationAction::Failed(NegotiationFailure::ProtocolError(-32602)),
-        ),
-    ] {
-        assert_eq!(
-            reply(
-                &mut stdio_offer(ProtocolVersion::Legacy20251125),
-                &error(-32602, data)
-            ),
-            expected
-        );
-    }
-}
-
-#[test]
-fn clean_discovery_unavailability_is_distinct_from_partial_frame_and_cancellation() {
-    let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-    assert_eq!(
-        machine.stdio_discovery_unavailable(),
-        NegotiationAction::RestartInitialize(ProtocolVersion::Legacy20241105)
-    );
-    assert_eq!(
-        machine.stdio_initialize_closed(),
-        NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
-    );
-    for reason in [
-        NegotiationFailure::Cancelled,
-        NegotiationFailure::Deadline,
-        NegotiationFailure::Transport,
-        NegotiationFailure::Wire(WireError::IncompleteFrame),
-    ] {
-        let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-        assert_eq!(machine.abort(reason), NegotiationAction::Failed(reason));
-        assert_eq!(
-            machine.stdio_discovery_unavailable(),
-            NegotiationAction::Failed(NegotiationFailure::WrongState)
-        );
-    }
-}
-
-#[test]
-fn http_null_error_discovery_only_and_single_explicit_modern_retry() {
-    let evidence = json!({"requested":"2026-07-28", "supported":["2026-07-28"]});
-    let signal = error(-32022, evidence);
-    let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-    assert_eq!(
-        machine.response(
+fn http_null_error_and_single_same_modern_retry_preserve_exact_evidence() {
+    let signal = envelope(&json!({"jsonrpc":"2.0","id":null,"error":{
+    "code":-32022,"message":"unsupported","data":{
+        "requested":"2026-07-28","supported":["2026-07-28"]
+    }}}));
+    for transport in [TransportKind::Stdio, TransportKind::StreamableHttp] {
+        let (mut machine, _) = Negotiation::new(transport);
+        let action = machine.response(
             &signal,
-            &RpcId::Integer(1),
-            HttpDiscoveryStatus::VersionError
-        ),
-        NegotiationAction::SendDiscover
-    );
-    assert_eq!(
-        machine.response(
-            &signal,
-            &RpcId::Integer(1),
-            HttpDiscoveryStatus::VersionError
-        ),
-        NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
-    );
-    let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-    assert_eq!(
-        reply(&mut machine, &signal),
-        NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
-    );
-    let null_error =
-        envelope(&json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid"}}));
-    let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-    assert_eq!(
-        reply(&mut machine, &null_error),
-        NegotiationAction::Initialize(ProtocolVersion::Legacy20251125)
-    );
-    assert_eq!(
-        reply(&mut machine, &null_error),
-        NegotiationAction::Failed(NegotiationFailure::Wire(WireError::MismatchedId))
-    );
-    let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-    assert_eq!(
-        machine.response(
-            &signal,
-            &RpcId::Integer(1),
-            HttpDiscoveryStatus::VersionError
-        ),
-        NegotiationAction::SendDiscover
-    );
-    assert_eq!(
-        reply(&mut machine, &null_error),
-        NegotiationAction::Initialize(ProtocolVersion::Legacy20251125)
-    );
-    let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
-    assert_eq!(
-        reply(&mut machine, &null_error),
-        NegotiationAction::Failed(NegotiationFailure::Wire(WireError::MismatchedId))
-    );
-}
-
-#[test]
-fn http_status_and_transport_specific_version_matrix() {
-    for status in [404, 405] {
-        let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-        assert_eq!(
-            machine.http_discovery_mismatch(status),
-            NegotiationAction::Initialize(ProtocolVersion::Legacy20251125)
+            &RpcId::Integer(7),
+            HttpDiscoveryStatus::VersionError,
         );
-    }
-    for status in [200, 301, 400, 401, 403, 429, 500] {
-        let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-        assert_eq!(
-            machine.http_discovery_mismatch(status),
-            NegotiationAction::Failed(NegotiationFailure::WrongState)
-        );
-    }
-    for transport in [
-        TransportKind::Stdio,
-        TransportKind::StreamableHttp,
-        TransportKind::LegacySse,
-    ] {
-        for version in [
-            ProtocolVersion::Legacy20251125,
-            ProtocolVersion::Legacy20250618,
-            ProtocolVersion::Legacy20250326,
-            ProtocolVersion::Legacy20241105,
-        ] {
-            let (mut machine, first) = Negotiation::new(transport);
-            if transport == TransportKind::LegacySse {
-                assert_eq!(
-                    first,
-                    NegotiationAction::Initialize(ProtocolVersion::Legacy20241105)
-                );
-            } else {
-                reply(&mut machine, &error(-32601, Value::Null));
-            }
-            let action = reply(
-                &mut machine,
-                &success(json!({"protocolVersion":version.as_str()})),
-            );
-            let supported = ProtocolVersion::parse_for(transport, version.as_str()).is_some();
-            assert_eq!(
+        if transport == TransportKind::Stdio {
+            assert!(matches!(
                 action,
-                if supported {
-                    selected(transport, version)
-                } else {
-                    NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
-                }
+                NegotiationAction::Failed(NegotiationFailure::Wire(_))
+            ));
+        } else {
+            assert_eq!(action, NegotiationAction::SendDiscover);
+            assert_eq!(
+                machine.response(
+                    &signal,
+                    &RpcId::Integer(8),
+                    HttpDiscoveryStatus::VersionError
+                ),
+                NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
             );
         }
     }
-}
-
-#[test]
-fn http_legacy_policies_do_not_leak_to_other_versions() {
-    for version in [
-        ProtocolVersion::Modern,
-        ProtocolVersion::Legacy20251125,
-        ProtocolVersion::Legacy20250618,
-        ProtocolVersion::Legacy20250326,
-    ] {
-        let protocol = NegotiatedProtocol {
-            transport: TransportKind::StreamableHttp,
-            version,
-        };
-        assert_eq!(
-            protocol.needs_initialized_notification(),
-            version != ProtocolVersion::Modern
-        );
-        assert_eq!(
-            protocol.sends_http_protocol_header(),
-            version != ProtocolVersion::Legacy20250326
-        );
-        assert_eq!(
-            protocol.allows_legacy_http_poll_close(),
-            version == ProtocolVersion::Legacy20251125
-        );
-    }
-}
-
-#[test]
-fn http_discovery_evidence_and_retry_success_match_pinned_transport_rules() {
     let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-    let signal = error(
-        -32022,
-        json!({"requested":"2026-07-28","supported":["2026-07-28"]}),
-    );
     assert_eq!(
         machine.response(
             &signal,
-            &RpcId::Integer(1),
+            &RpcId::Integer(7),
             HttpDiscoveryStatus::VersionError
         ),
         NegotiationAction::SendDiscover
@@ -652,32 +436,99 @@ fn http_discovery_evidence_and_retry_success_match_pinned_transport_rules() {
         reply(&mut machine, &discover(json!(["2026-07-28"]))),
         selected(TransportKind::StreamableHttp, ProtocolVersion::Modern)
     );
-    // HTTP ordinary errors include missing-capability errors, unlike stdio.
-    for code in [-32021, -32601, -32000] {
-        let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-        assert_eq!(
-            reply(&mut machine, &error(code, Value::Null)),
-            NegotiationAction::Initialize(ProtocolVersion::Legacy20251125)
-        );
-    }
-    // Discovery uses the pin's shared legacy classifier; actual initialize
-    // admission has a distinct HTTP set which includes 2025-03-26.
-    for (versions, expected) in [
-        (
-            json!(["2024-11-05"]),
-            NegotiationAction::Initialize(ProtocolVersion::Legacy20251125),
-        ),
-        (
-            json!(["2025-03-26"]),
-            NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion),
-        ),
-        (
-            json!([]),
-            NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion),
-        ),
+    let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
+    assert_eq!(
+        machine.response(&signal, &RpcId::Integer(7), HttpDiscoveryStatus::Ordinary),
+        NegotiationAction::Failed(NegotiationFailure::UnsupportedVersion)
+    );
+}
+
+#[test]
+fn http_retry_requires_exact_requested_and_all_string_supported_versions() {
+    for data in [
+        json!(null),
+        json!({}),
+        json!({"requested":"2025-11-25","supported":["2026-07-28"]}),
+        json!({"requested":"2026-07-28","supported":["2025-11-25"]}),
+        json!({"requested":"2026-07-28","supported":["2026-07-28",null]}),
+        json!({"requested":"2026-07-28","supported":"2026-07-28"}),
     ] {
         let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
-        assert_eq!(reply(&mut machine, &discover(versions)), expected);
+        assert_eq!(
+            machine.response(
+                &error(-32022, data),
+                &RpcId::Integer(1),
+                HttpDiscoveryStatus::VersionError
+            ),
+            NegotiationAction::Failed(NegotiationFailure::ProtocolError(-32022))
+        );
+    }
+    let (mut machine, _) = Negotiation::new(TransportKind::StreamableHttp);
+    assert_eq!(
+        machine.response(
+            &discover(json!(["2026-07-28"])),
+            &RpcId::Integer(1),
+            HttpDiscoveryStatus::VersionError
+        ),
+        NegotiationAction::Failed(NegotiationFailure::InvalidDiscovery)
+    );
+    let (mut machine, _) = Negotiation::new(TransportKind::Stdio);
+    assert_eq!(
+        machine.response(
+            &discover(json!(["2026-07-28"])),
+            &RpcId::Integer(1),
+            HttpDiscoveryStatus::VersionError
+        ),
+        NegotiationAction::Failed(NegotiationFailure::WrongState)
+    );
+}
+
+#[test]
+fn modern_http_header_is_transport_specific() {
+    for transport in [TransportKind::Stdio, TransportKind::StreamableHttp] {
+        let protocol = NegotiatedProtocol {
+            transport,
+            version: ProtocolVersion::Modern,
+        };
+        assert_eq!(
+            protocol.sends_http_protocol_header(),
+            transport == TransportKind::StreamableHttp
+        );
+    }
+}
+
+#[test]
+fn modern_metadata_is_present_without_progress_and_preserves_selected_modes() {
+    for (progress, form, url) in [
+        (None, false, false),
+        (Some(u64::MAX), true, false),
+        (Some(0), false, true),
+        (None, true, true),
+    ] {
+        let metadata =
+            McpClientMetadata::for_protocol(ProtocolVersion::Modern, progress, form, url);
+        let value = serde_json::to_value(metadata).unwrap();
+        assert_eq!(
+            value["io.modelcontextprotocol/protocolVersion"],
+            "2026-07-28"
+        );
+        assert_eq!(
+            value["io.modelcontextprotocol/clientInfo"]["name"],
+            "machine-god"
+        );
+        assert_eq!(
+            value.get("progressToken"),
+            progress.as_ref().map(|_| &value["progressToken"])
+        );
+        if let Some(progress) = progress {
+            assert_eq!(value["progressToken"], progress);
+        }
+        let capabilities = &value["io.modelcontextprotocol/clientCapabilities"];
+        assert_eq!(capabilities.get("elicitation").is_some(), form || url);
+        if form || url {
+            assert_eq!(capabilities["elicitation"].get("form").is_some(), form);
+            assert_eq!(capabilities["elicitation"].get("url").is_some(), url);
+        }
     }
 }
 

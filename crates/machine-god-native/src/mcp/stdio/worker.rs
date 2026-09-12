@@ -220,12 +220,6 @@ fn run_io(
         if cancellation.is_cancelled() || shared.stop.is_cancelled() {
             return McpStdioError::Cancelled;
         }
-        if shared
-            .discovery_timeout
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            return discovery_timeout_snapshot(output, &mut reader, active.is_some(), cancellation);
-        }
         if let Err(error) = prune(shared, &mut cx) {
             return error;
         }
@@ -296,73 +290,6 @@ fn run_io(
         // A fixed bounded poll quantum also limits ignored/empty-frame scanning.
         if !progressed {
             std::thread::sleep(POLL_INTERVAL);
-        }
-    }
-}
-
-fn discovery_timeout_snapshot(
-    output: &std::io::PipeReader,
-    reader: &mut ReadState<'_>,
-    active: bool,
-    cancellation: &CancellationToken,
-) -> McpStdioError {
-    let Ok(state) = reader.shared.state.lock() else {
-        return McpStdioError::Closed;
-    };
-    if active || state.admitted != 0 || !state.queue.is_empty() || !state.frames.is_empty() {
-        return McpStdioError::Protocol;
-    }
-    drop(state);
-    // Freeze at the first observed nonblocking quiescence, not an invented EOF.
-    // Four bounded reads and bounded EINTR handling prevent an output flood
-    // from extending timeout indefinitely. Complete responses forbid fallback.
-    let mut reads = 0;
-    let mut interruptions = 0;
-    loop {
-        if cancellation.is_cancelled() || reader.shared.stop.is_cancelled() {
-            return McpStdioError::Cancelled;
-        }
-        while reader.start < reader.end {
-            let Ok(progress) = reader.decoder.push(&reader.bytes[reader.start..reader.end]) else {
-                return McpStdioError::Protocol;
-            };
-            reader.start += progress.consumed;
-            if let Some(frame) = progress.frame {
-                let Ok(mut state) = reader.shared.state.lock() else {
-                    return McpStdioError::Closed;
-                };
-                state.frames.push_back(frame);
-                return McpStdioError::Protocol;
-            }
-        }
-        if reads >= 4 {
-            return McpStdioError::Capacity;
-        }
-        match rustix::io::read(output, &mut reader.bytes) {
-            Ok(0) => {
-                return if finalize_read(reader.shared, &mut reader.decoder, true) {
-                    McpStdioError::Protocol
-                } else {
-                    McpStdioError::Closed
-                };
-            }
-            Ok(count) => {
-                reads += 1;
-                reader.start = 0;
-                reader.end = count;
-            }
-            Err(rustix::io::Errno::INTR) if interruptions < 16 => interruptions += 1,
-            Err(rustix::io::Errno::AGAIN) => {
-                if finalize_read(reader.shared, &mut reader.decoder, false) {
-                    return McpStdioError::Protocol;
-                }
-                let Ok(mut state) = reader.shared.state.lock() else {
-                    return McpStdioError::Closed;
-                };
-                state.read_end = Some(McpStdioReadEnd::DiscoveryTimeoutQuiescent);
-                return McpStdioError::Deadline;
-            }
-            Err(_) => return McpStdioError::Process,
         }
     }
 }

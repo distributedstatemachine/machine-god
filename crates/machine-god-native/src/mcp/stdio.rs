@@ -72,9 +72,6 @@ pub enum McpStdioReadEnd {
     CleanEof,
     /// EOF was observed with an unterminated frame.
     IncompleteEof,
-    /// A bounded discovery-timeout snapshot observed `WouldBlock` with no frame
-    /// or partial input. This is a cutoff observation, not an EOF guarantee.
-    DiscoveryTimeoutQuiescent,
     /// No clean EOF proof: unread bytes may still contain a response.
     Unclassified,
 }
@@ -163,18 +160,6 @@ impl McpStdioConnection {
     /// Stops this connection only. The completion observer includes deferred reap.
     pub fn close(&self) {
         self.shared.stop.cancel();
-    }
-
-    /// Freezes new writes and asks the owned worker to classify discovery input
-    /// before cleanup. Only settled `close_observation` can establish quiescence;
-    /// calling this method alone grants no fallback or retry permission.
-    pub fn close_after_discovery_timeout(&self) {
-        let _state = self
-            .shared
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.shared.discovery_timeout.store(true, Ordering::Release);
     }
 
     /// Observation does not extend process authority or keep the connection open.
@@ -288,9 +273,6 @@ impl McpStdioConnection {
                 if shared.stop.is_cancelled() {
                     return Err(McpStdioError::Cancelled);
                 }
-                if shared.discovery_timeout.load(Ordering::Acquire) {
-                    return Err(McpStdioError::Deadline);
-                }
                 if state.admitted >= MAX_MCP_STDIO_WRITES {
                     return Err(McpStdioError::Capacity);
                 }
@@ -379,7 +361,6 @@ struct Shared {
     runtimes: Mutex<Box<[Arc<McpSubmissionRuntime>]>>,
     reader: AtomicWaker,
     receiving: AtomicBool,
-    discovery_timeout: AtomicBool,
     stop: CancellationToken,
     limits: WireLimits,
 }
@@ -397,7 +378,6 @@ impl Shared {
             runtimes: Mutex::new(Box::new([])),
             reader: AtomicWaker::new(),
             receiving: AtomicBool::new(false),
-            discovery_timeout: AtomicBool::new(false),
             stop,
             limits,
         }
@@ -405,9 +385,6 @@ impl Shared {
     fn check(&self) -> Result<()> {
         if self.stop.is_cancelled() {
             return Err(McpStdioError::Cancelled);
-        }
-        if self.discovery_timeout.load(Ordering::Acquire) {
-            return Err(McpStdioError::Deadline);
         }
         self.state
             .lock()

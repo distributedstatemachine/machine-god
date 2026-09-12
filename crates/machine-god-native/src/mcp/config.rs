@@ -1,7 +1,7 @@
 //! Bounded, effect-free profile MCP configuration.
 //!
 //! The wire grammar follows the pinned fx profile `mcp` object, including local/
-//! stdio command vectors, environment aliases and HTTP/SSE OAuth settings.
+//! stdio command vectors, environment aliases and Streamable HTTP OAuth settings.
 //! Unlike the producer, unknown and inactive transport fields, invalid environment
 //! names, control characters in active values, ambiguous headers and duplicate
 //! JSON keys are errors. As in the producer, `environment` takes precedence over
@@ -87,8 +87,6 @@ pub enum McpTransportConfig {
     Stdio(McpStdioConfig),
     /// Streamable HTTP endpoint.
     Http(McpRemoteConfig),
-    /// Deprecated HTTP+SSE endpoint.
-    Sse(McpRemoteConfig),
 }
 
 /// Validated stdio process configuration.
@@ -452,13 +450,8 @@ impl Serialize for McpServerConfig {
                 map.serialize_entry("args", &config.args)?;
                 map.serialize_entry("restart_limit", &config.restart_limit)?;
             }
-            McpTransportConfig::Http(config) | McpTransportConfig::Sse(config) => {
-                let kind = if matches!(&self.transport, McpTransportConfig::Http(_)) {
-                    "http"
-                } else {
-                    "sse"
-                };
-                map.serialize_entry("type", kind)?;
+            McpTransportConfig::Http(config) => {
+                map.serialize_entry("type", "http")?;
                 map.serialize_entry("url", &config.url)?;
                 map.serialize_entry("headers", &config.headers)?;
                 map.serialize_entry("header_env", &config.header_env)?;

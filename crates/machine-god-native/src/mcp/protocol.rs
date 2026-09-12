@@ -1,9 +1,9 @@
 //! Effect-free, bounded MCP framing and protocol selection.
 //!
-//! Compatibility decisions follow fx `b1774fbf6c7602b503026f96f6e960e946c692ef`.
+//! Modern behavior is informed by fx `b1774fbf6c7602b503026f96f6e960e946c692ef`.
 //! This module neither opens transports nor retries application requests. The
 //! transport retains deadlines, cancellation, connection generations and write
-//! ownership. Only startup negotiation can produce a restart instruction.
+//! ownership. Older versions and initialization/restart paths are not supported.
 
 mod client_metadata;
 mod json;

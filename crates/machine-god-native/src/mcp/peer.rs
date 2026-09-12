@@ -82,8 +82,8 @@ impl From<McpStdioError> for McpPeerError {
 }
 type Result<T> = std::result::Result<T, McpPeerError>;
 
-/// One connection owner and one mutable request lane. IDs never repeat even
-/// across startup restarts. Notifications remain untrusted bounded data.
+/// One connection owner and one mutable request lane. IDs never repeat during
+/// its connection lifetime. Notifications remain untrusted bounded data.
 pub struct McpStdioPeer {
     connection: McpStdioConnection,
     protocol: NegotiatedProtocol,
@@ -157,8 +157,8 @@ impl McpStdioPeer {
         .await
     }
     /// Configured startup with pre-effect completion observation. The returned
-    /// deadline also bounds initial tools catalog loading. Modern-to-legacy
-    /// fallback receives a fresh timeout; legacy-version retries share it.
+    /// deadline also bounds initial tools catalog loading. Discovery does not
+    /// downgrade or restart the selected process.
     /// Complete-startup retry policy remains with the caller, after cleanup.
     /// # Errors
     /// Rejects invalid timeout, failed observation, startup or negotiation.
@@ -205,13 +205,12 @@ impl McpStdioPeer {
         )
         .await
     }
-    /// Drives discovery/initialize over actual owned pipes. A restart occurs
-    /// only after positively settled old-connection cleanup and live control.
+    /// Drives modern discovery over one actual owned connection, without restart.
     /// `discovery_timeout` is a subdeadline, never the overall deadline.
     ///
     /// # Errors
     /// Rejects malformed success, uncorrelated replies, resource exhaustion,
-    /// cancelled/deadline startup, or non-admitted fallback observations.
+    /// cancelled/deadline startup, or unsupported discovery responses.
     pub async fn connect(
         factory: &mut dyn McpStdioLaunchFactory,
         host: NativeOwnedWorkerScope,

@@ -44,7 +44,6 @@ fn primary_writer_waits_for_inherited_reply_receipt() {
             writer,
             &id,
             timer.at(1000),
-            false,
         ));
         assert!(futures_util::poll!(&mut exchange).is_pending());
         assert_eq!(submissions.load(Ordering::SeqCst), 0);

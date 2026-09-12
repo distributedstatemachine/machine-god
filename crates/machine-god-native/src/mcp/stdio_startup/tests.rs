@@ -63,7 +63,7 @@ fn constructors_factories_and_unpolled_connection_are_inert() {
 }
 
 #[test]
-fn exact_snapshot_and_argv_remain_shared_across_negotiation_restarts() {
+fn exact_snapshot_and_argv_remain_shared_across_factory_launches() {
     let startup = startup(vec![("TOKEN".into(), "captured-secret".into())]);
     let snapshot = basic();
     let mut factory = startup.factory(snapshot.clone()).unwrap();

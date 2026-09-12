@@ -136,7 +136,7 @@ pub(super) fn server(name_value: &str, value: &Value) -> Result<McpServerConfig>
     let kind = object
         .get("type")
         .map_or(Ok("local"), |v| v.as_str().ok_or(McpConfigError::Invalid))?;
-    let remote = matches!(kind, "http" | "sse");
+    let remote = kind == "http";
     if !remote && !matches!(kind, "local" | "stdio") {
         return Err(McpConfigError::Invalid);
     }
@@ -157,11 +157,7 @@ pub(super) fn server(name_value: &str, value: &Value) -> Result<McpServerConfig>
     }
     let transport = if remote {
         let config = remote_config(object)?;
-        if kind == "http" {
-            McpTransportConfig::Http(config)
-        } else {
-            McpTransportConfig::Sse(config)
-        }
+        McpTransportConfig::Http(config)
     } else {
         McpTransportConfig::Stdio(stdio_config(object)?)
     };

@@ -127,102 +127,6 @@ fn queued_typed_control_retirement_is_pruned_without_write() {
 }
 
 #[test]
-fn discovery_timeout_snapshot_distinguishes_quiescence_partial_frames_and_eof() {
-    use std::io::Write as _;
-    for (bytes, eof, expected, end) in [
-        (
-            b"".as_slice(),
-            false,
-            McpStdioError::Deadline,
-            McpStdioReadEnd::DiscoveryTimeoutQuiescent,
-        ),
-        (
-            b"\n\n".as_slice(),
-            false,
-            McpStdioError::Deadline,
-            McpStdioReadEnd::DiscoveryTimeoutQuiescent,
-        ),
-        (
-            b"{".as_slice(),
-            false,
-            McpStdioError::Protocol,
-            McpStdioReadEnd::Unclassified,
-        ),
-        (
-            b"".as_slice(),
-            true,
-            McpStdioError::Closed,
-            McpStdioReadEnd::CleanEof,
-        ),
-        (
-            b"{".as_slice(),
-            true,
-            McpStdioError::Protocol,
-            McpStdioReadEnd::IncompleteEof,
-        ),
-        (
-            b"{}\n".as_slice(),
-            false,
-            McpStdioError::Protocol,
-            McpStdioReadEnd::Unclassified,
-        ),
-    ] {
-        let (output, mut writer) = std::io::pipe().unwrap();
-        let flags = rustix::fs::fcntl_getfl(&output).unwrap();
-        rustix::fs::fcntl_setfl(&output, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
-        writer.write_all(bytes).unwrap();
-        let writer = (!eof).then_some(writer);
-        let shared = Shared::new(WireLimits::default(), CancellationToken::new());
-        let mut reader = ReadState {
-            decoder: NdjsonDecoder::new(shared.limits).unwrap(),
-            shared: &shared,
-            bytes: [0; READ_BYTES],
-            start: 0,
-            end: 0,
-        };
-        assert_eq!(
-            discovery_timeout_snapshot(&output, &mut reader, false, &CancellationToken::new()),
-            expected
-        );
-        drop(reader);
-        assert_eq!(shared.state.lock().unwrap().read_end, Some(end));
-        drop(writer);
-    }
-}
-
-#[test]
-fn discovery_timeout_snapshot_rejects_active_writes_retained_tail_and_cancellation() {
-    let (output, _writer) = std::io::pipe().unwrap();
-    let flags = rustix::fs::fcntl_getfl(&output).unwrap();
-    rustix::fs::fcntl_setfl(&output, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
-    let shared = Shared::new(WireLimits::default(), CancellationToken::new());
-    let mut reader = ReadState {
-        decoder: NdjsonDecoder::new(shared.limits).unwrap(),
-        shared: &shared,
-        bytes: [0; READ_BYTES],
-        start: 0,
-        end: 0,
-    };
-    assert_eq!(
-        discovery_timeout_snapshot(&output, &mut reader, true, &CancellationToken::new()),
-        McpStdioError::Protocol
-    );
-    let cancellation = CancellationToken::new();
-    cancellation.cancel();
-    assert_eq!(
-        discovery_timeout_snapshot(&output, &mut reader, false, &cancellation),
-        McpStdioError::Cancelled
-    );
-    reader.bytes[..3].copy_from_slice(b"{}\n");
-    reader.end = 3;
-    assert_eq!(
-        discovery_timeout_snapshot(&output, &mut reader, false, &CancellationToken::new()),
-        McpStdioError::Protocol
-    );
-    assert_eq!(shared.state.lock().unwrap().frames.len(), 1);
-}
-
-#[test]
 fn partial_cancel_closes_before_any_next_frame_and_preserves_evidence() {
     let (input, peer) = UnixStream::pair().unwrap();
     input.set_nonblocking(true).unwrap();
@@ -230,7 +134,7 @@ fn partial_cancel_closes_before_any_next_frame_and_preserves_evidence() {
     rustix::net::sockopt::set_socket_send_buffer_size(&input, 1024).unwrap();
     let input = Arc::new(input);
     let bytes = format!(
-        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"padding":"{}"}}}}"#,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{{"padding":"{}"}}}}"#,
         "a".repeat(100_000)
     );
     let response = Arc::new(Response::new());
