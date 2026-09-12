@@ -8,10 +8,11 @@ use machine_god_core::{
     ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, TurnId,
 };
 use machine_god_native::{
-    MAX_MCP_SEARCH_DESCRIPTION_BYTES, MAX_MCP_SEARCH_QUERY_BYTES, MAX_MCP_SEARCH_QUERY_TOKENS,
-    MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES, MAX_MCP_TOOL_CATALOG_ENTRIES,
-    MAX_MCP_TOOL_SEARCH_TEXT_BYTES, MCP_SEARCH_TOOLS_DEFAULT_LIMIT, MCP_SEARCH_TOOLS_MAX_LIMIT,
-    MCP_SEARCH_TOOLS_TOOL_NAME, McpSearchToolsTool, McpToolCatalog, McpToolCatalogError,
+    MAX_MCP_SEARCH_DESCRIPTION_BYTES, MAX_MCP_SEARCH_MATCH_STEPS, MAX_MCP_SEARCH_QUERY_BYTES,
+    MAX_MCP_SEARCH_QUERY_TOKENS, MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES,
+    MAX_MCP_TOOL_CATALOG_BYTES, MAX_MCP_TOOL_CATALOG_ENTRIES, MAX_MCP_TOOL_SEARCH_TEXT_BYTES,
+    MCP_SEARCH_TOOLS_DEFAULT_LIMIT, MCP_SEARCH_TOOLS_MAX_LIMIT, MCP_SEARCH_TOOLS_TOOL_NAME,
+    McpSearchToolsTool, McpToolCatalog, McpToolCatalogBuildErrorKind, McpToolCatalogError,
     McpToolCatalogErrorKind, McpToolCatalogSnapshot, McpToolMetadata,
 };
 use serde_json::{Value, json};
@@ -467,7 +468,9 @@ fn public_contract_schema_and_no_authority_preflight_are_frozen() {
     assert_eq!(MCP_SEARCH_TOOLS_MAX_LIMIT, 20);
     assert_eq!(MAX_MCP_SEARCH_QUERY_BYTES, 4_096);
     assert_eq!(MAX_MCP_SEARCH_QUERY_TOKENS, 64);
-    assert_eq!(MAX_MCP_TOOL_CATALOG_ENTRIES, 1_024);
+    assert_eq!(MAX_MCP_TOOL_CATALOG_ENTRIES, 64 * 2_048);
+    assert_eq!(MAX_MCP_TOOL_CATALOG_BYTES, 64 * 1024 * 1024);
+    assert_eq!(MAX_MCP_SEARCH_MATCH_STEPS, 64 * 1024 * 1024);
     assert_eq!(MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES, 16_384);
 
     let (tool, catalog) = tool_with(catalog_entries());
@@ -813,12 +816,14 @@ fn server_aliases_preserve_bounded_ascii_identity_and_debug_is_fixed_shape() {
 
 #[test]
 fn result_serialization_and_catalog_cardinality_remain_bounded() {
+    // Exercise cardinality independently of the aggregate byte ceiling. Full
+    // descriptions at every slot can exhaust retained bytes before this count.
     let entries = (0..MAX_MCP_TOOL_CATALOG_ENTRIES)
         .map(|index| {
             metadata(
                 &format!("mcp_fixture_tool_{index}"),
                 "fixture",
-                &"d".repeat(256),
+                "",
                 &["mcp", "fixture"],
                 "fixture bounded tool",
             )
@@ -829,13 +834,17 @@ fn result_serialization_and_catalog_cardinality_remain_bounded() {
         &tool,
         json!({"query": "fixture", "limit": MCP_SEARCH_TOOLS_MAX_LIMIT}),
     );
-    assert!(output.content["tools"].as_array().unwrap().len() <= MCP_SEARCH_TOOLS_MAX_LIMIT);
+    assert_eq!(
+        output.content["tools"].as_array().unwrap().len(),
+        MCP_SEARCH_TOOLS_MAX_LIMIT
+    );
     assert!(output.content["more_available"].as_bool().unwrap());
     assert!(
         serde_json::to_vec(&output).unwrap().len() <= MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES,
         "complete ToolOutput serialization must stay inside the public ceiling"
     );
 
+    drop(tool);
     let overflow = (0..=MAX_MCP_TOOL_CATALOG_ENTRIES)
         .map(|index| {
             metadata(
@@ -847,12 +856,70 @@ fn result_serialization_and_catalog_cardinality_remain_bounded() {
             )
         })
         .collect();
-    assert!(McpToolCatalogSnapshot::new(overflow).is_err());
+    assert_eq!(
+        McpToolCatalogSnapshot::new(overflow).unwrap_err().kind(),
+        McpToolCatalogBuildErrorKind::ResourceLimit
+    );
+
+    // Separately force model-output truncation with a small admitted catalog.
+    let description = "d".repeat(MAX_MCP_SEARCH_DESCRIPTION_BYTES);
+    let entries = (0..=MCP_SEARCH_TOOLS_MAX_LIMIT)
+        .map(|index| {
+            metadata(
+                &format!("mcp_rich_{index}"),
+                "fixture",
+                &description,
+                &[],
+                "",
+            )
+        })
+        .collect();
+    let (tool, _) = tool_with(entries);
+    let output = search(
+        &tool,
+        json!({"query":"", "limit":MCP_SEARCH_TOOLS_MAX_LIMIT}),
+    );
+    let retained = result_names(&output).len();
+    assert!(retained > 0 && retained < MCP_SEARCH_TOOLS_MAX_LIMIT);
+    assert_eq!(output.content["more_available"], true);
+    assert_eq!(
+        output.content["context_limit"]["omitted_count"],
+        MCP_SEARCH_TOOLS_MAX_LIMIT - retained
+    );
+    assert!(serde_json::to_vec(&output).unwrap().len() <= MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES);
+}
+
+#[test]
+fn aggregate_catalog_bytes_fail_before_the_independent_cardinality_ceiling() {
+    // Source search bytes and their lowercase haystacks are both charged.
+    // These alone fill the ceiling; names/server bytes then cross it.
+    let count = MAX_MCP_TOOL_CATALOG_BYTES / (2 * MAX_MCP_TOOL_SEARCH_TEXT_BYTES);
+    assert!(count < MAX_MCP_TOOL_CATALOG_ENTRIES);
+    let search_text = "x".repeat(MAX_MCP_TOOL_SEARCH_TEXT_BYTES);
+    let entries = (0..count)
+        .map(|index| {
+            metadata(
+                &format!("mcp_bytes_{index}"),
+                "fixture",
+                "",
+                &[],
+                &search_text,
+            )
+        })
+        .collect();
+    assert_eq!(
+        McpToolCatalogSnapshot::new(entries).unwrap_err().kind(),
+        McpToolCatalogBuildErrorKind::ResourceLimit
+    );
 }
 
 #[test]
 fn requested_prefix_stops_before_a_costly_matching_suffix() {
-    let search_text = "x".repeat(MAX_MCP_TOOL_SEARCH_TEXT_BYTES);
+    // Two matches (limit plus one) fit the work budget. A third crosses it
+    // after the other metadata fields are included in every token comparison.
+    let search_bytes = MAX_MCP_SEARCH_MATCH_STEPS / (3 * MAX_MCP_SEARCH_QUERY_TOKENS);
+    assert!(search_bytes <= MAX_MCP_TOOL_SEARCH_TEXT_BYTES);
+    let search_text = "x".repeat(search_bytes);
     let entries = (0..20)
         .map(|index| {
             metadata(
@@ -873,4 +940,9 @@ fn requested_prefix_stops_before_a_costly_matching_suffix() {
     assert_eq!(result_names(&output), ["mcp_costly_match_00"]);
     assert_eq!(output.content["more_available"], true);
     assert_eq!(catalog.snapshot_count(), 1);
+
+    // Prove the suffix is actually costly, rather than merely assuming it.
+    let arguments = prepare(&tool, json!({"query":query, "limit":2}));
+    assert_resource_limit(execute(&tool, arguments, CancellationToken::new()).unwrap_err());
+    assert_eq!(catalog.snapshot_count(), 2);
 }
