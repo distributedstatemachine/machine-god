@@ -70,17 +70,28 @@ pub(super) async fn poll(
         peer.close();
         return Err(error);
     }
-    let Some(subscription) = &mut peer.subscription else {
-        return Ok(None);
-    };
-    let lifetime = subscription.deadline;
-    if peer.options.clock.now() >= lifetime {
+    if peer
+        .subscription
+        .as_ref()
+        .is_some_and(|subscription| peer.options.clock.now() >= subscription.deadline)
+    {
         peer.close_subscription();
         return Err(McpHttpPeerError::Deadline);
     }
     if peer.options.clock.now() >= deadline {
         return Ok(None);
     }
+    // Ordinary response streams can carry this subscription's notifications.
+    // Drain that already-admitted queue before waiting on the listener socket,
+    // including after its final response. Dequeue preserves existing accounting;
+    // it neither touches the owned partial read nor resets its stream quotas.
+    if let Some(frame) = peer.take_notification() {
+        return Ok(Some(frame));
+    }
+    let Some(subscription) = &mut peer.subscription else {
+        return Ok(None);
+    };
+    let lifetime = subscription.deadline;
     if subscription.pending.is_some() {
         return Ok(subscription.pending.take());
     }

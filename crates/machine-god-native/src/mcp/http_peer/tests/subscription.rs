@@ -8,6 +8,7 @@ use crate::mcp::{
 
 const ACK: &[u8] = b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/subscriptions/acknowledged\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/subscriptionId\":2},\"notifications\":{\"resourcesListChanged\":true}}}\n\n";
 const INVALIDATION: &[u8] = b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/list_changed\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/subscriptionId\":2}}}\n\n";
+const QUEUED_INVALIDATION: &[u8] = b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/list_changed\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/subscriptionId\":2},\"marker\":\"ordinary\"}}\n\n";
 
 struct SelectedClock {
     origin: Instant,
@@ -49,6 +50,88 @@ async fn listen_head(listener: &TcpListener) -> tokio::net::TcpStream {
         .unwrap();
     socket.flush().await.unwrap();
     socket
+}
+
+async fn catalog_with_notification(listener: &TcpListener, id: i64) {
+    let mut body = QUEUED_INVALIDATION.to_vec();
+    body.extend_from_slice(b"data: ");
+    body.extend_from_slice(&success(id, serde_json::json!({"tools":[]})));
+    body.extend_from_slice(b"\n\n");
+    accept_reply(listener, 200, SSE, &body).await;
+}
+
+#[test]
+fn ordinary_stream_notifications_drain_before_listener_reads_and_after_its_final_response() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let selected = options(listener.local_addr().unwrap(), TransportKind::StreamableHttp);
+        let partial = CancellationToken::new();
+        let catalog_allowed = CancellationToken::new();
+        let listener_allowed = CancellationToken::new();
+        let server = async {
+            accept_reply(&listener, 200, JSON, &modern(1)).await;
+            let mut socket = listen_head(&listener).await;
+            socket.write_all(ACK).await.unwrap();
+            let split = INVALIDATION.len() / 2;
+            socket.write_all(&INVALIDATION[..split]).await.unwrap();
+            partial.cancel();
+            catalog_allowed.cancelled().await;
+            catalog_with_notification(&listener, 3).await;
+            listener_allowed.cancelled().await;
+            socket.write_all(&INVALIDATION[split..]).await.unwrap();
+            socket.write_all(b"data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"resultType\":\"complete\",\"_meta\":{\"io.modelcontextprotocol/subscriptionId\":2}}}\n\n").await.unwrap();
+            let mut byte = [0];
+            assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
+            catalog_with_notification(&listener, 4).await;
+        };
+        let client = async {
+            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline()).await.unwrap();
+            let filters = McpSubscriptionFilters::new(peer.capabilities(), &[]).unwrap();
+            peer.start_subscription(&filters, deadline()).await.unwrap();
+            let generation = McpRefreshGeneration::new();
+            let mut policy = McpCatalogRefresh::new(generation.clone(), &[]).unwrap();
+            policy.install_subscription(&generation, 2, filters).unwrap();
+            let ack = peer.poll_subscription(deadline()).await.unwrap().unwrap();
+            assert_eq!(policy.observe(&generation, ack.envelope()).unwrap(), McpRefreshNotification::Acknowledged);
+            partial.cancelled().await;
+            {
+                let mut pending = Box::pin(peer.poll_subscription(deadline()));
+                assert!(futures_util::poll!(&mut pending).is_pending());
+            }
+            catalog_allowed.cancel();
+            peer.catalog(McpCatalogKind::Tools, McpCatalogLimits::default(), Instant::now(), deadline()).await.unwrap();
+            let queued = {
+                let mut poll = Box::pin(peer.poll_subscription(deadline()));
+                let std::task::Poll::Ready(Ok(Some(frame))) = futures_util::poll!(&mut poll) else {
+                    panic!("ordinary queue must precede the blocked listener read")
+                };
+                frame
+            };
+            assert_eq!(queued.envelope().params().unwrap()["marker"], "ordinary");
+            assert_eq!(policy.observe(&generation, queued.envelope()).unwrap(), McpRefreshNotification::AllResourceReads);
+            assert!(peer.notifications.is_empty());
+            assert_eq!(peer.notification_bytes, 0);
+            assert_eq!(peer.active_subscription(), Some(RpcId::Integer(2)));
+            listener_allowed.cancel();
+            let frame = peer.poll_subscription(deadline()).await.unwrap().unwrap();
+            assert!(frame.envelope().params().unwrap().get("marker").is_none());
+            assert_eq!(policy.observe(&generation, frame.envelope()).unwrap(), McpRefreshNotification::AllResourceReads);
+            assert!(peer.poll_subscription(deadline()).await.unwrap().is_none());
+            assert!(peer.active_subscription().is_none());
+            peer.catalog(McpCatalogKind::Tools, McpCatalogLimits::default(), Instant::now(), deadline()).await.unwrap();
+            let retained = peer.notification_bytes;
+            assert!(retained > 0);
+            assert!(peer.poll_subscription(Instant::now()).await.unwrap().is_none());
+            assert_eq!(peer.notification_bytes, retained);
+            let queued = peer.poll_subscription(deadline()).await.unwrap().unwrap();
+            assert_eq!(policy.observe(&generation, queued.envelope()).unwrap(), McpRefreshNotification::AllResourceReads);
+            assert_eq!(peer.notification_bytes, 0);
+            assert!(peer.poll_subscription(deadline()).await.unwrap().is_none());
+            assert!(peer.readiness().is_ready());
+        };
+        tokio::time::timeout(Duration::from_secs(3), join(client, server)).await.unwrap();
+        assert!(futures_util::poll!(Box::pin(listener.accept())).is_pending());
+    });
 }
 
 #[test]
