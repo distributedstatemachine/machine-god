@@ -16,6 +16,9 @@ impl fmt::Debug for McpHttpControl {
     }
 }
 impl McpHttpControl {
+    pub(super) fn is_listener(&self) -> bool {
+        matches!(self.0, Kind::Listen)
+    }
     pub(crate) fn feature(
         exchange: &crate::mcp::feature::McpFeatureExchange,
         guard: crate::mcp::control::McpFeatureControlAuthority,

@@ -94,7 +94,7 @@ fn injected_clock_controls_peer_connector_write_and_response_deadlines() {
         selected.clock = Arc::new(FixedClock(
             now.checked_sub(Duration::from_secs(60)).unwrap(),
         ));
-        selected.lifetime_deadline = now.checked_sub(Duration::from_secs(20)).unwrap();
+        selected.lifetime = now.checked_sub(Duration::from_secs(20)).unwrap().into();
         let body = modern(1);
         let server = accept_reply(&listener, 200, JSON, &body);
         let client = async {
@@ -121,7 +121,7 @@ fn completed_operations_do_not_exhaust_event_or_owner_lifetime_budgets() {
             listener.local_addr().unwrap(),
             TransportKind::StreamableHttp,
         );
-        selected.lifetime_deadline = Instant::now() + Duration::from_secs(7 * 24 * 60 * 60);
+        selected.lifetime = (Instant::now() + Duration::from_secs(7 * 24 * 60 * 60)).into();
         let server = async {
             accept_reply(&listener, 200, JSON, &modern(1)).await;
             accept_reply(

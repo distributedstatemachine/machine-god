@@ -12,6 +12,13 @@ pub(super) struct Reader {
     offset: usize,
 }
 impl Reader {
+    pub fn promote_listener(
+        &mut self,
+        lifetime: crate::mcp::lifetime::McpPeerLifetime,
+    ) -> Result<()> {
+        self.body.promote_listener(lifetime)?;
+        Ok(())
+    }
     pub fn new(body: McpHttpBody, mode: SseMode, limits: SseLimits) -> Result<Box<Self>> {
         Ok(Box::new(Self {
             body,

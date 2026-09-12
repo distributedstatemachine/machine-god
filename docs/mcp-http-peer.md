@@ -10,7 +10,10 @@
 
 Hosts inject the configured transport family, resolved endpoint/address
 authority, trust anchors, resolved headers, monotonic clock/timer, lifetime
-deadline and cancellation. Unpolled futures perform no acquisition. Peers do
+policy and cancellation. `McpPeerLifetime::OwnerControlled` retains the peer
+until explicit close or cancellation; `Until(Instant)` additionally enforces an
+exact host-selected expiry. No artificial session-expiry timestamp is inferred
+from startup or a completed operation. Unpolled futures perform no acquisition. Peers do
 not read ambient DNS, environment, credentials or time; the connector's existing
 convenience constructor retains system-clock behavior while peers select its
 explicit clock constructor.
@@ -19,6 +22,10 @@ There is one serialized application lane and at most one persistent listener.
 Callers poll requests or `next_notification` to drive it; no task is spawned.
 Pending listener reads survive request selection without being dropped and
 recreated. Dropping a polled operation closes the peer and local listener.
+An ordinary idle `next_notification` deadline returns a timeout without retiring
+a live peer or losing its pending read/parser state. Cancellation, owner expiry,
+malformed input and abandonment still retire it. A completed event at the
+deadline boundary is retained without publishing a late successful observation.
 
 ## Protocol lifecycle
 
@@ -151,7 +158,16 @@ Configured timeouts admit positive durations through `u32::MAX` milliseconds,
 with checked `Instant` addition. Observed peers select a separate configured
 connector policy admitting that same maximum for each finite exchange; existing
 public connector constructors and the original peer `connect` retain their
-24-hour exchange ceiling. No configured timeout is silently clamped. A listener
-whose requested lifetime exceeds the selected per-exchange bound must be given
-an admissible host lifetime or fails explicitly. Completion remains local cleanup
+24-hour exchange ceiling. No configured timeout is silently clamped. Persistent
+GET acquisition and initial endpoint discovery use finite startup deadlines;
+only their validated read-only bodies then retain the selected peer lifetime.
+They do not pass an indefinite or oversized deadline into the connector, reset
+stream bounds, reconnect solely because startup time elapsed, or replay POSTs.
+
+`connect_configured_observed` selects the same bounded configured attempt
+policy without imposing an additional overall startup deadline. Its initial
+auth/DNS deadline can only shorten that first attempt; admitted fallback gets
+its own fresh configured budget, still constrained by any explicit peer expiry.
+The existing `connect_observed` retains its caller-selected outer deadline.
+Completion remains local cleanup
 evidence, not session revocation, permission or remote cancellation proof.

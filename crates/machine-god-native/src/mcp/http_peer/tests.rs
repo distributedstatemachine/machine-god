@@ -10,6 +10,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 mod feature;
 mod lifecycle;
 mod observed;
+mod owned_lifetime;
 mod submission;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -53,7 +54,7 @@ fn options(address: SocketAddr, transport: TransportKind) -> McpHttpPeerOptions 
         headers: McpResolvedHeaders::resolve(remote, |_| None, None, &[]).unwrap(),
         clock: Arc::new(Clock),
         transport,
-        lifetime_deadline: deadline(),
+        lifetime: deadline().into(),
     }
 }
 fn success(id: i64, result: serde_json::Value) -> Vec<u8> {

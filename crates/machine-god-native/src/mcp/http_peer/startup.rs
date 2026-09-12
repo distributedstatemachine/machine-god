@@ -52,7 +52,7 @@ pub(super) async fn connect(
     cancellation: CancellationToken,
     deadline: Instant,
 ) -> Result<McpHttpPeer> {
-    connect_inner(options, cancellation, deadline, None)
+    connect_inner(options, cancellation, Some(deadline), None)
         .await
         .map(|(peer, _)| peer)
 }
@@ -60,7 +60,7 @@ pub(super) async fn connect(
 pub(super) async fn connect_observed(
     options: McpHttpPeerOptions,
     cancellation: CancellationToken,
-    deadline: Instant,
+    deadline: Option<Instant>,
     startup_timeout: Duration,
     first_attempt_deadline: Option<Instant>,
     observer: McpHttpCompletionObserver,
@@ -90,12 +90,12 @@ struct ConfiguredStartup {
 fn observed_owner(
     options: McpHttpPeerOptions,
     cancellation: CancellationToken,
-    outer_deadline: Instant,
+    outer_deadline: Option<Instant>,
     configured: Option<&ConfiguredStartup>,
 ) -> Result<(McpHttpPeer, Instant)> {
     let mut peer = inert(options, cancellation)?;
     peer.configured_timeouts = configured.is_some();
-    peer.check(outer_deadline)?;
+    check_outer(&peer, outer_deadline)?;
     let mut deadline = attempt_deadline(
         &peer,
         outer_deadline,
@@ -116,7 +116,7 @@ fn observed_owner(
 async fn connect_inner(
     options: McpHttpPeerOptions,
     cancellation: CancellationToken,
-    outer_deadline: Instant,
+    outer_deadline: Option<Instant>,
     configured: Option<ConfiguredStartup>,
 ) -> Result<(McpHttpPeer, Instant)> {
     let (mut peer, mut deadline) =
@@ -130,7 +130,7 @@ async fn connect_inner(
     let mut initialized_capabilities = McpPeerCapabilities::default();
     let mut was_modern = transport != TransportKind::LegacySse;
     loop {
-        peer.check(outer_deadline)?;
+        check_outer(&peer, outer_deadline)?;
         let version = match action {
             NegotiationAction::SendDiscover => ProtocolVersion::Modern,
             NegotiationAction::Initialize(version) => {
@@ -214,9 +214,16 @@ async fn connect_inner(
     }
 }
 
+fn check_outer(peer: &McpHttpPeer, outer: Option<Instant>) -> Result<()> {
+    match outer {
+        Some(deadline) => peer.check(deadline),
+        None => peer.check_owner(),
+    }
+}
+
 fn attempt_deadline(
     peer: &McpHttpPeer,
-    outer: Instant,
+    outer: Option<Instant>,
     timeout: Option<Duration>,
 ) -> Result<Instant> {
     let selected = match timeout {
@@ -225,16 +232,16 @@ fn attempt_deadline(
             .clock
             .now()
             .checked_add(timeout)
-            .ok_or(McpHttpPeerError::Limit)?
-            .min(outer),
-        None => outer,
+            .ok_or(McpHttpPeerError::Limit)?,
+        None => outer.ok_or(McpHttpPeerError::Invalid)?,
     };
-    Ok(selected.min(peer.options.lifetime_deadline))
+    let selected = outer.map_or(selected, |outer| outer.min(selected));
+    Ok(peer.options.lifetime.constrain(selected))
 }
 
 async fn legacy_endpoint(peer: &mut McpHttpPeer, deadline: Instant) -> Result<()> {
     let head = Arc::new(peer.make_head(None, None)?);
-    let connection = peer.connection(head, peer.options.lifetime_deadline)?;
+    let connection = peer.connection(head, deadline)?;
     let response = bounded(
         connection.control(McpHttpControl::listen()),
         &*peer.options.clock,
@@ -249,7 +256,7 @@ async fn legacy_endpoint(peer: &mut McpHttpPeer, deadline: Instant) -> Result<()
     let mut reader =
         stream::Reader::new(response.body, SseMode::Legacy, stream::listener_limits())?.next();
     for _ in 0..256 {
-        let (next, event) = bounded(
+        let (mut next, event) = bounded(
             &mut reader,
             &*peer.options.clock,
             &peer.cancellation,
@@ -259,6 +266,7 @@ async fn legacy_endpoint(peer: &mut McpHttpPeer, deadline: Instant) -> Result<()
         let event = event?.ok_or(McpHttpPeerError::Protocol)?;
         if event.event() == Some("endpoint") {
             let destination = peer.options.destination.message_endpoint(event.data())?;
+            next.promote_listener(peer.options.lifetime)?;
             peer.destination = destination;
             peer.listener = Some(next.next());
             return Ok(());

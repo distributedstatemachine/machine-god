@@ -70,15 +70,15 @@ impl From<McpHttpError> for McpHttpPeerError {
     }
 }
 
-/// Explicit selected authority. The deadline bounds the entire peer lifetime,
-/// independently of shorter startup/request deadlines; no ambient resolution.
+/// Explicit selected authority. Owner cancellation or an explicitly selected
+/// expiry bounds the peer, independently of finite startup/request deadlines.
 pub struct McpHttpPeerOptions {
     pub destination: McpHttpDestination,
     pub trust: Option<McpHttpTrust>,
     pub headers: McpResolvedHeaders,
     pub clock: Arc<dyn McpHttpClock>,
     pub transport: TransportKind,
-    pub lifetime_deadline: Instant,
+    pub lifetime: super::lifetime::McpPeerLifetime,
 }
 
 /// Raw bytes preserve exact schema numbers; the envelope is routing data only.
@@ -217,7 +217,28 @@ impl McpHttpPeer {
         startup::connect_observed(
             options,
             cancellation,
-            outer_deadline,
+            Some(outer_deadline),
+            startup_timeout,
+            first_attempt_deadline,
+            observer,
+        )
+        .await
+    }
+    /// Uses fresh finite configured attempt deadlines without an additional
+    /// overall startup timeout. Peer ownership and explicit expiry still apply.
+    /// # Errors
+    /// Rejects invalid timeout, observer capacity, transport or negotiation.
+    pub async fn connect_configured_observed(
+        options: McpHttpPeerOptions,
+        cancellation: CancellationToken,
+        startup_timeout: Duration,
+        first_attempt_deadline: Option<Instant>,
+        observer: McpHttpCompletionObserver,
+    ) -> Result<(Self, Instant)> {
+        startup::connect_observed(
+            options,
+            cancellation,
+            None,
             startup_timeout,
             first_attempt_deadline,
             observer,
@@ -310,7 +331,7 @@ impl McpHttpPeer {
     /// # Errors
     /// Rejects closed/cancelled peers and invalid protocol header composition.
     pub fn request_head(&self) -> Result<McpSubmissionHttpHead> {
-        self.check(self.options.lifetime_deadline)?;
+        self.check_owner()?;
         self.make_head(None, None)
     }
     /// Uses the reserved ID and an admitted runtime allocation. The projected
@@ -356,19 +377,26 @@ impl McpHttpPeer {
         Some(frame)
     }
     fn check(&self, deadline: Instant) -> Result<()> {
+        self.check_owner()?;
+        if self.options.clock.now() >= deadline {
+            return Err(McpHttpPeerError::Deadline);
+        }
+        Ok(())
+    }
+    fn check_owner(&self) -> Result<()> {
         if self.closed {
             return Err(McpHttpPeerError::Closed);
         }
         if self.cancellation.is_cancelled() {
             return Err(McpHttpPeerError::Cancelled);
         }
-        if self.options.clock.now() >= deadline.min(self.options.lifetime_deadline) {
+        if self.options.lifetime.is_expired(self.options.clock.now()) {
             return Err(McpHttpPeerError::Deadline);
         }
         Ok(())
     }
     fn available(&self) -> Result<()> {
-        self.check(self.options.lifetime_deadline)?;
+        self.check_owner()?;
         if self.reserved.blocks_control() {
             return Err(McpHttpPeerError::Limit);
         }
@@ -422,7 +450,7 @@ impl McpHttpPeer {
             self.options.trust.clone(),
             McpHttpLimits::default(),
             self.cancellation.clone(),
-            deadline.min(self.options.lifetime_deadline),
+            self.options.lifetime.constrain(deadline),
             self.options.clock.clone(),
         )?;
         if let Some(authority) = &self.feature_authority {

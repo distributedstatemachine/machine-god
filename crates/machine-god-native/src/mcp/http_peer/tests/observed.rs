@@ -208,7 +208,7 @@ fn configured_upper_timeout_is_inert_bounded_and_old_connector_cap_is_preserved(
     for duration in [Duration::ZERO, maximum + Duration::from_millis(1), maximum] {
         let mut selected = options(address, TransportKind::StreamableHttp);
         selected.clock = clock.clone();
-        selected.lifetime_deadline = clock.origin + maximum;
+        selected.lifetime = (clock.origin + maximum).into();
         let capture = observed.clone();
         assert!(matches!(
             futures_executor::block_on(McpHttpPeer::connect_observed(

@@ -93,6 +93,21 @@ request writes,
 response head and every body read, including buffered bytes. Userspace waits are
 bounded; synchronous OS/library work and scheduling are not real-time guarantees.
 
+The native peer has one private exception for persistent read-only GET listeners:
+after exact successful status, session and SSE validation (and same-origin
+endpoint admission for deprecated HTTP+SSE), it may promote that existing body's
+read lifetime to the selected peer ownership. Connect, TLS, GET writes, response
+headers and initial endpoint discovery retain the original finite deadline.
+Promotion requires the actual GET-listener lane, rejects repeat promotion, and
+never resets framing, byte budgets or completion ownership. A feature-scoped
+guard retained through GET acquisition is revalidated at transfer; only that
+operation observer is detached as the listener becomes peer-owned. Peer
+cancellation and explicit expiry remain. Ordinary protocol, OAuth, application and resumed response bodies
+cannot acquire this ownership policy. Public raw constructors remain unchanged.
+Owner-controlled listening observes cancellation until explicit close; an
+explicit peer expiry remains enforced. Every caller-driven listener observation
+still has a finite deadline outside its retained parser future.
+
 `with_clock` explicitly injects the monotonic clock and timer used at every
 acquisition/write/read boundary; the existing `new` constructor retains its
 system-clock behavior. `from_prepared_head` accepts immutable shared request

@@ -143,7 +143,7 @@ fn feature_json_and_sse_use_full_bounded_capacity_without_changing_ordinary_limi
             let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
             let mut selected = options(listener.local_addr().unwrap(), TransportKind::StreamableHttp);
             let until = Instant::now() + Duration::from_secs(45);
-            selected.lifetime_deadline = until;
+            selected.lifetime = until.into();
             let body = format!(r#"{{"jsonrpc":"2.0","id":2,"result":{{"resultType":"complete","contents":[],"large":"{}","nodes":[{}0],"number":-0.000e999999}}}}"#, "x".repeat(9 * 1024 * 1024), "0,".repeat(70_000));
             let wire = if media == SSE { format!("data: {body}\n\n") } else { body };
             let server = async {
