@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn decoded_string_lengths_are_retained_for_repeated_constraints() {
+    let limits = McpSchemaLimits::default();
+    let tree = json::Tree::parse(br#""\u00e9\ud83d\ude00""#, limits, false).unwrap();
+    assert_eq!(tree.string(0), Some("é😀"));
+    assert_eq!(tree.string_scalar_count(0), Some(2));
+    let json::Node::String { value, .. } = &tree.nodes[0] else {
+        panic!("expected a decoded string");
+    };
+    assert_eq!(
+        tree.retained_byte_charge().unwrap(),
+        tree.nodes.capacity() * size_of::<json::Node>() + value.capacity()
+    );
+    let schema = McpSchema::parse(
+        br##"{"$defs":{"s":{"minLength":2,"maxLength":2}},"allOf":[{"$ref":"#/$defs/s"},{"$ref":"#/$defs/s"}]}"##,
+        limits,
+    ).unwrap();
+    assert_eq!(
+        schema.validate_json(br#""\u00e9\ud83d\ude00""#).unwrap(),
+        McpSchemaValidation::Valid
+    );
+    assert!(matches!(
+        schema.validate_json(br#""\u00e9""#).unwrap(),
+        McpSchemaValidation::Invalid(_)
+    ));
+    check(
+        r#"{"propertyNames":{"minLength":2,"maxLength":2}}"#,
+        r#"{"é😀":null}"#,
+        true,
+    );
+    check(
+        r#"{"propertyNames":{"minLength":2,"maxLength":2}}"#,
+        r#"{"😀":null}"#,
+        false,
+    );
+}
+
+#[test]
 fn schema_and_instance_byte_node_and_lexeme_boundaries() {
     let defaults = McpSchemaLimits::default();
     let limits = McpSchemaLimits {

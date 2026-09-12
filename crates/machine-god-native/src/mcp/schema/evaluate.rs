@@ -287,6 +287,9 @@ impl Context<'_> {
             }
         }
         if let Some(value) = tree.string(instance) {
+            let scalar_count = tree
+                .string_scalar_count(instance)
+                .ok_or(Error::InvalidJson)?;
             for (key, lower, violation) in [
                 ("minLength", true, Violation::MinLength),
                 ("maxLength", false, Violation::MaxLength),
@@ -294,9 +297,9 @@ impl Context<'_> {
                 if let Some(bound) = object.get(key) {
                     let bound = count(&admitted.tree, *bound, admitted.limits)?;
                     if if lower {
-                        value.chars().count() < bound
+                        scalar_count < bound
                     } else {
-                        value.chars().count() > bound
+                        scalar_count > bound
                     } {
                         return Ok(Some(violation));
                     }
@@ -393,7 +396,7 @@ impl Context<'_> {
         Ok(match (&left.nodes[a], &right.nodes[b]) {
             (Node::Null, Node::Null) => true,
             (Node::Bool(a), Node::Bool(b)) => a == b,
-            (Node::String(a), Node::String(b)) => a == b,
+            (Node::String { value: a, .. }, Node::String { value: b, .. }) => a == b,
             (Node::Array(a), Node::Array(b)) if a.len() == b.len() => {
                 for (a, b) in a.iter().zip(b) {
                     if !self.equal(left, *a, right, *b, depth + 1)? {

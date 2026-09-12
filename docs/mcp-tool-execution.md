@@ -31,8 +31,8 @@ redacted tool error, never a fabricated successful result.
   the complete admitted error object under `error`. They remain distinct from a
   completed tool's `isError` and do not request turn termination.
 - Valid unresolved input has `is_error: true`, `resultType: "input_required"`,
-  the typed rendered `inputRequests` and any exact `requestState`. Modern input
-  and admitted legacy URL-required data use that same explicit projection.
+  the typed rendered modern `inputRequests` and any exact `requestState`.
+  JSON-RPC errors remain protocol failures and never enter input custody.
   Its `ToolExecution::finish_turn()` stops after the stored result and delivered
   event. Later sibling calls retain unknown placeholders; no further provider
   round or sibling preparation, permission or execution occurs.
@@ -63,7 +63,7 @@ distinct wire actions. A cancel supplies explicit cancel actions for the
 remaining requests without further prompts, matching the pinned responder.
 An empty request map, including state-only input, remains unresolved: the pinned
 `elicitation_interaction.zig` responder rejects zero requests. Unconfigured URL,
-sampling, roots and legacy requests, or an unavailable presenter, keep the
+sampling or roots requests, or an unavailable presenter, keep the
 explicit input-required projection and stop-after-tool behavior above.
 
 Actual answers and their exact round produce non-clone native consent custody.

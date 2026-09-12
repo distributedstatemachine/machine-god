@@ -35,17 +35,23 @@ struct Class {
     negated: bool,
 }
 impl Class {
-    fn matches(&self, value: char) -> bool {
-        let matched = self.flags & 1 != 0 && value.is_ascii_digit()
+    fn matches(&self, value: char, steps: &mut usize, limit: usize) -> Result<bool> {
+        consume(steps, limit)?;
+        let mut matched = self.flags & 1 != 0 && value.is_ascii_digit()
             || self.flags & 2 != 0 && (value.is_ascii_alphanumeric() || value == '_')
             || self.flags & 4 != 0 && whitespace(value)
             || self.flags & 8 != 0 && !whitespace(value)
-            || self.flags & 16 != 0 && unicode_letter::contains(value)
-            || self
-                .ranges
-                .iter()
-                .any(|(first, last)| *first <= value && value <= *last);
-        matched != self.negated
+            || self.flags & 16 != 0 && unicode_letter::contains(value);
+        if !matched {
+            for (first, last) in &self.ranges {
+                consume(steps, limit)?;
+                if *first <= value && value <= *last {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        Ok(matched != self.negated)
     }
 }
 fn whitespace(value: char) -> bool {
@@ -134,7 +140,9 @@ impl Pattern {
                 let matched = match instruction.op {
                     Op::Literal(literal) => value == literal,
                     Op::Any => !matches!(value, '\n' | '\r' | '\u{2028}' | '\u{2029}'),
-                    Op::Class(class) => self.classes[class].matches(value),
+                    Op::Class(class) => {
+                        self.classes[class].matches(value, work.steps, work.limit)?
+                    }
                     _ => false,
                 };
                 if matched {
@@ -214,4 +222,40 @@ fn consume(steps: &mut usize, limit: usize) -> Result<()> {
         return Err(PatternError::Limit);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn class_range_checks_share_the_match_budget() {
+        let class = Class {
+            ranges: vec![('a', 'b'), ('c', 'd'), ('e', 'f')],
+            ..Class::default()
+        };
+        let mut steps = 0;
+        assert!(matches!(
+            class.matches('z', &mut steps, 3),
+            Err(PatternError::Limit)
+        ));
+        let mut steps = 0;
+        assert!(!class.matches('z', &mut steps, 4).unwrap());
+        assert_eq!(steps, 4);
+        // The same counter is shared across text characters and classes.
+        assert!(matches!(
+            class.matches('a', &mut steps, 4),
+            Err(PatternError::Limit)
+        ));
+        let mut steps = 0;
+        assert!(class.matches('a', &mut steps, 2).unwrap());
+        assert_eq!(steps, 2);
+        let negated = Class {
+            negated: true,
+            ..class
+        };
+        let mut steps = 0;
+        assert!(negated.matches('z', &mut steps, 4).unwrap());
+        assert_eq!(steps, 4);
+    }
 }

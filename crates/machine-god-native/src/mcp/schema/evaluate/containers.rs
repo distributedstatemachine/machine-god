@@ -204,7 +204,7 @@ impl Context<'_> {
             marks.properties[index] |= covered;
             if let Some(child) = admitted.tree.field(schema, "propertyNames") {
                 let name = Tree {
-                    nodes: vec![Node::String(name.clone())],
+                    nodes: vec![Node::string(name.clone())],
                 };
                 if self.nested(child, &name, 0, depth + 1)?.violation.is_some() {
                     return Ok(Some(Violation::PropertyNames));

@@ -12,9 +12,18 @@ pub(super) enum Node {
     Null,
     Bool(bool),
     Number(Box<str>),
-    String(String),
+    String { value: String, scalar_count: usize },
     Array(Vec<usize>),
     Object(BTreeMap<String, usize>),
+}
+impl Node {
+    pub fn string(value: String) -> Self {
+        let scalar_count = value.chars().count();
+        Self::String {
+            value,
+            scalar_count,
+        }
+    }
 }
 pub(super) struct Tree {
     pub nodes: Vec<Node>,
@@ -25,7 +34,7 @@ impl Tree {
         let mut bytes = array::<Node>(self.nodes.capacity())?;
         for node in &self.nodes {
             match node {
-                Node::String(text) => add(&mut bytes, text.capacity(), usize::MAX)?,
+                Node::String { value, .. } => add(&mut bytes, value.capacity(), usize::MAX)?,
                 Node::Number(text) => add(&mut bytes, text.len(), usize::MAX)?,
                 Node::Array(items) => {
                     add(&mut bytes, array::<usize>(items.capacity())?, usize::MAX)?;
@@ -80,7 +89,7 @@ impl Tree {
             b't' => Node::Bool(true),
             b'f' => Node::Bool(false),
             b'"' => {
-                Node::String(serde_json::from_str(text).map_err(|_| McpSchemaError::InvalidJson)?)
+                Node::string(serde_json::from_str(text).map_err(|_| McpSchemaError::InvalidJson)?)
             }
             b'[' | b'{' => {
                 let mut deserializer = serde_json::Deserializer::from_str(text);
@@ -142,8 +151,15 @@ impl Tree {
         }
     }
     pub fn string(&self, id: usize) -> Option<&str> {
-        if let Node::String(value) = &self.nodes[id] {
+        if let Node::String { value, .. } = &self.nodes[id] {
             Some(value)
+        } else {
+            None
+        }
+    }
+    pub fn string_scalar_count(&self, id: usize) -> Option<usize> {
+        if let Node::String { scalar_count, .. } = &self.nodes[id] {
+            Some(*scalar_count)
         } else {
             None
         }

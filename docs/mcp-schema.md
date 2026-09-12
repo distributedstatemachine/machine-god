@@ -132,6 +132,10 @@ is a hard atomic admission error; cache exhaustion neither rejects a supported
 schema nor changes it to `ServerAuthoritative`.
 
 Equality recursion is charged to evaluation work as well as normal validation.
+Decoded string scalar counts are computed once per parsed value and reused by
+length constraints, including repeated references; their inline storage is part
+of the arena charge. Character-class flag and individual range checks consume
+the shared pattern-work budget, including unsuccessful comparisons.
 Schemas and instances remain untrusted data after validation. Full native
 executable publication must separately bind admitted schemas, exact arguments,
 configuration/authentication and live session/turn authority; projection must
