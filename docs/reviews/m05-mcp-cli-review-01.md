@@ -64,6 +64,12 @@ substage ceiling under the original deadline while allowing the configured MCP
 deadline through its own helper. Evidence: `r1-lifecycle-diagnostic.log` in the
 same retained directory. This baseline failure is not replacement-gate evidence.
 
+The original-candidate notification diagnostic also reproduced the reported
+failure: in one selected turn, the first tool call with 33 progress notifications
+completed, while the second returned a tool error. Owned cleanup completed before
+the assertion. Evidence: `r1-notification-diagnostic.log`; the diagnostic source
+is retained on `agent/m63-mcp-r1-notification-diagnostic` at `f5637596`.
+
 ## Remediation decisions
 
 Backward compatibility is not required. Correct the obsolete continuation
