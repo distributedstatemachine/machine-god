@@ -12,9 +12,14 @@ fn catalog(kind: McpCatalogKind, now: u64, ttl: u64) -> McpDescriptorCatalog {
         McpCatalogKind::ResourceTemplates => "resourceTemplates",
         McpCatalogKind::Prompts => "prompts",
     };
+    let items = if kind == McpCatalogKind::Resources {
+        r#"[{"uri":"test://fixed","name":"fixed"}]"#
+    } else {
+        "[]"
+    };
     let mut builder =
         McpCatalogBuilder::new(kind, ProtocolVersion::Modern, McpCatalogLimits::default()).unwrap();
-    builder.append_response(format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"resultType":"complete","{field}":[],"ttlMs":{ttl}}}}}"#).as_bytes(), &RpcId::Integer(1), None, now).unwrap();
+    builder.append_response(format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"resultType":"complete","{field}":{items},"ttlMs":{ttl}}}}}"#).as_bytes(), &RpcId::Integer(1), None, now).unwrap();
     McpDescriptorCatalog::admit(builder.finish().unwrap(), McpDescriptorLimits::default()).unwrap()
 }
 fn ticket(state: &mut NativeMcpCatalogState, kind: McpCatalogKind, now: u64) -> McpRefreshTicket {
