@@ -32,6 +32,7 @@ pub mod http;
 #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
 pub mod http_peer;
 pub mod interaction;
+pub mod lifetime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod management;
 pub mod mrtr;
