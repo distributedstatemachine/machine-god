@@ -33,25 +33,7 @@ pub(super) async fn build(
     #[cfg(feature = "mcp-http")]
     let _identity_cleanup =
         super::authentication::IdentityCleanup(startup.authentication_identities.clone());
-    let mut receipts: Vec<_> = startup
-        .configuration
-        .servers()
-        .iter()
-        .map(|server| {
-            let state = match phase.select(server.enabled(), server.required()) {
-                Selection::Connect => State::NotAttempted,
-                Selection::Disabled => State::Disabled,
-                Selection::Deferred => State::Deferred,
-            };
-            NativeMcpStartupServerReceipt {
-                name: server.name().into(),
-                required: server.required(),
-                state,
-                attempts: 0,
-                cleanup: NativeMcpStartupCompletion::new(),
-            }
-        })
-        .collect();
+    let mut receipts = initial_receipts(startup, phase);
     let mut servers = Vec::new();
     let mut failure = None;
     let permit = startup
@@ -138,6 +120,31 @@ pub(super) async fn build(
     }
 }
 
+fn initial_receipts(
+    startup: &NativeMcpStartup,
+    phase: Phase,
+) -> Vec<NativeMcpStartupServerReceipt> {
+    startup
+        .configuration
+        .servers()
+        .iter()
+        .map(|server| {
+            let state = match phase.select(server.enabled(), server.required()) {
+                Selection::Connect => State::NotAttempted,
+                Selection::Disabled => State::Disabled,
+                Selection::Deferred => State::Deferred,
+            };
+            NativeMcpStartupServerReceipt {
+                name: server.name().into(),
+                required: server.required(),
+                state,
+                attempts: 0,
+                cleanup: NativeMcpStartupCompletion::new(),
+            }
+        })
+        .collect()
+}
+
 async fn server(
     startup: &NativeMcpStartup,
     configuration: Arc<McpServerConfig>,
@@ -219,33 +226,19 @@ async fn server(
     authority_cancellations.extend(generations);
     control::check_optional(&startup.clock, guards, deadline)?;
     control::check_optional(&startup.clock, &authority_cancellations, deadline)?;
-    let charge = catalogs
-        .iter()
-        .try_fold(minimum, |total, catalog| {
-            total
-                .checked_add(catalog.retained_byte_charge())
-                .ok_or(Error::Limit)
-        })?
-        .checked_add(authentication.len())
-        .ok_or(Error::Limit)?;
-    if charge > maximum {
-        return Err(Error::Limit);
-    }
+    let charge = candidate_charge(&catalogs, &authentication, minimum, maximum)?;
+    let name = configuration.name();
     #[cfg(feature = "mcp-http")]
     if let Some(lease) = lease {
-        startup.retain_authentication(configuration.name(), lease, owner.completion.clone())?;
+        startup.retain_authentication(name, lease, owner.completion.clone())?;
     }
     #[cfg(feature = "mcp-http")]
     if let Some(selection) = identity_owner {
-        startup.retain_authentication_identity(
-            configuration.name(),
-            selection,
-            owner.completion.clone(),
-        )?;
+        startup.retain_authentication_identity(name, selection, owner.completion.clone())?;
     }
     Ok((
         NativeMcpServerCandidate {
-            server: Arc::from(configuration.name()),
+            server: Arc::from(name),
             configuration: identity,
             authentication,
             catalogs,
@@ -259,6 +252,28 @@ async fn server(
         },
         charge,
     ))
+}
+
+fn candidate_charge(
+    catalogs: &[McpDescriptorCatalog],
+    authentication: &[u8],
+    minimum: usize,
+    maximum: usize,
+) -> Result<usize> {
+    let charge = catalogs
+        .iter()
+        .try_fold(minimum, |total, catalog| {
+            total
+                .checked_add(catalog.retained_byte_charge())
+                .ok_or(Error::Limit)
+        })?
+        .checked_add(authentication.len())
+        .ok_or(Error::Limit)?;
+    if charge > maximum {
+        Err(Error::Limit)
+    } else {
+        Ok(charge)
+    }
 }
 
 async fn stdio_server(
