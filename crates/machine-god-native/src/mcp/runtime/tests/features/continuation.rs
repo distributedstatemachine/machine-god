@@ -73,6 +73,16 @@ fn install_input(
     repeat: bool,
     guard: Option<CancellationToken>,
 ) -> Arc<Mutex<Vec<u8>>> {
+    install_input_ttl(runtime, input, repeat, guard, 0)
+}
+
+fn install_input_ttl(
+    runtime: &NativeMcpRuntime,
+    input: String,
+    repeat: bool,
+    guard: Option<CancellationToken>,
+    ttl: u64,
+) -> Arc<Mutex<Vec<u8>>> {
     let writes = Arc::<Mutex<Vec<u8>>>::default();
     let wire = writes.clone();
     let rounds = AtomicUsize::new(0);
@@ -96,7 +106,7 @@ fn install_input(
             "prompts/get" => r#""messages":[{"role":"assistant","content":{"type":"text","text":"finished"}}]"#,
             _ => panic!("unexpected feature method {method}"),
         };
-        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete",{body}}}}}"#)
+        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","ttlMs":{ttl},{body}}}}}"#)
             .into_bytes()
             .into()
     });
@@ -119,6 +129,35 @@ fn install_input(
         .unwrap();
     runtime.publish(candidate).unwrap();
     writes
+}
+
+#[test]
+fn completed_human_read_and_get_are_cached_without_replaying_input() {
+    for command in [READ, GET] {
+        let presenter = Arc::new(Presenter::default());
+        let runtime = interactive(presenter.clone());
+        let writes = install_input_ttl(&runtime, FORM.into(), false, None, 60_000);
+        let owner = runtime.human_command();
+        for _ in 0..2 {
+            let result = futures_executor::block_on(owner.feature_interactive(
+                &request(command),
+                CancellationToken::new(),
+                &source(),
+            ))
+            .unwrap();
+            let McpFeatureReply::Response(response) = result.reply() else {
+                panic!("complete")
+            };
+            assert!(response.result_json().get().contains("finished"));
+        }
+        assert_eq!(presenter.requests.lock().unwrap().len(), 1);
+        assert_eq!(
+            sent(&writes).len(),
+            3,
+            "catalog, initial call, original continuation only"
+        );
+        assert_eq!(runtime.feature_operations.load(Ordering::Acquire), 0);
+    }
 }
 
 fn unresolved(result: &NativeMcpFeatureResult) {

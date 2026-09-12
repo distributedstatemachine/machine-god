@@ -18,7 +18,7 @@ fn request(command: &str) -> McpFeatureRequest {
     };
     McpFeatureRequest::try_from(command).unwrap()
 }
-fn response(result: serde_json::Value, now: Instant) -> McpFeatureResponse {
+fn response(result: &serde_json::Value, now: Instant) -> McpFeatureResponse {
     let init = parse_envelope(br#"{"jsonrpc":"2.0","id":0,"result":{"resultType":"complete","capabilities":{"resources":{}}}}"#, WireLimits::default()).unwrap();
     let caps = McpPeerCapabilities::admit(&init, ProtocolVersion::Modern).unwrap();
     let mut builder = McpCatalogBuilder::new(
@@ -59,7 +59,7 @@ fn response(result: serde_json::Value, now: Instant) -> McpFeatureResponse {
 }
 fn complete(ttl: u64, now: Instant) -> McpFeatureResponse {
     response(
-        json!({"resultType":"complete","contents":[{"uri":"test://fixed","text":"retained"}],"ttlMs":ttl}),
+        &json!({"resultType":"complete","contents":[{"uri":"test://fixed","text":"retained"}],"ttlMs":ttl}),
         now,
     )
 }
@@ -178,7 +178,7 @@ fn zero_ttl_unresolved_input_and_clock_regression_are_not_cache_hits() {
     let mut cache = cache(1_000_000);
     for reply in [
         complete(0, epoch),
-        response(json!({"resultType":"input_required","ttlMs":100}), epoch),
+        response(&json!({"resultType":"input_required","ttlMs":100}), epoch),
     ] {
         let fetch = ticket(&mut cache, "one", 0);
         cache.finish(fetch, &reply, (0, 0), epoch, 0).unwrap();
