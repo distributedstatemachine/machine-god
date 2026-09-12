@@ -1,5 +1,5 @@
 //! Pure actual human-command/ScriptPeer composition; the presenter supplies
-//! schema-validated answer data, never a tool grant or a synthetic ToolContext.
+//! schema-validated answer data, never a tool grant or a synthetic `ToolContext`.
 
 use super::*;
 use crate::mcp::{
@@ -142,7 +142,8 @@ fn read_and_get_resume_exact_params_state_numbers_metadata_and_human_origin() {
             let runtime = interactive(presenter.clone());
             let mut input = FORM.to_owned();
             if let Some(state) = state {
-                input.push_str(&format!(r#", "requestState":{state}"#));
+                input.push_str(r#", "requestState":"#);
+                input.push_str(state);
             }
             let writes = install_input(&runtime, input, false, None);
             let query = request(command);

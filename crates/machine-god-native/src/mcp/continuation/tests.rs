@@ -4,8 +4,8 @@ use super::*;
 use crate::mcp::mrtr::{McpInputRequired, McpMrtrLimits};
 use serde_json::json;
 
-fn required(value: serde_json::Value) -> McpInputRequired {
-    let raw = RawValue::from_string(serde_json::to_string(&value).unwrap()).unwrap();
+fn required(value: &serde_json::Value) -> McpInputRequired {
+    let raw = RawValue::from_string(serde_json::to_string(value).unwrap()).unwrap();
     McpInputRequired::parse(&raw, McpMrtrLimits::default()).unwrap()
 }
 
@@ -21,7 +21,7 @@ fn preflight_rejects_empty_or_unsupported_sets_before_any_partial_prompt() {
             "roots":{"method":"roots/list"}
         }}),
     ] {
-        let required = required(value);
+        let required = required(&value);
         assert!(!supported(&required, false));
         assert!(!supported(&required, true));
     }
@@ -33,14 +33,14 @@ fn forms_and_urls_share_preflight_without_inventing_browser_availability() {
         "message":"Continue?","requestedSchema":{"type":"object","properties":{}}}});
     let url = json!({"method":"elicitation/create","params":{
         "mode":"url","message":"Open?","url":"https://example.com/continue"}});
-    let only_form = required(json!({"inputRequests":{"form":form.clone()}}));
+    let only_form = required(&json!({"inputRequests":{"form":form.clone()}}));
     assert!(supported(&only_form, false));
     assert!(supported(&only_form, true));
     for value in [
         json!({"inputRequests":{"url":url.clone()}}),
         json!({"inputRequests":{"form":form,"url":url}}),
     ] {
-        let required = required(value);
+        let required = required(&value);
         assert!(!supported(&required, false));
         assert!(supported(&required, true));
     }
