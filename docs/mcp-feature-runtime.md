@@ -187,11 +187,15 @@ shared retirement flag is checked at its atomic cutoff, before deferred token
 wakeups. Closing a command cancels its pending operations; it does not close an
 unrelated server or another command.
 
-Non-list actions lazily fetch their required catalog families through guarded
-typed exchanges under one operation deadline. Exact resources avoid a needless
-template fetch; template fallback uses the existing admitted matcher. No caller
-catalog or expired startup snapshot supplies identity evidence. This path does
-not cache results: TTL/notification-driven caching remains separate work.
+Non-list actions lazily acquire their required catalog families under one
+operation deadline. The exact peer partition's admitted TTL and notification
+policy can reuse a fresh catalog or retain its prior snapshot during bounded
+failure backoff; neither path extends the original operation's authority. Exact
+resources avoid a needless template fetch, and template fallback uses the admitted
+matcher. Caller-supplied catalogs never supply identity evidence. Direct list
+commands remain explicit guarded exchanges. Catalog retention uses the separate
+shared budget in [catalog refresh](mcp-catalog-refresh.md); caching read/get content
+and expanding resource-specific subscriptions remain separate composition work.
 
 `NativeMcpFeatureResult` retains the original selection and exposes data through
 `reply()`, with separate `revalidate()` and `cancelled()` checks for projection
