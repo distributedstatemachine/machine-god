@@ -4,7 +4,6 @@ use crate::mcp::{
     http::McpHttpClock,
 };
 use std::{
-    future::Future,
     sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
