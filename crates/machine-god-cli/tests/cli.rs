@@ -2713,45 +2713,59 @@ fn session_store_equivalence_rejects_an_externally_tagged_role_without_rewrite()
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn session_store_equivalence_rejects_an_out_of_range_number() {
-    let temporary = TestDirectory::new("session-number-rejected");
-    let state_base = temporary.path().join("state");
-    let (store, record_path, record_before) = seed_manual_current_schema_record(
-        &state_base,
-        "number-rejected",
-        r#"{"value":1.7976931348623158e308}"#,
-    );
-    assert_store_rejects_and_listing_agrees(&store, &state_base, "number-rejected");
-    let output = run_session_bounded(
-        OsStr::new("relative-config-must-not-be-read"),
-        state_base.as_os_str(),
-        "number-rejected",
-    );
-    assert_session_error(&output, true, "Corrupt");
-    assert_output_omits(&output, &["1.7976931348623158e308"]);
-    assert_eq!(fs::read(record_path).unwrap(), record_before);
+fn session_store_equivalence_rejects_malformed_numeric_syntax() {
+    for number in ["01", "1.", "1e", "--1", "NaN", "Infinity"] {
+        let temporary = TestDirectory::new("session-number-rejected");
+        let state_base = temporary.path().join("state");
+        let (store, record_path, record_before) = seed_manual_current_schema_record(
+            &state_base,
+            "number-rejected",
+            &format!(r#"{{"value":{number}}}"#),
+        );
+        assert_store_rejects_and_listing_agrees(&store, &state_base, "number-rejected");
+        let output = run_session_bounded(
+            OsStr::new("relative-config-must-not-be-read"),
+            state_base.as_os_str(),
+            "number-rejected",
+        );
+        assert_session_error(&output, true, "Corrupt");
+        assert_eq!(fs::read(record_path).unwrap(), record_before);
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn session_store_equivalence_accepts_the_maximum_finite_number() {
-    let temporary = TestDirectory::new("session-number-accepted");
-    let state_base = temporary.path().join("state");
-    let (store, record_path, record_before) = seed_manual_current_schema_record(
-        &state_base,
-        "number-accepted",
-        r#"{"value":1.79769313486231581e308}"#,
-    );
-    let record = assert_store_accepts_and_lists(&store, &state_base, "number-accepted");
-    assert_eq!(record.metadata.len(), 1);
-    let output = run_session_bounded(
-        OsStr::new("relative-config-must-not-be-read"),
-        state_base.as_os_str(),
-        "number-accepted",
-    );
-    assert_success(&output, &expected_session_json("number-accepted", 1));
-    assert_output_omits(&output, &["1.79769313486231581e308"]);
-    assert_eq!(fs::read(record_path).unwrap(), record_before);
+fn session_store_equivalence_preserves_numbers_beyond_binary_float_limits() {
+    for number in [
+        "1.7976931348623158e308",
+        "1.79769313486231581e308",
+        "1e99999",
+        "1e-99999",
+        "9007199254740993",
+        "-0",
+    ] {
+        let temporary = TestDirectory::new("session-number-accepted");
+        let state_base = temporary.path().join("state");
+        let (store, record_path, record_before) = seed_manual_current_schema_record(
+            &state_base,
+            "number-accepted",
+            &format!(r#"{{"value":{number}}}"#),
+        );
+        let record = assert_store_accepts_and_lists(&store, &state_base, "number-accepted");
+        assert_eq!(record.metadata.len(), 1);
+        assert_eq!(
+            serde_json::to_string(&record.metadata["value"]).unwrap(),
+            number
+        );
+        let output = run_session_bounded(
+            OsStr::new("relative-config-must-not-be-read"),
+            state_base.as_os_str(),
+            "number-accepted",
+        );
+        assert_success(&output, &expected_session_json("number-accepted", 1));
+        assert_output_omits(&output, &[number]);
+        assert_eq!(fs::read(record_path).unwrap(), record_before);
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2833,8 +2847,8 @@ fn session_store_equivalence_rejects_final_json_node_overflow() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn session_store_equivalence_matches_metadata_serde_recursion_boundary() {
-    for (depth, accepted) in [(123, true), (124, false)] {
+fn session_store_equivalence_matches_metadata_payload_depth_boundary() {
+    for (depth, accepted) in [(63, true), (64, false)] {
         let label = format!("recursion-metadata-{depth}");
         let metadata = format!("{{\"payload\":{}}}", shadowed_nested_arrays(depth));
         assert_session_recursion_process_case(&label, "[]", &metadata, 0, 1, accepted);
@@ -2843,8 +2857,8 @@ fn session_store_equivalence_matches_metadata_serde_recursion_boundary() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn session_store_equivalence_matches_json_content_serde_recursion_boundary() {
-    for (depth, accepted) in [(120, true), (121, false)] {
+fn session_store_equivalence_matches_json_content_payload_depth_boundary() {
+    for (depth, accepted) in [(63, true), (64, false)] {
         let label = format!("recursion-json-content-{depth}");
         let messages = format!(
             "[{{\"role\":\"user\",\"content\":[{{\"type\":\"json\",\"value\":{}}}]}}]",
@@ -2856,8 +2870,8 @@ fn session_store_equivalence_matches_json_content_serde_recursion_boundary() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn session_store_equivalence_matches_tool_call_serde_recursion_boundary() {
-    for (depth, accepted) in [(119, true), (120, false)] {
+fn session_store_equivalence_matches_tool_call_payload_depth_boundary() {
+    for (depth, accepted) in [(63, true), (64, false)] {
         let label = format!("recursion-tool-call-{depth}");
         let messages = format!(
             concat!(
@@ -2874,8 +2888,8 @@ fn session_store_equivalence_matches_tool_call_serde_recursion_boundary() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn session_store_equivalence_matches_tool_result_serde_recursion_boundary() {
-    for (depth, accepted) in [(119, true), (120, false)] {
+fn session_store_equivalence_matches_tool_result_payload_depth_boundary() {
+    for (depth, accepted) in [(63, true), (64, false)] {
         let label = format!("recursion-tool-result-{depth}");
         let messages = format!(
             concat!(

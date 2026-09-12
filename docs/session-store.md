@@ -118,7 +118,7 @@ Writes use the compact representation shown: the envelope has exactly
 or duplicate typed schema fields, missing or wrong-typed fields, malformed or
 non-UTF-8 documents, trailing data, and unsupported versions are rejected
 rather than ignored or migrated. Duplicate keys in the metadata map and inside
-arbitrary embedded JSON values use `serde_json`'s ordinary last-value-wins map
+arbitrary embedded JSON values use last-value-wins map
 semantics; they are not typed-schema duplicates. Revision zero and
 `next_turn_sequence` zero are not accepted from a stored file.
 
@@ -184,8 +184,9 @@ use fixed-stack scratch space. Transcript strings and arbitrary JSON payloads
 are validated and discarded while streaming; only the returned session and
 incarnation ID strings survive as payload-sized allocations.
 
-The summary parser must accept and reject numbers exactly as canonical
-`serde_json::Number` parsing does. `StoredEnvelope`, `StoredRecord`,
+The summary parser must accept and reject numeric syntax exactly as the canonical
+lossless JSON decoder does, without imposing binary-float range limits.
+`StoredEnvelope`, `StoredRecord`,
 `StoredMessage`, `StoredToolCall`, and `StoredToolOutput` are object-only, while
 `Role` is string-only; the canonical writer is unchanged. Typed schema fields
 remain unique. Metadata
@@ -201,13 +202,15 @@ shape checks, and exact
 filename/ID binding remain store-owned constraints. They are not the engine's
 configurable message, transcript, or metadata limits.
 
-Parse-time recursion is a separate ordinary-load compatibility boundary from
-the final-tree depth limit. `serde_json` 1.0.151 admits at most 127
-simultaneously active arrays or objects, including typed envelope parents.
-Before arbitrary JSON begins, metadata has three active parents, a JSON content
-block has six, and tool-call/result JSON has seven. The specialized inspector
-therefore accepts/rejects nested-array depths at 123/124, 120/121, 119/120, and
-119/120 respectively, including a value later shadowed by a duplicate key.
+Both typed loading and streaming inspection enforce 64 containers while parsing
+each arbitrary JSON payload, including values later shadowed by duplicate keys.
+Envelope parents do not consume this per-payload budget. A payload object with
+63 nested arrays is admitted; adding a 64th array exceeds the combined limit.
+The same rule applies to metadata values, JSON content, tool arguments and tool
+results. The loader additionally preflights whole-document lexical nesting at
+71 containers (64 payload containers plus at most seven typed parents) before
+raw-token decoding. Serde's historical recursion and floating-point quirks are
+not native-format compatibility requirements.
 
 The complete native projection and error-mapping contract lives in
 [`Native session inspection`](native-session-inspection.md); historical review
@@ -356,8 +359,7 @@ reset over the exact shared store, including a reset-specific atomic incarnation
 replacement; it does not change the ordinary store trait described by this
 page. Native session listing adds bounded lifecycle-level IDs-only listing above
 the same retained root; it adds no index, rich summary, cursor, pagination, CLI,
-or global snapshot. Migration and legacy import,
-schema upgrades, encryption at rest, authenticated records, secure erasure,
+or global snapshot. Schema upgrades, encryption at rest, authenticated records, secure erasure,
 key management, backup/restore, multi-record transactions, cross-host
 coordination, and non-Unix hardening remain deferred. The store makes no
 upstream-equivalence or product-performance claim.

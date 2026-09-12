@@ -828,11 +828,19 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn streamed_numbers_match_authoritative_serde_boundaries() {
+    fn streamed_numbers_match_authoritative_exact_json_syntax() {
         let cases = [
-            ("1.7976931348623158e308".to_owned(), false),
+            ("1.7976931348623158e308".to_owned(), true),
             ("1.79769313486231581e308".to_owned(), true),
-            (format!("17976931348623158{}", "0".repeat(292)), false),
+            (format!("17976931348623158{}", "0".repeat(292)), true),
+            ("1e400".to_owned(), true),
+            ("1e-400".to_owned(), true),
+            ("-0".to_owned(), true),
+            ("1e".to_owned(), false),
+            ("1e+".to_owned(), false),
+            ("01".to_owned(), false),
+            ("1.".to_owned(), false),
+            ("+1".to_owned(), false),
         ];
         for (index, (number, accepted)) in cases.into_iter().enumerate() {
             let temporary = TempDirectory::new(&format!("number-boundary-{index}"));
@@ -847,7 +855,12 @@ mod tests {
             let streamed = store.inspect_session_summary(id("alpha"));
             assert_eq!(ordinary.is_ok(), accepted, "ordinary load for {number}");
             assert_eq!(streamed.is_ok(), accepted, "streamed load for {number}");
-            if !accepted {
+            if accepted {
+                assert_eq!(
+                    ordinary.unwrap().unwrap().metadata["number"],
+                    machine_god_core::json::from_str(&number).unwrap()
+                );
+            } else {
                 assert_eq!(ordinary.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
                 assert_eq!(streamed.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
             }
@@ -874,6 +887,34 @@ mod tests {
         assert_eq!(record.metadata.len(), 2);
         assert_eq!(record.metadata["same"], serde_json::Value::Null);
         assert_eq!(summary.metadata_entry_count, 2);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn shadowed_metadata_entries_still_obey_each_values_lexical_depth() {
+        for (depth, accepted) in [(64, true), (65, false)] {
+            let temporary = TempDirectory::new("metadata-shadowed-depth");
+            let store = FileSessionStore::open(temporary.path()).unwrap();
+            save_record(
+                &store,
+                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+            );
+            let nested = format!("{}null{}", "[".repeat(depth), "]".repeat(depth));
+            replace_empty_metadata(
+                temporary.path(),
+                &format!(r#"{{"same":{nested},"s\u0061me":null}}"#),
+            );
+
+            let ordinary = ready(store.load(id("alpha")));
+            let streamed = store.inspect_session_summary(id("alpha"));
+            if accepted {
+                assert_eq!(ordinary.unwrap().unwrap().metadata["same"], json!(null));
+                assert_eq!(streamed.unwrap().unwrap().metadata_entry_count, 1);
+            } else {
+                assert_eq!(ordinary.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+                assert_eq!(streamed.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+            }
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -915,7 +956,7 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn streamed_recursion_limit_matches_authoritative_store_in_every_json_context() {
+    fn streamed_lexical_depth_matches_authoritative_store_in_every_json_context() {
         enum Location {
             Metadata,
             JsonContent,
@@ -930,14 +971,6 @@ mod tests {
                     Self::JsonContent => "json-content",
                     Self::ToolCallArguments => "tool-call-arguments",
                     Self::ToolResultContent => "tool-result-content",
-                }
-            }
-
-            const fn first_rejected_array_depth(&self) -> usize {
-                match self {
-                    Self::Metadata => 124,
-                    Self::JsonContent => 121,
-                    Self::ToolCallArguments | Self::ToolResultContent => 120,
                 }
             }
 
@@ -991,7 +1024,9 @@ mod tests {
             let data = entry_with_suffix(temporary.path(), ".json");
             let persisted = String::from_utf8(fs::read(&data).unwrap()).unwrap();
 
-            let first_rejected = location.first_rejected_array_depth();
+            // The payload object consumes one of the 64 container levels.
+            // Shadowing its first member cannot bypass lexical admission.
+            let first_rejected = machine_god_core::MAX_SAFE_JSON_DEPTH;
             for (array_depth, accepted) in [(first_rejected - 1, true), (first_rejected, false)] {
                 let nested = format!("{}null{}", "[".repeat(array_depth), "]".repeat(array_depth));
                 let shadowed = format!(r#"{{"same":{nested},"same":null}}"#);

@@ -114,7 +114,7 @@ pub const MAX_LIST_SESSION_DIRECTORY_ENTRIES: usize = 1_024;
 /// decoded, or returned.
 pub const MAX_LIST_SESSION_TOTAL_RECORD_BYTES: usize = 64 * 1_024 * 1_024;
 
-pub(crate) const MAX_STORED_JSON_DEPTH: usize = 64;
+pub(crate) const MAX_STORED_JSON_DEPTH: usize = machine_god_core::MAX_SAFE_JSON_DEPTH;
 pub(crate) const MAX_STORED_JSON_NODES: usize = 65_536;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SESSION_INSPECTION_READ_BUFFER_BYTES: usize = 4 * 1_024;
@@ -122,24 +122,6 @@ const SESSION_INSPECTION_READ_BUFFER_BYTES: usize = 4 * 1_024;
 const JSON_KEY_TRACKER_INITIAL_BUCKETS: usize = 8;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const JSON_KEY_TRACKER_MAX_BUCKETS: usize = MAX_STORED_JSON_NODES * 2;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-/// `serde_json` starts with 128 remaining recursion slots and rejects a JSON
-/// container when entering it would reduce that counter to zero. The ordinary
-/// store decoder therefore accepts at most 127 simultaneously active arrays or
-/// objects, including the typed envelope surrounding an arbitrary JSON value.
-const MAX_SERDE_JSON_ACTIVE_CONTAINERS: usize = 127;
-/// Active typed containers before a top-level metadata value is decoded:
-/// envelope object, record object, and metadata map.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const METADATA_JSON_PARENT_CONTAINERS: usize = 3;
-/// Active typed containers before a `json` content value is decoded: envelope,
-/// record, messages, message, content, and internally tagged content block.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const CONTENT_JSON_PARENT_CONTAINERS: usize = 6;
-/// A tool-call or tool-result payload has the same parents as `json` content
-/// plus its `call` or `output` object.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const TOOL_JSON_PARENT_CONTAINERS: usize = 7;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const JSON_KEY_VERIFICATION_DOMAIN: &[u8] = b"machine-god:json-key-verification:v1:";
 
@@ -1450,7 +1432,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
                 }
                 "value" => {
                     mark_field(&mut fields, 4)?;
-                    self.parse_and_account_embedded_json(CONTENT_JSON_PARENT_CONTAINERS)?;
+                    self.parse_and_account_embedded_json()?;
                 }
                 "call" => {
                     mark_field(&mut fields, 8)?;
@@ -1507,7 +1489,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
                 }
                 "arguments" => {
                     mark_field(&mut fields, 4)?;
-                    self.parse_and_account_embedded_json(TOOL_JSON_PARENT_CONTAINERS)?;
+                    self.parse_and_account_embedded_json()?;
                 }
                 _ => return Err(InspectionParseError::Corrupt),
             }
@@ -1535,7 +1517,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             match field.as_str() {
                 "content" => {
                     mark_field(&mut fields, 1)?;
-                    self.parse_and_account_embedded_json(TOOL_JSON_PARENT_CONTAINERS)?;
+                    self.parse_and_account_embedded_json()?;
                 }
                 "is_error" => {
                     mark_field(&mut fields, 2)?;
@@ -1565,8 +1547,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
         loop {
             let key = self.parse_string_digest()?;
             self.expect(b':')?;
-            let summary =
-                self.parse_embedded_json(json_container_budget(METADATA_JSON_PARENT_CONTAINERS))?;
+            let summary = self.parse_embedded_json(MAX_STORED_JSON_DEPTH)?;
             overflowed |= self.json_keys.upsert(scope, key, summary)?.is_full();
             if self.consume(b'}')? {
                 let values = self.json_keys.finish_scope(scope)?;
@@ -1584,12 +1565,11 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
     }
 
     /// Validates one arbitrary JSON root and accounts only the final decoded
-    /// value. Object duplicates therefore have serde's last-value-wins shape.
-    fn parse_and_account_embedded_json(
-        &mut self,
-        parent_containers: usize,
-    ) -> Result<(), InspectionParseError> {
-        let summary = self.parse_embedded_json(json_container_budget(parent_containers))?;
+    /// value. Object duplicates therefore have last-value-wins node accounting,
+    /// but every visited value must obey the typed decoder's lexical depth bound,
+    /// including values later shadowed by duplicate keys.
+    fn parse_and_account_embedded_json(&mut self) -> Result<(), InspectionParseError> {
+        let summary = self.parse_embedded_json(MAX_STORED_JSON_DEPTH)?;
         if summary.max_depth > MAX_STORED_JSON_DEPTH {
             return Err(InspectionParseError::Corrupt);
         }
@@ -2041,11 +2021,6 @@ impl JsonSummary {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn capped_json_nodes(left: usize, right: usize) -> usize {
     left.saturating_add(right).min(MAX_STORED_JSON_NODES + 1)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const fn json_container_budget(parent_containers: usize) -> usize {
-    MAX_SERDE_JSON_ACTIVE_CONTAINERS - parent_containers
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3126,35 +3101,43 @@ mod tests {
 
     #[test]
     fn exact_json_history_roundtrip_preserves_numbers_and_private_keys() {
-        let value = machine_god_core::json::from_str(r#"{"n":9007199254740993.00001,"large":1e400,"tiny":1e-400,"zero":-0,"$serde_json::private::Number":"1","raw":{"$serde_json::private::RawValue":"null"}}"#).unwrap();
-        let call_id = ToolCallId::new("call-1").unwrap();
-        let mut record = SessionRecord::empty(
-            SessionId::new("exact").unwrap(),
-            SessionIncarnationId::new("incarnation").unwrap(),
-        );
-        record.metadata.insert("exact".into(), value.clone());
-        record.messages.push(Message {
-            role: Role::Assistant,
-            content: vec![
-                ContentBlock::Json {
-                    value: value.clone(),
-                },
-                ContentBlock::ToolCall {
-                    call: ToolCall {
-                        id: call_id.clone(),
-                        name: ToolName::new("mcp.exact").unwrap(),
-                        arguments: value.clone(),
+        for depth in [0, super::MAX_STORED_JSON_DEPTH - 2] {
+            let mut value = machine_god_core::json::from_str(r#"{"n":9007199254740993.00001,"large":1e400,"tiny":1e-400,"zero":-0,"$serde_json::private::Number":"1","raw":{"$serde_json::private::RawValue":"null"}}"#).unwrap();
+            // The literal object contains two container levels. Exercise the exact
+            // writer/typed-loader boundary in every persisted arbitrary JSON field.
+            for _ in 0..depth {
+                value = Value::Array(vec![value]);
+            }
+            let call_id = ToolCallId::new("call-1").unwrap();
+            let mut record = SessionRecord::empty(
+                SessionId::new("exact").unwrap(),
+                SessionIncarnationId::new("incarnation").unwrap(),
+            );
+            record.metadata.insert("exact".into(), value.clone());
+            record.messages.push(Message {
+                role: Role::Assistant,
+                content: vec![
+                    ContentBlock::Json {
+                        value: value.clone(),
                     },
-                },
-                ContentBlock::ToolResult {
-                    call_id,
-                    output: ToolOutput::success(value),
-                },
-            ],
-        });
-        let bytes = serialize_record(&record).unwrap();
-        let super::ObjectOnly(envelope) = super::decode_stored_envelope(&bytes).unwrap();
-        assert_eq!(SessionRecord::from(envelope.record.0), record);
+                    ContentBlock::ToolCall {
+                        call: ToolCall {
+                            id: call_id.clone(),
+                            name: ToolName::new("mcp.exact").unwrap(),
+                            arguments: value.clone(),
+                        },
+                    },
+                    ContentBlock::ToolResult {
+                        call_id,
+                        output: ToolOutput::success(value),
+                    },
+                ],
+            });
+            validate_record_json(&record).unwrap();
+            let bytes = serialize_record(&record).unwrap();
+            let super::ObjectOnly(envelope) = super::decode_stored_envelope(&bytes).unwrap();
+            assert_eq!(SessionRecord::from(envelope.record.0), record);
+        }
     }
 
     #[test]
