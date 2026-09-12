@@ -39,6 +39,8 @@ mod tests;
 #[cfg(test)]
 use machine_god_native as native;
 #[cfg(test)]
+mod mcp_test_support;
+#[cfg(test)]
 #[path = "../../../../machine-god-native/tests/interactive_session/support.rs"]
 mod support;
 

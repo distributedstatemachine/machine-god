@@ -25,6 +25,16 @@ struct Harness {
 }
 
 async fn harness(fixture: &support::Fixture) -> Harness {
+    let (bridge, inbox) =
+        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    harness_with_prompts(fixture, bridge, inbox).await
+}
+
+async fn harness_with_prompts(
+    fixture: &support::Fixture,
+    bridge: Arc<NativeInteractivePromptBridge>,
+    inbox: NativeInteractivePromptInbox,
+) -> Harness {
     assert!(Arc::ptr_eq(
         &fixture.undo,
         &fixture.host.undo_tracker().unwrap()
@@ -58,8 +68,6 @@ async fn harness(fixture: &support::Fixture) -> Harness {
         ),
         CancellationToken::new(),
     );
-    let (bridge, inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
     let (send, work) = tokio::sync::mpsc::channel(1);
     let (ack, acknowledgements) = tokio::sync::mpsc::channel(1);
     let (signal, received) = tokio::sync::mpsc::channel(1);

@@ -1,7 +1,6 @@
 //! Composed literal slash dispatch. Requires the exact fresh release helper.
 use super::*;
 use serde_json::{Value, json};
-use std::time::Instant;
 use tokio::net::TcpListener;
 
 #[path = "runtime/support.rs"]
