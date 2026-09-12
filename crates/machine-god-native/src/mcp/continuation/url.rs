@@ -1,6 +1,6 @@
 //! Consented URL handoff and at most three explicit recovery questions.
 
-use super::{ContinuationInput, PromptCancellation, prompt, rejected};
+use super::{InputSource, PromptCancellation, rejected};
 use crate::mcp::{
     browser_launcher::{NativeMcpBrowserLaunchOutcome, NativeMcpBrowserLauncher},
     interaction::{
@@ -8,7 +8,6 @@ use crate::mcp::{
         McpElicitationPromptError, McpUrlRecoveryAnswer, McpUrlRecoveryPromptRequest,
     },
     mrtr::{McpElicitationAction, McpElicitationRequest},
-    runtime::NativeMcpRuntimeToolCall,
 };
 use futures_util::future::{Either, select};
 use machine_god_core::{CancellationToken, ToolError};
@@ -16,20 +15,19 @@ use serde_json::value::RawValue;
 use std::sync::Arc;
 
 pub(super) async fn complete(
-    call: &NativeMcpRuntimeToolCall,
-    input: &ContinuationInput,
+    call: &InputSource<'_>,
     request: &Arc<McpElicitationRequest>,
     consent: &McpElicitationAnswer,
     presenter: &dyn McpElicitationPresenter,
     launcher: &NativeMcpBrowserLauncher,
 ) -> Result<Option<McpElicitationAnswer>, ToolError> {
-    if launch(call, input, request, consent, launcher).await? {
+    if launch(call, request, consent, launcher).await? {
         return answer(request, McpElicitationAction::Accept).map(Some);
     }
     for _ in 0..3 {
         call.revalidate()?;
         call.check_interaction_deadline()?;
-        let prompt = McpUrlRecoveryPromptRequest::new(prompt(call, request.clone())?)
+        let prompt = McpUrlRecoveryPromptRequest::new(call.prompt(request.clone())?)
             .map_err(|_| rejected())?;
         let cancellation = PromptCancellation(CancellationToken::new());
         let recovery = match select(
@@ -51,7 +49,7 @@ pub(super) async fn complete(
                 return answer(request, McpElicitationAction::Cancel).map(Some);
             }
             Ok(McpUrlRecoveryAnswer::RetryBrowser) => {
-                if launch(call, input, request, consent, launcher).await? {
+                if launch(call, request, consent, launcher).await? {
                     return answer(request, McpElicitationAction::Accept).map(Some);
                 }
             }
@@ -63,14 +61,13 @@ pub(super) async fn complete(
 }
 
 async fn launch(
-    call: &NativeMcpRuntimeToolCall,
-    input: &ContinuationInput,
+    call: &InputSource<'_>,
     request: &Arc<McpElicitationRequest>,
     consent: &McpElicitationAnswer,
     launcher: &NativeMcpBrowserLauncher,
 ) -> Result<bool, ToolError> {
     let cancellation = PromptCancellation(CancellationToken::new());
-    let handoff = call.launch_url(input, request, consent, launcher, cancellation.0.clone())?;
+    let handoff = call.launch_url(request, consent, launcher, cancellation.0.clone())?;
     let result = match select(handoff, call.interaction_cancelled()).await {
         Either::Left((result, _)) => result,
         Either::Right(_) => return Err(rejected()),

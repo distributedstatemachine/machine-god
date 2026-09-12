@@ -133,14 +133,38 @@ remain outside that continuation path.
 The typed native presenter exposes URL recovery; an unsupported live presenter
 returns `Unavailable`. Recovery yields `ContinueManually`, `RetryBrowser`, or
 `Cancel`. These choices are data, not browser effects or continuation grants.
-Recovery uses the original model context and the existing bounded inbox, exact
-activation/token checks, response charges, cancellation and CLI flush
+Recovery uses the original native tool or human-feature source and the existing
+bounded inbox, exact activation/token checks, response charges, cancellation and CLI flush
 acknowledgement. Dropping a pending question invalidates its token.
-The collector owns browser launching, the three-prompt recovery budget and
-consuming continuation custody. Recovery rendering does not repeat the URL or
+The collector owns browser orchestration and the three-prompt recovery budget;
+the original runtime operation consumes continuation custody. Recovery rendering does not repeat the URL or
 create a human-command origin from fabricated model fields.
 
 There is no legacy completion-notification registry or public completion-window
 API. Modern URL consent does not depend on legacy elicitation IDs or
 `notifications/elicitation/complete`; its result is submitted through the modern
 input-response continuation. Browser acceptance is not proof of remote completion.
+
+## Shared native input collection
+
+Tool continuations and human resource-read/prompt-get continuations use one
+collector selected by concrete native operation types. The tool branch retains
+its original sealed required input and round allocation, including when input
+cannot be resolved. The human branch obtains required input and presentation
+origin only from its native feature-call owner; no caller-supplied request set,
+model context, tool name or authority callback substitutes for that owner.
+
+Before any prompt, collection validates the original operation and interaction
+deadline and preflights the entire nonempty request set. Unsupported sampling or
+roots, and URL requests without an explicitly selected launcher, leave input
+unresolved without partial prompting. Form answers retain their inherited schema
+bounds. A cancel disposition supplies cancel responses for remaining requests;
+actual operation cancellation aborts collection instead of granting continuation.
+
+Both paths bound the escaped aggregate response map to 128 KiB, validate its exact
+request keys, and revalidate operation ownership/deadline after asynchronous
+presentation or browser work. Prompt abandonment cancels the exact inbox wait.
+URL recovery shares the same three-question budget and typed native launcher
+checks; a recovery choice cannot mint browser or continuation authority. The
+collector returns validated response data only. The original runtime operation
+still owns one-shot consumption, round limits and any subsequent wire submission.

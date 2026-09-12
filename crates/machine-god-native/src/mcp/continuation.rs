@@ -3,20 +3,22 @@
 
 use super::{
     browser_launcher::NativeMcpBrowserLauncher,
-    interaction::{
-        McpElicitationPresenter, McpElicitationPromptError, McpElicitationPromptRequest,
-    },
+    interaction::{McpElicitationPresenter, McpElicitationPromptError},
     mrtr::{
         McpElicitationAction, McpElicitationMode, McpInputRequestPayload, McpValidatedResponses,
     },
-    runtime::NativeMcpRuntimeToolCall,
+    runtime::{NativeMcpRuntimeFeatureCall, NativeMcpRuntimeToolCall},
     tool_result::{McpToolInputRequired, McpToolProtocolFailure},
 };
 
+mod source;
+#[cfg(test)]
+mod tests;
 mod url;
 use futures_util::future::{Either, select};
 use machine_god_core::{CancellationToken, ToolError, ToolErrorKind, ToolOutput};
 use serde_json::value::RawValue;
+use source::InputSource;
 use std::{
     collections::BTreeMap,
     sync::{Arc, atomic::AtomicBool},
@@ -53,16 +55,42 @@ pub(crate) async fn collect_input(
     presenter: &dyn McpElicitationPresenter,
     launcher: Option<&NativeMcpBrowserLauncher>,
 ) -> Result<InputOutcome, ToolError> {
+    let responses = collect(
+        &InputSource::Tool {
+            call,
+            input: &input,
+        },
+        presenter,
+        launcher,
+    )
+    .await?;
+    Ok(match responses {
+        Some(responses) => InputOutcome::Consented(ContinuationConsent { input, responses }),
+        None => InputOutcome::Unresolved(input),
+    })
+}
+
+pub(crate) async fn collect_feature_input(
+    call: &NativeMcpRuntimeFeatureCall,
+    presenter: &dyn McpElicitationPresenter,
+    launcher: Option<&NativeMcpBrowserLauncher>,
+) -> Result<Option<McpValidatedResponses>, ToolError> {
+    collect(&InputSource::Feature(call), presenter, launcher).await
+}
+
+async fn collect(
+    call: &InputSource<'_>,
+    presenter: &dyn McpElicitationPresenter,
+    launcher: Option<&NativeMcpBrowserLauncher>,
+) -> Result<Option<McpValidatedResponses>, ToolError> {
     call.revalidate()?;
     call.check_interaction_deadline()?;
-    let requests = input.required.required().requests();
+    let required = call.required();
+    let requests = required.requests();
     // The pinned responder rejects empty maps, including state-only responses.
     // Preflight all methods/modes before displaying any partial interaction.
-    if call.protocol().version != super::protocol::ProtocolVersion::Modern
-        || requests.is_empty()
-        || requests.iter().any(|request| !matches!(request.payload(), McpInputRequestPayload::Elicitation(form) if form.mode() == McpElicitationMode::Form || launcher.is_some()))
-    {
-        return Ok(InputOutcome::Unresolved(input));
+    if !supported(required, launcher.is_some()) {
+        return Ok(None);
     }
     let mut responses = BTreeMap::<&str, Box<RawValue>>::new();
     // Nonempty object: braces plus commas contribute one more byte than the
@@ -78,7 +106,7 @@ pub(crate) async fn collect_input(
         let answer = if cancelled {
             RawValue::from_string("{\"action\":\"cancel\"}".into()).expect("fixed JSON")
         } else {
-            let prompt = prompt(call, form.clone())?;
+            let prompt = call.prompt(form.clone())?;
             let cancellation = PromptCancellation(CancellationToken::new());
             let answer = match select(
                 presenter.present(prompt, cancellation.0.clone()),
@@ -98,7 +126,6 @@ pub(crate) async fn collect_input(
                     {
                         let Some(answer) = url::complete(
                             call,
-                            &input,
                             form,
                             &answer,
                             presenter,
@@ -106,7 +133,7 @@ pub(crate) async fn collect_input(
                         )
                         .await?
                         else {
-                            return Ok(InputOutcome::Unresolved(input));
+                            return Ok(None);
                         };
                         answer
                     } else {
@@ -116,48 +143,40 @@ pub(crate) async fn collect_input(
                     answer.canonical_json().to_owned()
                 }
                 Err(McpElicitationPromptError::Cancelled) => return Err(rejected()),
-                Err(_) => return Ok(InputOutcome::Unresolved(input)),
+                Err(_) => return Ok(None),
             }
         };
         // Charge the actual bounded escaped key before assembling the aggregate
         // map, then strictly validate the exact keyset and response shape.
-        let key_bytes = serde_json::to_string(request.key())
-            .map_err(|_| rejected())?
-            .len();
-        bytes = bytes
-            .checked_add(key_bytes + answer.get().len() + 2)
-            .ok_or_else(rejected)?;
-        if bytes > 128 * 1024 {
-            return Err(rejected());
-        }
+        charge_response(&mut bytes, request.key(), &answer)?;
         responses.insert(request.key(), answer);
     }
     let json = serde_json::to_string(&responses).map_err(|_| rejected())?;
     let raw = RawValue::from_string(json).map_err(|_| rejected())?;
-    let responses = input
-        .required
-        .required()
-        .validate_responses(&raw)
-        .map_err(|_| rejected())?;
+    let responses = required.validate_responses(&raw).map_err(|_| rejected())?;
     call.revalidate()?;
     call.check_interaction_deadline()?;
-    Ok(InputOutcome::Consented(ContinuationConsent {
-        input,
-        responses,
-    }))
+    Ok(Some(responses))
 }
 
-fn prompt(
-    call: &NativeMcpRuntimeToolCall,
-    request: Arc<super::mrtr::McpElicitationRequest>,
-) -> Result<McpElicitationPromptRequest, ToolError> {
-    McpElicitationPromptRequest::new(
-        call.context().clone(),
-        Arc::from(call.server_name()),
-        call.tool_name().clone(),
-        request,
-    )
-    .map_err(|_| rejected())
+fn supported(required: &super::mrtr::McpInputRequired, has_launcher: bool) -> bool {
+    !required.requests().is_empty()
+        && required.requests().iter().all(|request| {
+            matches!(request.payload(), McpInputRequestPayload::Elicitation(form)
+                if form.mode() == McpElicitationMode::Form || has_launcher)
+        })
+}
+
+fn charge_response(bytes: &mut usize, key: &str, answer: &RawValue) -> Result<(), ToolError> {
+    let key_bytes = serde_json::to_string(key).map_err(|_| rejected())?.len();
+    let total = bytes
+        .checked_add(key_bytes)
+        .and_then(|bytes| bytes.checked_add(answer.get().len()))
+        .and_then(|bytes| bytes.checked_add(2))
+        .filter(|bytes| *bytes <= 128 * 1024)
+        .ok_or_else(rejected)?;
+    *bytes = total;
+    Ok(())
 }
 
 fn rejected() -> ToolError {
