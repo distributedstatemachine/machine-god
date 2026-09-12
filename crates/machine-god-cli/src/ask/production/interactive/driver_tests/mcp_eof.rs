@@ -29,14 +29,11 @@ fn physical_pipe_eof_retires_pending_mcp_human_command_without_an_answer() {
         let (_, replacement) = std::io::pipe().unwrap();
         drop(std::mem::replace(&mut harness.input_writer, replacement));
         let result = runtime.block_on(drive_to_eof(&mut harness));
-        assert_eq!(
-            result.outcome,
-            if raw {
-                AskCommandOutcome::OperationalFailure
-            } else {
-                AskCommandOutcome::Completed
-            }
-        );
+        // Even line-mode EOF cannot report this interrupted human action as
+        // completed: its cancelled native control receipt remains a failure.
+        assert_eq!(result.outcome, AskCommandOutcome::OperationalFailure);
+        assert!(harness.driver.input_ended);
+        assert!(harness.driver.signal.is_none());
         assert!(harness.driver.owner.is_closed());
         assert!(harness.driver.inbox.reply(&token, stale).is_err());
         assert!(fixture.transport.requests().is_empty());
