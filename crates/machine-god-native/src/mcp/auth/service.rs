@@ -8,6 +8,7 @@ use crate::NativeOwnedWorkerScope;
 use machine_god_core::{BoxFuture, CancellationToken};
 use std::{fmt, sync::Arc, time::Instant};
 
+mod lease;
 mod lifetime;
 mod persistence;
 mod state;
@@ -36,43 +37,9 @@ pub struct McpAuthLease {
     credentials: Arc<Credentials>,
     generation: CancellationToken,
     profile: Option<Arc<NativeMcpAuthProfile>>,
+    lifetime: lease::Lifetime,
 }
 redacted!(NativeMcpAuthService, McpAuthLease);
-impl McpAuthLease {
-    #[must_use]
-    pub fn identity(&self) -> &McpAuthIdentity {
-        &self.credentials.identity
-    }
-    /// # Errors
-    /// Rejects a generation invalidated by refresh, logout or owner cutoff.
-    pub fn access_token(&self) -> Result<&[u8]> {
-        if let Some(profile) = &self.profile {
-            profile.check()?;
-        }
-        if self.generation.is_cancelled() {
-            Err(McpAuthError::Conflict)
-        } else {
-            Ok(self.credentials.access.bytes())
-        }
-    }
-    #[must_use]
-    pub fn generation(&self) -> CancellationToken {
-        self.generation.clone()
-    }
-    #[must_use]
-    pub fn cancelled_owned(&self) -> BoxFuture<'static, ()> {
-        let generation = self.generation.clone();
-        let profile = self.profile.clone();
-        Box::pin(async move {
-            if let Some(profile) = profile {
-                futures_util::future::select(generation.cancelled(), Box::pin(profile.stopped()))
-                    .await;
-            } else {
-                generation.cancelled().await;
-            }
-        })
-    }
-}
 impl NativeMcpAuthService {
     #[must_use]
     pub fn new(
@@ -238,7 +205,9 @@ impl NativeMcpAuthService {
         let identity = &operation.guard.identity;
         let snapshot = operation.load(cancellation, deadline).await?;
         let credentials = snapshot.get(identity).ok_or(McpAuthError::Missing)?;
-        if credentials.expires_ms.saturating_sub(60_000) > self.inner.authority.clock.unix_millis()
+        if credentials.expires_ms == i64::MAX
+            || credentials.expires_ms.saturating_sub(60_000)
+                > self.inner.authority.clock.unix_millis()
         {
             return operation.lease(credentials.clone(), cancellation, deadline);
         }

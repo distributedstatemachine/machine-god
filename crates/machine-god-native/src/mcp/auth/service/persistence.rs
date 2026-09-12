@@ -70,6 +70,12 @@ impl Operation {
             guard.inner.hooks.before_commit();
             let profile_lock = profile.map(|profile| profile.lock()).transpose()?;
             guard.check(&cancellation, deadline, false)?;
+            // Map before publication: an unrepresentable deadline cannot erase
+            // an already-durable credential outcome. Commit latency only narrows it.
+            let lifetime = super::lease::Lifetime::new(
+                guard.inner.authority.clock.clone(),
+                credentials.expires_ms,
+            )?;
             #[cfg(test)]
             guard.inner.hooks.admitted_commit();
             let mut durability =
@@ -122,6 +128,7 @@ impl Operation {
                 credentials: Arc::new(credentials),
                 generation,
                 profile: profile.cloned(),
+                lifetime,
             })
         })
         .await

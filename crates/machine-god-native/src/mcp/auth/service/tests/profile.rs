@@ -89,10 +89,12 @@ fn profile_selection_is_inert_and_cached_lease_observes_source_cutoff() {
             .await
             .unwrap();
         assert_eq!(lease.access_token().unwrap(), b"old");
+        assert_eq!(lease.refresh_due(), Ok(false));
         let stopped = lease.cancelled_owned();
         selected.cancellation.cancel();
         stopped.await;
         assert_eq!(lease.access_token(), Err(McpAuthError::Conflict));
+        assert_eq!(lease.refresh_due(), Err(McpAuthError::Conflict));
         assert!(matches!(
             fixture
                 .service

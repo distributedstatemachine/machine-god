@@ -159,6 +159,20 @@ Profile-selected leases and their cancellation waiters retain the original
 owner/configuration cutoff. Explicit injected `Stored` selections remain
 independent of native profile selection.
 
+Each issued lease retains its selected authorization clock and an immutable
+monotonic hard expiry mapped from the persisted wall-clock deadline. Wall-clock
+rollback cannot extend that issued lease; current forward wall-clock expiry can
+reject access earlier. `expires_at` reports that hard deadline in the selected
+authorization clock's domain, which must not be compared with an unrelated
+injected clock. The no-expiry sentinel remains unbounded by token time, not by
+generation or profile authority. Unrepresentable finite deadlines fail before
+credential publication rather than becoming unbounded leases.
+`refresh_due` checks the original generation/profile and the pinned 60-second
+skew, returning true even after expiry; expired `access_token` calls are rejected.
+`cancelled_owned` observes the original cutoff and hard expiry using the selected
+timer only when polled. It creates no detached watcher and does not change the
+meaning of the original generation cancellation token.
+
 One service serializes authorization/refresh for each identity and retains at
 most 64 identities and 128 pending operation reservations, including retired
 operations and worker results that have not been consumed. Async credential

@@ -330,10 +330,15 @@ impl Operation {
             profile.check()?;
         }
         self.guard.check(caller, deadline, false)?;
+        let lifetime = super::lease::Lifetime::new(
+            self.guard.inner.authority.clock.clone(),
+            credentials.expires_ms,
+        )?;
         Ok(McpAuthLease {
             credentials: Arc::new(credentials),
             generation: lock(&self.guard.slot.generation).clone(),
             profile: self.profile.clone(),
+            lifetime,
         })
     }
     pub async fn wait_previous(
