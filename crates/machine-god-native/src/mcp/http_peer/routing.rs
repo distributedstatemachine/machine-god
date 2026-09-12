@@ -211,6 +211,7 @@ pub(super) async fn catalog(
             .map_err(|_| McpHttpPeerError::Protocol)?
         {
             let catalog = builder.finish().map_err(|_| McpHttpPeerError::Protocol)?;
+            peer.check(deadline)?;
             operation.settled = true;
             return Ok(catalog);
         }

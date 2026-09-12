@@ -15,6 +15,7 @@ pub(in crate::mcp::http_peer) async fn exchange(
     deadline: Instant,
 ) -> Result<Received> {
     let response = bounded(writer, &*peer.options.clock, &peer.cancellation, deadline).await??;
+    peer.check(deadline)?;
     head::status(&response)?;
     if response.status != 200 && !(discovery && response.status == 400) {
         return Err(McpHttpPeerError::Protocol);
@@ -38,6 +39,7 @@ pub(in crate::mcp::http_peer) async fn exchange(
         .envelope
         .correlate(expected, discovery)
         .map_err(|_| McpHttpPeerError::Correlation)?;
+    peer.check(deadline)?;
     Ok(Received { frame, status })
 }
 
@@ -64,6 +66,7 @@ async fn response_stream(
             event.data().as_bytes().into(),
             peer.response_limits,
         )?;
+        peer.check(deadline)?;
         match frame.envelope.kind() {
             RpcKind::Success | RpcKind::Error => {
                 frame
