@@ -109,6 +109,7 @@ impl fmt::Debug for McpDescriptorCatalog {
     }
 }
 impl McpDescriptorCatalog {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn same_allocation(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
