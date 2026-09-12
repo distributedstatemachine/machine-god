@@ -25,6 +25,8 @@ use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
 mod control;
 mod launch;
 mod runtime_set;
+#[cfg(test)]
+pub(crate) mod testing;
 mod worker;
 pub use control::McpStdioControl;
 pub use launch::McpStdioLaunch;

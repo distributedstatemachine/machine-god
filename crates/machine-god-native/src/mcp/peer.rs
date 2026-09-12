@@ -20,6 +20,7 @@ mod capabilities;
 mod feature;
 mod routing;
 mod startup;
+mod subscription;
 #[cfg(test)]
 mod tests;
 pub use capabilities::McpPeerCapabilities;
@@ -97,6 +98,7 @@ pub struct McpStdioPeer {
     notifications: VecDeque<RpcEnvelope>,
     notification_bytes: usize,
     pending_replies: routing::Replies,
+    subscription: subscription::State,
     closed: bool,
 }
 pub(crate) struct McpStdioPeerReadiness {
@@ -267,6 +269,7 @@ impl McpStdioPeer {
     /// Retires the connection; its completion still includes deferred reap.
     pub fn close(&mut self) {
         self.closed = true;
+        self.subscription = subscription::State::default();
         self.reserved = McpPendingToolReservation::default();
         self.connection.close();
         self.pending_replies.clear();

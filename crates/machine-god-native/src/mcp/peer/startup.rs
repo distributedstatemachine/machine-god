@@ -171,6 +171,7 @@ async fn connect_inner(
             notifications: &mut peer.notifications,
             notification_bytes: &mut peer.notification_bytes,
             pending_replies: &mut peer.pending_replies,
+            subscription: &mut peer.subscription,
             timer: &peer.timer,
             cancellation: &peer.cancellation,
         },
@@ -212,6 +213,7 @@ fn unnegotiated(
         notifications: VecDeque::new(),
         notification_bytes: 0,
         pending_replies: super::routing::Replies::new(),
+        subscription: super::subscription::State::default(),
         closed: false,
     }
 }

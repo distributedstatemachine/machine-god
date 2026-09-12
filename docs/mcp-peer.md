@@ -114,6 +114,24 @@ holding its lock without mutation. Committing swaps the exact table infallibly
 and returns the previous allocations for disposal outside publication locks;
 dropping the staged guard leaves the old table unchanged.
 
+The caller-polled subscription lane allocates listen IDs from the peer's ordinary
+monotonic allocator and settles the exact typed write receipt before returning.
+It does not claim acknowledgement: the owner feeds queued envelopes into the
+shared catalog-refresh policy before readiness. Polling uses the existing bounded
+idle receiver; timeout or dropped observation retains the active ID, partial NDJSON,
+complete notifications and original pending unsupported-reply receipts. Ordinary
+catalog/feature/tool exchanges continue to route those notifications while matching
+only their own response IDs. An exact active listen final ends the listener; an
+invalid final reports a listener failure without closing an otherwise healthy
+shared stdio peer. Unrelated response IDs remain fatal.
+
+Cancellation writes the fixed exact-ID notification and does not require a final
+server response. At most 64 cancelled IDs remain to consume one late final each;
+64 retained IDs still permit one active listener, while another cancellation must
+wait for retirement capacity. Abandoned or failed cancellation writes retain the
+ordinary close-on-ambiguous-write rule. No listener request is replayed or renewed,
+and no detached reader, process or executor is created by this lane.
+
 Modern behavior is informed by fx `b1774fbf6c7602b503026f96f6e960e946c692ef`,
 especially `mcp_runtime.zig` request metadata, capability parsing and modern
 stdio discovery, and `protocol_negotiation.zig`. Strict duplicate-free wire

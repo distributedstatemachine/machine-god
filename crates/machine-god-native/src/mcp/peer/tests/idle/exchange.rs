@@ -107,6 +107,7 @@ fn context(peer: &mut McpStdioPeer) -> routing::Exchange<'_> {
         notifications: &mut peer.notifications,
         notification_bytes: &mut peer.notification_bytes,
         pending_replies: &mut peer.pending_replies,
+        subscription: &mut peer.subscription,
         timer: &peer.timer,
         cancellation: &peer.cancellation,
     }

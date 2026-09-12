@@ -14,7 +14,7 @@ use crate::mcp::protocol::{ProtocolVersion, RpcKind};
 use crate::mcp::stdio::{McpStdioControl, McpStdioFrame, McpStdioWriteReceipt};
 
 mod idle;
-pub(super) use idle::next_notification;
+pub(super) use idle::{next_notification, poll_subscription};
 
 const MAX_UNSUPPORTED_REPLIES: usize = crate::mcp::stdio::MAX_MCP_STDIO_WRITES - 1;
 const MAX_OPERATION_FRAMES: usize = 256;
@@ -126,15 +126,31 @@ pub(super) struct Exchange<'a> {
     pub notifications: &'a mut VecDeque<RpcEnvelope>,
     pub notification_bytes: &'a mut usize,
     pub pending_replies: &'a mut Replies,
+    pub subscription: &'a mut super::subscription::State,
     pub timer: &'a Arc<dyn McpPeerTimer>,
     pub cancellation: &'a CancellationToken,
 }
 pub(super) async fn exchange(
-    mut context: Exchange<'_>,
+    context: Exchange<'_>,
     writer: Write,
     expected: &RpcId,
     deadline: Instant,
 ) -> Result<McpStdioFrame> {
+    drive(context, writer, Some(expected), deadline)
+        .await?
+        .ok_or(McpPeerError::Correlation)
+}
+
+pub(super) async fn send(context: Exchange<'_>, writer: Write, deadline: Instant) -> Result<()> {
+    drive(context, writer, None, deadline).await.map(|_| ())
+}
+
+async fn drive(
+    mut context: Exchange<'_>,
+    writer: Write,
+    expected: Option<&RpcId>,
+    deadline: Instant,
+) -> Result<Option<McpStdioFrame>> {
     let connection = context.connection;
     let timer = context.timer;
     let cancellation = context.cancellation;
@@ -153,9 +169,9 @@ pub(super) async fn exchange(
             return Err(McpPeerError::Deadline);
         }
         draining &= !replies.is_empty();
-        if writer.is_none() && response.is_some() && replies.is_empty() {
+        if writer.is_none() && (expected.is_none() || response.is_some()) && replies.is_empty() {
             guard.0 = None;
-            return response.ok_or(McpPeerError::Correlation);
+            return Ok(response);
         }
         let event = bounded(
             poll_fn(|cx| {
@@ -207,7 +223,7 @@ pub(super) async fn exchange(
 fn route_exchange_frame(
     context: &mut Exchange<'_>,
     frame: McpStdioFrame,
-    expected: &RpcId,
+    expected: Option<&RpcId>,
     replies: &mut Replies,
     response: &mut Option<McpStdioFrame>,
     draining: bool,
@@ -215,12 +231,15 @@ fn route_exchange_frame(
 ) -> Result<()> {
     match frame.envelope().kind() {
         RpcKind::Success | RpcKind::Error => {
+            if context.subscription.consume(frame.envelope()) {
+                return Ok(());
+            }
             if draining {
                 return Err(McpPeerError::Correlation);
             }
             frame
                 .envelope()
-                .correlate(expected, false)
+                .correlate(expected.ok_or(McpPeerError::Correlation)?, false)
                 .map_err(|_| McpPeerError::Correlation)?;
             if response.replace(frame).is_some() {
                 return Err(McpPeerError::Correlation);
@@ -283,6 +302,7 @@ pub(super) async fn call(
             notifications: &mut peer.notifications,
             notification_bytes: &mut peer.notification_bytes,
             pending_replies: &mut peer.pending_replies,
+            subscription: &mut peer.subscription,
             timer: &peer.timer,
             cancellation: &peer.cancellation,
         },
@@ -332,6 +352,7 @@ pub(super) async fn catalog(
                 notifications: &mut peer.notifications,
                 notification_bytes: &mut peer.notification_bytes,
                 pending_replies: &mut peer.pending_replies,
+                subscription: &mut peer.subscription,
                 timer: &peer.timer,
                 cancellation: &peer.cancellation,
             },

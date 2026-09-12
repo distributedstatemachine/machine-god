@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 mod exchange;
 mod runtime;
+mod subscriptions;
 
 struct ManualTimer {
     origin: Instant,
@@ -65,6 +66,7 @@ fn inert(timer: Arc<dyn McpPeerTimer>) -> McpStdioPeer {
         notifications: VecDeque::new(),
         notification_bytes: 0,
         pending_replies: routing::Replies::new(),
+        subscription: crate::mcp::peer::subscription::State::default(),
         closed: false,
     }
 }

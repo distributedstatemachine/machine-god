@@ -24,7 +24,7 @@ pub(in crate::mcp::peer) async fn next_notification(
     }
     peer.check_available()?;
     let observation = Observation(peer);
-    match read(observation.0, deadline).await {
+    match read(observation.0, deadline, false).await {
         Ok(Some(notification)) => Ok(notification),
         Ok(None) => Err(McpPeerError::Deadline),
         Err(error) => {
@@ -34,7 +34,32 @@ pub(in crate::mcp::peer) async fn next_notification(
     }
 }
 
-async fn read(peer: &mut McpStdioPeer, deadline: Instant) -> Result<Option<RpcEnvelope>> {
+pub(in crate::mcp::peer) async fn poll_subscription(
+    peer: &mut McpStdioPeer,
+    deadline: Instant,
+) -> Result<Option<RpcEnvelope>> {
+    if let Err(error) = peer.check_owner() {
+        peer.close();
+        return Err(error);
+    }
+    peer.check_available()?;
+    let observation = Observation(peer);
+    let result = read(observation.0, deadline, true).await;
+    if result.is_err() {
+        observation.0.close();
+    }
+    let notification = result?;
+    if let Some(error) = observation.0.subscription.take_failure() {
+        return Err(error);
+    }
+    Ok(notification)
+}
+
+async fn read(
+    peer: &mut McpStdioPeer,
+    deadline: Instant,
+    subscription_only: bool,
+) -> Result<Option<RpcEnvelope>> {
     let deadline = peer.lifetime.constrain(deadline);
     // Dropping this receiver releases only the receiving lane/waker. Complete
     // frames and partial NDJSON stay with the existing connection worker.
@@ -42,6 +67,9 @@ async fn read(peer: &mut McpStdioPeer, deadline: Instant) -> Result<Option<RpcEn
     let mut observations = 0;
     loop {
         peer.check_owner()?;
+        if subscription_only && peer.active_subscription().is_none() {
+            return Ok(None);
+        }
         if !observing(peer, deadline)? {
             return Ok(None);
         }
@@ -94,7 +122,11 @@ async fn read(peer: &mut McpStdioPeer, deadline: Instant) -> Result<Option<RpcEn
                             deadline,
                         )?);
                     }
-                    RpcKind::Success | RpcKind::Error => return Err(McpPeerError::Correlation),
+                    RpcKind::Success | RpcKind::Error => {
+                        if !peer.subscription.consume(frame.envelope()) {
+                            return Err(McpPeerError::Correlation);
+                        }
+                    }
                 }
                 // The next loop checks the clock only after retaining the complete
                 // notification/reply. No completed receive future is polled twice.
