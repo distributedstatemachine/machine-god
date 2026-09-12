@@ -24,7 +24,10 @@ impl NativeMcpRuntime {
     ) -> Result<()> {
         let registry = context.registry().map_err(|_| Error::Unavailable)?;
         let caller = BorrowedRefreshCaller::Turn(&registry, cancellation);
-        for server in self.catalog_servers()? {
+        let servers = self
+            .catalog_publication()?
+            .map_or_else(Vec::new, |view| view.servers.clone());
+        for server in servers {
             let mut lane = server.acquire(context, cancellation).await?;
             match select(
                 Box::pin(async {
@@ -35,7 +38,9 @@ impl NativeMcpRuntime {
             .await
             {
                 Either::Left(_) => return Err(Error::Cancelled),
-                Either::Right((result, _)) => result?,
+                Either::Right((result, _)) => {
+                    result?;
+                }
             }
             context.revalidate().map_err(|_| Error::Unavailable)?;
             if cancellation.is_cancelled() {
@@ -51,19 +56,21 @@ impl NativeMcpRuntime {
         command: &CancellationToken,
         cancellation: &CancellationToken,
     ) -> Result<()> {
-        let server = self
-            .catalog_servers()?
-            .into_iter()
+        let publication = self.catalog_publication()?.ok_or(Error::Unavailable)?;
+        publication.check()?;
+        let server = publication
+            .servers
+            .iter()
             .find(|server| server.name.as_ref() == name)
+            .cloned()
             .ok_or(Error::Unavailable)?;
-        // This pre-selection guard intentionally has no publication cutoff: the
-        // refresh may replace that view. The actual feature receives the newly
-        // selected publication only after this original command survives.
+        // Queueing and fetching remain bound to this view. Only this operation's
+        // own successful catalog cutover may retire it before feature selection.
         let authority = McpFeatureControlAuthority::for_human(
             command.clone(),
             cancellation.clone(),
             server.cancellation.clone(),
-            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            publication.retired.clone(),
             server.authority_cancellations.clone(),
         )
         .map_err(|_| Error::Unavailable)?;
@@ -77,23 +84,23 @@ impl NativeMcpRuntime {
         {
             Either::Left(_) => Err(Error::Cancelled),
             Either::Right((result, _)) => {
-                if !authority.is_live() {
+                let changed = result?;
+                caller.check()?;
+                server.check_authority()?;
+                if (!changed && !authority.is_live()) || server.clock.now() >= lane.deadline {
                     return Err(Error::Cancelled);
                 }
-                result
+                Ok(())
             }
         }
     }
 
-    fn catalog_servers(&self) -> Result<Vec<Arc<ServerRoute>>> {
+    fn catalog_publication(&self) -> Result<Option<Arc<super::candidate::Publication>>> {
         let state = self.state.lock().map_err(|_| Error::Unavailable)?;
         if state.closed {
             return Err(Error::Unavailable);
         }
-        Ok(state
-            .active
-            .as_ref()
-            .map_or_else(Vec::new, |view| view.servers.clone()))
+        Ok(state.active.clone())
     }
 
     async fn refresh_server(
@@ -101,12 +108,12 @@ impl NativeMcpRuntime {
         server: &Arc<ServerRoute>,
         lane: &mut PeerGuard<'_>,
         caller: &BorrowedRefreshCaller<'_>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         caller.check()?;
         server.check_authority()?;
         super::subscriptions::drain(lane, server).await?;
         if !lane.peer.supports_tools() {
-            return Ok(());
+            return Ok(false);
         }
         let now = elapsed(server)?;
         let decision = server
@@ -122,7 +129,7 @@ impl NativeMcpRuntime {
             }
             | McpRefreshDecision::AlreadyRefreshing {
                 may_serve_snapshot: true,
-            } => return Ok(()),
+            } => return Ok(false),
             _ => return Err(Error::Unavailable),
         };
         let expected = self.publication_checkpoint()?;
@@ -148,14 +155,17 @@ impl NativeMcpRuntime {
         // mutex across publication callbacks or controller cleanup observation.
         let mut state = server.catalogs.lock().map_err(|_| Error::Unavailable)?;
         match attempted {
-            Ok((catalog, changed)) => state.finish_tools(ticket, &catalog, now, changed),
+            Ok((catalog, changed)) => {
+                state.finish_tools(ticket, &catalog, now, changed)?;
+                Ok(changed)
+            }
             Err(error) => {
                 let may_serve = ticket.may_serve_snapshot();
                 state.fail(ticket, now)?;
                 server.check_authority()?;
                 caller.check()?;
                 if may_serve && server.clock.now() < lane.deadline {
-                    Ok(())
+                    Ok(false)
                 } else {
                     Err(error)
                 }

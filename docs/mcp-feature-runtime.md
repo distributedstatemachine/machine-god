@@ -201,7 +201,11 @@ and expanding resource-specific subscriptions remain separate composition work.
 `reply()`, with separate `revalidate()` and `cancelled()` checks for projection
 and archive composition. Reading data alone asserts no continuing authority.
 At most two operations/results coexist per runtime (or the lower configured
-pending limit); keeping a result retains its slot until drop. Catalog accumulation
+pending limit); admission reserves this slot before asynchronous authentication,
+catalog refresh or peer-queue waits, and keeping a result retains it until drop.
+Queued human refresh observes its originally selected publication cutoff; only
+its own successful catalog replacement may retire that view before final feature
+selection. Catalog accumulation
 is bounded to 64 MiB, with at most one separately admitted 64 MiB incoming family
 before that aggregate check, plus bounded wire/parser storage. No hidden result
 queue or detached observer retains additional generations. Catalog replies retain

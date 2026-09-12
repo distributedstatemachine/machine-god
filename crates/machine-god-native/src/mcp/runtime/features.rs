@@ -127,6 +127,7 @@ impl NativeMcpHumanCommand {
             .runtime
             .upgrade()
             .ok_or(NativeMcpRuntimeError::Unavailable)?;
+        let operation = runtime.reserve_feature_operation()?;
         if let Some(controller) = runtime.controller.get() {
             let controller = controller
                 .upgrade()
@@ -163,7 +164,7 @@ impl NativeMcpHumanCommand {
             server.authority_cancellations.clone(),
         )?;
         runtime
-            .exchange_feature(&publication, &server, request, authority, source)
+            .exchange_feature(&publication, &server, request, authority, source, operation)
             .await
     }
 }
@@ -204,6 +205,7 @@ impl NativeMcpRuntime {
         let registry = context
             .registry()
             .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
+        let operation = self.reserve_feature_operation()?;
         self.activate_for_turn(&context, &registry, &cancellation)
             .await?;
         let publication = self
@@ -217,7 +219,7 @@ impl NativeMcpRuntime {
             publication.retired.clone(),
             server.authority_cancellations.clone(),
         )?;
-        self.exchange_feature(&publication, &server, request, authority, None)
+        self.exchange_feature(&publication, &server, request, authority, None, operation)
             .await
     }
 
@@ -235,14 +237,7 @@ impl NativeMcpRuntime {
             .ok_or_else(|| NativeMcpRuntimeError::Unavailable.into())
     }
 
-    async fn exchange_feature(
-        &self,
-        publication: &Publication,
-        server: &Arc<ServerRoute>,
-        request: &McpFeatureRequest,
-        authority: McpFeatureControlAuthority,
-        source: Option<&BackgroundOutputOwner>,
-    ) -> Result<NativeMcpFeatureResult> {
+    fn reserve_feature_operation(&self) -> Result<FeatureOperation> {
         // Native feature admission has a separate finite transient budget. No
         // result queue is retained after returning caller-owned data. Lazy
         // catalog caching has its own shared finite retained-byte budget.
@@ -252,7 +247,18 @@ impl NativeMcpRuntime {
                 (count < maximum).then_some(count + 1)
             })
             .map_err(|_| NativeMcpRuntimeError::Limit)?;
-        let operation = FeatureOperation(self.feature_operations.clone());
+        Ok(FeatureOperation(self.feature_operations.clone()))
+    }
+
+    async fn exchange_feature(
+        &self,
+        publication: &Publication,
+        server: &Arc<ServerRoute>,
+        request: &McpFeatureRequest,
+        authority: McpFeatureControlAuthority,
+        source: Option<&BackgroundOutputOwner>,
+        operation: FeatureOperation,
+    ) -> Result<NativeMcpFeatureResult> {
         let input = source.zip(self.feature_input.as_ref());
         let mut options =
             crate::mcp::control::McpFeatureOperationOptions::new(server.catalog_epoch);
