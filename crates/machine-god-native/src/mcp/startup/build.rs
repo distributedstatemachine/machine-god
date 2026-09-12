@@ -145,6 +145,8 @@ async fn server(
     if minimum > maximum {
         return Err(Error::Limit);
     }
+    #[cfg(feature = "mcp-http")]
+    let mut lease = None;
     let (peer, catalogs, authentication, generations) = match configuration.transport() {
         McpTransportConfig::Stdio(_) => {
             let (peer, catalogs) = stdio_server(
@@ -163,7 +165,7 @@ async fn server(
             #[cfg(feature = "mcp-http")]
             {
                 *attempts = 1;
-                remote_server(
+                let (peer, catalogs, authentication, generations, selected_lease) = remote_server(
                     startup,
                     &configuration,
                     remote,
@@ -172,7 +174,9 @@ async fn server(
                     deadline,
                     maximum - minimum,
                 )
-                .await?
+                .await?;
+                lease = selected_lease;
+                (peer, catalogs, authentication, generations)
             }
             #[cfg(not(feature = "mcp-http"))]
             {
@@ -201,6 +205,10 @@ async fn server(
         .ok_or(Error::Limit)?;
     if charge > maximum {
         return Err(Error::Limit);
+    }
+    #[cfg(feature = "mcp-http")]
+    if let Some(lease) = lease {
+        startup.retain_authentication(configuration.name(), lease, owner.completion.clone())?;
     }
     Ok((
         NativeMcpServerCandidate {
@@ -390,15 +398,17 @@ async fn remote_server(
     Vec<McpDescriptorCatalog>,
     Arc<[u8]>,
     Vec<CancellationToken>,
+    Option<Arc<crate::mcp::auth::McpAuthLease>>,
 )> {
     use crate::mcp::{endpoint::McpEndpoint, http_peer::McpHttpPeer};
     let network = startup.network.as_ref().ok_or(Error::Unavailable)?;
+    startup.authentication_slot(configuration.name())?;
     let mut selected = guards.to_vec();
     selected.push(network.owner_cancellation());
     let attempt_deadline = startup
         .clock
         .deadline(configuration.startup_timeout_ms(), deadline)?;
-    let (headers, auth_generation) = control::bounded(
+    let (headers, lease) = control::bounded(
         startup.headers(
             configuration.name(),
             remote,
@@ -410,6 +420,7 @@ async fn remote_server(
         attempt_deadline,
     )
     .await??;
+    let auth_generation = lease.as_ref().map(|lease| lease.generation());
     if let Some(generation) = &auth_generation {
         selected.push(generation.clone());
     }
@@ -432,29 +443,16 @@ async fn remote_server(
         Arc::new(move |completion| custody.record(NativeMcpPeerCompletion::Http(completion)));
     let timeout = Duration::from_millis(u64::from(configuration.startup_timeout_ms()));
     let connect = async {
-        let result = match deadline {
-            Some(deadline) => {
-                McpHttpPeer::connect_observed(
-                    options,
-                    owner.cancellation.clone(),
-                    deadline,
-                    timeout,
-                    Some(attempt_deadline),
-                    observer,
-                )
-                .await
-            }
-            None => {
-                McpHttpPeer::connect_configured_observed(
-                    options,
-                    owner.cancellation.clone(),
-                    timeout,
-                    Some(attempt_deadline),
-                    observer,
-                )
-                .await
-            }
-        };
+        let result = McpHttpPeer::connect_selected_observed(
+            options,
+            owner.cancellation.clone(),
+            deadline,
+            timeout,
+            Some(attempt_deadline),
+            observer,
+            lease.clone(),
+        )
+        .await;
         result.map_err(|error| {
             startup.observe_http_error(
                 configuration.name(),
@@ -478,7 +476,7 @@ async fn remote_server(
     .await?;
     let mut generations = vec![network.owner_cancellation()];
     generations.extend(auth_generation);
-    Ok((peer, catalogs, authentication, generations))
+    Ok((peer, catalogs, authentication, generations, lease))
 }
 
 fn lifetime_deadline(startup: &NativeMcpStartup, outer: Option<Instant>) -> Option<Instant> {

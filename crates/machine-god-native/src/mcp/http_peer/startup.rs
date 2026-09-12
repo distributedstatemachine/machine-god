@@ -33,6 +33,7 @@ fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result
         configured_timeouts: false,
         response_limits: super::WireLimits::default(),
         feature_authority: None,
+        authentication: None,
     })
 }
 
@@ -53,6 +54,7 @@ pub(super) async fn connect_observed(
     startup_timeout: Duration,
     first_attempt_deadline: Option<Instant>,
     observer: McpHttpCompletionObserver,
+    authentication: Option<Arc<crate::mcp::auth::McpAuthLease>>,
 ) -> Result<(McpHttpPeer, Instant)> {
     if startup_timeout.is_zero() || startup_timeout > Duration::from_millis(u64::from(u32::MAX)) {
         return Err(McpHttpPeerError::Limit);
@@ -65,6 +67,7 @@ pub(super) async fn connect_observed(
             timeout: startup_timeout,
             first_deadline: first_attempt_deadline,
             observer,
+            authentication,
         }),
     )
     .await
@@ -74,6 +77,7 @@ struct ConfiguredStartup {
     timeout: Duration,
     first_deadline: Option<Instant>,
     observer: McpHttpCompletionObserver,
+    authentication: Option<Arc<crate::mcp::auth::McpAuthLease>>,
 }
 
 fn observed_owner(
@@ -83,6 +87,7 @@ fn observed_owner(
     configured: Option<&ConfiguredStartup>,
 ) -> Result<(McpHttpPeer, Instant)> {
     let mut peer = inert(options, cancellation)?;
+    peer.authentication = configured.and_then(|policy| policy.authentication.clone());
     peer.configured_timeouts = configured.is_some();
     check_outer(&peer, outer_deadline)?;
     let mut deadline = attempt_deadline(

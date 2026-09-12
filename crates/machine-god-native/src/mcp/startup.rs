@@ -98,6 +98,8 @@ pub struct NativeMcpStartup {
     authentication: Vec<NativeMcpStartupAuthentication>,
     #[cfg(feature = "mcp-http")]
     challenges: Arc<Mutex<authentication::Challenges>>,
+    #[cfg(feature = "mcp-http")]
+    authentication_leases: Mutex<Vec<Arc<authentication::RetainedLease>>>,
     lifetime: McpPeerLifetime,
     max_retained_bytes: usize,
     pending: Arc<AtomicBool>,
@@ -133,6 +135,8 @@ impl NativeMcpStartup {
             authentication: options.authentication,
             #[cfg(feature = "mcp-http")]
             challenges: Arc::new(Mutex::new(authentication::Challenges::default())),
+            #[cfg(feature = "mcp-http")]
+            authentication_leases: Mutex::default(),
             lifetime: options.peer_lifetime,
             max_retained_bytes: options.max_retained_bytes,
             pending: Arc::new(AtomicBool::new(false)),
@@ -163,6 +167,24 @@ impl NativeMcpStartup {
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, NativeMcpStartupBatch> {
         Box::pin(build::build(self, phase, cancellation, None))
+    }
+
+    /// Observes only the original successfully selected credential leases and
+    /// their clocks/profile lifetimes. Does not load configuration, access the
+    /// credential store, refresh a token or mutate a runtime publication.
+    /// # Errors
+    /// Rejects retired owner/configuration/credential/profile authority. An
+    /// expired credential requests refresh instead of permitting anonymous use.
+    pub fn authentication_refresh_due(&self) -> Result<bool> {
+        control::check_optional(
+            &self.clock,
+            &[self.owner.clone(), self.configuration_generation.clone()],
+            self.lifetime.deadline(),
+        )?;
+        #[cfg(feature = "mcp-http")]
+        return self.retained_authentication_refresh_due();
+        #[cfg(not(feature = "mcp-http"))]
+        Ok(false)
     }
 
     /// Retains observations even when a polled build future is abandoned.

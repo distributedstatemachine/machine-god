@@ -168,6 +168,34 @@ takes precedence over dormant bearer environment selection. Discovery/token URLs
 are independently admitted by the auth service; resource headers are never copied
 to the token endpoint. This path has no browser authority and cannot start consent.
 
+Successfully assembled authenticated peers retain their exact issued OAuth lease.
+`authentication_refresh_due` observes those original leases, their selected clocks
+and profile/generation cutoffs without reading files, loading another saved
+configuration or refreshing a token. It requests refresh within the 60-second
+skew, including expired tokens; invalid profile/generation authority remains an
+error rather than anonymous fallback. Every retained authority is checked, so an
+earlier due lease cannot hide a later revoked one. The controller owns selection
+and publication of a fresh generation; old headers are never renewed in place.
+
+The concrete lease is installed before HTTP discovery and remains attached to
+every subsequent connection, proof-bearing writer, control writer and response
+reader. Its original authentication clock supplies the blocked-I/O expiry timer;
+access-token checks run before and after I/O and before each write/flush, including
+wall-clock expiry. This fence is independent of the finite request deadline and
+the selected peer lifetime. Authentication and HTTP clocks need not be identical,
+and an absolute lease deadline is not compared with an unrelated injected clock.
+Feature/tool guards are retained alongside authentication, not replaced by it.
+
+At most one retained lease per configured server, and at most 64 in total, is
+allowed per startup service. A second build selecting a still-retained name fails
+before authentication/DNS/discovery effects. Completed fresh candidates are pruned
+after actual peer cleanup. Expired or revoked records remain bounded tombstones
+until their startup generation is dropped, so closing an expired peer cannot
+erase the need to refresh. Failed acquisition never registers a lease; a rejected
+candidate that has already expired retains the same conservative bounded record.
+Normal required startup followed by deferred optional discovery uses distinct
+names. Reload uses a new startup service with its own immutable profile selection.
+
 ## Bounded ownership and cleanup
 
 One pending build or returned batch is allowed per startup service. Candidate

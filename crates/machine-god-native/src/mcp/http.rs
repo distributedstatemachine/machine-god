@@ -160,6 +160,9 @@ impl McpHttpConnection {
     pub(crate) fn guard_feature(&mut self, guard: super::control::McpFeatureControlAuthority) {
         self.lifetime.guard_feature(guard);
     }
+    pub(crate) fn guard_authentication(&mut self, lease: Arc<super::auth::McpAuthLease>) {
+        self.lifetime.guard_authentication(lease);
+    }
     /// Selects explicit authority without connecting. HTTPS requires explicit
     /// verified trust; plaintext requires a loopback-only selected destination.
     ///

@@ -8,8 +8,10 @@ use machine_god_core::CancellationToken;
 use std::{fmt, os::unix::ffi::OsStrExt, sync::Arc, time::Instant};
 
 mod challenges;
+mod leases;
 pub(super) use challenges::Challenges;
 pub use challenges::NativeMcpStartupAuthChallenge;
+pub(super) use leases::RetainedLease;
 
 /// Explicit endpoint authentication choice. None of these variants can open a
 /// browser. Stored credentials may refresh through the selected native service.
@@ -104,7 +106,7 @@ impl NativeMcpStartup {
         remote: &McpRemoteConfig,
         cancellation: &CancellationToken,
         deadline: Instant,
-    ) -> Result<(McpResolvedHeaders, Option<CancellationToken>)> {
+    ) -> Result<(McpResolvedHeaders, Option<Arc<McpAuthLease>>)> {
         let selection = self.authentication_selection(name);
         let additional: Vec<_> = selection
             .into_iter()
@@ -156,7 +158,7 @@ impl NativeMcpStartup {
         let headers =
             McpResolvedHeaders::resolve(remote, |name| self.lookup(name), token, &additional)
                 .map_err(|_| Error::Authentication)?;
-        Ok((headers, lease.as_ref().map(|lease| lease.generation())))
+        Ok((headers, lease))
     }
 }
 

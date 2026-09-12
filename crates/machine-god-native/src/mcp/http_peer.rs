@@ -118,12 +118,17 @@ pub(crate) struct McpHttpPeerReadiness {
     cancellation: CancellationToken,
     lifetime: super::lifetime::McpPeerLifetime,
     clock: Arc<dyn McpHttpClock>,
+    authentication: Option<Arc<super::auth::McpAuthLease>>,
 }
 impl McpHttpPeerReadiness {
     pub(crate) fn is_ready(&self) -> bool {
         !self.closed.is_cancelled()
             && !self.cancellation.is_cancelled()
             && !self.lifetime.is_expired(self.clock.now())
+            && self
+                .authentication
+                .as_ref()
+                .is_none_or(|lease| lease.access_token().is_ok())
     }
 }
 /// Local owner completion, not evidence that remote operations were revoked.
@@ -177,6 +182,7 @@ pub struct McpHttpPeer {
     configured_timeouts: bool,
     response_limits: WireLimits,
     feature_authority: Option<super::control::McpFeatureControlAuthority>,
+    authentication: Option<Arc<super::auth::McpAuthLease>>,
 }
 impl McpHttpPeer {
     pub(crate) fn readiness(&self) -> McpHttpPeerReadiness {
@@ -185,6 +191,7 @@ impl McpHttpPeer {
             cancellation: self.cancellation.clone(),
             lifetime: self.options.lifetime,
             clock: self.options.clock.clone(),
+            authentication: self.authentication.clone(),
         }
     }
     /// Executes a native-selected typed feature request with exact fixed HTTP
@@ -241,13 +248,14 @@ impl McpHttpPeer {
         first_attempt_deadline: Option<Instant>,
         observer: McpHttpCompletionObserver,
     ) -> Result<(Self, Instant)> {
-        startup::connect_observed(
+        Self::connect_selected_observed(
             options,
             cancellation,
             Some(outer_deadline),
             startup_timeout,
             first_attempt_deadline,
             observer,
+            None,
         )
         .await
     }
@@ -262,13 +270,36 @@ impl McpHttpPeer {
         first_attempt_deadline: Option<Instant>,
         observer: McpHttpCompletionObserver,
     ) -> Result<(Self, Instant)> {
-        startup::connect_observed(
+        Self::connect_selected_observed(
             options,
             cancellation,
             None,
             startup_timeout,
             first_attempt_deadline,
             observer,
+            None,
+        )
+        .await
+    }
+    // The concrete native startup supplies the exact lease that resolved these
+    // headers. Install it before discovery, not after the first socket effect.
+    pub(crate) async fn connect_selected_observed(
+        options: McpHttpPeerOptions,
+        cancellation: CancellationToken,
+        outer_deadline: Option<Instant>,
+        startup_timeout: Duration,
+        first_attempt_deadline: Option<Instant>,
+        observer: McpHttpCompletionObserver,
+        authentication: Option<Arc<super::auth::McpAuthLease>>,
+    ) -> Result<(Self, Instant)> {
+        startup::connect_observed(
+            options,
+            cancellation,
+            outer_deadline,
+            startup_timeout,
+            first_attempt_deadline,
+            observer,
+            authentication,
         )
         .await
     }
@@ -399,6 +430,13 @@ impl McpHttpPeer {
         if self.cancellation.is_cancelled() {
             return Err(McpHttpPeerError::Cancelled);
         }
+        if self
+            .authentication
+            .as_ref()
+            .is_some_and(|lease| lease.access_token().is_err())
+        {
+            return Err(McpHttpPeerError::Cancelled);
+        }
         if self.options.lifetime.is_expired(self.options.clock.now()) {
             return Err(McpHttpPeerError::Deadline);
         }
@@ -450,6 +488,9 @@ impl McpHttpPeer {
         )?;
         if let Some(authority) = &self.feature_authority {
             connection.guard_feature(authority.clone());
+        }
+        if let Some(lease) = &self.authentication {
+            connection.guard_authentication(lease.clone());
         }
         let mut exchanges = std::mem::take(
             &mut *self

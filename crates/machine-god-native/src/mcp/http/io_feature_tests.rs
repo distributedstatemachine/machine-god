@@ -34,6 +34,7 @@ fn feature_writer_checks_retirement_at_each_suffix_and_flush() {
             deadline: Instant::now() + std::time::Duration::from_secs(5),
             clock: Arc::new(Clock),
             feature: Some(human_selected(token.clone(), retired.clone())),
+            authentication: None,
         };
         let count = poll_fn(|cx| writer.poll_write(cx, b"prefix"))
             .await

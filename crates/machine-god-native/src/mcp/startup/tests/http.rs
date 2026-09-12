@@ -1,6 +1,7 @@
 use super::*;
 mod challenges;
 mod configured;
+mod refresh;
 use crate::mcp::{
     auth::{
         McpAuthClock, McpAuthConfig, McpAuthEntropy, McpAuthError, McpAuthInvalidated,
@@ -278,6 +279,13 @@ struct Credentials {
 }
 impl Credentials {
     fn new(network: Arc<NativeMcpNetwork>, workers: crate::NativeOwnedWorkerScope) -> Self {
+        Self::with_clock(network, workers, Arc::new(Clock::default()))
+    }
+    fn with_clock(
+        network: Arc<NativeMcpNetwork>,
+        workers: crate::NativeOwnedWorkerScope,
+        clock: Arc<dyn McpAuthClock>,
+    ) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "mg-mcp-startup-{}-{}",
@@ -291,7 +299,7 @@ impl Credentials {
         let service = Arc::new(NativeMcpAuthService::new(
             store.clone(),
             network,
-            Arc::new(Clock::default()),
+            clock,
             Arc::new(Entropy),
             Arc::new(Events),
             workers.clone(),
