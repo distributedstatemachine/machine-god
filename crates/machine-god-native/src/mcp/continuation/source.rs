@@ -41,7 +41,7 @@ impl InputSource<'_> {
         }
     }
 
-    pub(super) fn interaction_cancelled(&self) -> BoxFuture<'static, ()> {
+    pub(super) fn interaction_cancelled(&self) -> BoxFuture<'_, ()> {
         match self {
             Self::Tool { call, .. } => call.interaction_cancelled(),
             Self::Feature(call) => call.interaction_cancelled(),

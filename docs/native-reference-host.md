@@ -194,7 +194,8 @@ retain their supplied authorities unchanged.
 
 `NativeReferenceHostMcpOptions::with_form_responder` retains the actual human
 presentation endpoint and supplies it to the concrete executor before its runtime
-policy is selected. Without that endpoint, form support is not advertised.
+policy is selected. The native human feature path retains the same endpoint,
+not a second inbox or an ambient presenter. Without that endpoint, form support is not advertised.
 Selecting it is inert and does not advertise URL completion support.
 The interactive CLI selects its existing prompt bridge for this endpoint;
 noninteractive ask/resume do not select a human presenter.
@@ -205,7 +206,7 @@ terminal options and bind the opener once to that terminal's actual worker scope
 before selecting the MCP executor. No executable inspection, launch or environment
 capture occurs during binding. Invalid optional environment authority leaves the
 opener unavailable. The immutable host opener supplies the executor's URL launcher,
-interactive background controls and interactive authentication with one shared
+human resource/prompt continuation, interactive background controls and interactive authentication with one shared
 admission through direct-child reap; it also works without MCP selection. Sessions
 inherit that opener and reject a second session selection before preparing a
 conversation, including when the first selection failed optional validation. A
@@ -213,6 +214,14 @@ session-only selection remains supported for hosts without a desktop selection,
 but does not retrofit executor support. The production interactive CLI
 captures desktop authority once before host acquisition; one-shot ask/resume
 select none. Launcher availability never supplies consent or continuation proof.
+
+Human feature commands derive their presentation owner from the exact retained
+conversation's session and incarnation after native control admission. They do
+not fabricate a model turn or tool grant. Resource reads and prompt gets can
+collect modern input through the shared bridge while retaining their original
+server, descriptor and command authority. The native runtime releases the peer
+lane during human waits, but retains the bounded operation slot and checks
+retirement before continuing; the CLI only projects prompts and owned receipts.
 
 With the native `mcp-http` feature, `mcp::clock::TokioMcpClock` is an explicit
 production clock selection for both runtime/startup and HTTP deadlines. Its

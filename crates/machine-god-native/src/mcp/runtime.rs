@@ -23,6 +23,7 @@ pub use checkpoint::NativeMcpPublicationCheckpoint;
 pub use executor::{
     NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy, NativeMcpToolExecutor,
 };
+pub(crate) use features::human::NativeMcpRuntimeFeatureCall;
 pub use features::{NativeMcpFeatureError, NativeMcpFeatureResult, NativeMcpHumanCommand};
 pub use peer::{NativeMcpOwnedPeer, NativeMcpPeerCompletion};
 
@@ -120,6 +121,7 @@ pub struct NativeMcpRuntime {
     executor: Arc<dyn NativeMcpToolExecutor>,
     policy: NativeMcpToolExecutionPolicy,
     feature_operations: Arc<std::sync::atomic::AtomicUsize>,
+    feature_input: Option<features::human::FeatureInputEndpoint>,
 }
 impl fmt::Debug for NativeMcpRuntime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -147,7 +149,20 @@ impl NativeMcpRuntime {
             executor,
             policy: policy.validate()?,
             feature_operations: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            feature_input: None,
         })
+    }
+
+    pub(crate) fn with_feature_input(
+        mut self,
+        presenter: Option<Arc<dyn super::interaction::McpElicitationPresenter>>,
+        launcher: Option<super::browser_launcher::NativeMcpBrowserLauncher>,
+    ) -> Self {
+        self.feature_input = presenter.map(|presenter| features::human::FeatureInputEndpoint {
+            presenter,
+            launcher,
+        });
+        self
     }
 
     /// Publishes every prepared server together. On failure the old executable

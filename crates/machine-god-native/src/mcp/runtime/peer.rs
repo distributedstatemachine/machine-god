@@ -39,11 +39,26 @@ impl NativeMcpOwnedPeer {
         options: crate::mcp::control::McpFeatureOperationOptions,
         deadline: std::time::Instant,
     ) -> super::features::Result<crate::mcp::control::McpFeatureReply> {
+        self.feature_round(request, server, catalogs, authority, options, deadline)
+            .await
+            .map(crate::mcp::control::McpFeatureRound::into_reply)
+    }
+    pub(super) async fn feature_round(
+        &mut self,
+        request: &crate::McpFeatureRequest,
+        server: &str,
+        catalogs: &[crate::mcp::catalog::McpDescriptorCatalog],
+        authority: crate::mcp::control::McpFeatureControlAuthority,
+        options: crate::mcp::control::McpFeatureOperationOptions,
+        deadline: std::time::Instant,
+    ) -> super::features::Result<crate::mcp::control::McpFeatureRound> {
         match self {
             #[cfg(test)]
-            Self::Script(peer) => peer.feature(request, server, catalogs, &authority, options),
+            Self::Script(peer) => {
+                peer.feature_round(request, server, catalogs, &authority, options)
+            }
             Self::Stdio(peer) => peer
-                .feature(request, server, catalogs, authority, options, deadline)
+                .feature_round(request, server, catalogs, authority, options, deadline)
                 .await
                 .map_err(|error| match error {
                     crate::mcp::peer::McpPeerError::Feature(error) => error.into(),
@@ -51,7 +66,7 @@ impl NativeMcpOwnedPeer {
                 }),
             #[cfg(feature = "mcp-http")]
             Self::Http(peer) => peer
-                .feature(request, server, catalogs, authority, options, deadline)
+                .feature_round(request, server, catalogs, authority, options, deadline)
                 .await
                 .map_err(|error| match error {
                     crate::mcp::http_peer::McpHttpPeerError::Feature(error) => error.into(),
@@ -59,6 +74,34 @@ impl NativeMcpOwnedPeer {
                 }),
         }
     }
+
+    pub(super) async fn resume_feature(
+        &mut self,
+        round: crate::mcp::control::McpFeatureRound,
+        responses: crate::mcp::mrtr::McpValidatedResponses,
+        deadline: std::time::Instant,
+    ) -> super::features::Result<crate::mcp::control::McpFeatureRound> {
+        match self {
+            #[cfg(test)]
+            Self::Script(peer) => peer.resume_feature(round, responses),
+            Self::Stdio(peer) => peer
+                .resume_feature(round, responses, deadline)
+                .await
+                .map_err(|error| match error {
+                    crate::mcp::peer::McpPeerError::Feature(error) => error.into(),
+                    _ => Error::Unavailable.into(),
+                }),
+            #[cfg(feature = "mcp-http")]
+            Self::Http(peer) => peer
+                .resume_feature(round, responses, deadline)
+                .await
+                .map_err(|error| match error {
+                    crate::mcp::http_peer::McpHttpPeerError::Feature(error) => error.into(),
+                    _ => Error::Unavailable.into(),
+                }),
+        }
+    }
+
     pub(super) fn supports_tools(&self) -> bool {
         match self {
             #[cfg(test)]

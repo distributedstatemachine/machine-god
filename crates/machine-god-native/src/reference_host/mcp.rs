@@ -100,11 +100,11 @@ impl NativeReferenceHostMcpOptions {
         url_launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
     ) -> Result<Composition, NativeReferenceHostBuildError> {
         let executor = NativeMcpArchivedToolExecutor::new(archive.clone()).map_err(|_| error())?;
-        let executor = match self.form_responder {
+        let executor = match self.form_responder.clone() {
             Some(presenter) => executor.with_form_responder(presenter),
             None => executor,
         };
-        let executor = Arc::new(match url_launcher {
+        let executor = Arc::new(match url_launcher.clone() {
             Some(launcher) => executor.with_url_launcher(launcher),
             None => executor,
         });
@@ -116,7 +116,7 @@ impl NativeReferenceHostMcpOptions {
             policy,
             self.limits,
         )
-        .map(Arc::new)
+        .map(|runtime| Arc::new(runtime.with_feature_input(self.form_responder, url_launcher)))
         .map_err(|_| error())?;
         let features = Arc::new(crate::NativeMcpFeaturesTool::new(
             Arc::downgrade(&runtime),

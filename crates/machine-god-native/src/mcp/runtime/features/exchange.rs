@@ -4,7 +4,10 @@ use crate::{
     mcp::{
         catalog::{McpDescriptor, McpDescriptorCatalog},
         commands::McpFeatureCommand,
-        control::{McpFeatureControlAuthority, McpFeatureOperationOptions, McpFeatureReply},
+        control::{
+            McpFeatureControlAuthority, McpFeatureOperationOptions, McpFeatureReply,
+            McpFeatureRound,
+        },
         feature::McpFeatureCodecError,
         runtime::{
             NativeMcpRuntimeError,
@@ -18,11 +21,11 @@ pub(super) async fn run(
     server: &ServerRoute,
     request: &McpFeatureRequest,
     authority: &McpFeatureControlAuthority,
-) -> Result<McpFeatureReply> {
+    options: McpFeatureOperationOptions,
+) -> Result<McpFeatureRound> {
     if server.clock.now() < server.catalog_epoch {
         return Err(NativeMcpRuntimeError::Invalid.into());
     }
-    let options = McpFeatureOperationOptions::new(server.catalog_epoch);
     let mut catalogs = Vec::new();
     // Only guarded, current peer discovery supplies identity evidence. No
     // caller-provided catalog or expired startup snapshot is used as a fallback.
@@ -61,7 +64,7 @@ pub(super) async fn run(
         )
         .await?;
     }
-    let response = lane.peer.feature(
+    let response = lane.peer.feature_round(
         request,
         &server.name,
         &catalogs,
@@ -108,7 +111,7 @@ async fn load(
     Ok(())
 }
 
-async fn timed<T>(
+pub(super) async fn timed<T>(
     server: &ServerRoute,
     authority: &McpFeatureControlAuthority,
     deadline: std::time::Instant,

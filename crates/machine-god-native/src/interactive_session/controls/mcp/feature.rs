@@ -69,9 +69,10 @@ pub(super) fn run(
             return Err(Error::McpFeature(NativeMcpRuntimeError::Cancelled.into()));
         }
         let _permit = ControlPermit::acquire(&conversation)?;
+        let source = crate::interactive_session::transition::principal(&conversation);
         let owner = runtime.human_command();
         let result = owner
-            .feature(&request, cancellation)
+            .feature_interactive(&request, cancellation, &source)
             .await
             .map_err(Error::McpFeature)?;
         result.revalidate().map_err(Error::McpFeature)?;

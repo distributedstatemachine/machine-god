@@ -22,6 +22,7 @@ pub struct ScriptPeer {
     pub(in crate::mcp::runtime) closed: Arc<AtomicBool>,
     writes: Arc<Mutex<Vec<u8>>>,
     response: Option<Arc<Response>>,
+    feature_identity: Arc<()>,
 }
 impl std::fmt::Debug for ScriptPeer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -38,6 +39,7 @@ impl ScriptPeer {
             closed: Arc::new(AtomicBool::new(false)),
             writes,
             response: None,
+            feature_identity: Arc::new(()),
         }
     }
     pub(crate) fn with_response(

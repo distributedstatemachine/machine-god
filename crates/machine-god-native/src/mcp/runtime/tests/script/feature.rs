@@ -1,20 +1,20 @@
 use super::*;
 use crate::mcp::{
-    control::{self, McpFeatureControlAuthority, McpFeatureOperationOptions, McpFeatureReply},
+    control::{self, McpFeatureControlAuthority, McpFeatureOperationOptions, McpFeatureRound},
     feature::{McpFeatureCatalogLoad, McpFeatureExchangeOptions},
     peer::McpPeerCapabilities,
     protocol::{NegotiatedProtocol, TransportKind, WireLimits, parse_envelope},
 };
 
 impl ScriptPeer {
-    pub(in crate::mcp::runtime) fn feature(
+    pub(in crate::mcp::runtime) fn feature_round(
         &mut self,
         request: &McpFeatureRequest,
         server: &str,
         catalogs: &[McpDescriptorCatalog],
         authority: &McpFeatureControlAuthority,
         options: McpFeatureOperationOptions,
-    ) -> crate::mcp::runtime::features::Result<McpFeatureReply> {
+    ) -> crate::mcp::runtime::features::Result<McpFeatureRound> {
         let init = parse_envelope(br#"{"jsonrpc":"2.0","id":0,"result":{"resultType":"complete","capabilities":{"resources":{},"prompts":{},"completions":{}}}}"#, WireLimits::default()).unwrap();
         let capabilities = McpPeerCapabilities::admit(&init, ProtocolVersion::Modern).unwrap();
         let mut load: Option<McpFeatureCatalogLoad> = None;
@@ -69,8 +69,57 @@ impl ScriptPeer {
                 return Err(NativeMcpRuntimeError::Cancelled.into());
             }
             if let Some(reply) = reply {
-                return Ok(reply);
+                return McpFeatureRound::new(
+                    reply,
+                    exchange,
+                    authority.clone(),
+                    options,
+                    self.feature_identity.clone(),
+                )
+                .map_err(Into::into);
             }
         }
+    }
+
+    pub(in crate::mcp::runtime) fn resume_feature(
+        &mut self,
+        round: McpFeatureRound,
+        responses: crate::mcp::mrtr::McpValidatedResponses,
+    ) -> crate::mcp::runtime::features::Result<McpFeatureRound> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(NativeMcpRuntimeError::Cancelled.into());
+        }
+        round.check_peer(&self.feature_identity)?;
+        let id = self.next;
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or(NativeMcpRuntimeError::Limit)?;
+        let (exchange, authority, options) = round.resume(&self.feature_identity, id, responses)?;
+        {
+            let mut writes = self.writes.lock().unwrap();
+            writes.extend_from_slice(exchange.wire_json().get().as_bytes());
+            writes.push(b'\n');
+        }
+        let response = self
+            .response
+            .as_ref()
+            .ok_or(NativeMcpRuntimeError::Unavailable)?(id);
+        let reply = control::admit(
+            &mut None,
+            &exchange,
+            &response,
+            options.epoch,
+            options.epoch,
+        )?
+        .ok_or(NativeMcpRuntimeError::Invalid)?;
+        McpFeatureRound::new(
+            reply,
+            exchange,
+            authority,
+            options,
+            self.feature_identity.clone(),
+        )
+        .map_err(Into::into)
     }
 }

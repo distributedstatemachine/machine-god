@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `modern-only MCP cleanup, authentication, modern continuation and catalog refresh; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `modern MCP continuation integration checks, authentication and catalog refresh; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.

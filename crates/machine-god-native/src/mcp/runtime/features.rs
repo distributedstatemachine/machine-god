@@ -6,7 +6,7 @@ use crate::{
         feature::McpFeatureCodecError,
     },
 };
-use machine_god_core::{CancellationToken, ToolContext};
+use machine_god_core::{BackgroundOutputOwner, CancellationToken, ToolContext};
 use std::{
     fmt,
     sync::{
@@ -16,6 +16,7 @@ use std::{
 };
 
 mod exchange;
+pub(super) mod human;
 
 /// Fixed failures; peer names, credentials, arguments and content stay redacted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,6 +101,25 @@ impl NativeMcpHumanCommand {
         request: &McpFeatureRequest,
         cancellation: CancellationToken,
     ) -> Result<NativeMcpFeatureResult> {
+        self.feature_selected(request, cancellation, None).await
+    }
+
+    pub(crate) async fn feature_interactive(
+        &self,
+        request: &McpFeatureRequest,
+        cancellation: CancellationToken,
+        source: &BackgroundOutputOwner,
+    ) -> Result<NativeMcpFeatureResult> {
+        self.feature_selected(request, cancellation, Some(source))
+            .await
+    }
+
+    async fn feature_selected(
+        &self,
+        request: &McpFeatureRequest,
+        cancellation: CancellationToken,
+        source: Option<&BackgroundOutputOwner>,
+    ) -> Result<NativeMcpFeatureResult> {
         let runtime = self
             .runtime
             .upgrade()
@@ -114,7 +134,7 @@ impl NativeMcpHumanCommand {
             server.authority_cancellations.clone(),
         )?;
         runtime
-            .exchange_feature(&publication, &server, request, authority)
+            .exchange_feature(&publication, &server, request, authority, source)
             .await
     }
 }
@@ -168,7 +188,7 @@ impl NativeMcpRuntime {
             publication.retired.clone(),
             server.authority_cancellations.clone(),
         )?;
-        self.exchange_feature(&publication, &server, request, authority)
+        self.exchange_feature(&publication, &server, request, authority, None)
             .await
     }
 
@@ -189,9 +209,10 @@ impl NativeMcpRuntime {
     async fn exchange_feature(
         &self,
         publication: &Publication,
-        server: &ServerRoute,
+        server: &Arc<ServerRoute>,
         request: &McpFeatureRequest,
         authority: McpFeatureControlAuthority,
+        source: Option<&BackgroundOutputOwner>,
     ) -> Result<NativeMcpFeatureResult> {
         // Native feature admission has a separate finite transient budget. No
         // result/cache queue is retained after returning caller-owned data.
@@ -202,9 +223,26 @@ impl NativeMcpRuntime {
             })
             .map_err(|_| NativeMcpRuntimeError::Limit)?;
         let operation = FeatureOperation(self.feature_operations.clone());
-        let mut lane = server.acquire_feature(&authority).await?;
-        publication.check()?;
-        let reply = exchange::run(&mut lane, server, request, &authority).await?;
+        let input = source.zip(self.feature_input.as_ref());
+        let mut options =
+            crate::mcp::control::McpFeatureOperationOptions::new(server.catalog_epoch);
+        if let Some((_, endpoint)) = input {
+            options.form = true;
+            options.url = endpoint.launcher.is_some();
+        }
+        let round = {
+            let mut lane = server.acquire_feature(&authority).await?;
+            publication.check()?;
+            exchange::run(&mut lane, server, request, &authority, options).await?
+        };
+        // Release the serialized transport lane before any human interaction.
+        // The original operation slot and publication authority stay retained.
+        let reply = match input {
+            Some((source, endpoint)) => {
+                human::complete(round, server, request, &authority, source, endpoint).await?
+            }
+            None => round.into_reply(),
+        };
         publication.check()?;
         server.check_authority()?;
         if !authority.is_live() {
