@@ -2,6 +2,8 @@ use super::super::super::super::super::presentation::Modal;
 use super::*;
 use native::mcp::interaction::McpElicitationPromptSource;
 
+mod url;
+
 fn input_required() -> Value {
     json!({"resultType":"input_required","requestState":null,"inputRequests":{
         "confirm":{"method":"elicitation/create","params":{

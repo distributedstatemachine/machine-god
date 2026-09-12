@@ -40,6 +40,14 @@ pub(super) struct HttpFixture {
 }
 
 pub(super) async fn setup() -> HttpFixture {
+    setup_with_host_options(|options| options).await
+}
+
+pub(super) async fn setup_with_host_options(
+    select: impl FnOnce(
+        native::NativeReferenceHostConversationOptions,
+    ) -> native::NativeReferenceHostConversationOptions,
+) -> HttpFixture {
     let (bridge, inbox) =
         NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
     let clock = Arc::new(TokioMcpClock);
@@ -48,7 +56,8 @@ pub(super) async fn setup() -> HttpFixture {
         clock.clone(),
     )
     .with_form_responder(bridge.clone());
-    let fixture = support::Fixture::with_host_options(|host| host.with_mcp_runtime(options), None);
+    let fixture =
+        support::Fixture::with_host_options(|host| select(host.with_mcp_runtime(options)), None);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let url = format!("http://{address}/mcp");
