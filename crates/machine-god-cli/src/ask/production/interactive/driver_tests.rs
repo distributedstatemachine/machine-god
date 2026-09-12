@@ -14,6 +14,9 @@ use std::time::Duration;
 #[path = "driver_tests/mcp_paging.rs"]
 mod mcp_paging;
 
+#[path = "driver_tests/mcp_eof.rs"]
+mod mcp_eof;
+
 struct Harness {
     driver: Driver,
     input_writer: std::io::PipeWriter,

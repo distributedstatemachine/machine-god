@@ -25,9 +25,9 @@ impl Requests {
             Some("server/discover") => {
                 json!({"supportedVersions":["2026-07-28"],"capabilities":{"tools":{},"resources":{},"prompts":{}}})
             }
-            Some("tools/list") => json!({"tools":[],"ttlMs":300000}),
+            Some("tools/list") => json!({"tools":[],"ttlMs":300_000}),
             Some("resources/list") => {
-                json!({"resources":[{"uri":"test://fixed","name":"MCP process resource"},{"uri":"test://confirm","name":"MCP confirmation resource"}],"ttlMs":300000})
+                json!({"resources":[{"uri":"test://fixed","name":"MCP process resource"},{"uri":"test://confirm","name":"MCP confirmation resource"}],"ttlMs":300_000})
             }
             Some("resources/read") => read(&request),
             _ => return Err(io::ErrorKind::InvalidData.into()),
