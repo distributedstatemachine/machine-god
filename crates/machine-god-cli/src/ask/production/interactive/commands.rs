@@ -41,7 +41,9 @@ arguments are literal whitespace-separated tokens, not shell expressions.\n\
 /mcp prompt complete SERVER NAME ARGUMENT [VALUE]\n\
 Reload and resource/prompt commands require selected native runtime authority.\n\
 External results are paged historical data, never queued model prompts.\n\
-MCP auth/logout are currently unavailable in this host.\n> ";
+/mcp auth NAME [--open] | /mcp logout NAME\n\
+Auth requires --open to confirm browser handoff and selected native auth authority.\n\
+Saved credentials, runtime activation, local removal and remote revocation are separate observations.\n> ";
 
 enum Submission<'a> {
     Empty,

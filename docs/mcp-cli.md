@@ -80,6 +80,18 @@ remain required.
 
 ## Human input presentation
 
+Authentication control receipts separately report confirmed credential persistence,
+usability at the native observation, and the result of any full configured reload;
+they do not claim a targeted reconnect or a current connection. Without `--open`,
+the confirmation receipt prints the explicit `/mcp auth NAME --open` command.
+Logout reports local removal independently from confirmed, unsupported,
+unattempted or ambiguous remote revocation. Issuer mismatch remains rejection,
+with a fixed instruction to edit the selected server's `oauth.issuer` and retry;
+there is no issuer-override prompt. Output is bounded and terminal-escaped, never
+includes an authorization URL or credential, and never automatically retries an
+ambiguous result. Management-only hosts without native runtime/auth authority
+still reject auth/logout as unavailable.
+
 The interactive modal presents an explicitly queued native MCP elicitation,
 including its selected server and exposed tool identity. Server messages, URLs,
 field schemas, choices and answer previews are terminal-escaped. Source text is

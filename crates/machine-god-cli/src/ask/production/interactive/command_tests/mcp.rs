@@ -7,7 +7,14 @@ use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn mcp_slash_recognition_and_help_preserve_the_global_envelope() {
-    for command in ["/mcp", "/mcp list", "/mcp add demo /bin/echo literal"] {
+    for command in [
+        "/mcp",
+        "/mcp list",
+        "/mcp add demo /bin/echo literal",
+        "/mcp auth demo",
+        "/mcp auth demo --open",
+        "/mcp logout demo",
+    ] {
         assert!(matches!(
             submission(command),
             Ok(Submission::Slash(NativeSlashCommand::Mcp, _))
@@ -28,7 +35,10 @@ fn mcp_slash_recognition_and_help_preserve_the_global_envelope() {
     assert!(help.contains("resource complete SERVER TEMPLATE ARGUMENT [VALUE]"));
     assert!(help.contains("prompt get") || help.contains("get SERVER NAME [ARGUMENTS_JSON]"));
     assert!(help.contains("require selected native runtime authority"));
-    assert!(help.contains("auth/logout are currently unavailable"));
+    assert!(help.contains("/mcp auth NAME [--open] | /mcp logout NAME"));
+    assert!(help.contains("--open to confirm browser handoff"));
+    assert!(help.contains("local removal and remote revocation are separate observations"));
+    assert!(!help.contains("auth/logout are currently unavailable"));
 }
 
 #[test]

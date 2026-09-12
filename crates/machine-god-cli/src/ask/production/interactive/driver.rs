@@ -1185,6 +1185,12 @@ fn render_profile_control(
 ) -> Option<Result<Vec<u8>, ()>> {
     use machine_god_native::NativeInteractiveControlError;
     Some(match &outcome.result {
+        Ok(NativeInteractiveControlReceipt::McpAuthentication(receipt)) => {
+            super::mcp_receipts::auth::render(outcome.id.get(), Ok(receipt))
+        }
+        Err(NativeInteractiveControlError::McpAuthentication(error)) => {
+            super::mcp_receipts::auth::render(outcome.id.get(), Err(error))
+        }
         Ok(NativeInteractiveControlReceipt::McpReload(receipt)) => {
             super::mcp_receipts::render_reload(outcome.id.get(), Ok(receipt))
         }
@@ -1317,6 +1323,9 @@ pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Resul
             unreachable!("MCP uses its separately bounded renderer")
         }
         Ok(NativeInteractiveControlReceipt::McpFeature(_)) => return Err(()),
+        Ok(NativeInteractiveControlReceipt::McpAuthentication(_)) => {
+            unreachable!("MCP authentication uses its separately bounded renderer")
+        }
     }
     .map_err(|_| ())?;
     text.write_str("]\n> ").map_err(|_| ())?;

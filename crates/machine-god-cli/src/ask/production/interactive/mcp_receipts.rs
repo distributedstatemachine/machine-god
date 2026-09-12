@@ -14,6 +14,8 @@ use machine_god_native::mcp::{
 };
 use std::fmt::Write;
 
+pub(super) mod auth;
+
 pub(super) fn render(
     id: u64,
     result: Result<&NativeMcpManagementReceipt, &NativeMcpManagementError>,
@@ -123,6 +125,15 @@ pub(super) fn render_reload(
 ) -> Result<Vec<u8>, ()> {
     let mut text = super::bounded_output();
     writeln!(text, "\n[control {id}: mcp reload observation]").map_err(|_| ())?;
+    reload_observation(&mut text, result)?;
+    text.write_str("> ").map_err(|_| ())?;
+    Ok(text.finish().into_bytes())
+}
+
+fn reload_observation(
+    text: &mut BoundedOutput,
+    result: Result<&NativeMcpControllerReceipt, &NativeMcpControllerFailure>,
+) -> Result<(), ()> {
     let (startup, cleanup) = match result {
         Ok(receipt) => {
             writeln!(
@@ -145,7 +156,7 @@ pub(super) fn render_reload(
         }
     };
     if let Some(startup) = startup {
-        startup_observation(&mut text, startup)?;
+        startup_observation(text, startup)?;
     }
     writeln!(
         text,
@@ -157,8 +168,7 @@ pub(super) fn render_reload(
         }
     )
     .map_err(|_| ())?;
-    text.write_str("> ").map_err(|_| ())?;
-    Ok(text.finish().into_bytes())
+    Ok(())
 }
 
 fn startup_observation(
