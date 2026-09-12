@@ -11,7 +11,7 @@ use crate::mcp::{
     config::{McpConfig, McpServerConfig, McpTransportConfig},
     pagination::{McpCatalogKind, McpCatalogLimits},
     peer::{McpPeerError, McpStdioPeer},
-    runtime::{NativeMcpOwnedPeer, NativeMcpPeerCompletion, NativeMcpServerCandidate},
+    runtime::{NativeMcpCatalogState, NativeMcpOwnedPeer, NativeMcpPeerCompletion, NativeMcpServerCandidate},
 };
 use machine_god_core::CancellationToken;
 use std::{
@@ -147,9 +147,9 @@ async fn server(
     }
     #[cfg(feature = "mcp-http")]
     let mut lease = None;
-    let (peer, catalogs, authentication, generations) = match configuration.transport() {
+    let (peer, catalogs, refresh, authentication, generations) = match configuration.transport() {
         McpTransportConfig::Stdio(_) => {
-            let (peer, catalogs) = stdio_server(
+            let (peer, catalogs, refresh) = stdio_server(
                 startup,
                 &configuration,
                 guards,
@@ -159,13 +159,13 @@ async fn server(
                 maximum - minimum,
             )
             .await?;
-            (peer, catalogs, Arc::<[u8]>::from([]), Vec::new())
+            (peer, catalogs, refresh, Arc::<[u8]>::from([]), Vec::new())
         }
         McpTransportConfig::Http(remote) => {
             #[cfg(feature = "mcp-http")]
             {
                 *attempts = 1;
-                let (peer, catalogs, authentication, generations, selected_lease) = remote_server(
+                let (peer, catalogs, refresh, authentication, generations, selected_lease) = remote_server(
                     startup,
                     &configuration,
                     remote,
@@ -176,7 +176,7 @@ async fn server(
                 )
                 .await?;
                 lease = selected_lease;
-                (peer, catalogs, authentication, generations)
+                (peer, catalogs, refresh, authentication, generations)
             }
             #[cfg(not(feature = "mcp-http"))]
             {
@@ -216,7 +216,7 @@ async fn server(
             configuration: identity,
             authentication,
             catalogs,
-            refresh: None,
+            refresh: Some(refresh),
             catalog_epoch: startup.catalog_epoch,
             peer,
             operation_timeout: Duration::from_millis(u64::from(
@@ -236,7 +236,7 @@ async fn stdio_server(
     attempts: &mut u16,
     deadline: Option<Instant>,
     maximum: usize,
-) -> Result<(NativeMcpOwnedPeer, Vec<McpDescriptorCatalog>)> {
+) -> Result<(NativeMcpOwnedPeer, Vec<McpDescriptorCatalog>, NativeMcpCatalogState)> {
     let McpTransportConfig::Stdio(config) = configuration.transport() else {
         return Err(Error::Invalid);
     };
@@ -310,7 +310,7 @@ async fn stdio_server(
         )
         .await
         {
-            Ok(catalogs) => return Ok((peer, catalogs)),
+            Ok((catalogs, refresh)) => return Ok((peer, catalogs, refresh)),
             Err(error) => {
                 last = error;
                 drop(peer);
@@ -330,6 +330,27 @@ fn stdio_error(error: McpPeerError) -> Error {
 }
 
 async fn tools(
+    startup: &NativeMcpStartup,
+    authentication: (&str, Option<&CancellationToken>),
+    peer: &mut NativeMcpOwnedPeer,
+    guards: &[CancellationToken],
+    deadline: Instant,
+    maximum: usize,
+) -> Result<(Vec<McpDescriptorCatalog>, NativeMcpCatalogState)> {
+    let catalogs = tool_catalog(startup, authentication, peer, guards, deadline, maximum).await?;
+    let mut refresh = NativeMcpCatalogState::new(&catalogs).map_err(|_| Error::Catalog)?;
+    control::bounded(
+        refresh.start_subscription(peer, deadline),
+        &startup.clock,
+        guards,
+        deadline,
+    )
+    .await?
+    .map_err(|_| Error::Unavailable)?;
+    Ok((catalogs, refresh))
+}
+
+async fn tool_catalog(
     startup: &NativeMcpStartup,
     authentication: (&str, Option<&CancellationToken>),
     peer: &mut NativeMcpOwnedPeer,
@@ -397,6 +418,7 @@ async fn remote_server(
 ) -> Result<(
     NativeMcpOwnedPeer,
     Vec<McpDescriptorCatalog>,
+    NativeMcpCatalogState,
     Arc<[u8]>,
     Vec<CancellationToken>,
     Option<Arc<crate::mcp::auth::McpAuthLease>>,
@@ -466,7 +488,7 @@ async fn remote_server(
     let (peer, selected_deadline) =
         control::bounded_optional(connect, &startup.clock, &selected, deadline).await??;
     let mut peer = NativeMcpOwnedPeer::Http(Box::new(peer));
-    let catalogs = tools(
+    let (catalogs, refresh) = tools(
         startup,
         (configuration.name(), auth_generation.as_ref()),
         &mut peer,
@@ -477,7 +499,7 @@ async fn remote_server(
     .await?;
     let mut generations = vec![network.owner_cancellation()];
     generations.extend(auth_generation);
-    Ok((peer, catalogs, authentication, generations, lease))
+    Ok((peer, catalogs, refresh, authentication, generations, lease))
 }
 
 fn lifetime_deadline(startup: &NativeMcpStartup, outer: Option<Instant>) -> Option<Instant> {

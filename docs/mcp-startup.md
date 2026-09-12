@@ -49,8 +49,12 @@ Only an advertised tools catalog is eagerly fetched, including every correlated
 page and exact descriptor/schema admission. Resource, resource-template and prompt
 catalogs remain absent until an explicitly owned lazy feature request; their
 absence does not disable a usable tools server. Peers advertising only features
-remain ready with no eager tool catalog. Typed subscription activation is a
-separate runtime responsibility, not an arbitrary raw startup request.
+remain ready with no eager tool catalog. Advertised modern list-change filters
+start one typed subscription after eager discovery. Readiness requires an exact
+filter acknowledgement within the original startup attempt deadline; unsupported
+filters, listener failure or timeout reject that candidate without compatibility
+fallback. Startup transfers the acknowledged policy state with the exact owned
+peer and initial catalog allocations, not an arbitrary raw request or permission.
 
 Every configured startup timeout retains its full positive `u32` millisecond
 domain. HTTP authentication refresh and DNS consume the initial attempt's budget;
