@@ -163,6 +163,12 @@ pub(super) fn controller(
             .map_err(|_| error())
         })
         .transpose()?;
+    if let Some(controller) = &controller {
+        composition
+            .runtime
+            .bind_controller(controller)
+            .map_err(|_| error())?;
+    }
     Ok((Some(composition.runtime), controller))
 }
 

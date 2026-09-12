@@ -148,3 +148,22 @@ and production permission-preparer routing remain separate responsibilities.
 The [profile store](mcp-persistence.md) owns configuration publication separately
 from runtime activation; callers must preserve save and reload outcomes as
 independent facts.
+
+### Lazy Ask discovery and exact turn pins
+
+The actual reference host binds its controller once to the exact native runtime
+before engine publication. The runtime retains only a weak reverse link; lookup
+data cannot construct a controller, infer configuration or extend host ownership.
+Before a model's first search, selection or feature operation pins a publication,
+the runtime validates the registered native turn and exact submission registry,
+then awaits the controller's configured deferred Ask discovery. Concurrent
+waiters share the controller-owned discovery; caller cancellation or turn
+retirement ends that wait without cancelling another turn's discovery. The
+original context, registry and caller cancellation are revalidated after the wait.
+
+An existing turn pin bypasses discovery and never changes to a newer view.
+All-mode and completed deferred discovery are controller no-ops. Ordinary
+optional-server failures preserve the usable required publication; global
+controller failures, stale authority and owner closure propagate as errors.
+No runtime lock is held across discovery, and already-selected tool execution
+continues through its original native route and permission proof.

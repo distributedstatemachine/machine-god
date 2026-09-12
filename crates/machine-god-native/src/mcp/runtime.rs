@@ -4,6 +4,7 @@ mod addition;
 mod call;
 mod candidate;
 mod checkpoint;
+mod deferred;
 mod executor;
 mod features;
 mod peer;
@@ -29,7 +30,7 @@ use crate::{McpToolCatalog, McpToolCatalogError, McpToolCatalogErrorKind, McpToo
 use machine_god_core::{BoxFuture, CancellationToken, ToolContext};
 use std::{
     fmt,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::Instant,
 };
 
@@ -114,6 +115,7 @@ pub struct NativeMcpRuntime {
     limits: NativeMcpRuntimeLimits,
     state: Mutex<State>,
     identity: Arc<()>,
+    controller: OnceLock<Weak<super::controller::NativeMcpController>>,
     executor: Arc<dyn NativeMcpToolExecutor>,
     policy: NativeMcpToolExecutionPolicy,
     feature_operations: Arc<std::sync::atomic::AtomicUsize>,
@@ -140,6 +142,7 @@ impl NativeMcpRuntime {
             limits: limits.validate()?,
             state: Mutex::default(),
             identity: Arc::new(()),
+            controller: OnceLock::new(),
             executor,
             policy: policy.validate()?,
             feature_operations: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -420,6 +423,15 @@ impl McpToolCatalog for NativeMcpRuntime {
                 .snapshot_for_tool(&context)
                 .map_err(|_| catalog_error())?;
             let registry = context.registry().map_err(|_| catalog_error())?;
+            self.activate_for_turn(&context, &registry, &cancellation)
+                .await
+                .map_err(|error| {
+                    McpToolCatalogError::new(if error == NativeMcpRuntimeError::Cancelled {
+                        McpToolCatalogErrorKind::Cancelled
+                    } else {
+                        McpToolCatalogErrorKind::Unavailable
+                    })
+                })?;
             let publication = self.for_turn(&registry).map_err(|_| catalog_error())?;
             Ok(
                 publication.map_or_else(McpToolCatalogSnapshot::discovering, |value| {

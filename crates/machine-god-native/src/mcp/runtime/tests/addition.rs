@@ -62,7 +62,7 @@ fn names(publication: &super::super::candidate::Publication) -> Vec<String> {
         .collect()
 }
 
-fn conversation(
+pub(super) fn conversation(
     runtime: &NativeMcpRuntime,
     id: &str,
 ) -> (

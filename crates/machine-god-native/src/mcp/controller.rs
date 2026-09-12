@@ -146,6 +146,10 @@ pub struct NativeMcpController {
 type Result<T> = std::result::Result<T, NativeMcpControllerFailure>;
 
 impl NativeMcpController {
+    pub(crate) fn selects_runtime(&self, runtime: &NativeMcpRuntime) -> bool {
+        std::ptr::eq(self.inner.options.runtime.as_ref(), runtime)
+    }
+
     /// Observes the explicitly selected monotonic clock now, not at construction.
     /// Call from the first operation poll. This remains available after close so
     /// a caller can select a fresh bounded cleanup deadline.

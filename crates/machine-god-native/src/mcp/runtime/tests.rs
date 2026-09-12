@@ -14,6 +14,7 @@ use std::time::Duration;
 
 mod addition;
 mod checkpoint;
+mod deferred;
 mod execution;
 mod features;
 mod fixture;

@@ -155,6 +155,8 @@ impl NativeMcpRuntime {
         let registry = context
             .registry()
             .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
+        self.activate_for_turn(&context, &registry, &cancellation)
+            .await?;
         let publication = self
             .for_turn(&registry)?
             .ok_or(NativeMcpRuntimeError::Unavailable)?;
