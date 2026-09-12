@@ -10,7 +10,9 @@ mod phase;
 mod tests;
 
 #[cfg(feature = "mcp-http")]
-pub use authentication::{NativeMcpStartupAuthSource, NativeMcpStartupAuthentication};
+pub use authentication::{
+    NativeMcpStartupAuthChallenge, NativeMcpStartupAuthSource, NativeMcpStartupAuthentication,
+};
 pub use batch::{
     NativeMcpStartupBatch, NativeMcpStartupCompletion, NativeMcpStartupFailure,
     NativeMcpStartupReceipt, NativeMcpStartupRequirement, NativeMcpStartupServerReceipt,
@@ -94,6 +96,8 @@ pub struct NativeMcpStartup {
     network: Option<Arc<super::network::NativeMcpNetwork>>,
     #[cfg(feature = "mcp-http")]
     authentication: Vec<NativeMcpStartupAuthentication>,
+    #[cfg(feature = "mcp-http")]
+    challenges: Arc<Mutex<authentication::Challenges>>,
     lifetime: McpPeerLifetime,
     max_retained_bytes: usize,
     pending: Arc<AtomicBool>,
@@ -127,6 +131,8 @@ impl NativeMcpStartup {
             network: options.network,
             #[cfg(feature = "mcp-http")]
             authentication: options.authentication,
+            #[cfg(feature = "mcp-http")]
+            challenges: Arc::new(Mutex::new(authentication::Challenges::default())),
             lifetime: options.peer_lifetime,
             max_retained_bytes: options.max_retained_bytes,
             pending: Arc::new(AtomicBool::new(false)),

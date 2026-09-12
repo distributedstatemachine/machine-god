@@ -94,7 +94,7 @@ pub(super) async fn build(
             &mut owner,
             &mut receipt.attempts,
             deadline,
-            startup.max_retained_bytes - retained,
+            remaining(startup, configuration.name(), retained),
         )
         .await;
         match result {
@@ -286,7 +286,16 @@ async fn stdio_server(
         };
         peer.restrict_lifetime(startup.lifetime);
         let mut peer = NativeMcpOwnedPeer::Stdio(peer);
-        match tools(startup, &mut peer, guards, selected_deadline, maximum).await {
+        match tools(
+            startup,
+            (configuration.name(), None),
+            &mut peer,
+            guards,
+            selected_deadline,
+            maximum,
+        )
+        .await
+        {
             Ok(catalogs) => return Ok((peer, catalogs)),
             Err(error) => {
                 last = error;
@@ -308,11 +317,14 @@ fn stdio_error(error: McpPeerError) -> Error {
 
 async fn tools(
     startup: &NativeMcpStartup,
+    authentication: (&str, Option<&CancellationToken>),
     peer: &mut NativeMcpOwnedPeer,
     guards: &[CancellationToken],
     deadline: Instant,
     maximum: usize,
 ) -> Result<Vec<McpDescriptorCatalog>> {
+    #[cfg(not(feature = "mcp-http"))]
+    let _ = authentication;
     let supported = match peer {
         NativeMcpOwnedPeer::Stdio(peer) => peer.capabilities().tools(),
         #[cfg(feature = "mcp-http")]
@@ -341,7 +353,10 @@ async fn tools(
             NativeMcpOwnedPeer::Http(peer) => peer
                 .catalog(McpCatalogKind::Tools, limits, epoch, deadline)
                 .await
-                .map_err(|_| Error::Catalog),
+                .map_err(|error| {
+                    startup.observe_http_error(authentication.0, authentication.1, maximum, error);
+                    Error::Catalog
+                }),
             #[cfg(test)]
             NativeMcpOwnedPeer::Script(_) => unreachable!("startup only creates concrete peers"),
         }
@@ -371,11 +386,7 @@ async fn remote_server(
     Arc<[u8]>,
     Vec<CancellationToken>,
 )> {
-    use crate::mcp::{
-        endpoint::McpEndpoint,
-        http_peer::{McpHttpPeer, McpHttpPeerOptions},
-        protocol::TransportKind,
-    };
+    use crate::mcp::{endpoint::McpEndpoint, http_peer::McpHttpPeer};
     let network = startup.network.as_ref().ok_or(Error::Unavailable)?;
     let mut selected = guards.to_vec();
     selected.push(network.owner_cancellation());
@@ -411,23 +422,12 @@ async fn remote_server(
         return Err(Error::Limit);
     }
     let custody = owner.completion.clone();
-    let options = McpHttpPeerOptions {
-        destination: admitted.destination,
-        trust: admitted.trust,
-        headers,
-        clock: startup.clock.clone(),
-        transport: if matches!(configuration.transport(), McpTransportConfig::Sse(_)) {
-            TransportKind::LegacySse
-        } else {
-            TransportKind::StreamableHttp
-        },
-        lifetime: startup.lifetime,
-    };
+    let options = http_options(startup, configuration, admitted, headers);
     let observer =
         Arc::new(move |completion| custody.record(NativeMcpPeerCompletion::Http(completion)));
     let timeout = Duration::from_millis(u64::from(configuration.startup_timeout_ms()));
     let connect = async {
-        match deadline {
+        let result = match deadline {
             Some(deadline) => {
                 McpHttpPeer::connect_observed(
                     options,
@@ -449,15 +449,22 @@ async fn remote_server(
                 )
                 .await
             }
-        }
+        };
+        result.map_err(|error| {
+            startup.observe_http_error(
+                configuration.name(),
+                auth_generation.as_ref(),
+                maximum - authentication.len(),
+                error,
+            )
+        })
     };
     let (peer, selected_deadline) =
-        control::bounded_optional(connect, &startup.clock, &selected, deadline)
-            .await?
-            .map_err(|error| http_error(&error))?;
+        control::bounded_optional(connect, &startup.clock, &selected, deadline).await??;
     let mut peer = NativeMcpOwnedPeer::Http(Box::new(peer));
     let catalogs = tools(
         startup,
+        (configuration.name(), auth_generation.as_ref()),
         &mut peer,
         &selected,
         selected_deadline,
@@ -476,13 +483,39 @@ fn lifetime_deadline(startup: &NativeMcpStartup, outer: Option<Instant>) -> Opti
 }
 
 #[cfg(feature = "mcp-http")]
-fn http_error(error: &crate::mcp::http_peer::McpHttpPeerError) -> Error {
-    use crate::mcp::http_peer::McpHttpPeerError;
-    match error {
-        McpHttpPeerError::Authentication(_) => Error::Authentication,
-        McpHttpPeerError::Deadline => Error::Deadline,
-        McpHttpPeerError::Cancelled => Error::Cancelled,
-        McpHttpPeerError::Limit => Error::Limit,
-        _ => Error::Unavailable,
+fn http_options(
+    startup: &NativeMcpStartup,
+    configuration: &McpServerConfig,
+    admitted: crate::mcp::auth::McpAuthDestination,
+    headers: crate::mcp::headers::McpResolvedHeaders,
+) -> crate::mcp::http_peer::McpHttpPeerOptions {
+    use crate::mcp::{http_peer::McpHttpPeerOptions, protocol::TransportKind};
+    McpHttpPeerOptions {
+        destination: admitted.destination,
+        trust: admitted.trust,
+        headers,
+        clock: startup.clock.clone(),
+        transport: if matches!(configuration.transport(), McpTransportConfig::Sse(_)) {
+            TransportKind::LegacySse
+        } else {
+            TransportKind::StreamableHttp
+        },
+        lifetime: startup.lifetime,
     }
+}
+
+fn remaining(startup: &NativeMcpStartup, server: &str, retained: usize) -> usize {
+    #[cfg(feature = "mcp-http")]
+    let challenge_charge = {
+        startup.clear_challenge(server);
+        startup.challenge_charge()
+    };
+    #[cfg(not(feature = "mcp-http"))]
+    let challenge_charge = {
+        let _ = server;
+        0
+    };
+    startup
+        .max_retained_bytes
+        .saturating_sub(retained + challenge_charge)
 }

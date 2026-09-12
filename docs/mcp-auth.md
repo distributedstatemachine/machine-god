@@ -39,6 +39,19 @@ scope priority, deduplication and supported `offline_access`. Each scope has at
 most 64 tokens of 256 bytes. Runtime challenge sequences own the pinned maximum
 of two scope reauthorizations; this service executes one explicit authorization.
 
+Startup retains exact bounded HTTP authentication status and ordered
+`WWW-Authenticate` bytes from connection and initial tool-catalog failures.
+These are external observations, not parsed scope, destination, consent or
+browser authority; no login or retry follows automatically. Lookup remains
+historical after failure/cleanup. Revalidation requires the same startup source,
+latest per-server observation and original owner/configuration/network/auth
+lifetimes; actual profile revalidation and explicit command consent remain host
+obligations. A new attempted server replaces the latest observation. Failed
+retention reports `Limit`, never stale previous headers. At most 128 retained
+observations (including externally held replacements), each with at most eight
+headers and 16 KiB of header bytes, share the startup retained-byte budget with
+candidate catalogs. Formatting never exposes challenge or server contents.
+
 Native owns an ephemeral `127.0.0.1` callback listener before registration fixes
 its redirect URI. A presenter must approve before the launcher is called.
 The callback must be GET `/callback`, with bounded headers, exact state and the

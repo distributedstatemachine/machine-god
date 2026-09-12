@@ -1,4 +1,5 @@
 use super::*;
+mod challenges;
 mod configured;
 use crate::mcp::{
     auth::{

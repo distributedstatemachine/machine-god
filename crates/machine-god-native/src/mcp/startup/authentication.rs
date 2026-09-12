@@ -7,6 +7,10 @@ use crate::mcp::{
 use machine_god_core::CancellationToken;
 use std::{fmt, os::unix::ffi::OsStrExt, sync::Arc, time::Instant};
 
+mod challenges;
+pub(super) use challenges::Challenges;
+pub use challenges::NativeMcpStartupAuthChallenge;
+
 /// Explicit endpoint authentication choice. None of these variants can open a
 /// browser. Stored credentials may refresh through the selected native service.
 #[derive(Clone)]
