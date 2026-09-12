@@ -21,10 +21,14 @@ explicit clock constructor.
 There is one serialized application lane and at most one persistent listener.
 Callers poll requests or `next_notification` to drive it; no task is spawned.
 Pending listener reads survive request selection without being dropped and
-recreated. Dropping a polled operation closes the peer and local listener.
-An ordinary idle `next_notification` deadline returns a timeout without retiring
-a live peer or losing its pending read/parser state. Cancellation, owner expiry,
-malformed input and abandonment still retire it. A completed event at the
+recreated. Dropping a polled application operation closes the peer and local listener.
+An idle `next_notification` observation can instead be dropped or time out without
+retiring a live peer or losing its pending read/parser state. A pending listener
+GET reconnect, including its retry delay and partial acquisition, stays owned by
+the peer and retains its original finite acquisition deadline; a later observer
+cannot restart that GET or extend that deadline. Each observation retains the
+existing event/reconnect limits. Cancellation, owner expiry, malformed input and
+failed reconnect acquisition still retire it. A completed event at the
 deadline boundary is retained without publishing a late successful observation.
 
 ## Protocol lifecycle

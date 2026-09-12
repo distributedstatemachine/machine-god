@@ -387,6 +387,9 @@ impl McpHttpPeer {
         routing::start_listener(self, deadline).await
     }
     /// Drives the owned listener until one untrusted notification is available.
+    /// Dropping this observation retains the healthy peer's pending read or GET
+    /// reconnect. Its deadline bounds observation, not the listener lifetime;
+    /// a retained reconnect keeps its original finite acquisition deadline.
     /// # Errors
     /// Rejects retired listeners, malformed events and exhausted bounds.
     pub async fn next_notification(&mut self, deadline: Instant) -> Result<McpHttpPeerFrame> {

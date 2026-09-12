@@ -1,6 +1,8 @@
 use super::*;
 use crate::mcp::lifetime::McpPeerLifetime;
 
+mod idle;
+
 struct TestClock {
     origin: Instant,
     state: Mutex<(u64, CancellationToken)>,

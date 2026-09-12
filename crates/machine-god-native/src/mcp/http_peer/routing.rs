@@ -11,7 +11,9 @@ use crate::mcp::{
 };
 use std::task::Poll;
 mod exchange;
+mod idle;
 pub(super) use exchange::{exchange, notification};
+pub(super) use idle::next_notification;
 
 /// A polled operation abandoned at any await retires its peer and listener.
 pub(super) struct Operation<'a> {
@@ -299,30 +301,51 @@ pub(super) async fn catalog(
 }
 
 pub(super) async fn open_listener(peer: &mut McpHttpPeer, deadline: Instant) -> Result<()> {
-    let head = Arc::new(peer.make_head(None, peer.listener_resume.id.as_deref())?);
-    let mut response = bounded(
-        peer.connection(head, deadline)?
-            .control(McpHttpControl::listen()),
-        &*peer.options.clock,
-        &peer.cancellation,
-        deadline,
-    )
-    .await??;
-    head::status(&response, peer.session.is_some())?;
-    if response.status == 405 {
-        return Err(McpHttpPeerError::ListenerUnsupported);
-    }
-    head::stable_session(&response.headers, peer.session.as_deref())?;
-    if response.status != 200 || head::media(&response.headers)? != head::Media::Sse {
-        return Err(McpHttpPeerError::Protocol);
-    }
-    response.body.promote_listener(peer.options.lifetime)?;
-    peer.listener = Some(
-        stream::Reader::new(response.body, SseMode::Legacy, stream::listener_limits())?.next(),
-    );
+    peer.listener = Some(prepare_listener(peer, deadline, 0)?.await?.next());
     // Hints are observations of this new stream, not inherited event fields.
     peer.listener_resume = stream::Resume::default();
     Ok(())
+}
+
+fn prepare_listener(
+    peer: &McpHttpPeer,
+    deadline: Instant,
+    retry_ms: u32,
+) -> Result<BoxFuture<'static, Result<Box<stream::Reader>>>> {
+    let head = Arc::new(peer.make_head(None, peer.listener_resume.id.as_deref())?);
+    let connection = peer.connection(head, deadline)?;
+    let clock = peer.options.clock.clone();
+    let cancellation = peer.cancellation.clone();
+    let session = peer.session.clone();
+    let lifetime = peer.options.lifetime;
+    let deadline = lifetime.constrain(deadline);
+    let wake = clock
+        .now()
+        .checked_add(Duration::from_millis(u64::from(retry_ms)))
+        .ok_or(McpHttpPeerError::Limit)?
+        .min(deadline);
+    Ok(Box::pin(async move {
+        if retry_ms != 0 {
+            bounded(clock.sleep_until(wake), &*clock, &cancellation, deadline).await?;
+        }
+        let mut response = bounded(
+            connection.control(McpHttpControl::listen()),
+            &*clock,
+            &cancellation,
+            deadline,
+        )
+        .await??;
+        head::status(&response, session.is_some())?;
+        if response.status == 405 {
+            return Err(McpHttpPeerError::ListenerUnsupported);
+        }
+        head::stable_session(&response.headers, session.as_deref())?;
+        if response.status != 200 || head::media(&response.headers)? != head::Media::Sse {
+            return Err(McpHttpPeerError::Protocol);
+        }
+        response.body.promote_listener(lifetime)?;
+        stream::Reader::new(response.body, SseMode::Legacy, stream::listener_limits())
+    }))
 }
 
 pub(super) async fn start_listener(peer: &mut McpHttpPeer, deadline: Instant) -> Result<()> {
@@ -342,58 +365,6 @@ pub(super) async fn start_listener(peer: &mut McpHttpPeer, deadline: Instant) ->
     operation.settled =
         result.is_ok() || matches!(result, Err(McpHttpPeerError::ListenerUnsupported));
     result
-}
-
-pub(super) async fn next_notification(
-    peer: &mut McpHttpPeer,
-    deadline: Instant,
-) -> Result<McpHttpPeerFrame> {
-    peer.available()?;
-    peer.check(deadline)?;
-    if let Some(frame) = peer.take_notification() {
-        return Ok(frame);
-    }
-    if peer.listener.is_none() {
-        return Err(McpHttpPeerError::ListenerUnsupported);
-    }
-    let mut operation = Operation::begin(peer);
-    loop {
-        let peer = &mut *operation.peer;
-        let read = peer.listener.as_mut().ok_or(McpHttpPeerError::Closed)?;
-        let result = observe_listener(
-            read,
-            &*peer.options.clock,
-            &peer.cancellation,
-            peer.options.lifetime.constrain(deadline),
-        )
-        .await;
-        // A caller's idle observation deadline is not the listener lifetime.
-        // The same pending reader retains partially consumed framing in `peer`.
-        if matches!(result, Err(McpHttpPeerError::Deadline)) && peer.check_owner().is_ok() {
-            operation.settled = true;
-            return Err(McpHttpPeerError::Deadline);
-        }
-        let (reader, event) = result?;
-        peer.listener = None;
-        let event = event?;
-        if let Some(event) = &event {
-            route_listener(peer, event, None)?;
-        }
-        peer.listener = Some(reader.next());
-        if let Err(error) = peer.check(deadline) {
-            operation.settled = peer.check_owner().is_ok();
-            return Err(error);
-        }
-        if event.is_some() {
-            if let Some(frame) = peer.take_notification() {
-                operation.settled = true;
-                return Ok(frame);
-            }
-        } else {
-            peer.listener = None;
-            reconnect_listener(peer, deadline).await?;
-        }
-    }
 }
 
 pub(super) fn charge_event(peer: &mut McpHttpPeer) -> Result<()> {
