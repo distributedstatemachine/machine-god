@@ -4,7 +4,7 @@
 use machine_god_native::{
     MAX_TERMINAL_ENVIRONMENT_BYTES, MAX_TERMINAL_ENVIRONMENT_ENTRIES,
     MAX_TERMINAL_ENVIRONMENT_KEY_BYTES, MAX_TERMINAL_ENVIRONMENT_VALUE_BYTES,
-    NativeBackgroundUrlExecutable, NativeInteractiveSessionOptions,
+    NativeBackgroundUrlExecutable, NativeReferenceHostConversationOptions,
 };
 use rustix::fs::{Mode, OFlags};
 use std::ffi::OsString;
@@ -38,15 +38,15 @@ const DESKTOP_KEYS: [&str; 20] = [
     "PATH",
 ];
 
-pub(super) struct Authority {
+pub(in crate::ask::production) struct Authority {
     executable: NativeBackgroundUrlExecutable,
     environment: Vec<(OsString, OsString)>,
 }
 
-pub(super) fn configure(
-    options: NativeInteractiveSessionOptions,
+pub(in crate::ask::production) fn configure(
+    options: NativeReferenceHostConversationOptions,
     authority: Option<Authority>,
-) -> NativeInteractiveSessionOptions {
+) -> NativeReferenceHostConversationOptions {
     match authority {
         Some(authority) => {
             options.with_background_url_opener(authority.executable, authority.environment)
@@ -56,7 +56,7 @@ pub(super) fn configure(
 }
 
 /// No process starts here. Missing/invalid optional authority leaves startup intact.
-/// This runs beside clipboard capture, before entering the async session owner.
+/// This runs before host composition, on the blocking interactive startup owner.
 pub(super) fn capture() -> Option<Authority> {
     capture_with(platform_program(), |key| std::env::var_os(key))
 }

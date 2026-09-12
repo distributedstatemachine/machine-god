@@ -97,10 +97,15 @@ impl NativeReferenceHostMcpOptions {
     pub(super) fn compose(
         self,
         archive: Arc<NativeToolResultArchiveAdapter>,
+        url_launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
     ) -> Result<Composition, NativeReferenceHostBuildError> {
         let executor = NativeMcpArchivedToolExecutor::new(archive.clone()).map_err(|_| error())?;
-        let executor = Arc::new(match self.form_responder {
+        let executor = match self.form_responder {
             Some(presenter) => executor.with_form_responder(presenter),
+            None => executor,
+        };
+        let executor = Arc::new(match url_launcher {
+            Some(launcher) => executor.with_url_launcher(launcher),
             None => executor,
         });
         let policy = executor.execution_policy();
@@ -206,6 +211,7 @@ pub(super) fn select(
     terminal: &super::SelectedTerminalComposition,
     permissions: Option<&super::PermissionComposition>,
     catalog: Arc<dyn crate::McpToolCatalog>,
+    url_launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
 ) -> Result<(Option<Composition>, Arc<dyn crate::McpToolCatalog>), NativeReferenceHostBuildError> {
     let Some(options) = selection.options else {
         return Ok((None, catalog));
@@ -214,7 +220,8 @@ pub(super) fn select(
         return Err(error());
     }
     options.validate_controller(selection.management.is_some())?;
-    let mut composition = options.compose(terminal.archive.clone().ok_or_else(error)?)?;
+    let mut composition =
+        options.compose(terminal.archive.clone().ok_or_else(error)?, url_launcher)?;
     composition.management = selection.management;
     let catalog = composition.runtime.clone();
     Ok((Some(composition), catalog))

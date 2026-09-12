@@ -1122,6 +1122,7 @@ mod production {
                             Arc::new(DenyPermissionPrompter),
                             Arc::new(UnavailableQuestionPrompter),
                             None,
+                            None,
                             || control.activate_turn(),
                             false,
                         )
@@ -1210,6 +1211,7 @@ mod production {
         mcp_presenter: Option<
             Arc<dyn machine_god_native::mcp::interaction::McpElicitationPresenter>,
         >,
+        background_url: Option<interactive::background_open::Authority>,
         before_host: impl FnOnce() -> Result<(), ()>,
         discover_skills: bool,
     ) -> Result<PreparedConversationHost, ()> {
@@ -1284,6 +1286,7 @@ mod production {
                 .with_model_routes(model_routes.clone())
                 .with_observations(Arc::clone(&observations))
                 .with_permissions(capture_permission_options());
+        options = interactive::background_open::configure(options, background_url);
         if let Some((service, mcp_options)) = mcp_management.zip(mcp_options) {
             options = options
                 .with_mcp_management(service)

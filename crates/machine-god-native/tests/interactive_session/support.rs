@@ -161,7 +161,7 @@ impl FixtureExtension {
 
 impl Fixture {
     pub fn new() -> Self {
-        Self::with_prompter(Arc::new(AllowPrompter))
+        Self::with_host_options(|options| options)
     }
 
     pub fn with_prompter(prompter: Arc<dyn PermissionPrompter>) -> Self {
@@ -184,6 +184,30 @@ impl Fixture {
         with_workspace: bool,
         extension: FixtureExtension,
         prompter: Arc<dyn PermissionPrompter>,
+    ) -> Self {
+        Self::configured_with_options(with_workspace, extension, prompter, |options| options)
+    }
+
+    pub fn with_host_options(
+        select: impl FnOnce(
+            NativeReferenceHostConversationOptions,
+        ) -> NativeReferenceHostConversationOptions,
+    ) -> Self {
+        Self::configured_with_options(
+            false,
+            FixtureExtension::None,
+            Arc::new(AllowPrompter),
+            select,
+        )
+    }
+
+    fn configured_with_options(
+        with_workspace: bool,
+        extension: FixtureExtension,
+        prompter: Arc<dyn PermissionPrompter>,
+        select: impl FnOnce(
+            NativeReferenceHostConversationOptions,
+        ) -> NativeReferenceHostConversationOptions,
     ) -> Self {
         let temporary = TemporaryDirectory::new();
         let workspace = temporary.0.join("workspace");
@@ -265,6 +289,7 @@ impl Fixture {
             );
         }
         options = extension.apply(options, &workspace, &state_root);
+        options = select(options);
         let transport = ScriptedTransport::default();
         let host = Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             config, Arc::new(transport.clone()), NetworkTarget {

@@ -283,6 +283,7 @@ struct TerminalCompositionSelection {
 /// Construction is inert and does not capture files, open roots, or start work.
 #[derive(Clone)]
 pub struct NativeReferenceHostConversationOptions {
+    background_url: Option<BackgroundUrlSelection>,
     mcp_runtime: Option<NativeReferenceHostMcpOptions>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
@@ -300,6 +301,7 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
         Self {
+            background_url: None,
             mcp_runtime: None,
             mcp_management: None,
             mcp_contexts: None,
@@ -318,6 +320,22 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn with_terminal(mut self, terminal: NativeReferenceHostTerminalOptions) -> Self {
         self.terminal = Some(terminal);
+        self
+    }
+
+    /// Retains an explicit desktop launcher selection without inspecting or
+    /// executing it. Composition binds it to the complete terminal's workers;
+    /// invalid optional environment authority leaves the launcher unavailable.
+    #[must_use]
+    pub fn with_background_url_opener(
+        mut self,
+        executable: crate::NativeBackgroundUrlExecutable,
+        environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    ) -> Self {
+        self.background_url = Some(BackgroundUrlSelection {
+            executable,
+            environment,
+        });
         self
     }
 
@@ -416,6 +434,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 
 #[derive(Default)]
 struct PreparedCompositionOptions {
+    background_url: Option<BackgroundUrlSelection>,
     mcp_runtime: Option<NativeReferenceHostMcpOptions>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
@@ -431,6 +450,7 @@ struct PreparedCompositionOptions {
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
     fn from(options: NativeReferenceHostConversationOptions) -> Self {
         Self {
+            background_url: options.background_url,
             mcp_runtime: options.mcp_runtime,
             mcp_management: options.mcp_management,
             mcp_contexts: options.mcp_contexts,
@@ -442,6 +462,29 @@ impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions
             observations: options.observations,
             permissions: options.permissions,
         }
+    }
+}
+
+#[derive(Clone)]
+struct BackgroundUrlSelection {
+    executable: crate::NativeBackgroundUrlExecutable,
+    environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+}
+
+impl BackgroundUrlSelection {
+    fn bind(
+        self,
+        terminal: &SelectedTerminalComposition,
+    ) -> Result<crate::NativeBackgroundUrlOpener, crate::NativeBackgroundOpenError> {
+        crate::NativeBackgroundUrlOpener::from_executable(
+            self.executable,
+            self.environment,
+            terminal
+                .resource
+                .as_ref()
+                .ok_or(crate::NativeBackgroundOpenError::Unavailable)?
+                .worker_scope(),
+        )
     }
 }
 
@@ -463,6 +506,8 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
+    background_opener:
+        Option<Result<crate::NativeBackgroundUrlOpener, crate::NativeBackgroundOpenError>>,
     mcp_runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
     mcp_controller: Option<Arc<crate::mcp::controller::NativeMcpController>>,
     reserved_tool_names: Box<[ToolName]>,
@@ -488,6 +533,15 @@ pub struct NativeReferenceHost {
 }
 
 impl NativeReferenceHost {
+    /// Shares the already-bound launcher; this accessor captures no authority.
+    pub(crate) fn background_url_opener(&self) -> Option<crate::NativeBackgroundUrlOpener> {
+        self.background_opener.as_ref()?.as_ref().ok().cloned()
+    }
+
+    pub(crate) fn has_background_url_selection(&self) -> bool {
+        self.background_opener.is_some()
+    }
+
     /// Composes the production AI Gateway HTTP reference host from explicit roots.
     ///
     /// The roots must already exist. This function does not create a runtime,
@@ -723,6 +777,7 @@ impl NativeReferenceHost {
             management: mcp_management.clone(),
         };
         let skills = options.skills.clone();
+        let background_url = options.background_url.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
@@ -755,6 +810,7 @@ impl NativeReferenceHost {
             observations.clone(),
             permissions,
             mcp_options,
+            background_url,
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
@@ -863,6 +919,7 @@ impl NativeReferenceHost {
             None,
             None,
             mcp::Selection::default(),
+            None,
         )
     }
 
@@ -917,6 +974,7 @@ impl NativeReferenceHost {
             None,
             None,
             mcp::Selection::default(),
+            None,
         )
     }
 
@@ -967,6 +1025,7 @@ impl NativeReferenceHost {
             None,
             None,
             mcp::Selection::default(),
+            None,
         )
     }
 
@@ -1019,6 +1078,7 @@ impl NativeReferenceHost {
             None,
             None,
             mcp::Selection::default(),
+            None,
         )
     }
 
@@ -1154,6 +1214,7 @@ impl NativeReferenceHost {
             management: mcp_management.clone(),
         };
         let skills = options.skills.clone();
+        let background_url = options.background_url.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
@@ -1180,6 +1241,7 @@ impl NativeReferenceHost {
             observations.clone(),
             permissions,
             mcp_options,
+            background_url,
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
@@ -1438,6 +1500,7 @@ impl NativeReferenceHost {
             None,
             None,
             mcp::Selection::default(),
+            None,
         )
     }
 
@@ -1461,6 +1524,7 @@ impl NativeReferenceHost {
         observations: Option<Arc<crate::NativeConversationObservations>>,
         permission_options: Option<NativeReferenceHostPermissionOptions>,
         mcp_options: mcp::Selection,
+        background_url: Option<BackgroundUrlSelection>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let workspace_binding = workspace_tools.workspace_binding.clone();
         let (workspace_tools, permission_setup) =
@@ -1507,11 +1571,16 @@ impl NativeReferenceHost {
             TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
         construction.observe(selected_terminal.resource.as_ref());
+        let background_opener = background_url.map(|selected| selected.bind(&selected_terminal));
         let (mcp, mcp_catalog) = mcp::select(
             mcp_options,
             &selected_terminal,
             permission_setup.as_ref(),
             mcp_catalog,
+            background_opener
+                .as_ref()
+                .and_then(|selected| selected.as_ref().ok())
+                .map(crate::NativeBackgroundUrlOpener::mcp_launcher),
         )?;
         let SelectedTerminalComposition {
             tool: terminal,
@@ -1559,6 +1628,7 @@ impl NativeReferenceHost {
         )
         .map(|mut host| {
             host.workspace_binding = workspace_binding;
+            host.background_opener = background_opener;
             construction.transfer();
             host
         })
@@ -1611,6 +1681,7 @@ impl NativeReferenceHost {
             )?;
 
         Ok(Self {
+            background_opener: None,
             reserved_tool_names,
             engine,
             mcp_runtime,
@@ -2154,7 +2225,10 @@ fn validate_prepared_selections(
     {
         return Err(mcp::error());
     }
-    if (options.skills.is_some() || options.mcp_management.is_some()) && options.terminal.is_none()
+    if (options.skills.is_some()
+        || options.mcp_management.is_some()
+        || options.background_url.is_some())
+        && options.terminal.is_none()
     {
         return Err(terminal_options_error());
     }

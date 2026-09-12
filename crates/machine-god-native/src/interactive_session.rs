@@ -281,6 +281,7 @@ impl NativeInteractiveSession {
                 || host.terminal_lifecycle_requester().is_none()
                 || host.model_routes().is_none()
                 || host.observations().is_none()
+                || (host.has_background_url_selection() && options.background_url.is_some())
             {
                 return Err(NativeInteractiveError::Configuration);
             }
@@ -326,7 +327,7 @@ impl NativeInteractiveSession {
                     )
                 },
             );
-            let background_opener =
+            let background_opener = host.background_url_opener().or_else(|| {
                 options
                     .background_url
                     .take()
@@ -337,7 +338,8 @@ impl NativeInteractiveSession {
                             host.control_workers()?,
                         )
                         .ok()
-                    });
+                    })
+            });
             let mcp_browser_launcher = background_opener
                 .as_ref()
                 .map(crate::NativeBackgroundUrlOpener::mcp_launcher);

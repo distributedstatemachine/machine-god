@@ -172,19 +172,34 @@ fn unavailable_optional_capability_keeps_native_startup_options_usable() {
     let fixture = Fixture::new();
     let authority = capture_with(&fixture.0.join("absent"), |_| None);
     assert!(authority.is_none());
-    let options = NativeInteractiveSessionOptions::new(
-        fixture.0.clone(),
-        machine_god_native::NativeModelPreferences::default(),
-    )
-    .unwrap();
-    assert!(
-        configure(options, authority)
-            .with_process_model_override("fixture/optional")
-            .is_ok()
-    );
+    let options = NativeReferenceHostConversationOptions::new(std::sync::Arc::new(
+        machine_god_native::FileUndoTracker::new(),
+    ));
+    let _options = configure(options, authority);
     let program = fixture.program();
     let oversized = capture_with(&program, |_| {
         Some("x".repeat(MAX_TERMINAL_ENVIRONMENT_VALUE_BYTES + 1).into())
     });
     assert!(oversized.is_none());
+}
+
+#[test]
+fn captured_authority_moves_into_host_options_before_host_acquisition_without_recapture() {
+    let fixture = Fixture::new();
+    let program = fixture.program();
+    let mut calls = 0;
+    let authority = capture_with(&program, |_| {
+        calls += 1;
+        None
+    })
+    .unwrap();
+    assert_eq!(calls, DESKTOP_KEYS.len() - 1);
+    // Retaining host options must not resolve the selected installation again.
+    std::fs::remove_file(program).unwrap();
+    let options = NativeReferenceHostConversationOptions::new(std::sync::Arc::new(
+        machine_god_native::FileUndoTracker::new(),
+    ));
+    let selected = configure(options, Some(authority));
+    let _retained = selected.clone();
+    assert!(!fixture.0.join("launcher.invoked").exists());
 }

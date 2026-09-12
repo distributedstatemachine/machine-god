@@ -19,6 +19,7 @@ use std::{
 
 #[cfg(feature = "mcp-http")]
 mod authentication;
+mod browser_composition;
 mod controller;
 mod fixture;
 #[cfg(feature = "mcp-http")]
@@ -123,9 +124,12 @@ fn concrete_executor_composition_does_not_prepare_archive_or_read_clock() {
     let options =
         NativeReferenceHostMcpOptions::new(Arc::new(NativeMcpContexts::new()), clock.clone());
     let composition = options
-        .compose(Arc::new(
-            NativeToolResultArchiveAdapter::new(archive).with_worker_scope(workers.clone()),
-        ))
+        .compose(
+            Arc::new(
+                NativeToolResultArchiveAdapter::new(archive).with_worker_scope(workers.clone()),
+            ),
+            None,
+        )
         .unwrap();
     assert_eq!(clock.0.load(Ordering::Relaxed), 0);
     assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);

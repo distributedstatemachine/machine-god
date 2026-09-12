@@ -199,6 +199,21 @@ Selecting it is inert and does not advertise URL completion support.
 The interactive CLI selects its existing prompt bridge for this endpoint;
 noninteractive ask/resume do not select a human presenter.
 
+`with_background_url_opener(executable, captured_environment)` separately retains
+explicit desktop authority. Both prepared composition paths require complete
+terminal options and bind the opener once to that terminal's actual worker scope,
+before selecting the MCP executor. No executable inspection, launch or environment
+capture occurs during binding. Invalid optional environment authority leaves the
+opener unavailable. The immutable host opener supplies the executor's URL launcher,
+interactive background controls and interactive authentication with one shared
+admission through direct-child reap; it also works without MCP selection. Sessions
+inherit that opener and reject a second session selection before preparing a
+conversation, including when the first selection failed optional validation. A
+session-only selection remains supported for hosts without a desktop selection,
+but does not retrofit executor support. The production interactive CLI
+captures desktop authority once before host acquisition; one-shot ask/resume
+select none. Launcher availability never supplies consent or continuation proof.
+
 With the native `mcp-http` feature, `mcp::clock::TokioMcpClock` is an explicit
 production clock selection for both runtime/startup and HTTP deadlines. Its
 unpolled timers are inert and use the host's existing Tokio runtime on poll;
