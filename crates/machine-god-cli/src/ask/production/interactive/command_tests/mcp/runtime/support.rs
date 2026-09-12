@@ -155,6 +155,9 @@ pub(super) fn resources() -> Value {
 pub(super) fn prompts() -> Value {
     json!({"prompts":[{"name":"review","arguments":[{"name":"topic","required":true}]}],"ttlMs":300_000})
 }
+pub(super) fn templates() -> Value {
+    json!({"resourceTemplates":[{"uriTemplate":"test:///{id}","name":"dynamic"}],"ttlMs":300_000})
+}
 pub(super) async fn finish_runtime(driver: Driver, fixture: support::Fixture) {
     fixture.host.close_mcp();
     let receipts = fixture

@@ -128,10 +128,10 @@ fn literal_read_and_get_resume_through_the_exact_command_bridge_and_modal() {
 }
 
 #[test]
-fn literal_cancel_retires_waiting_human_input_without_resuming_http() {
+fn literal_modal_cancel_sends_only_the_original_canonical_cancel_response() {
     executor().block_on(async {
         let (fixture, mut driver, listener) = http::setup().await;
-        let (mut modal, _) = begin(&mut driver, &listener, false).await;
+        let (mut modal, original) = begin(&mut driver, &listener, false).await;
         modal.displayed = true;
         assert!(modal.answer("/next", &modal.binding()).unwrap().is_none());
         modal.displayed = true;
@@ -139,8 +139,29 @@ fn literal_cancel_retires_waiting_human_input_without_resuming_http() {
         let token = modal.view.token().clone();
         driver.modal = Some(modal);
         driver.command("/cancel", 202);
-        let outcome = control(&mut driver).await;
-        assert!(outcome.failed());
+        // UI cancellation is protocol answer data. It is distinct from
+        // retiring the producer's command/turn cancellation token.
+        let (outcome, cancelled) = tokio::time::timeout(
+            Duration::from_secs(10),
+            futures_util::future::join(
+                control(&mut driver),
+                http::reply(&listener, "resources/read", json!({"contents":[]})),
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(!outcome.failed());
+        assert!(cancelled["id"].as_i64().unwrap() > original["id"].as_i64().unwrap());
+        let mut params = cancelled["params"].clone();
+        assert_eq!(
+            params.as_object_mut().unwrap().remove("requestState"),
+            Some(Value::Null)
+        );
+        assert_eq!(
+            params.as_object_mut().unwrap().remove("inputResponses"),
+            Some(json!({"confirm":{"action":"cancel"}}))
+        );
+        assert_eq!(params, original["params"]);
         assert!(driver.inbox.reply(&token, stale).is_err());
         let listener = listener.into_std().unwrap();
         assert_eq!(

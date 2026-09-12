@@ -32,7 +32,7 @@ fn cases() -> [Case; 7] {
             native::McpFeatureAction::ResourceTemplates,
             "resources/templates/list",
             json!({}),
-            json!({"resourceTemplates":[{"uriTemplate":"test:///{id}","name":"dynamic"}],"ttlMs":300_000}),
+            http::templates(),
         ),
         (
             "/mcp resource read fixture test://fixed",
@@ -82,10 +82,24 @@ fn seven_literal_feature_commands_use_actual_http_owner_and_exact_receipts() {
             driver.command(command, 200);
             let (outcome, request) = tokio::time::timeout(
                 Duration::from_secs(10),
-                futures_util::future::join(
-                    control(&mut driver),
-                    http::reply(&listener, method, body),
-                ),
+                futures_util::future::join(control(&mut driver), async {
+                    // Explicit list commands above do not populate the
+                    // dependency cache of a later read/get/completion.
+                    match action {
+                        native::McpFeatureAction::ResourceRead => {
+                            http::reply(&listener, "resources/list", http::resources()).await;
+                        }
+                        native::McpFeatureAction::PromptGet => {
+                            http::reply(&listener, "prompts/list", http::prompts()).await;
+                        }
+                        native::McpFeatureAction::ResourceComplete => {
+                            http::reply(&listener, "resources/templates/list", http::templates())
+                                .await;
+                        }
+                        _ => {}
+                    }
+                    http::reply(&listener, method, body).await
+                }),
             )
             .await
             .unwrap();
