@@ -158,3 +158,22 @@ optional-server failures preserve the usable required publication; global
 controller failures, stale authority and owner closure propagate as errors.
 No runtime lock is held across discovery, and already-selected tool execution
 continues through its original native route and permission proof.
+
+### Authentication refresh before new operations
+
+Prompt admission, the first unpinned model MCP operation and new human feature
+commands observe retained authentication leases before selecting a publication.
+Within the credential refresh window they await one coalesced, caller-polled
+controller job. Cancelling a waiter does not cancel another observer's job;
+controller close and configured finite stage budgets still bound its effects.
+Existing turn pins and input-required continuations never switch generations or
+replay their original requests through this path.
+
+Refresh rebuilds the active configuration snapshot, preserving required-only Ask
+startup until deferred discovery has succeeded. It validates that exact saved
+source before network/credential effects and again before atomic publication.
+Saving configuration alone cannot activate new peers: changed source requires an
+explicit reload. Revoked profile or credential authority is an error, not an
+anonymous fallback. A failed refresh leaves the old publication selected, but a
+credential replacement may already have revoked its authentication; retaining a
+publication does not promise that its old credentials remain usable.

@@ -120,10 +120,36 @@ impl NativeMcpHumanCommand {
         cancellation: CancellationToken,
         source: Option<&BackgroundOutputOwner>,
     ) -> Result<NativeMcpFeatureResult> {
+        if self.cancellation.is_cancelled() || cancellation.is_cancelled() {
+            return Err(NativeMcpRuntimeError::Cancelled.into());
+        }
         let runtime = self
             .runtime
             .upgrade()
             .ok_or(NativeMcpRuntimeError::Unavailable)?;
+        if let Some(controller) = runtime.controller.get() {
+            let controller = controller
+                .upgrade()
+                .ok_or(NativeMcpRuntimeError::Unavailable)?;
+            match futures_util::future::select(
+                self.cancellation.cancelled(),
+                controller.refresh_authentication_configured(cancellation.clone()),
+            )
+            .await
+            {
+                futures_util::future::Either::Left(_) => {
+                    return Err(NativeMcpRuntimeError::Cancelled.into());
+                }
+                futures_util::future::Either::Right((result, _)) => {
+                    result.map_err(|error| match error.kind() {
+                        crate::mcp::controller::NativeMcpControllerError::Cancelled => {
+                            NativeMcpRuntimeError::Cancelled
+                        }
+                        _ => NativeMcpRuntimeError::Unavailable,
+                    })?;
+                }
+            }
+        }
         let publication = runtime.feature_publication()?;
         let server = selected_server(&publication, request.server())?;
         let authority = McpFeatureControlAuthority::for_human(

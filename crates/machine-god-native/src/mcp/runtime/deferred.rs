@@ -55,7 +55,14 @@ impl NativeMcpRuntime {
             // cancels another turn's coalesced controller-owned discovery.
             match select(
                 context.cancelled(),
-                controller.activate_deferred_configured(cancellation.clone()),
+                Box::pin(async {
+                    controller
+                        .refresh_authentication_configured(cancellation.clone())
+                        .await?;
+                    controller
+                        .activate_deferred_configured(cancellation.clone())
+                        .await
+                }),
             )
             .await
             {

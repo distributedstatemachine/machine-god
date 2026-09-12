@@ -74,6 +74,7 @@ pub(super) enum Kind {
     Start(NativeMcpStartupPhase),
     Reload,
     Deferred,
+    Refresh,
 }
 
 pub(super) struct Loaded {
@@ -116,6 +117,7 @@ impl Drop for WorkerReservation {
 pub(super) struct Running {
     pub kind: Kind,
     pub generation: Arc<Generation>,
+    pub refresh_source: Option<Arc<Generation>>,
     pub cancellation: CancellationToken,
     pub future: Job,
 }

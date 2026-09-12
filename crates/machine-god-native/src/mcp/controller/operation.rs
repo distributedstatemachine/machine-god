@@ -4,7 +4,7 @@ use super::{
     NativeMcpStartupPhase, Result,
     state::{
         CancelOnDrop, Failure, Generation, Inner, JobResult, Kind, MAX_DRAIN_BATCH,
-        MAX_PEER_OBSERVATIONS, Receipt, Running, failure, lock,
+        MAX_PEER_OBSERVATIONS, Receipt, Running, State, failure, lock,
     },
 };
 use futures_util::{
@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex, Weak, atomic::Ordering};
 
 mod budget;
 mod publish;
+mod refresh;
 #[cfg(test)]
 mod tests;
 
@@ -44,7 +45,7 @@ pub(super) fn request(
             Selected::Complete(data, generation) => (data, generation),
             Selected::Running(job) => {
                 let generation = job.generation.clone();
-                let data = if kind == Kind::Deferred {
+                let data = if matches!(kind, Kind::Deferred | Kind::Refresh) {
                     let stopped = async {
                         select(
                             cancellation.cancelled(),
@@ -92,6 +93,9 @@ fn select_job(
     cancellation: &CancellationToken,
     deadline: Option<Instant>,
 ) -> Result<Selected> {
+    let refresh = (kind == Kind::Refresh)
+        .then(|| refresh::observe(inner))
+        .transpose()?;
     let mut state = lock(&inner.state);
     if state.closed {
         return Err(failure(NativeMcpControllerError::Closed));
@@ -107,6 +111,18 @@ fn select_job(
         || matches!(kind, Kind::Start(_)) && state.active.is_some()
     {
         return Err(failure(NativeMcpControllerError::Invalid));
+    }
+    if let Some(refresh) = &refresh {
+        if state
+            .active
+            .as_ref()
+            .is_none_or(|active| !Arc::ptr_eq(active, &refresh.source))
+        {
+            return Err(failure(NativeMcpControllerError::Busy));
+        }
+        if !refresh.due {
+            return Ok(Selected::Complete(Ok(unchanged()), refresh.source.clone()));
+        }
     }
     let deferred = if kind == Kind::Deferred {
         let generation = state
@@ -125,6 +141,17 @@ fn select_job(
         None
     };
     if let Some(running) = &state.running {
+        if kind == Kind::Refresh
+            && running.kind == Kind::Refresh
+            && refresh.as_ref().is_some_and(|observation| {
+                running
+                    .refresh_source
+                    .as_ref()
+                    .is_some_and(|source| Arc::ptr_eq(source, &observation.source))
+            })
+        {
+            return Ok(Selected::Running(running.clone()));
+        }
         if kind == Kind::Deferred
             && running.kind == Kind::Deferred
             && deferred
@@ -140,6 +167,26 @@ fn select_job(
     if state.peers.len() > MAX_PEER_OBSERVATIONS - 2 * MAX_DRAIN_BATCH {
         return Err(failure(NativeMcpControllerError::Limit));
     }
+    start_job(
+        inner,
+        &mut state,
+        kind,
+        deferred,
+        refresh,
+        cancellation,
+        deadline,
+    )
+}
+
+fn start_job(
+    inner: &Arc<Inner>,
+    state: &mut State,
+    kind: Kind,
+    deferred: Option<Arc<Generation>>,
+    refresh: Option<refresh::Observation>,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<Selected> {
     let generation = if let Some(generation) = deferred {
         generation
     } else {
@@ -149,6 +196,9 @@ fn select_job(
         let generation = Arc::new(Generation {
             phase: match kind {
                 Kind::Start(phase) => phase,
+                Kind::Refresh => {
+                    refresh::phase(&refresh.as_ref().expect("refresh observation").source)
+                }
                 _ => NativeMcpStartupPhase::All,
             },
             cancellation: CancellationToken::new(),
@@ -163,12 +213,14 @@ fn select_job(
     let job_cancel = CancellationToken::new();
     let signals = Signals {
         job: job_cancel.clone(),
-        caller: (kind != Kind::Deferred).then(|| cancellation.clone()),
+        caller: (!matches!(kind, Kind::Deferred | Kind::Refresh)).then(|| cancellation.clone()),
     };
+    let refresh_source = refresh.map(|observation| observation.source);
     let future = run(
         Arc::downgrade(inner),
         inner.options.clone(),
         generation.clone(),
+        refresh_source.clone(),
         kind,
         signals,
         deadline,
@@ -177,6 +229,7 @@ fn select_job(
     let running = Running {
         kind,
         generation,
+        refresh_source,
         cancellation: job_cancel,
         future,
     };
@@ -227,6 +280,7 @@ fn run(
     inner: Weak<Inner>,
     options: Arc<NativeMcpControllerOptions>,
     generation: Arc<Generation>,
+    refresh_source: Option<Arc<Generation>>,
     kind: Kind,
     signals: Signals,
     deadline: Option<Instant>,
@@ -239,7 +293,15 @@ fn run(
             if kind == Kind::Deferred {
                 publish::deferred(&inner, &options, &generation, &signals, deadline).await
             } else {
-                publish::replace(&inner, &options, &generation, &signals, deadline).await
+                publish::replace(
+                    &inner,
+                    &options,
+                    &generation,
+                    refresh_source.as_ref(),
+                    &signals,
+                    deadline,
+                )
+                .await
             }
         };
         // Observe an already-signalled cutoff before advancing another startup

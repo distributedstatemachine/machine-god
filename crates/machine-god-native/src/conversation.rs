@@ -995,9 +995,14 @@ impl NativeConversation {
             return Err(NativeConversationError::Busy);
         }
         if let Some(controller) = &self.mcp_readiness {
-            controller
+            let controller = controller
                 .upgrade()
-                .ok_or(NativeConversationError::McpRequiredUnavailable)?
+                .ok_or(NativeConversationError::McpRequiredUnavailable)?;
+            controller
+                .refresh_authentication_configured(machine_god_core::CancellationToken::new())
+                .await
+                .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
+            controller
                 .required_readiness()
                 .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
         }

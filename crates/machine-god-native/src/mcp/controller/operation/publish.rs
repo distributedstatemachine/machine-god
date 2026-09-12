@@ -15,11 +15,26 @@ pub(super) async fn replace(
     inner: &Weak<Inner>,
     options: &Arc<NativeMcpControllerOptions>,
     generation: &Arc<Generation>,
+    refresh_source: Option<&Arc<Generation>>,
     signals: &Signals,
     deadline: Option<Instant>,
 ) -> JobResult {
     drop(check(inner, signals, deadline)?);
-    let expected = options.runtime.publication_checkpoint()?;
+    let (expected, retained_snapshot) = if let Some(source) = refresh_source {
+        let loaded = lock(&source.loaded);
+        let loaded = loaded
+            .as_ref()
+            .ok_or(NativeMcpControllerError::Unavailable)?;
+        (
+            loaded
+                .checkpoint
+                .clone()
+                .ok_or(NativeMcpControllerError::Unavailable)?,
+            Some(loaded.snapshot.clone()),
+        )
+    } else {
+        (options.runtime.publication_checkpoint()?, None)
+    };
     // Returned observations keep their custody even if later profile I/O fails.
     let cleanup_deadline = budget::housekeeping_deadline(options, deadline)?;
     let completions = options
@@ -30,20 +45,7 @@ pub(super) async fn replace(
     lock(&owner.state).peers.extend(completions);
     signals.check(&owner, deadline)?;
     drop(owner);
-    let store = options.management.config_store();
-    let reservation = WorkerReservation::new(generation);
-    let snapshot = Arc::new(
-        budget::housekeeping(
-            options,
-            deadline,
-            options.workers.run(move || {
-                let _reservation = reservation;
-                store.load()
-            }),
-        )
-        .await?
-        .map_err(|_| NativeMcpControllerError::Unavailable)??,
-    );
+    let snapshot = selected_snapshot(options, generation, retained_snapshot, deadline).await?;
     drop(check(inner, signals, deadline)?);
     let startup =
         super::super::configuration::startup(options, &snapshot, generation.cancellation.clone())?;
@@ -103,6 +105,35 @@ pub(super) async fn replace(
         publication: NativeMcpControllerPublication::Published,
         closed,
     })
+}
+
+async fn selected_snapshot(
+    options: &NativeMcpControllerOptions,
+    generation: &Arc<Generation>,
+    retained_snapshot: Option<Arc<NativeMcpConfigSnapshot>>,
+    deadline: Option<Instant>,
+) -> std::result::Result<Arc<NativeMcpConfigSnapshot>, Failure> {
+    if let Some(snapshot) = retained_snapshot {
+        // Refresh does not activate newly saved settings. Reject changed source
+        // before credential/network effects and revalidate again at publication.
+        validate(options, generation, snapshot.clone(), deadline).await?;
+        Ok(snapshot)
+    } else {
+        let store = options.management.config_store();
+        let reservation = WorkerReservation::new(generation);
+        Ok(Arc::new(
+            budget::housekeeping(
+                options,
+                deadline,
+                options.workers.run(move || {
+                    let _reservation = reservation;
+                    store.load()
+                }),
+            )
+            .await?
+            .map_err(|_| NativeMcpControllerError::Unavailable)??,
+        ))
+    }
 }
 
 pub(super) async fn deferred(

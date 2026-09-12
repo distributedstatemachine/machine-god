@@ -335,6 +335,27 @@ impl NativeMcpController {
         )
     }
 
+    /// Refreshes expiring authentication before a new operation selects peers.
+    /// Reuses the exact active profile, with configured per-attempt budgets;
+    /// never activates saved changes or replays a previously selected request.
+    /// Concurrent callers share one owner-controlled refresh job.
+    /// # Errors
+    /// Rejects revoked credentials, changed configuration, competing mutations,
+    /// unavailable startup and cancellation. A failed credential refresh may
+    /// leave the original publication present but no longer authenticated.
+    #[must_use]
+    pub fn refresh_authentication_configured(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeMcpControllerReceipt>> {
+        operation::request(
+            Arc::downgrade(&self.inner),
+            state::Kind::Refresh,
+            cancellation,
+            None,
+        )
+    }
+
     /// Irrevocable cutoff, not a reap/socket-completion receipt. No locks are
     /// held while cancellation or runtime retirement wakes caller code.
     pub fn close(&self) {

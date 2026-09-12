@@ -110,7 +110,7 @@ impl Fixture {
         })
         .unwrap()
     }
-    fn seed(&self, config: &str) {
+    pub(super) fn seed(&self, config: &str) {
         let profile = self.base.join("profile");
         fs::create_dir_all(&profile).unwrap();
         fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
