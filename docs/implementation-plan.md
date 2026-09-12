@@ -417,7 +417,7 @@ Exact conversation/turn routing is integrated into both CLI setup paths. Owned
 OAuth provides discovery, approved callbacks, refresh, private credentials and
 generation-bound logout receipts; runtime/CLI activation remains below.
 Typed feature/result/input codecs and exact HTTP heads compose with explicit
-DNS/TLS, startup, atomic publication, archived feature calls and consented form input.
+DNS/TLS, startup, additive publication, archived feature calls and consented forms.
 Component checks are not full-feature gates; completed clean trees are removed.
 
 These components do not constitute a delivered runtime. Remaining composition
