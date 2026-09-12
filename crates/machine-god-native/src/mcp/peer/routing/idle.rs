@@ -49,7 +49,10 @@ pub(in crate::mcp::peer) async fn poll_subscription(
         observation.0.close();
     }
     let notification = result?;
-    if let Some(error) = observation.0.subscription.take_failure() {
+    if notification.is_none()
+        && observation.0.notifications.is_empty()
+        && let Some(error) = observation.0.subscription.take_failure()
+    {
         return Err(error);
     }
     Ok(notification)
@@ -67,7 +70,10 @@ async fn read(
     let mut observations = 0;
     loop {
         peer.check_owner()?;
-        if subscription_only && peer.active_subscription().is_none() {
+        if subscription_only
+            && peer.active_subscription().is_none()
+            && peer.notifications.is_empty()
+        {
             return Ok(None);
         }
         if !observing(peer, deadline)? {

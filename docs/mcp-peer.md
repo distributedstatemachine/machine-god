@@ -123,7 +123,9 @@ complete notifications and original pending unsupported-reply receipts. Ordinary
 catalog/feature/tool exchanges continue to route those notifications while matching
 only their own response IDs. An exact active listen final ends the listener; an
 invalid final reports a listener failure without closing an otherwise healthy
-shared stdio peer. Unrelated response IDs remain fatal.
+shared stdio peer. Already retained notifications are observed before that terminal
+status, including when an ordinary exchange consumed the final. Unrelated response
+IDs remain fatal.
 
 Cancellation writes the fixed exact-ID notification and does not require a final
 server response. At most 64 cancelled IDs remain to consume one late final each;

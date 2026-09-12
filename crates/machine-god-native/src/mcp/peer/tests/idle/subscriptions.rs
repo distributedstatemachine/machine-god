@@ -229,12 +229,77 @@ fn listener_final_interleaves_with_inherited_reply_and_catalog() {
         assert!(pipe.take_write().is_none());
         assert!(peer.active_subscription().is_none());
         assert_eq!(
-            peer.take_notification().unwrap().method(),
+            peer.poll_subscription(timer.at(1000))
+                .await
+                .unwrap()
+                .unwrap()
+                .method(),
             Some("notifications/tools/list_changed")
         );
         assert!(peer.readiness().is_ready());
         peer.close();
     });
+}
+
+#[test]
+fn queued_notification_precedes_listener_error_and_staged_whitelist_drop_is_inert() {
+    futures_executor::block_on(async {
+        let timer = ManualTimer::new();
+        let mut peer = inert(timer.clone());
+        let pipe = Pipe::new(&peer.connection);
+        let RpcId::Integer(id) = start(&mut peer, &pipe, timer.at(1000)).await else {
+            unreachable!()
+        };
+        retain_notice(&mut peer);
+        let error = parse_envelope(
+            &serde_json::to_vec(
+                &json!({"jsonrpc":"2.0","id":id,"error":{"code":-1,"message":"unsupported"}}),
+            )
+            .unwrap(),
+            WireLimits::default(),
+        )
+        .unwrap();
+        assert!(peer.subscription.consume(&error));
+        assert!(
+            peer.poll_subscription(timer.at(1000))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(matches!(
+            peer.poll_subscription(timer.at(1000)).await,
+            Err(McpPeerError::InvalidResult)
+        ));
+        assert!(peer.readiness().is_ready());
+
+        let fixture = crate::mcp::submission::tests::Fixture::new();
+        peer.admit_runtimes(vec![fixture.runtime.clone()]).unwrap();
+        drop(peer.prepare_runtime_set(Vec::new()).unwrap());
+        let old = peer.prepare_runtime_set(Vec::new()).unwrap().commit();
+        assert_eq!(old.len(), 1);
+        assert!(Arc::ptr_eq(&old[0], &fixture.runtime));
+        drop(old);
+        assert!(
+            peer.prepare_runtime_set(Vec::new())
+                .unwrap()
+                .commit()
+                .is_empty()
+        );
+        peer.close();
+    });
+}
+
+#[test]
+fn typed_listen_rejects_empty_filters_bad_ids_and_raw_allowlist_bypass() {
+    use crate::mcp::stdio::McpStdioControl;
+    let empty = McpSubscriptionFilters::new(McpPeerCapabilities::default(), &[]).unwrap();
+    assert!(
+        McpStdioControl::subscription(&RpcId::Integer(1), &empty, ProtocolVersion::Modern).is_err()
+    );
+    for id in [RpcId::Integer(-1), RpcId::String("1".into()), RpcId::Null] {
+        assert!(McpStdioControl::subscription(&id, &filters(), ProtocolVersion::Modern).is_err());
+    }
+    assert!(McpStdioControl::discovery(br#"{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"notifications":{"toolsListChanged":true}}}"#).is_err());
 }
 
 #[test]

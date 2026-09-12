@@ -66,7 +66,11 @@ impl McpStdioPeer {
     /// The exact active listen ID; an idle observation timeout does not clear it.
     #[must_use]
     pub fn active_subscription(&self) -> Option<RpcId> {
-        self.subscription.active.map(RpcId::Integer)
+        if self.closed {
+            None
+        } else {
+            self.subscription.active.map(RpcId::Integer)
+        }
     }
 
     /// Observes one queued notification or the listener ending. Dropping this
