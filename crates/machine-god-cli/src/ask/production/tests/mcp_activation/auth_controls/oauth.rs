@@ -162,12 +162,22 @@ fn mcp_browser_wrong_state_cannot_exchange_token_save_credentials_or_activate() 
             producer,
         )
         .await;
-        assert!(matches!(
-            observed.result,
-            Err(NativeInteractiveControlError::McpAuthentication(
-                NativeMcpAuthenticationError::Authorization(McpAuthError::Invalid)
-            ))
-        ));
+        let Err(NativeInteractiveControlError::McpAuthentication(
+            NativeMcpAuthenticationError::Authorization(error),
+        )) = &observed.result
+        else {
+            panic!("expected callback authorization failure; redacted outcome: {observed:?}");
+        };
+        assert_eq!(
+            *error,
+            McpAuthError::StateMismatch,
+            "callback rejection must retain its exact redacted authorization category"
+        );
+        assert_eq!(
+            fixture.listener.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock,
+            "wrong state cannot submit a token exchange or activation request"
+        );
         assert!(!fixture.credentials().exists());
         assert!(
             fixture
