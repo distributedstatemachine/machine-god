@@ -4,7 +4,7 @@ use crate::mcp::{
         NativeMcpControllerPublication,
         operation::{Signals, publish, unchanged},
         state::Running,
-        tests::Fixture,
+        tests::{Fixture, run},
     },
     startup::NativeMcpStartupPhase,
     store::NativeMcpConfigStoreError,
@@ -28,7 +28,7 @@ fn generation(phase: NativeMcpStartupPhase) -> Arc<Generation> {
 
 #[test]
 fn refresh_without_leases_is_inert_then_does_not_load_saved_changes() {
-    futures_executor::block_on(async {
+    run(async {
         let fixture = Fixture::new();
         let controller = fixture.controller();
         drop(controller.refresh_authentication_configured(CancellationToken::new()));
@@ -78,7 +78,7 @@ fn refresh_phase_preserves_lazy_startup_until_successful_deferred_admission() {
 
 #[test]
 fn refresh_replacement_rejects_saved_changes_before_candidate_startup() {
-    futures_executor::block_on(async {
+    run(async {
         let fixture = Fixture::new();
         let controller = fixture.controller();
         controller
@@ -117,7 +117,7 @@ fn refresh_replacement_rejects_saved_changes_before_candidate_startup() {
 
 #[test]
 fn refresh_observers_join_original_job_and_dropping_one_does_not_cancel_it() {
-    futures_executor::block_on(async {
+    run(async {
         let fixture = Fixture::new();
         let controller = fixture.controller();
         controller

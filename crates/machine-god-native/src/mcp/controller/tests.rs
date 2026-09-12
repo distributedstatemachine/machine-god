@@ -174,7 +174,7 @@ fn selected_clock_deadlines_reject_zero_and_overflow_and_work_after_close() {
     );
     assert_eq!(clock.reads.load(Ordering::Relaxed), 3);
 }
-fn run(future: impl std::future::Future<Output = ()>) {
+pub(super) fn run(future: impl std::future::Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
