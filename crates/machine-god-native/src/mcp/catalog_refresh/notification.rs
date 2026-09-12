@@ -46,8 +46,10 @@ impl McpSubscriptionFilters {
             uris: uris.iter().map(|uri| Box::<str>::from(*uri)).collect(),
         })
     }
-    fn any(&self) -> bool {
-        self.tools || self.resources || self.prompts || !self.uris.is_empty()
+    /// Whether this selection requests no list changes or resource updates.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        !self.tools && !self.resources && !self.prompts && self.uris.is_empty()
     }
     fn accepts(&self, value: Option<&Value>) -> bool {
         let Some(fields) = value.and_then(Value::as_object) else {
@@ -136,7 +138,7 @@ impl McpCatalogRefresh {
     ) -> Result<()> {
         self.check(generation)?;
         if request_id < 0
-            || !filters.any()
+            || filters.is_empty()
             || self
                 .last_subscription_id
                 .is_some_and(|previous| request_id <= previous)
