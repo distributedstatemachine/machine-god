@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `configured activation, authentication and CLI end-to-end acceptance; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `complete MCP local feature gate, fresh adversarial review and exact remote evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -457,13 +457,16 @@ Scoped credential identity owners compose missing credentials, overlapping reloa
 failed candidates and retirement without historical receipts extending selection.
 Literal slash-command and human-modal acceptance fixtures are integrated.
 
-These components do not constitute a delivered runtime. Remaining acceptance includes
-configured startup through model search/select/call, authentication/browser/logout
-end-to-end evidence and CLI process/recording/session-transition ownership. Raw pages
-do not grant executable tool authority. Schema integration must preserve pinned
-exact-number, reference and server-authoritative validation semantics end to end.
-Complete continuation and CLI process acceptance still requires the fresh-release
-full feature gate, not just deterministic component tests.
+Configured Ask/Resume startup now composes model search/select/call and archived
+results; optional activation is demand-owned. Composed OAuth/browser/logout,
+human form/URL recovery, blocked-output paging, physical pipe EOF and PTY
+recording/session-transition tests pass with the exact fresh release helper.
+The 24 focused CLI tests use explicit local producers; PTY test children exercise
+the production capture/interactive host, not top-level provider discovery.
+These components are not a delivered runtime. The complete fresh-release local
+gate, three fresh reviews and exact remote artifact gates remain required.
+Raw pages grant no execution authority; preserve exact-number, reference and
+server-authoritative schema semantics through the complete feature gate.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
 and this ledger. Subsequent transport, permission and authentication lanes use
 the agreed typed interfaces with non-overlapping files. Keep runtime/resource
