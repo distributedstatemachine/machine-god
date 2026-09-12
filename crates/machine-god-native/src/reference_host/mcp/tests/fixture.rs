@@ -148,6 +148,18 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub fn new(mode: &str, enabled: bool) -> Self {
+        Self::with_options(mode, enabled, |options, _, _| options)
+    }
+
+    pub fn with_options(
+        mode: &str,
+        enabled: bool,
+        select: impl FnOnce(
+            NativeReferenceHostConversationOptions,
+            &Directory,
+            Arc<Clock>,
+        ) -> NativeReferenceHostConversationOptions,
+    ) -> Self {
         let directory = Directory::new();
         let workspace = directory.0.join("workspace");
         fs::create_dir(&workspace).unwrap();
@@ -173,6 +185,7 @@ impl Fixture {
         } else {
             options = options.with_mcp_contexts(contexts.clone());
         }
+        let options = select(options, &directory, clock.clone());
         let transport = Arc::new(Transport::default());
         let prompt = Arc::new(Prompt::default());
         let config = crate::config::parse_config_bytes(format!(r#"{{"schema_version":5,"permission_mode":"{mode}","sandbox_mode":"none","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","credential_source":"environment","model":"fixture/main","effort":"auto","fast_mode":false}}"#).as_bytes()).unwrap();

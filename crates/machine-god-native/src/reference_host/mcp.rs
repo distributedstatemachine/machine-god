@@ -7,7 +7,11 @@ use crate::{
     NativeToolResultArchiveAdapter,
     mcp::{
         context::NativeMcpContexts,
+        controller::{
+            NativeMcpController, NativeMcpControllerOptions, NativeMcpControllerStartupOptions,
+        },
         execution::NativeMcpArchivedToolExecutor,
+        management::NativeMcpManagementService,
         runtime::{
             NativeMcpPeerCompletion, NativeMcpRuntime, NativeMcpRuntimeClock,
             NativeMcpRuntimeError, NativeMcpRuntimeLimits,
@@ -27,6 +31,7 @@ pub struct NativeReferenceHostMcpOptions {
     clock: Arc<dyn NativeMcpRuntimeClock>,
     limits: NativeMcpRuntimeLimits,
     form_responder: Option<Arc<dyn crate::mcp::interaction::McpElicitationPresenter>>,
+    startup: Option<NativeMcpControllerStartupOptions>,
 }
 impl NativeReferenceHostMcpOptions {
     #[must_use]
@@ -36,6 +41,7 @@ impl NativeReferenceHostMcpOptions {
             clock,
             limits: NativeMcpRuntimeLimits::default(),
             form_responder: None,
+            startup: None,
         }
     }
 
@@ -44,6 +50,29 @@ impl NativeReferenceHostMcpOptions {
     pub fn with_runtime_limits(mut self, limits: NativeMcpRuntimeLimits) -> Self {
         self.limits = limits;
         self
+    }
+
+    /// Selects caller-polled profile activation using this host's exact runtime,
+    /// management service, fixed registrations and worker scope. No I/O occurs.
+    /// Host composition requires management selection and the same clock Arc.
+    #[must_use]
+    pub fn with_controller_startup(mut self, startup: NativeMcpControllerStartupOptions) -> Self {
+        self.startup = Some(startup);
+        self
+    }
+
+    pub(super) fn validate_controller(
+        &self,
+        has_management: bool,
+    ) -> Result<(), NativeReferenceHostBuildError> {
+        if self
+            .startup
+            .as_ref()
+            .is_some_and(|startup| !has_management || !Arc::ptr_eq(&startup.clock, &self.clock))
+        {
+            return Err(error());
+        }
+        Ok(())
     }
 
     /// Selects the actual host-owned form endpoint, without prompting or I/O.
@@ -83,6 +112,8 @@ impl NativeReferenceHostMcpOptions {
             runtime,
             features,
             contexts: self.contexts,
+            startup: self.startup,
+            management: None,
         })
     }
 }
@@ -91,6 +122,45 @@ pub(super) struct Composition {
     pub runtime: Arc<NativeMcpRuntime>,
     pub features: Arc<crate::NativeMcpFeaturesTool>,
     pub contexts: Arc<NativeMcpContexts>,
+    startup: Option<NativeMcpControllerStartupOptions>,
+    management: Option<Arc<NativeMcpManagementService>>,
+}
+
+#[derive(Default)]
+pub(super) struct Selection {
+    pub options: Option<NativeReferenceHostMcpOptions>,
+    pub management: Option<Arc<NativeMcpManagementService>>,
+}
+
+pub(super) type OwnedRuntime = (
+    Option<Arc<NativeMcpRuntime>>,
+    Option<Arc<NativeMcpController>>,
+);
+
+pub(super) fn controller(
+    composition: Option<Composition>,
+    workers: Option<&crate::NativeOwnedWorkerScope>,
+    reserved_tool_names: &[ToolName],
+) -> Result<OwnedRuntime, NativeReferenceHostBuildError> {
+    let Some(composition) = composition else {
+        return Ok((None, None));
+    };
+    let controller = composition
+        .startup
+        .map(|startup| {
+            NativeMcpController::new(NativeMcpControllerOptions {
+                runtime: composition.runtime.clone(),
+                management: composition.management.ok_or_else(error)?,
+                workers: workers.ok_or_else(error)?.clone(),
+                reserved_tool_names: reserved_tool_names.into(),
+                startup,
+                max_retained_generations: 4,
+            })
+            .map(Arc::new)
+            .map_err(|_| error())
+        })
+        .transpose()?;
+    Ok((Some(composition.runtime), controller))
 }
 
 pub(super) fn features(
@@ -104,18 +174,20 @@ pub(super) fn features(
 }
 
 pub(super) fn select(
-    options: Option<NativeReferenceHostMcpOptions>,
+    selection: Selection,
     terminal: &super::SelectedTerminalComposition,
     permissions: Option<&super::PermissionComposition>,
     catalog: Arc<dyn crate::McpToolCatalog>,
 ) -> Result<(Option<Composition>, Arc<dyn crate::McpToolCatalog>), NativeReferenceHostBuildError> {
-    let Some(options) = options else {
+    let Some(options) = selection.options else {
         return Ok((None, catalog));
     };
     if terminal.resource.is_none() || permissions.is_none() {
         return Err(error());
     }
-    let composition = options.compose(terminal.archive.clone().ok_or_else(error)?)?;
+    options.validate_controller(selection.management.is_some())?;
+    let mut composition = options.compose(terminal.archive.clone().ok_or_else(error)?)?;
+    composition.management = selection.management;
     let catalog = composition.runtime.clone();
     Ok((Some(composition), catalog))
 }
@@ -133,15 +205,25 @@ pub(super) fn error() -> NativeReferenceHostBuildError {
 /// Field destruction follows Drop: MCP invalidation precedes terminal shutdown.
 pub(super) struct HostResource {
     pub mcp: Arc<NativeMcpRuntime>,
+    pub controller: Option<Arc<NativeMcpController>>,
     pub _terminal: NativeTerminalHostResource,
 }
 impl Drop for HostResource {
     fn drop(&mut self) {
+        if let Some(controller) = &self.controller {
+            controller.close();
+        }
         self.mcp.close();
     }
 }
 
 impl NativeReferenceHost {
+    /// Returns this engine owner's exact optional controller without activation.
+    /// Retaining this accessor does not prevent engine-drop invalidation.
+    #[must_use]
+    pub fn mcp_controller(&self) -> Option<Arc<NativeMcpController>> {
+        self.mcp_controller.clone()
+    }
     /// Returns the exact native runtime, without connecting or publishing peers.
     #[must_use]
     pub fn mcp_runtime(&self) -> Option<Arc<NativeMcpRuntime>> {
@@ -158,6 +240,9 @@ impl NativeReferenceHost {
     /// Irreversibly invalidates native MCP before host worker shutdown.
     /// This is not a socket-close, child-reap or remote DELETE completion receipt.
     pub fn close_mcp(&self) {
+        if let Some(controller) = &self.mcp_controller {
+            controller.close();
+        }
         if let Some(runtime) = &self.mcp_runtime {
             runtime.close();
         }

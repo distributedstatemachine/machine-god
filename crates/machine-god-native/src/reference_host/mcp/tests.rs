@@ -17,6 +17,7 @@ use std::{
     time::Duration,
 };
 
+mod controller;
 mod fixture;
 #[cfg(feature = "mcp-http")]
 mod http;

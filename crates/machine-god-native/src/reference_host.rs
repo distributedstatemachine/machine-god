@@ -464,6 +464,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
     mcp_runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
+    mcp_controller: Option<Arc<crate::mcp::controller::NativeMcpController>>,
     reserved_tool_names: Box<[ToolName]>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
@@ -717,7 +718,10 @@ impl NativeReferenceHost {
             .mcp_contexts
             .clone()
             .or_else(|| options.mcp_runtime.as_ref().map(|mcp| mcp.contexts.clone()));
-        let mcp_options = options.mcp_runtime.clone();
+        let mcp_options = mcp::Selection {
+            options: options.mcp_runtime.clone(),
+            management: mcp_management.clone(),
+        };
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -858,7 +862,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
-            None,
+            mcp::Selection::default(),
         )
     }
 
@@ -912,7 +916,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
-            None,
+            mcp::Selection::default(),
         )
     }
 
@@ -962,7 +966,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
-            None,
+            mcp::Selection::default(),
         )
     }
 
@@ -1014,7 +1018,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
-            None,
+            mcp::Selection::default(),
         )
     }
 
@@ -1145,7 +1149,10 @@ impl NativeReferenceHost {
             .mcp_contexts
             .clone()
             .or_else(|| options.mcp_runtime.as_ref().map(|mcp| mcp.contexts.clone()));
-        let mcp_options = options.mcp_runtime.clone();
+        let mcp_options = mcp::Selection {
+            options: options.mcp_runtime.clone(),
+            management: mcp_management.clone(),
+        };
         let skills = options.skills.clone();
         let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
@@ -1426,7 +1433,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
-            None,
+            mcp::Selection::default(),
         )
     }
 
@@ -1449,7 +1456,7 @@ impl NativeReferenceHost {
         model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
         observations: Option<Arc<crate::NativeConversationObservations>>,
         permission_options: Option<NativeReferenceHostPermissionOptions>,
-        mcp_options: Option<NativeReferenceHostMcpOptions>,
+        mcp_options: mcp::Selection,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let workspace_binding = workspace_tools.workspace_binding.clone();
         let (workspace_tools, permission_setup) =
@@ -1544,7 +1551,7 @@ impl NativeReferenceHost {
             host_resource,
             permissions,
             permission_contexts,
-            mcp.as_ref().map(|composition| composition.runtime.clone()),
+            mcp,
         )
         .map(|mut host| {
             host.workspace_binding = workspace_binding;
@@ -1563,7 +1570,7 @@ impl NativeReferenceHost {
         host_resource: Option<NativeTerminalHostResource>,
         permissions: Option<Arc<crate::NativePermissionController>>,
         permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
-        mcp_runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
+        mcp: Option<mcp::Composition>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let terminal_shutdown = host_resource
             .as_ref()
@@ -1577,10 +1584,14 @@ impl NativeReferenceHost {
         let terminal_background = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::background_requester);
-        let reserved_tool_names = builder.registered_tool_names().cloned().collect();
+        let reserved_tool_names: Box<[ToolName]> =
+            builder.registered_tool_names().cloned().collect();
+        let (mcp_runtime, mcp_controller) =
+            mcp::controller(mcp, control_workers.as_ref(), &reserved_tool_names)?;
         let builder = match (host_resource, &mcp_runtime) {
             (Some(resource), Some(runtime)) => builder.host_resource(mcp::HostResource {
                 mcp: runtime.clone(),
+                controller: mcp_controller.clone(),
                 _terminal: resource,
             }),
             (Some(resource), None) => builder.host_resource(resource),
@@ -1599,6 +1610,7 @@ impl NativeReferenceHost {
             reserved_tool_names,
             engine,
             mcp_runtime,
+            mcp_controller,
             mcp_management: None,
             mcp_contexts: None,
             skills: None,
@@ -2125,6 +2137,9 @@ fn validate_prepared_selections(
     loaded_config: &LoadedNativeConfig,
     options: &PreparedCompositionOptions,
 ) -> Result<(), NativeReferenceHostBuildError> {
+    if let Some(mcp) = &options.mcp_runtime {
+        mcp.validate_controller(options.mcp_management.is_some())?;
+    }
     if let Some(mcp) = &options.mcp_runtime
         && (options.terminal.is_none()
             || options.permissions.is_none()

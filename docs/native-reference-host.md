@@ -226,9 +226,21 @@ After terminal-resource acquisition, failed or unwound synchronous assembly
 releases its actual owners and joins that new worker scope on the constructor's
 caller worker. Successful assembly transfers that obligation to the returned
 host. Drop invalidation alone is not treated as completed construction cleanup.
+`with_controller_startup` additionally selects the native profile controller;
+it requires the exact runtime clock allocation and an explicitly selected MCP
+management service. Selection mismatch is rejected before terminal acquisition.
+`mcp_controller()` returns the controller composed before engine construction
+from that management service, runtime, fixed names and existing worker scope,
+with four retained generation slots. It does not create another store or scope.
+The actual engine resource lease closes both controller and runtime, including
+after `into_engine`; retaining controller accessors cannot extend that lifetime.
 Startup/reload candidate construction and atomic publication remain explicit
-caller operations. Options and host construction do not connect MCP peers or
+caller-polled controller operations. Options and host construction do not connect MCP peers or
 perform authentication, discovery, browser launch or application requests.
+`close_mcp()` closes the selected controller before runtime invalidation. Its
+separate `settle` operation must run while host workers are still owned, before
+the host's final worker join. Runtime-only hosts retain explicit `drain_mcp`
+behavior; a peer drain alone is not controller-job settlement.
 
 The engine's host-resource lease invalidates MCP before terminal worker shutdown,
 including when the host is consumed with `into_engine`; retained tools or
