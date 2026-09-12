@@ -1,7 +1,9 @@
 use super::*;
 
 fn notification(method: &str, id: i64, extra: Value) -> RpcEnvelope {
-    let mut params = extra.as_object().unwrap().clone();
+    let Value::Object(mut params) = extra else {
+        panic!("notification fixture requires object parameters");
+    };
     params.insert(
         "_meta".into(),
         json!({"io.modelcontextprotocol/subscriptionId":id}),

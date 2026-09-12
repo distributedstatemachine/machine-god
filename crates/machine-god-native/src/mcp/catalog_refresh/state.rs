@@ -72,6 +72,7 @@ impl McpCatalogRefresh {
         family.active = None;
         family.attempt = 0;
         family.retry_at = None;
+        drop(ticket);
         Ok(())
     }
 
@@ -118,6 +119,7 @@ impl McpCatalogRefresh {
         family.retry_at = Some(retry_at);
         family.attempt = family.attempt.saturating_add(1).min(8);
         family.active = None;
+        drop(ticket);
         Ok(())
     }
 
