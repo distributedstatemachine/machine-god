@@ -6,10 +6,7 @@ use super::super::{
     },
 };
 use super::{Signals, budget, check, unchanged};
-use crate::mcp::{
-    startup::{NativeMcpStartup, NativeMcpStartupOptions, NativeMcpStartupRequirement},
-    store::NativeMcpConfigSnapshot,
-};
+use crate::mcp::{startup::NativeMcpStartupRequirement, store::NativeMcpConfigSnapshot};
 use machine_god_core::ToolName;
 use std::{
     sync::{Arc, Weak},
@@ -51,7 +48,8 @@ pub(super) async fn replace(
         .map_err(|_| NativeMcpControllerError::Unavailable)??,
     );
     drop(check(inner, signals, deadline)?);
-    let startup = selected_startup(options, generation, &snapshot)?;
+    let startup =
+        super::super::configuration::startup(options, &snapshot, generation.cancellation.clone())?;
     *lock(&generation.loaded) = Some(Loaded {
         snapshot: snapshot.clone(),
         startup: startup.clone(),
@@ -108,34 +106,6 @@ pub(super) async fn replace(
         publication: NativeMcpControllerPublication::Published,
         closed,
     })
-}
-
-fn selected_startup(
-    options: &NativeMcpControllerOptions,
-    generation: &Generation,
-    snapshot: &Arc<NativeMcpConfigSnapshot>,
-) -> std::result::Result<Arc<NativeMcpStartup>, Failure> {
-    let selected = &options.startup;
-    Ok(Arc::new(NativeMcpStartup::new(NativeMcpStartupOptions {
-        configuration: Arc::new(snapshot.config().clone()),
-        captured_environment: selected.captured_environment.clone(),
-        stdio: selected.stdio.clone(),
-        workers: options.workers.clone(),
-        clock: selected.clock.clone(),
-        catalog_epoch: selected.catalog_epoch,
-        owner_cancellation: selected.owner_cancellation.clone(),
-        configuration_cancellation: generation.cancellation.clone(),
-        #[cfg(feature = "mcp-http")]
-        network: selected.network.clone(),
-        #[cfg(feature = "mcp-http")]
-        authentication: super::super::authentication::selections(
-            options,
-            snapshot,
-            generation.cancellation.clone(),
-        )?,
-        peer_lifetime: selected.peer_lifetime,
-        max_retained_bytes: selected.max_retained_bytes,
-    })?))
 }
 
 pub(super) async fn deferred(

@@ -125,6 +125,8 @@ pub(super) struct State {
     pub active: Option<Arc<Generation>>,
     pub generations: Vec<Arc<Generation>>,
     pub running: Option<Running>,
+    #[cfg(all(feature = "mcp-http", any(test, feature = "ai-gateway-http")))]
+    pub authenticating: std::sync::Weak<super::authentication::CommandOwner>,
     pub peers: Vec<NativeMcpPeerCompletion>,
 }
 pub(super) struct Inner {

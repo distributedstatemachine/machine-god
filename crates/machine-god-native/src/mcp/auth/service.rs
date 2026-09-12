@@ -134,6 +134,51 @@ impl NativeMcpAuthService {
         let operation = self
             .inner
             .begin(config.identity(), cancellation, deadline)?;
+        self.authorize(
+            &operation,
+            config,
+            challenge,
+            browser,
+            cancellation,
+            deadline,
+        )
+        .await
+    }
+
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) async fn authenticate_profile(
+        &self,
+        selected: &super::SelectedConfig,
+        challenge: &McpAuthChallenge,
+        browser: &dyn McpAuthBrowser,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<McpAuthLease> {
+        selected.profile.check()?;
+        let mut operation = self
+            .inner
+            .begin(selected.config.identity(), cancellation, deadline)?;
+        operation.profile = Some(selected.profile.clone());
+        self.authorize(
+            &operation,
+            &selected.config,
+            challenge,
+            browser,
+            cancellation,
+            deadline,
+        )
+        .await
+    }
+
+    async fn authorize(
+        &self,
+        operation: &Operation,
+        config: &McpAuthConfig,
+        challenge: &McpAuthChallenge,
+        browser: &dyn McpAuthBrowser,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<McpAuthLease> {
         let snapshot = operation.load(cancellation, deadline).await?;
         let previous = snapshot.get(config.identity()).map(|c| c.scope.as_ref());
         let credentials = operation
@@ -222,6 +267,30 @@ impl NativeMcpAuthService {
         deadline: Instant,
     ) -> Result<McpAuthLogoutReceipt> {
         let (operation, previous) = self.inner.cutoff(identity, cancellation, deadline)?;
+        Self::logout_selected(operation, previous, cancellation, deadline).await
+    }
+
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) async fn logout_profile(
+        &self,
+        selected: &super::SelectedConfig,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<McpAuthLogoutReceipt> {
+        selected.profile.check()?;
+        let (mut operation, previous) =
+            self.inner
+                .cutoff(selected.config.identity(), cancellation, deadline)?;
+        operation.profile = Some(selected.profile.clone());
+        Self::logout_selected(operation, previous, cancellation, deadline).await
+    }
+
+    async fn logout_selected(
+        operation: Operation,
+        previous: Vec<Arc<state::Observation>>,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<McpAuthLogoutReceipt> {
         let in_flight = !previous.is_empty();
         operation
             .wait_previous(&previous, cancellation, deadline)

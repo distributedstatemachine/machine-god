@@ -2,7 +2,12 @@
 
 #[cfg(feature = "mcp-http")]
 mod authentication;
+#[cfg(all(feature = "mcp-http", any(test, feature = "ai-gateway-http")))]
+pub(crate) use authentication::{ControlFence, Selection as NativeMcpAuthSelection};
+#[cfg(feature = "mcp-http")]
+pub use authentication::{NativeMcpAuthenticationError, NativeMcpAuthenticationReceipt};
 mod cleanup;
+mod configuration;
 mod operation;
 mod state;
 #[cfg(test)]
@@ -153,6 +158,22 @@ pub struct NativeMcpController {
 type Result<T> = std::result::Result<T, NativeMcpControllerFailure>;
 
 impl NativeMcpController {
+    #[cfg(all(feature = "mcp-http", any(test, feature = "ai-gateway-http")))]
+    pub(crate) fn prepare_authentication(
+        &self,
+        server: String,
+        fence: Arc<authentication::ControlFence>,
+        cancellation: CancellationToken,
+        deadline: Instant,
+    ) -> BoxFuture<'static, Result<authentication::Selection>> {
+        authentication::prepare(
+            Arc::downgrade(&self.inner),
+            server,
+            fence,
+            cancellation,
+            deadline,
+        )
+    }
     /// Shares this owner's exact credential coordinator without loading records,
     /// refreshing, opening a browser or extending engine-drop authority.
     #[cfg(feature = "mcp-http")]

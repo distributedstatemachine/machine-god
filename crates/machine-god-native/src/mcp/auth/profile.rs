@@ -1,5 +1,7 @@
 //! Exact selected profile custody, checked only on actual credential workers.
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
+use super::McpAuthConfig;
 use super::{McpAuthError, Result, redacted};
 use crate::mcp::store::{NativeMcpConfigSnapshot, NativeMcpConfigStore, NativeMcpConfigStoreError};
 use futures_util::future::select;
@@ -14,8 +16,22 @@ pub struct NativeMcpAuthProfile {
     snapshot: Arc<NativeMcpConfigSnapshot>,
     owner: CancellationToken,
     configuration: CancellationToken,
+    command: Option<Arc<dyn CommandCustody>>,
 }
 redacted!(NativeMcpAuthProfile);
+
+/// Native-only admitted control custody. Workers retain the actual conversation
+/// and controller reservations, not merely an outer observer's cancellation.
+pub(crate) trait CommandCustody: Send + Sync {
+    fn check(&self) -> Result<()>;
+    fn cancelled(&self) -> machine_god_core::BoxFuture<'_, ()>;
+}
+
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) struct SelectedConfig {
+    pub config: McpAuthConfig,
+    pub profile: Arc<NativeMcpAuthProfile>,
+}
 
 impl NativeMcpAuthProfile {
     pub(crate) fn new(
@@ -29,10 +45,20 @@ impl NativeMcpAuthProfile {
             snapshot,
             owner,
             configuration,
+            command: None,
         }
     }
 
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) fn with_command(mut self, command: Arc<dyn CommandCustody>) -> Self {
+        self.command = Some(command);
+        self
+    }
+
     pub(super) fn check(&self) -> Result<()> {
+        if let Some(command) = &self.command {
+            command.check()?;
+        }
         if self.owner.is_cancelled() || self.configuration.is_cancelled() {
             Err(McpAuthError::Conflict)
         } else {
@@ -41,7 +67,21 @@ impl NativeMcpAuthProfile {
     }
 
     pub(super) async fn stopped(&self) {
-        select(self.owner.cancelled(), self.configuration.cancelled()).await;
+        let command = async {
+            if let Some(command) = &self.command {
+                command.cancelled().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        select(
+            Box::pin(command),
+            Box::pin(select(
+                self.owner.cancelled(),
+                self.configuration.cancelled(),
+            )),
+        )
+        .await;
     }
 
     pub(super) fn validate(&self) -> Result<()> {

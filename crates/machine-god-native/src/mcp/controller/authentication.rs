@@ -11,6 +11,15 @@ use crate::mcp::{
 use machine_god_core::CancellationToken;
 use std::sync::Arc;
 
+mod receipt;
+#[cfg(any(test, feature = "ai-gateway-http"))]
+mod selection;
+pub use receipt::{NativeMcpAuthenticationError, NativeMcpAuthenticationReceipt};
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(super) use selection::{CommandOwner, prepare};
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) use selection::{ControlFence, Selection};
+
 pub(super) fn selections(
     options: &NativeMcpControllerOptions,
     snapshot: &Arc<NativeMcpConfigSnapshot>,

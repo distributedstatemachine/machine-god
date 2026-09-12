@@ -102,6 +102,26 @@ second launcher capture or owner. Missing or invalid optional desktop-launcher
 authority disables both paths without preventing interactive startup. This inert
 composition changes neither public startup options nor consent requirements.
 
+## Interactive authentication commands
+
+`/mcp auth NAME` selects an existing remote server and asks the user to repeat
+the command with `--open`; it does not resolve OAuth secrets, load credentials,
+contact OAuth endpoints or launch a browser. A disabled or failed remote server
+can be selected. Stdio and unknown names are rejected. `--open` is explicit
+browser consent, without a second issuer-approval dialog. An issuer mismatch
+requires correcting the selected server's `oauth.issuer` and retrying.
+
+The native command retains the actual conversation admission, selected profile
+snapshot, controller reservation, original cancellation and deadline through
+credential-worker completion, including abandoned observations. Authentication
+commands serialize with controller startup/reload. Credential publication is
+validated against the selected profile, and its receipt is separate from the
+subsequent configured runtime reload. A reload failure does not undo a confirmed
+credential save or establish that the server connected. `/mcp logout NAME`
+reports local removal and remote revocation independently, without implicit
+runtime reload. Secret-bearing authorization URLs go directly to the retained
+native launcher and are never placed in recorded CLI output.
+
 ## Credentials and generations
 
 The explicitly selected directory owns `mcp-credentials.json`, with separate

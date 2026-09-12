@@ -1,5 +1,7 @@
 //! MCP controls retain exact conversation admission and native effect owners.
 
+#[cfg(feature = "mcp-http")]
+mod authentication;
 mod feature;
 mod reload;
 #[cfg(test)]
@@ -22,9 +24,42 @@ pub(super) fn prepare(
     runtime: Arc<NativeConversationRuntime>,
     host: &NativeReferenceHost,
     command: McpCommand,
+    browser: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
 ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
     let token = CancellationToken::new();
+    #[cfg(not(feature = "mcp-http"))]
+    let _ = browser;
     let command = match command {
+        #[cfg(feature = "mcp-http")]
+        McpCommand::Authenticate {
+            server,
+            open_browser,
+        } => {
+            let Some(controller) = host.mcp_controller() else {
+                return Ok((token, unavailable()));
+            };
+            return Ok((
+                token.clone(),
+                authentication::run(
+                    runtime,
+                    controller,
+                    browser,
+                    server,
+                    Some(open_browser),
+                    token,
+                ),
+            ));
+        }
+        #[cfg(feature = "mcp-http")]
+        McpCommand::Logout { server } => {
+            let Some(controller) = host.mcp_controller() else {
+                return Ok((token, unavailable()));
+            };
+            return Ok((
+                token.clone(),
+                authentication::run(runtime, controller, browser, server, None, token),
+            ));
+        }
         McpCommand::Reload => {
             let Some(controller) = host.mcp_controller() else {
                 return Ok((token, unavailable()));

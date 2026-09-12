@@ -99,6 +99,10 @@ fn select_job(
     if inner.settling.load(Ordering::Acquire) {
         return Err(failure(NativeMcpControllerError::Busy));
     }
+    #[cfg(all(feature = "mcp-http", any(test, feature = "ai-gateway-http")))]
+    if state.authenticating.upgrade().is_some() {
+        return Err(failure(NativeMcpControllerError::Busy));
+    }
     if matches!(kind, Kind::Start(NativeMcpStartupPhase::AskDeferred))
         || matches!(kind, Kind::Start(_)) && state.active.is_some()
     {

@@ -88,6 +88,8 @@ pub enum NativeInteractiveControlError {
     Mcp(crate::mcp::management::NativeMcpManagementError),
     McpReload(crate::mcp::controller::NativeMcpControllerFailure),
     McpFeature(crate::mcp::runtime::NativeMcpFeatureError),
+    #[cfg(feature = "mcp-http")]
+    McpAuthentication(crate::mcp::controller::NativeMcpAuthenticationError),
     Unavailable,
 }
 impl fmt::Debug for NativeInteractiveControlError {
@@ -123,6 +125,8 @@ pub enum NativeInteractiveControlReceipt {
     Mcp(crate::mcp::management::NativeMcpManagementReceipt),
     McpReload(crate::mcp::controller::NativeMcpControllerReceipt),
     McpFeature(NativeMcpHumanFeatureReceipt),
+    #[cfg(feature = "mcp-http")]
+    McpAuthentication(crate::mcp::controller::NativeMcpAuthenticationReceipt),
 }
 impl fmt::Debug for NativeInteractiveControlReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -160,6 +164,8 @@ impl NativeInteractiveControlOutcome {
                         .is_some_and(crate::mcp::startup::NativeMcpStartupReceipt::has_failures)
             }
             Ok(NativeInteractiveControlReceipt::McpFeature(receipt)) => receipt.failed(),
+            #[cfg(feature = "mcp-http")]
+            Ok(NativeInteractiveControlReceipt::McpAuthentication(receipt)) => receipt.failed(),
             Ok(NativeInteractiveControlReceipt::Workspace(receipt)) => !matches!(
                 receipt.reconciliation,
                 crate::NativeWorkspaceReconciliation::CachedBusy
@@ -223,7 +229,12 @@ impl NativeInteractiveSession {
         let mut cancellation = None;
         let future = match control {
             NativeInteractiveControl::Mcp { command } => {
-                let (token, future) = mcp::prepare(runtime, &self.host, command)?;
+                let (token, future) = mcp::prepare(
+                    runtime,
+                    &self.host,
+                    command,
+                    self.mcp_browser_launcher.clone(),
+                )?;
                 cancellation = Some(token);
                 future
             }

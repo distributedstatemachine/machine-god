@@ -18,6 +18,8 @@ use std::{
 };
 
 #[cfg(feature = "mcp-http")]
+mod authentication;
+#[cfg(feature = "mcp-http")]
 mod http;
 
 #[derive(Default)]
