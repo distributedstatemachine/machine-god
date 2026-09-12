@@ -2,6 +2,7 @@
 use super::{
     NativeMcpOwnedPeer, NativeMcpPublicationCheckpoint, NativeMcpRuntime,
     NativeMcpRuntimeError as Error, Result,
+    refresh::BorrowedRefreshCaller,
     route::{PeerGuard, ServerRoute},
 };
 use crate::mcp::{
@@ -21,13 +22,15 @@ impl NativeMcpRuntime {
         context: &NativeMcpTurnContext,
         cancellation: &CancellationToken,
     ) -> Result<()> {
+        let registry = context.registry().map_err(|_| Error::Unavailable)?;
+        let caller = BorrowedRefreshCaller::Turn(&registry, cancellation);
         for server in self.catalog_servers()? {
             let mut lane = server.acquire(context, cancellation).await?;
             match select(
                 Box::pin(async {
                     select(context.cancelled(), cancellation.cancelled()).await;
                 }),
-                Box::pin(self.refresh_server(&server, &mut lane)),
+                Box::pin(self.refresh_server(&server, &mut lane, &caller)),
             )
             .await
             {
@@ -65,9 +68,10 @@ impl NativeMcpRuntime {
         )
         .map_err(|_| Error::Unavailable)?;
         let mut lane = server.acquire_feature(&authority).await?;
+        let caller = BorrowedRefreshCaller::Human(command, cancellation);
         match select(
             authority.cancelled(),
-            Box::pin(self.refresh_server(&server, &mut lane)),
+            Box::pin(self.refresh_server(&server, &mut lane, &caller)),
         )
         .await
         {
@@ -96,7 +100,9 @@ impl NativeMcpRuntime {
         &self,
         server: &Arc<ServerRoute>,
         lane: &mut PeerGuard<'_>,
+        caller: &BorrowedRefreshCaller<'_>,
     ) -> Result<()> {
+        caller.check()?;
         server.check_authority()?;
         super::subscriptions::drain(lane, server).await?;
         if !lane.peer.supports_tools() {
@@ -135,7 +141,7 @@ impl NativeMcpRuntime {
             let candidate = self.prepare_tool_refresh(&expected, server, catalog.clone(), &[])?;
             let changed = candidate.is_changed();
             let prospective = candidate.publication_checkpoint();
-            self.commit_catalog_refresh(&expected, &prospective, candidate, lane)?;
+            self.commit_catalog_refresh(&expected, &prospective, candidate, lane, caller)?;
             Ok((catalog, changed))
         });
         // The peer lane serializes all policy mutation. Do not retain the cache
@@ -147,6 +153,7 @@ impl NativeMcpRuntime {
                 let may_serve = ticket.may_serve_snapshot();
                 state.fail(ticket, now)?;
                 server.check_authority()?;
+                caller.check()?;
                 if may_serve && server.clock.now() < lane.deadline {
                     Ok(())
                 } else {
@@ -162,16 +169,17 @@ impl NativeMcpRuntime {
         prospective: &NativeMcpPublicationCheckpoint,
         candidate: super::refresh::NativeMcpToolRefresh,
         lane: &mut PeerGuard<'_>,
+        caller: &BorrowedRefreshCaller<'_>,
     ) -> Result<NativeMcpPublicationCheckpoint> {
         if let Some(controller) = self.controller.get() {
             controller
                 .upgrade()
                 .ok_or(Error::Unavailable)?
                 .sync_catalog_publication(expected, prospective, || {
-                    self.commit_tool_refresh(candidate, lane)
+                    self.commit_tool_refresh_guarded(candidate, lane, caller)
                 })
         } else {
-            self.commit_tool_refresh(candidate, lane)
+            self.commit_tool_refresh_guarded(candidate, lane, caller)
         }
     }
 
@@ -189,7 +197,10 @@ impl NativeMcpRuntime {
         let fetch = async {
             match &mut *lane.peer {
                 #[cfg(test)]
-                NativeMcpOwnedPeer::Script(_) => Err(Error::Unavailable),
+                NativeMcpOwnedPeer::Script(peer) => {
+                    peer.tools_catalog(limits, server.catalog_epoch, server.clock.as_ref())
+                        .await
+                }
                 NativeMcpOwnedPeer::Stdio(peer) => peer
                     .catalog(
                         McpCatalogKind::Tools,
