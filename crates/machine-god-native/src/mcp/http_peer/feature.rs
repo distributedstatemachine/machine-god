@@ -139,7 +139,7 @@ async fn send(
         return Err(Error::Cancelled);
     }
     peer.check(deadline)?;
-    reply
+    let round = reply
         .map(|reply| {
             McpFeatureRound::new(
                 reply,
@@ -150,5 +150,10 @@ async fn send(
             )
         })
         .transpose()
-        .map_err(Error::Feature)
+        .map_err(Error::Feature)?;
+    if !authority.is_live() {
+        return Err(Error::Cancelled);
+    }
+    peer.check(deadline)?;
+    Ok(round)
 }

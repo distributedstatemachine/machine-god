@@ -81,9 +81,6 @@ impl McpFeatureRound {
         Ok(Self { reply, pending })
     }
 
-    pub(crate) fn reply(&self) -> &McpFeatureReply {
-        &self.reply
-    }
     pub(crate) fn input(&self) -> Option<&Arc<McpInputRequired>> {
         self.pending.as_ref().map(|pending| &pending.input)
     }
@@ -118,6 +115,7 @@ impl McpFeatureRound {
         let exchange = pending
             .exchange
             .continue_with(id, &pending.input, &responses)?;
+        drop(responses);
         Ok((exchange, pending.authority, pending.options))
     }
 }

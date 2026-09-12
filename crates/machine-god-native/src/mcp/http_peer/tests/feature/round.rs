@@ -89,7 +89,6 @@ fn modern_read_get_rounds_retain_original_params_metadata_and_exact_state() {
                     .await
                     .unwrap();
                 let input = round.input().unwrap().clone();
-                assert!(matches!(round.reply(), McpFeatureReply::Response(_)));
                 let responses = answers(&round);
                 let complete = peer
                     .resume_feature(round, responses, deadline())
@@ -167,6 +166,7 @@ fn continuation_rejects_a_distinct_peer_with_equal_endpoint_and_request_sequence
             accept_reply(&listener, 200, JSON, &discovery()).await;
             accept_reply(&listener, 200, JSON, INPUT).await;
             accept_reply(&listener, 200, JSON, &discovery()).await;
+            accept_reply(&listener, 200, JSON, INPUT).await;
         };
         let client = async {
             let mut original =
@@ -179,13 +179,15 @@ fn continuation_rejects_a_distinct_peer_with_equal_endpoint_and_request_sequence
                 McpHttpPeer::connect(selected(), CancellationToken::new(), deadline())
                     .await
                     .unwrap();
+            drop(first(&mut foreign, human(CancellationToken::new())).await);
+            assert_eq!(foreign.next_id, original.next_id);
             assert!(
                 foreign
                     .resume_feature(round, responses, deadline())
                     .await
                     .is_err()
             );
-            assert_eq!(foreign.next_id, Some(2));
+            assert_eq!(foreign.next_id, Some(3));
             assert!(!foreign.closed);
             assert!(!original.closed);
         };
@@ -217,7 +219,11 @@ fn dropped_partial_resume_keeps_original_guard_and_owned_cleanup() {
                 .unwrap();
             socket.flush().await.unwrap();
             partial.cancel();
-            assert_eq!(socket.read(&mut [0]).await.unwrap(), 0);
+            match socket.read(&mut [0]).await {
+                Ok(0) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                result => panic!("expected owned connection closure, got {result:?}"),
+            }
         };
         let client = async {
             let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())

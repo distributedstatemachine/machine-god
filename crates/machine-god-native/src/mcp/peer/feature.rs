@@ -152,6 +152,10 @@ async fn send(
         })
         .transpose()
         .map_err(Error::Feature)?;
+    if !authority.is_live() {
+        return Err(Error::Cancelled);
+    }
+    routing::check(&peer.cancellation, deadline)?;
     close.0 = None;
     peer.closed = false;
     Ok(round)
