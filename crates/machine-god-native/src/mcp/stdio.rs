@@ -24,9 +24,11 @@ use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
 
 mod control;
 mod launch;
+mod runtime_set;
 mod worker;
 pub use control::McpStdioControl;
 pub use launch::McpStdioLaunch;
+pub(crate) use runtime_set::PreparedStdioRuntimeSet;
 
 /// Fixed maximum admitted outbound requests, including the active writer.
 pub const MAX_MCP_STDIO_WRITES: usize = 8;
@@ -196,20 +198,16 @@ impl McpStdioConnection {
     /// # Errors
     /// Rejects excessive allocations or a closed connection.
     pub fn admit_runtimes(&self, runtimes: Vec<Arc<McpSubmissionRuntime>>) -> Result<()> {
-        if runtimes.len() > MAX_MCP_STDIO_RUNTIMES {
-            return Err(McpStdioError::Capacity);
-        }
-        self.shared.check()?;
-        let previous = {
-            let mut admitted = self
-                .shared
-                .runtimes
-                .lock()
-                .map_err(|_| McpStdioError::Closed)?;
-            std::mem::replace(&mut *admitted, runtimes.into_boxed_slice())
-        };
+        let previous = self.prepare_runtime_set(runtimes)?.commit();
         drop(previous);
         Ok(())
+    }
+
+    pub(crate) fn prepare_runtime_set(
+        &self,
+        runtimes: Vec<Arc<McpSubmissionRuntime>>,
+    ) -> Result<PreparedStdioRuntimeSet<'_>> {
+        runtime_set::prepare(self, runtimes)
     }
 
     /// Enqueues on first poll only; a full queue rejects without starting a write.

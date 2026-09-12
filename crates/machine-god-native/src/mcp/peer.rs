@@ -279,6 +279,15 @@ impl McpStdioPeer {
         self.check_lifetime()?;
         self.connection.admit_runtimes(runtimes).map_err(Into::into)
     }
+    pub(crate) fn prepare_runtime_set(
+        &self,
+        runtimes: Vec<Arc<McpSubmissionRuntime>>,
+    ) -> Result<crate::mcp::stdio::PreparedStdioRuntimeSet<'_>> {
+        self.check_lifetime()?;
+        self.connection
+            .prepare_runtime_set(runtimes)
+            .map_err(Into::into)
+    }
     /// Reserves the one pending application ID before native proof preparation.
     /// A failed preparation may discard the reservation; its ID is never reused.
     ///

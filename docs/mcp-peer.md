@@ -109,6 +109,10 @@ Subscription control construction uses the admitted typed filter selection and a
 nonnegative integer request ID, with modern client metadata and the existing
 bounded control frame size. Empty filters are rejected. This constructor does not
 widen the public raw discovery method allowlist or establish acknowledgement.
+Same-peer executable replacement can stage a bounded runtime whitelist while
+holding its lock without mutation. Committing swaps the exact table infallibly
+and returns the previous allocations for disposal outside publication locks;
+dropping the staged guard leaves the old table unchanged.
 
 Modern behavior is informed by fx `b1774fbf6c7602b503026f96f6e960e946c692ef`,
 especially `mcp_runtime.zig` request metadata, capability parsing and modern
