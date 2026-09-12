@@ -104,6 +104,11 @@ async fn route(listener: &TcpListener) -> ServerRoute {
         configuration: Arc::from(&b"config"[..]),
         authentication: Arc::from(&b"auth"[..]),
         catalogs: std::sync::Mutex::new(NativeMcpCatalogState::new(&[]).unwrap()),
+        results: std::sync::Mutex::new(crate::mcp::runtime::result_cache::FeatureResultCache::new(
+            Arc::new(crate::mcp::runtime::catalog_state::FeatureCacheBudget::new(
+                16 * 1024 * 1024,
+            )),
+        )),
         catalog_epoch: Instant::now(),
         protocol,
         readiness: peer.readiness(),

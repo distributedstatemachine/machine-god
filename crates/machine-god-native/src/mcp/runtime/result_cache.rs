@@ -107,8 +107,9 @@ impl FeatureResultCache {
             return Err(Error::Invalid);
         }
         self.last_seen = now;
-        self.entries
-            .retain(|entry| entry.invalidation == tag(entry.action, invalidation));
+        self.entries.retain(|entry| {
+            entry.invalidation == tag(entry.action, invalidation) && now < entry.expires
+        });
         Ok(())
     }
     pub(super) fn begin(
@@ -151,10 +152,11 @@ impl FeatureResultCache {
         if ticket.serial != self.serial || ticket.invalidation != tag(ticket.action, invalidation) {
             return Ok(());
         }
-        let hints = match (ticket.action, response.outcome()) {
-            (Action::ResourceRead, McpFeatureOutcome::Resource { cache, .. })
-            | (Action::PromptGet, McpFeatureOutcome::Prompt { cache, .. }) => cache,
-            _ => return Ok(()),
+        let ((Action::ResourceRead, McpFeatureOutcome::Resource { cache: hints, .. })
+        | (Action::PromptGet, McpFeatureOutcome::Prompt { cache: hints, .. })) =
+            (ticket.action, response.outcome())
+        else {
+            return Ok(());
         };
         let Some(received) = response
             .received_at()

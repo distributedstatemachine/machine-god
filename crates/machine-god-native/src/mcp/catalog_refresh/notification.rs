@@ -147,10 +147,10 @@ impl McpCatalogRefresh {
         request_id: i64,
     ) -> Result<bool> {
         self.check(generation)?;
-        if !self
+        if self
             .subscription
             .as_ref()
-            .is_some_and(|selected| selected.id == request_id)
+            .is_none_or(|selected| selected.id != request_id)
         {
             return Ok(false);
         }
