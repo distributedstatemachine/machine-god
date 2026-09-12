@@ -2,7 +2,7 @@
 
 use super::{http::McpHttpClock, runtime::NativeMcpRuntimeClock};
 use machine_god_core::BoxFuture;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Explicit monotonic clock selection shared by native runtime/startup and HTTP.
 /// Construction is inert. Timers use the existing host runtime only when polled;
@@ -30,10 +30,38 @@ impl McpHttpClock for TokioMcpClock {
     }
 }
 
+impl super::auth::McpAuthClock for TokioMcpClock {
+    fn unix_millis(&self) -> i64 {
+        unix_millis(SystemTime::now())
+    }
+}
+
+fn unix_millis(time: SystemTime) -> i64 {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+        Err(error) => {
+            i64::try_from(error.duration().as_millis()).map_or(i64::MIN, i64::saturating_neg)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn persisted_expiry_uses_signed_wall_time_without_changing_monotonic_timers() {
+        assert_eq!(unix_millis(UNIX_EPOCH), 0);
+        assert_eq!(
+            unix_millis(UNIX_EPOCH.checked_add(Duration::from_millis(17)).unwrap()),
+            17
+        );
+        assert_eq!(
+            unix_millis(UNIX_EPOCH.checked_sub(Duration::from_millis(17)).unwrap()),
+            -17
+        );
+    }
 
     #[test]
     fn clock_and_unpolled_deadlines_need_no_tokio_runtime() {

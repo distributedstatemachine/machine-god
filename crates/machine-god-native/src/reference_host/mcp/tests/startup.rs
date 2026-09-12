@@ -38,6 +38,7 @@ fn captured_startup_reuses_retained_roots_environment_and_exact_clock() {
     )
     .unwrap();
     let startup = options.startup.as_ref().unwrap();
+    assert!(options.authentication.is_some());
     assert!(Arc::ptr_eq(&options.contexts, &contexts));
     assert!(Arc::ptr_eq(&options.clock, &startup.clock));
     assert_eq!(startup.peer_lifetime, McpPeerLifetime::OwnerControlled);
@@ -81,6 +82,7 @@ fn captured_startup_reuses_retained_roots_environment_and_exact_clock() {
     let offline =
         NativeReferenceHostMcpOptions::from_captured_startup(&roots, &terminal, contexts, None)
             .unwrap();
+    assert!(offline.authentication.is_some());
     let offline = offline.startup.unwrap();
     assert!(offline.network.is_none());
     assert!(offline.stdio.is_some());

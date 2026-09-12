@@ -1,5 +1,7 @@
 //! Owned, caller-polled activation of one explicitly selected MCP profile.
 
+#[cfg(feature = "mcp-http")]
+mod authentication;
 mod cleanup;
 mod operation;
 mod state;
@@ -48,6 +50,11 @@ pub struct NativeMcpControllerOptions {
     pub workers: NativeOwnedWorkerScope,
     pub reserved_tool_names: Box<[ToolName]>,
     pub startup: NativeMcpControllerStartupOptions,
+    /// One explicitly owned profile credential service. Each loaded configuration
+    /// selects stored credentials for its remote servers unless a caller supplied
+    /// an exact per-server override. Controller close also closes this service.
+    #[cfg(feature = "mcp-http")]
+    pub stored_authentication: Option<Arc<super::auth::NativeMcpAuthService>>,
     /// Includes active, pending, retired and outstanding result generations.
     /// Positive and at most eight; four is suitable for an ordinary host.
     pub max_retained_generations: usize,
@@ -146,6 +153,13 @@ pub struct NativeMcpController {
 type Result<T> = std::result::Result<T, NativeMcpControllerFailure>;
 
 impl NativeMcpController {
+    /// Shares this owner's exact credential coordinator without loading records,
+    /// refreshing, opening a browser or extending engine-drop authority.
+    #[cfg(feature = "mcp-http")]
+    #[must_use]
+    pub fn authentication_service(&self) -> Option<Arc<super::auth::NativeMcpAuthService>> {
+        self.inner.options.stored_authentication.clone()
+    }
     pub(crate) fn selects_runtime(&self, runtime: &NativeMcpRuntime) -> bool {
         std::ptr::eq(self.inner.options.runtime.as_ref(), runtime)
     }

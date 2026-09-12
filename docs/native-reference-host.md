@@ -218,8 +218,13 @@ DNS or entropy authority remains unavailable for remote peers; it does not
 prevent empty profiles or stdio startup. Remote startup reports that absence
 under its normal required/optional server policy, without later ambient capture
 or fallback. Invalid process/root or bundled trust selection fails with a
-redacted MCP configuration error. Stored credentials and human presentation
-endpoints remain separate explicit selections.
+redacted MCP configuration error. Capture also selects native OAuth entropy and
+wall-clock expiry authority; it does not generate a verifier or inspect tokens.
+When composed with the selected MCP management profile, authentication uses that
+profile's separate `mcp-credentials.json`, the exact captured network and the
+existing host worker scope. Missing DNS still permits local status/removal, but
+OAuth network attempts fail without a resolver fallback. Human presentation and
+browser-launch endpoints remain separate explicit selections.
 
 The concrete executor receives the same archive adapter allocation as terminal
 input/result publishers and `read_tool_result`, including its existing quota
@@ -250,7 +255,12 @@ it requires the exact runtime clock allocation and an explicitly selected MCP
 management service. Selection mismatch is rejected before terminal acquisition.
 `mcp_controller()` returns the controller composed before engine construction
 from that management service, runtime, fixed names and existing worker scope,
-with four retained generation slots. It does not create another store or scope.
+with four retained generation slots, reusing the selected configuration store
+and existing worker scope.
+`mcp_authentication()` shares the exact optional profile credential service without
+reading or refreshing it. Each loaded startup/reload configuration selects stored
+credentials for its remote servers, unless an explicit per-server authentication
+selection overrides that default; profile saves do not activate credentials.
 The actual engine resource lease closes both controller and runtime, including
 after `into_engine`; retaining controller accessors cannot extend that lifetime.
 Startup/reload candidate construction and atomic publication remain explicit
@@ -265,6 +275,11 @@ startup executor, aggregate timeout or absolute session lifetime is introduced.
 separate `settle` operation must run while host workers are still owned, before
 the host's final worker join. Runtime-only hosts retain explicit `drain_mcp`
 behavior; a peer drain alone is not controller-job settlement.
+Controller close cuts off its selected auth service as well. Settlement polls
+auth-operation/worker observation and peer cleanup together, attempting both even
+if one fails; an aggregate success requires both. Caller-owned auth network or
+browser futures must first finish or be dropped by their command owner. Retaining
+an auth accessor cannot extend the engine's lifetime or create another worker.
 Both CLI paths explicitly settle that controller before dropping the host and
 joining its workers, including startup failure and unwind. MCP cleanup uses a
 fresh token and a separate bounded 30-second window. Cleanup failure cannot

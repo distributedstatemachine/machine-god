@@ -52,6 +52,7 @@ fn actual_controller_receipts_keep_publication_and_cleanup_observations_separate
         workers: workers.clone(),
         reserved_tool_names: Box::new([]),
         max_retained_generations: 4,
+        stored_authentication: None,
         startup: NativeMcpControllerStartupOptions {
             captured_environment: vec![],
             stdio: None,

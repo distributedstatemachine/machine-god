@@ -24,12 +24,44 @@ pub(super) fn settle(
             .map_err(|_| failure(NativeMcpControllerError::Busy))?;
         let _settlement = Settlement(inner.clone());
         inner.close();
-        let result = run(&inner, deadline, cancellation).await;
+        let result = settle_all(&inner, deadline, cancellation).await;
         result.map_err(|data| NativeMcpControllerFailure {
             data,
             generation: None,
         })
     })
+}
+
+async fn settle_all(
+    inner: &Arc<Inner>,
+    deadline: Instant,
+    cancellation: CancellationToken,
+) -> std::result::Result<NativeMcpControllerCleanup, Failure> {
+    let peers = run(inner, deadline, cancellation.clone());
+    #[cfg(feature = "mcp-http")]
+    {
+        // Poll both retained owners even when one fails. Neither creates a task
+        // nor closes the host worker scope. Caller-owned auth network/browser
+        // futures must already have completed or been dropped by their host.
+        let authentication = async {
+            let Some(service) = &inner.options.stored_authentication else {
+                return Ok::<(), Failure>(());
+            };
+            let receipt = service
+                .settle(deadline, cancellation)
+                .await
+                .map_err(|_| Failure::from(NativeMcpControllerError::Unavailable))?;
+            if !receipt.complete {
+                return Err(NativeMcpControllerError::Unavailable.into());
+            }
+            Ok(())
+        };
+        let (peers, authentication) = futures_util::future::join(peers, authentication).await;
+        authentication?;
+        peers
+    }
+    #[cfg(not(feature = "mcp-http"))]
+    peers.await
 }
 
 async fn run(

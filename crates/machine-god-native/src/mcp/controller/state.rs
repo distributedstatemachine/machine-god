@@ -150,6 +150,10 @@ impl Inner {
                 state.active.take(),
             )
         };
+        #[cfg(feature = "mcp-http")]
+        if let Some(authentication) = &self.options.stored_authentication {
+            authentication.close();
+        }
         self.options.startup.owner_cancellation.cancel();
         if let Some(job) = job {
             job.cancel();

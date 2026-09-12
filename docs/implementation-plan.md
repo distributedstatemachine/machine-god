@@ -414,16 +414,16 @@ schema review, per-turn workspace evidence and credential-free reusable keys.
 Proof and request ownership remain checked through core admission and writing.
 
 Exact conversation/turn routing is integrated into both CLI setup paths. Owned
-OAuth provides discovery, approved callbacks, refresh, private credentials and
-generation-bound logout receipts; runtime/CLI activation remains below.
+OAuth services share actual host workers and selected profile credentials;
+startup/reload resolves stored auth per snapshot. Auth commands remain below.
 Typed feature/result/input codecs compose with explicit DNS/TLS, archived calls
 and consented forms. CLI startup/reload/settlement retain exact profile and cleanup
 custody; required startup precedes conversation work, with turn-authorized deferred
 discovery. Component checks are not full-feature gates; clean trees are removed.
 
 These components do not constitute a delivered runtime. Remaining composition
-must compose URL/legacy input custody, TTL/notification
-refresh, authentication and their CLI ownership. Raw pages
+must compose URL/legacy input custody, TTL/notification refresh,
+authentication commands/lifetime refresh and their CLI ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition

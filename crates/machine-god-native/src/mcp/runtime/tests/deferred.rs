@@ -72,6 +72,8 @@ impl Fixture {
                 max_retained_bytes: 1024 * 1024,
             },
             max_retained_generations: 4,
+            #[cfg(feature = "mcp-http")]
+            stored_authentication: None,
         };
         let fixture = Self {
             base,
@@ -97,6 +99,8 @@ impl Fixture {
                 workers: self.options.workers.clone(),
                 reserved_tool_names: Box::new([]),
                 startup: self.options.startup.clone(),
+                #[cfg(feature = "mcp-http")]
+                stored_authentication: self.options.stored_authentication.clone(),
                 max_retained_generations: 4,
             })
             .unwrap(),

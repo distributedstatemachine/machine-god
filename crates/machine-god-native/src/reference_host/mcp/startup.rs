@@ -93,7 +93,10 @@ impl NativeReferenceHostMcpOptions {
             peer_lifetime: McpPeerLifetime::OwnerControlled,
             max_retained_bytes: 256 * 1024 * 1024,
         };
-        Ok(Self::new(contexts, clock).with_controller_startup(startup))
+        let authentication = super::authentication::Options::captured(clock.clone());
+        let mut options = Self::new(contexts, clock).with_controller_startup(startup);
+        options.authentication = Some(authentication);
+        Ok(options)
     }
 }
 

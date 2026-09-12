@@ -47,7 +47,7 @@ fn options(address: SocketAddr, clock: Arc<Clock>) -> McpHttpPeerOptions {
         lifetime: deadline().into(),
     }
 }
-async fn reply(listener: &TcpListener, body: &[u8]) -> Vec<u8> {
+pub(super) async fn reply(listener: &TcpListener, body: &[u8]) -> Vec<u8> {
     let (mut socket, _) = listener.accept().await.unwrap();
     let received = request(&mut socket).await;
     socket

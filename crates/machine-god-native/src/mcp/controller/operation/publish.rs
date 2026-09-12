@@ -64,7 +64,7 @@ pub(super) async fn replace(
         #[cfg(feature = "mcp-http")]
         network: selected.network.clone(),
         #[cfg(feature = "mcp-http")]
-        authentication: selected.authentication.clone(),
+        authentication: super::super::authentication::selections(options, snapshot.config())?,
         peer_lifetime: selected.peer_lifetime,
         max_retained_bytes: selected.max_retained_bytes,
     })?);

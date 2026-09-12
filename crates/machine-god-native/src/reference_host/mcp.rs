@@ -1,6 +1,8 @@
 //! Concrete MCP composition using the reference host's existing native owners.
 
 #[cfg(feature = "mcp-http")]
+mod authentication;
+#[cfg(feature = "mcp-http")]
 mod startup;
 
 use super::{
@@ -35,6 +37,8 @@ pub struct NativeReferenceHostMcpOptions {
     limits: NativeMcpRuntimeLimits,
     form_responder: Option<Arc<dyn crate::mcp::interaction::McpElicitationPresenter>>,
     startup: Option<NativeMcpControllerStartupOptions>,
+    #[cfg(feature = "mcp-http")]
+    authentication: Option<authentication::Options>,
 }
 impl NativeReferenceHostMcpOptions {
     #[must_use]
@@ -45,6 +49,8 @@ impl NativeReferenceHostMcpOptions {
             limits: NativeMcpRuntimeLimits::default(),
             form_responder: None,
             startup: None,
+            #[cfg(feature = "mcp-http")]
+            authentication: None,
         }
     }
 
@@ -116,6 +122,8 @@ impl NativeReferenceHostMcpOptions {
             features,
             contexts: self.contexts,
             startup: self.startup,
+            #[cfg(feature = "mcp-http")]
+            authentication: self.authentication,
             management: None,
         })
     }
@@ -126,6 +134,8 @@ pub(super) struct Composition {
     pub features: Arc<crate::NativeMcpFeaturesTool>,
     pub contexts: Arc<NativeMcpContexts>,
     startup: Option<NativeMcpControllerStartupOptions>,
+    #[cfg(feature = "mcp-http")]
+    authentication: Option<authentication::Options>,
     management: Option<Arc<NativeMcpManagementService>>,
 }
 
@@ -151,12 +161,21 @@ pub(super) fn controller(
     let controller = composition
         .startup
         .map(|startup| {
+            let management = composition.management.ok_or_else(error)?;
+            let workers = workers.ok_or_else(error)?;
+            #[cfg(feature = "mcp-http")]
+            let stored_authentication = composition
+                .authentication
+                .map(|selected| selected.compose(&management, &startup, workers))
+                .transpose()?;
             NativeMcpController::new(NativeMcpControllerOptions {
                 runtime: composition.runtime.clone(),
-                management: composition.management.ok_or_else(error)?,
-                workers: workers.ok_or_else(error)?.clone(),
+                management,
+                workers: workers.clone(),
                 reserved_tool_names: reserved_tool_names.into(),
                 startup,
+                #[cfg(feature = "mcp-http")]
+                stored_authentication,
                 max_retained_generations: 4,
             })
             .map(Arc::new)
@@ -227,6 +246,13 @@ impl Drop for HostResource {
 }
 
 impl NativeReferenceHost {
+    /// Returns the host's exact optional profile credential service. This is an
+    /// inert accessor, not authentication, credential read or browser consent.
+    #[cfg(feature = "mcp-http")]
+    #[must_use]
+    pub fn mcp_authentication(&self) -> Option<Arc<crate::mcp::auth::NativeMcpAuthService>> {
+        self.mcp_controller.as_ref()?.authentication_service()
+    }
     /// Returns this engine owner's exact optional controller without activation.
     /// Retaining this accessor does not prevent engine-drop invalidation.
     #[must_use]
