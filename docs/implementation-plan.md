@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `authentication lifetime refresh and catalog refresh; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `catalog refresh/subscription runtime composition and authentication end-to-end evidence; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -440,9 +440,18 @@ original-request custody. Human waits release the peer lane while retaining
 bounded operation ownership; neither consent nor a resumed round selects a new
 publication or descriptor.
 
+Credential generations now retain their original selected-clock expiry across
+repeated acquisitions. Startup keeps bounded original lease observations, and
+HTTP checks those leases through I/O and response decoding. New prompt admission,
+unpinned MCP use and human feature commands coalesce due authentication refresh
+against the exact active configuration, without activating saved edits or replaying
+old requests. The effect-free catalog refresh policy implements modern TTL,
+backoff and subscription invalidation admission; transport driving and atomic
+runtime catalog replacement remain to be composed.
+
 These components do not constitute a delivered runtime. Remaining composition includes
 TTL/notification refresh, authentication
-end-to-end evidence/lifetime refresh and CLI ownership. Raw pages
+end-to-end evidence and CLI ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 Complete continuation and CLI process acceptance still requires the fresh-release
