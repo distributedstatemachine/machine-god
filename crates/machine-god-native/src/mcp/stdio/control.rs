@@ -22,12 +22,6 @@ impl McpStdioControl {
     ) -> Result<Self> {
         use crate::mcp::protocol::McpClientMetadata;
         use serde::Serialize;
-        let RpcId::Integer(id) = id else {
-            return Err(McpStdioError::Invalid);
-        };
-        if *id < 0 || filters.is_empty() {
-            return Err(McpStdioError::Invalid);
-        }
         #[derive(Serialize)]
         struct Params<'a> {
             #[serde(rename = "_meta")]
@@ -40,6 +34,12 @@ impl McpStdioControl {
             id: i64,
             method: &'static str,
             params: Params<'a>,
+        }
+        let RpcId::Integer(id) = id else {
+            return Err(McpStdioError::Invalid);
+        };
+        if *id < 0 || filters.is_empty() {
+            return Err(McpStdioError::Invalid);
         }
         let bytes = serde_json::to_vec(&Request {
             jsonrpc: "2.0",

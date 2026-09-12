@@ -243,6 +243,7 @@ fn listener_final_interleaves_with_inherited_reply_and_catalog() {
 
 #[test]
 fn queued_notification_precedes_listener_error_and_staged_whitelist_drop_is_inert() {
+    let fixture = crate::mcp::submission::tests::Fixture::new();
     futures_executor::block_on(async {
         let timer = ManualTimer::new();
         let mut peer = inert(timer.clone());
@@ -272,7 +273,6 @@ fn queued_notification_precedes_listener_error_and_staged_whitelist_drop_is_iner
         ));
         assert!(peer.readiness().is_ready());
 
-        let fixture = crate::mcp::submission::tests::Fixture::new();
         peer.admit_runtimes(vec![fixture.runtime.clone()]).unwrap();
         drop(peer.prepare_runtime_set(Vec::new()).unwrap());
         let old = peer.prepare_runtime_set(Vec::new()).unwrap().commit();
