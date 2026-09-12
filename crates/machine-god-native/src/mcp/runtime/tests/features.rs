@@ -2,6 +2,8 @@ use super::*;
 use crate::mcp::control::{McpFeatureReply, tests::request};
 use std::{future::Future, task::Context};
 
+mod continuation;
+
 fn install(
     runtime: &NativeMcpRuntime,
     writes: Arc<Mutex<Vec<u8>>>,
