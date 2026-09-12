@@ -1865,13 +1865,30 @@ mod production {
 
         impl ScopedTestDirectory {
             fn new(label: &str) -> Self {
-                let path = std::env::temp_dir().join(format!(
-                    "machine-god-ask-stage-{}-{label}",
-                    std::process::id()
-                ));
-                let _ = fs::remove_dir_all(&path);
-                fs::create_dir(&path).expect("stage directory should be creatable");
-                Self { path }
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                Self::create_in(&std::env::temp_dir(), label, &NEXT)
+            }
+
+            fn create_in(root: &Path, label: &str, next: &std::sync::atomic::AtomicU64) -> Self {
+                for _ in 0..1_024 {
+                    let sequence = next
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                            value.checked_add(1)
+                        })
+                        .expect("stage directory sequence should not be exhausted");
+                    let path = root.join(format!(
+                        "machine-god-ask-stage-{}-{label}-{sequence}",
+                        std::process::id()
+                    ));
+                    // Only successful exclusive creation grants cleanup ownership.
+                    // A stale or concurrent candidate belongs to somebody else.
+                    match fs::create_dir(&path) {
+                        Ok(()) => return Self { path },
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                        Err(error) => panic!("stage directory should be creatable: {error}"),
+                    }
+                }
+                panic!("stage directory candidates should not be exhausted");
             }
 
             fn path(&self) -> &Path {
@@ -1883,6 +1900,58 @@ mod production {
             fn drop(&mut self) {
                 let _ = fs::remove_dir_all(&self.path);
             }
+        }
+
+        #[test]
+        fn scoped_test_directories_with_same_label_keep_independent_ownership() {
+            let barrier = std::sync::Barrier::new(2);
+            let create = |contents: &[u8]| {
+                barrier.wait();
+                let directory = ScopedTestDirectory::new("same-label-ownership");
+                fs::write(directory.path().join("owner"), contents).unwrap();
+                directory
+            };
+            let (first, second) = std::thread::scope(|scope| {
+                let first = scope.spawn(|| create(b"first"));
+                let second = scope.spawn(|| create(b"second"));
+                (first.join().unwrap(), second.join().unwrap())
+            });
+            let first_path = first.path().to_owned();
+            let second_path = second.path().to_owned();
+            assert_ne!(first_path, second_path);
+            assert_eq!(fs::read(first_path.join("owner")).unwrap(), b"first");
+            assert_eq!(fs::read(second_path.join("owner")).unwrap(), b"second");
+            drop(first);
+            assert!(!first_path.exists());
+            assert_eq!(fs::read(second_path.join("owner")).unwrap(), b"second");
+            drop(second);
+            assert!(!second_path.exists());
+        }
+
+        #[test]
+        fn scoped_test_directory_preserves_preexisting_candidates() {
+            let root = ScopedTestDirectory::new("stale-candidate-ownership");
+            let candidate = |sequence| {
+                root.path().join(format!(
+                    "machine-god-ask-stage-{}-stale-{sequence}",
+                    std::process::id()
+                ))
+            };
+            let stale_directory = candidate(0);
+            let stale_file = candidate(1);
+            fs::create_dir(&stale_directory).unwrap();
+            fs::write(stale_directory.join("owner"), b"stale-directory").unwrap();
+            fs::write(&stale_file, b"stale-file").unwrap();
+            let next = std::sync::atomic::AtomicU64::new(0);
+            let directory = ScopedTestDirectory::create_in(root.path(), "stale", &next);
+            assert_eq!(directory.path(), candidate(2));
+            drop(directory);
+            assert!(!candidate(2).exists());
+            assert_eq!(
+                fs::read(stale_directory.join("owner")).unwrap(),
+                b"stale-directory"
+            );
+            assert_eq!(fs::read(&stale_file).unwrap(), b"stale-file");
         }
 
         impl ScopedChild {
