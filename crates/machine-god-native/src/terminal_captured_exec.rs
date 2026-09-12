@@ -740,15 +740,23 @@ pub(crate) fn launch_gated_argv(
     let flags = rustix::fs::fcntl_getfl(&stdout).map_err(|_| TerminalCapturedExecError::Process)?;
     rustix::fs::fcntl_setfl(&stdout, flags | OFlags::NONBLOCK)
         .map_err(|_| TerminalCapturedExecError::Process)?;
-    let mut guard =
-        match TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline, stop) {
-            Ok(guard) => guard,
-            Err(_) if stopped(cancellation, stop) => {
-                return Err(TerminalCapturedExecError::Cancelled);
-            }
-            Err(_) if Instant::now() >= deadline => return Ok(None),
-            Err(_) => return Err(TerminalCapturedExecError::Process),
-        };
+    // Inventory bootstrap has its own terminal-helper protocol ceiling. A long
+    // MCP startup deadline must not be sent to that narrower helper. This
+    // substage never extends the original deadline or changes the MCP deadline.
+    let inventory_deadline = deadline.min(Instant::now() + MAX_TERMINAL_EXEC_DURATION);
+    let mut guard = match TerminalChildGuard::reserve_for_helper(
+        cancellation,
+        helper,
+        inventory_deadline,
+        stop,
+    ) {
+        Ok(guard) => guard,
+        Err(_) if stopped(cancellation, stop) => {
+            return Err(TerminalCapturedExecError::Cancelled);
+        }
+        Err(_) if Instant::now() >= deadline => return Ok(None),
+        Err(_) => return Err(TerminalCapturedExecError::Process),
+    };
     let original_group = keepalive.is_some();
     if let Some(keepalive) = keepalive {
         guard.retain_until_reaped(keepalive);

@@ -50,6 +50,9 @@ of detaching children or reporting complete cleanup. The retained direct child,
 original process group and positively captured descendants define ownership;
 descendants escaping before observation are outside that existing boundary.
 macOS accepts the explicit shared inventory-service helper.
+Its inventory bootstrap keeps the separate 600-second helper ceiling, capped
+by the original caller deadline. This substage does not shorten or restart the
+configured MCP server startup deadline.
 
 ## Queue, framing and submission
 

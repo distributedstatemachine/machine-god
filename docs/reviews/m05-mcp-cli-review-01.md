@@ -55,6 +55,15 @@ runtime execution. The resource reviewer ended with a tool error before a final
 report; its partial observations are not a completed third-review verdict.
 R1 therefore did not satisfy acceptance.
 
+The coordinator's original-candidate macOS startup diagnostic subsequently
+completed: the immediate producer succeeded at ten seconds and failed with
+`Transport(Process)` at 1,200 seconds. Cleanup settled before the assertion.
+The log additionally located a 600-second inventory-bootstrap encoder ceiling,
+before the captured-helper launch ceiling. The repair preserves that inventory
+substage ceiling under the original deadline while allowing the configured MCP
+deadline through its own helper. Evidence: `r1-lifecycle-diagnostic.log` in the
+same retained directory. This baseline failure is not replacement-gate evidence.
+
 ## Remediation decisions
 
 Backward compatibility is not required. Correct the obsolete continuation
