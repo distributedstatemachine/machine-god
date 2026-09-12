@@ -196,11 +196,30 @@ retain their supplied authorities unchanged.
 presentation endpoint and supplies it to the concrete executor before its runtime
 policy is selected. Without that endpoint, form support is not advertised.
 Selecting it is inert and does not advertise URL completion support.
+The interactive CLI selects its existing prompt bridge for this endpoint;
+noninteractive ask/resume do not select a human presenter.
 
 With the native `mcp-http` feature, `mcp::clock::TokioMcpClock` is an explicit
 production clock selection for both runtime/startup and HTTP deadlines. Its
 unpolled timers are inert and use the host's existing Tokio runtime on poll;
 they create no separate runtime, detached task or worker owner.
+
+`NativeReferenceHostMcpOptions::capture_startup` is the explicit effectful
+production capture boundary, separate from inert options construction. On the
+caller's owned startup worker it captures system DNS configuration and secure
+query entropy, and duplicates the already retained workspace descriptor without
+reopening its pathname. It reuses the terminal's exact selected helper and
+validated environment, registers one shared inert macOS inventory helper, and
+selects bundled TLS roots without ambient certificate files or proxy settings.
+The runtime, controller and network share one monotonic clock; actual host and
+configuration cancellation own peer lifetime, while each request remains bounded.
+Capture starts no peer, process, browser, worker or separate executor. Missing
+DNS or entropy authority remains unavailable for remote peers; it does not
+prevent empty profiles or stdio startup. Remote startup reports that absence
+under its normal required/optional server policy, without later ambient capture
+or fallback. Invalid process/root or bundled trust selection fails with a
+redacted MCP configuration error. Stored credentials and human presentation
+endpoints remain separate explicit selections.
 
 The concrete executor receives the same archive adapter allocation as terminal
 input/result publishers and `read_tool_result`, including its existing quota
@@ -237,10 +256,19 @@ after `into_engine`; retaining controller accessors cannot extend that lifetime.
 Startup/reload candidate construction and atomic publication remain explicit
 caller-polled controller operations. Options and host construction do not connect MCP peers or
 perform authentication, discovery, browser launch or application requests.
+The production CLI polls configured `AskStartup` before one-shot ask/resume
+admission, and configured `All` before interactive session/picker admission.
+These operations use the already owned Tokio runtime and signal receiver;
+signals cancel startup while its native completion remains polled. No separate
+startup executor, aggregate timeout or absolute session lifetime is introduced.
 `close_mcp()` closes the selected controller before runtime invalidation. Its
 separate `settle` operation must run while host workers are still owned, before
 the host's final worker join. Runtime-only hosts retain explicit `drain_mcp`
 behavior; a peer drain alone is not controller-job settlement.
+Both CLI paths explicitly settle that controller before dropping the host and
+joining its workers, including startup failure and unwind. MCP cleanup uses a
+fresh token and a separate bounded 30-second window. Cleanup failure cannot
+skip the host join, interactive input restoration, or recording settlement.
 
 The engine's host-resource lease invalidates MCP before terminal worker shutdown,
 including when the host is consumed with `into_engine`; retained tools or

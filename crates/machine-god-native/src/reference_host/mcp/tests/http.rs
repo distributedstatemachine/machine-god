@@ -44,7 +44,7 @@ fn options(address: SocketAddr, clock: Arc<Clock>) -> McpHttpPeerOptions {
         headers: McpResolvedHeaders::resolve(remote, |_| None, None, &[]).unwrap(),
         clock,
         transport: TransportKind::StreamableHttp,
-        lifetime_deadline: deadline(),
+        lifetime: deadline().into(),
     }
 }
 async fn reply(listener: &TcpListener, body: &[u8]) -> Vec<u8> {

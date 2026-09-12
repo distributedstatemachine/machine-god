@@ -21,6 +21,8 @@ mod controller;
 mod fixture;
 #[cfg(feature = "mcp-http")]
 mod http;
+#[cfg(feature = "mcp-http")]
+mod startup;
 use fixture::*;
 
 #[derive(Default)]

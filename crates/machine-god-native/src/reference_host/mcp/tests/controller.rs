@@ -18,7 +18,7 @@ fn startup(clock: Arc<Clock>) -> NativeMcpControllerStartupOptions {
         network: None,
         #[cfg(feature = "mcp-http")]
         authentication: vec![],
-        peer_lifetime_deadline: now + Duration::from_secs(60),
+        peer_lifetime: (now + Duration::from_secs(60)).into(),
         max_retained_bytes: 1024 * 1024,
     }
 }

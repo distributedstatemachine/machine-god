@@ -72,10 +72,12 @@ then:
 5. consumes that same credential into the production reference host with
    complete terminal, shared undo, conversation-model routing, and native file
    observation and native permission allocations;
-6. creates one fresh durable native conversation using a bounded random-identity
+6. activates required MCP servers from the explicitly selected native profile,
+   through the composed host's caller-polled `AskStartup` controller;
+7. creates one fresh durable native conversation using a bounded random-identity
    operation, with the verified selected workspace, explicit current Unix time
    in milliseconds, and `Cli` origin in its initial metadata; and
-7. enqueues exactly one prompt in `NativeConversationRuntime` and drives its
+8. enqueues exactly one prompt in `NativeConversationRuntime` and drives its
    admitted turn through native checkpoint finalization.
 
 Root preparation may create only the private fixed state suffix described by
@@ -131,11 +133,25 @@ An available tmux executable is selected from that frozen PATH. The resulting
 terminal tool exposes all twelve actions with shared lossless input/result
 archives; ordinary transcript limits remain unchanged.
 Library embeddings are not assumed to implement the CLI's private helper modes.
+MCP capture reuses that exact environment, helper and retained workspace, with
+explicit native DNS/TLS selection; see [reference-host capture](native-reference-host.md).
+Required startup precedes session creation and provider inference. Optional
+servers are not activated by this initial phase. Each selected startup attempt
+uses its configured timeout; there is no competing global startup timeout or
+absolute CLI-session expiry. An initial signal cancels the actual startup token
+while the CLI keeps polling the controller to retain publication and cleanup
+observations. This performs no human prompt or automatic application call.
 After the turn succeeds, fails, or unwinds, the constructor worker drops the
 host and waits for its terminal worker scope to settle before returning the
 command outcome. Settlement includes collected worker joins and transferred
 child reaping, not consumption of tool-result futures. Other hosts' workers do
 not delay this wait; the async poll thread performs no blocking join.
+Before dropping the host, the CLI closes its MCP controller and drives bounded
+local settlement on the existing runtime with a fresh cleanup token and a
+separate 30-second deadline. Startup failure and unwind use the same path.
+An MCP settlement failure remains an operational failure, but the final host
+worker join is still attempted; closing alone never proves peer cleanup or
+remote session revocation.
 Once a turn is active, the guardian remains in turn-forwarding mode and the
 turn signal receiver stays owned through settlement, including operation errors
 and unwinds. A first signal arriving during cleanup remains deliverable and

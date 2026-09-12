@@ -429,7 +429,7 @@ impl PreparedNativeRoots {
     }
 
     #[cfg(feature = "ai-gateway-http")]
-    pub(crate) fn try_clone_skills_workspace(&self) -> io::Result<OwnedFd> {
+    pub(crate) fn try_clone_workspace(&self) -> io::Result<OwnedFd> {
         self.workspace.descriptor().try_clone()
     }
 

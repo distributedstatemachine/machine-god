@@ -351,6 +351,7 @@ mod production {
 
     use futures_core::Stream;
     use machine_god_core::{CancellationToken, ModelEvent, TurnEvent};
+    use machine_god_native::mcp::startup::NativeMcpStartupPhase;
     use machine_god_native::{
         AiGatewayCredentialEnvironment, AiGatewayModelCatalogAccessMode,
         AiGatewayModelCatalogHttpTransport, AiGatewayModelCatalogProvider, FileUndoTracker,
@@ -1120,33 +1121,45 @@ mod production {
                             launch,
                             Arc::new(DenyPermissionPrompter),
                             Arc::new(UnavailableQuestionPrompter),
+                            None,
                             || control.activate_turn(),
                             false,
                         )
                         else {
                             return finish_setup_failure(signals, &control);
                         };
-                        with_settled_terminal_turn(host, signals, &control, |host, signals| {
-                            runtime.block_on(execute_turn(
-                                host,
-                                selection,
-                                prompt,
-                                ConversationSetup {
-                                    workspace,
-                                    model_routes,
-                                    observations,
-                                    catalog,
-                                    now_ms: wall_clock_ms()?,
-                                },
-                                OutputBridge {
-                                    work: work_sender,
-                                    acknowledgements: acknowledgement_receiver,
-                                    tape: None,
-                                },
-                                signals,
-                                &control,
-                            ))
-                        })
+                        with_settled_terminal_turn(
+                            host,
+                            &runtime,
+                            signals,
+                            &control,
+                            |host, signals| {
+                                runtime.block_on(mcp_startup::activate(
+                                    host,
+                                    NativeMcpStartupPhase::AskStartup,
+                                    signals,
+                                ))?;
+                                runtime.block_on(execute_turn(
+                                    host,
+                                    selection,
+                                    prompt,
+                                    ConversationSetup {
+                                        workspace,
+                                        model_routes,
+                                        observations,
+                                        catalog,
+                                        now_ms: wall_clock_ms()?,
+                                    },
+                                    OutputBridge {
+                                        work: work_sender,
+                                        acknowledgements: acknowledgement_receiver,
+                                        tape: None,
+                                    },
+                                    signals,
+                                    &control,
+                                ))
+                            },
+                        )
                     }),
             )?;
 
@@ -1194,6 +1207,9 @@ mod production {
         launch: &crate::workspace::launch::LaunchWorkspaceOptions,
         permission_prompter: Arc<dyn PermissionPrompter>,
         question_prompter: Arc<dyn QuestionPrompter>,
+        mcp_presenter: Option<
+            Arc<dyn machine_god_native::mcp::interaction::McpElicitationPresenter>,
+        >,
         before_host: impl FnOnce() -> Result<(), ()>,
         discover_skills: bool,
     ) -> Result<PreparedConversationHost, ()> {
@@ -1214,6 +1230,12 @@ mod production {
             PreparedNativeRoots::prepare(root_selection.clone()).map_err(|_| ())?;
         let terminal_options =
             capture_terminal_options(prepared_roots.workspace_root(), captured_environment)?;
+        let mcp_options = mcp_startup::prepare_runtime(
+            &prepared_roots,
+            &terminal_options,
+            mcp_management.as_deref(),
+            mcp_presenter,
+        )?;
         let workspace = prepared_roots.workspace_root().to_owned();
         let state_path = prepared_roots.state_root().to_owned();
         let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
@@ -1262,12 +1284,10 @@ mod production {
                 .with_model_routes(model_routes.clone())
                 .with_observations(Arc::clone(&observations))
                 .with_permissions(capture_permission_options());
-        if let Some(service) = mcp_management {
+        if let Some((service, mcp_options)) = mcp_management.zip(mcp_options) {
             options = options
                 .with_mcp_management(service)
-                .with_mcp_contexts(Arc::new(
-                    machine_god_native::mcp::context::NativeMcpContexts::new(),
-                ));
+                .with_mcp_runtime(mcp_options);
         }
         let host =
             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
@@ -1331,20 +1351,25 @@ mod production {
     /// observer carries no Engine/Session vote and never waits for other hosts.
     fn with_settled_terminal_host<T>(
         host: NativeReferenceHost,
+        runtime: &machine_god_native::TokioWebSearchRuntime,
         operation: impl FnOnce(&NativeReferenceHost) -> Result<T, ()>,
     ) -> Result<T, ()> {
         let shutdown = host.terminal_shutdown_completion().ok_or(())?;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(&host)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(&host)))
+            .map_err(std::mem::forget);
+        let mcp = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mcp_startup::settle(&host, runtime)
+        }))
+        .map_err(std::mem::forget);
         drop(host);
         shutdown.wait_on_worker().map_err(|_| ())?;
-        result.map_err(|payload| {
-            // A panic payload may itself have a panicking destructor.
-            std::mem::forget(payload);
-        })?
+        mcp??;
+        result?
     }
 
     fn with_settled_terminal_turn(
         host: NativeReferenceHost,
+        runtime: &machine_god_native::TokioWebSearchRuntime,
         mut signals: AskSignals,
         control: &AskSignalControlSender,
         operation: impl FnOnce(&NativeReferenceHost, &mut AskSignals) -> Result<TurnDriveResult, ()>,
@@ -1353,7 +1378,8 @@ mod production {
         // able to latch a first late signal throughout native cleanup, including
         // after an operation fails or panics. Neither final-phase signals nor a
         // stalled writer may exit the process before these workers have joined.
-        let result = with_settled_terminal_host(host, |host| operation(host, &mut signals));
+        let result =
+            with_settled_terminal_host(host, runtime, |host| operation(host, &mut signals));
         control.enter_final()?;
         let operation_failed = result.is_err();
         let mut result = result.unwrap_or(TurnDriveResult {
@@ -1653,6 +1679,8 @@ mod production {
 
     #[cfg(test)]
     mod tests {
+        mod mcp_activation;
+
         use std::collections::VecDeque;
         use std::fs;
         use std::future::{self, Future, poll_fn};
@@ -3412,9 +3440,8 @@ mod production {
                         arguments: serde_json::json!({"action":"list"}),
                     })
                     .unwrap();
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .build()
-                    .unwrap();
+                let (runtime, _) =
+                    machine_god_native::TokioWebSearchDeadline::build_runtime_pair().unwrap();
                 runtime
                     .block_on(terminal.execute(
                         ToolContext {
@@ -3495,6 +3522,7 @@ mod production {
                     });
                     let result = super::with_settled_terminal_turn(
                         host,
+                        &runtime,
                         AskSignals::new(signal_receiver),
                         &control,
                         |_, signals| {

@@ -60,7 +60,7 @@ fn actual_controller_receipts_keep_publication_and_cleanup_observations_separate
             owner_cancellation: CancellationToken::new(),
             network: None,
             authentication: vec![],
-            peer_lifetime_deadline: deadline,
+            peer_lifetime: deadline.into(),
             max_retained_bytes: 1024 * 1024,
         },
     })

@@ -1,9 +1,81 @@
-//! Inert selection from the already captured native configuration directory.
+//! Thin MCP profile selection, caller-polled activation and host settlement.
 
 use machine_god_native::mcp::{
     management::NativeMcpManagementService, store::NativeMcpConfigStore,
 };
 use std::{path::Path, sync::Arc};
+
+/// No profile selection means no MCP capture. All effectful acquisition remains
+/// in the explicit native startup boundary on this existing constructor worker.
+pub(super) fn prepare_runtime(
+    roots: &machine_god_native::PreparedNativeRoots,
+    terminal: &machine_god_native::NativeReferenceHostTerminalOptions,
+    management: Option<&NativeMcpManagementService>,
+    presenter: Option<Arc<dyn machine_god_native::mcp::interaction::McpElicitationPresenter>>,
+) -> Result<Option<machine_god_native::NativeReferenceHostMcpOptions>, ()> {
+    management
+        .map(|_| {
+            let options = machine_god_native::NativeReferenceHostMcpOptions::capture_startup(
+                roots,
+                terminal,
+                Arc::new(machine_god_native::mcp::context::NativeMcpContexts::new()),
+            )
+            .map_err(|_| ())?;
+            Ok(match presenter {
+                Some(presenter) => options.with_form_responder(presenter),
+                None => options,
+            })
+        })
+        .transpose()
+}
+
+/// First signals cancel the actual startup owner. Continue polling the native
+/// operation so its publication/cleanup receipt is not abandoned by a select.
+pub(super) async fn activate(
+    host: &machine_god_native::NativeReferenceHost,
+    phase: machine_god_native::mcp::startup::NativeMcpStartupPhase,
+    signals: &mut super::AskSignals,
+) -> Result<(), ()> {
+    let Some(controller) = host.mcp_controller() else {
+        return Ok(());
+    };
+    let cancellation = machine_god_core::CancellationToken::new();
+    let mut operation = controller.start_configured(phase, cancellation.clone());
+    let result = std::future::poll_fn(|cx| {
+        if signals.first_observed.is_some() || signals.poll_signal(cx).is_ready() {
+            cancellation.cancel();
+        }
+        operation.as_mut().poll(cx)
+    })
+    .await;
+    result.map_err(|_| ())?;
+    if cancellation.is_cancelled() {
+        return Err(());
+    }
+    Ok(())
+}
+
+/// Runs on the existing blocking CLI worker, before dropping its host lease.
+/// A fresh cleanup token is independent of the cancelled model/startup token.
+pub(super) fn settle(
+    host: &machine_god_native::NativeReferenceHost,
+    runtime: &machine_god_native::TokioWebSearchRuntime,
+) -> Result<(), ()> {
+    host.close_mcp();
+    let Some(controller) = host.mcp_controller() else {
+        return Ok(());
+    };
+    let deadline = controller
+        .deadline_after(std::time::Duration::from_secs(30))
+        .map_err(|_| ())?;
+    let receipt = runtime
+        .block_on(controller.settle(deadline, machine_god_core::CancellationToken::new()))
+        .map_err(|_| ())?;
+    if !receipt.complete {
+        return Err(());
+    }
+    Ok(())
+}
 
 /// Does not load configuration, resolve environment values or activate servers.
 /// Missing profile selection means unavailable authority, not an ambient fallback.

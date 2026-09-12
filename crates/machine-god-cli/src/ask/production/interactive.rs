@@ -82,7 +82,8 @@ pub(super) fn execute(
             prepare_conversation_host_with_activation(
                 launch,
                 bridge.clone(),
-                bridge,
+                bridge.clone(),
+                Some(bridge),
                 || control.activate_turn(),
                 true,
             )
@@ -207,6 +208,12 @@ fn run_interactive(
             )?;
             output.tape = prepared.tape;
             runtime.block_on(async {
+                super::mcp_startup::activate(
+                    &host,
+                    machine_god_native::mcp::startup::NativeMcpStartupPhase::All,
+                    signals,
+                )
+                .await?;
                 let mut options = NativeInteractiveSessionOptions::new(
                     workspace,
                     host.loaded_config().config().model_preferences(),
@@ -440,7 +447,12 @@ fn settle_with_recording(
     let host = Arc::new(host);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         operation(host.clone(), &mut signals, &mut input.terminal)
-    }));
+    }))
+    .map_err(std::mem::forget);
+    let mcp_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::mcp_startup::settle(&host, input.runtime)
+    }))
+    .map_err(std::mem::forget);
     drop(host);
     // Both joins run on the dedicated caller worker, outside async polling.
     // Attempt both even when one reports a failure.
@@ -455,13 +467,11 @@ fn settle_with_recording(
         control.enter_final()
     };
     let result = result
-        .map_err(|payload| {
-            std::mem::forget(payload);
-        })
         .and_then(std::convert::identity)
         .and_then(|presentation| {
             input_result?;
             host_result.map_err(|_| ())?;
+            mcp_result??;
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 render(presentation, &mut signals)
             }))

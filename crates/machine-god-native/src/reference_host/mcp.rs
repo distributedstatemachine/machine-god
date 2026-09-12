@@ -1,5 +1,8 @@
 //! Concrete MCP composition using the reference host's existing native owners.
 
+#[cfg(feature = "mcp-http")]
+mod startup;
+
 use super::{
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
 };

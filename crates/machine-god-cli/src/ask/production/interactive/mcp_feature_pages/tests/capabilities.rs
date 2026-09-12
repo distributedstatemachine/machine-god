@@ -70,7 +70,7 @@ async fn acquire(workers: NativeOwnedWorkerScope) -> (NegotiatedProtocol, McpPee
             .unwrap(),
         )),
         authentication: vec![],
-        peer_lifetime_deadline: deadline,
+        peer_lifetime: deadline.into(),
         max_retained_bytes: 1024 * 1024,
     })
     .unwrap();
