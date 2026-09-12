@@ -163,12 +163,18 @@ impl Inner {
     pub fn check(
         &self,
         cancellation: &CancellationToken,
-        deadline: Instant,
+        deadline: Option<Instant>,
     ) -> std::result::Result<(), Failure> {
         if lock(&self.state).closed || self.options.startup.owner_cancellation.is_cancelled() {
             return Err(NativeMcpControllerError::Closed.into());
         }
-        cleanup_check(&self.options, cancellation, deadline)
+        if cancellation.is_cancelled() {
+            return Err(NativeMcpControllerError::Cancelled.into());
+        }
+        if deadline.is_some_and(|deadline| self.options.startup.clock.now() >= deadline) {
+            return Err(NativeMcpControllerError::Deadline.into());
+        }
+        Ok(())
     }
     /// Drop completed shared futures outside the mutex: their last allocation
     /// may own cancellation/cleanup drops. Active jobs remain retained.

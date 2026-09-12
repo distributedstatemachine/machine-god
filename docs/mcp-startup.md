@@ -59,7 +59,14 @@ deadline. Eager tools discovery uses the selected negotiation attempt's remainin
 deadline. Legacy version retry timing stays with the peer's pinned protocol rules.
 Stdio `restart_limit` bounds retries of complete connection plus eager tools
 startup; observed prior cleanup must settle before another full startup attempt.
-The outer build deadline and explicit peer lifetime always bound these attempts.
+`build_configured` has no aggregate startup deadline: each serial server and full
+restart keeps its configured attempt budget. `build` additionally bounds all
+attempts by its explicitly supplied outer deadline. Both retain cancellation.
+Peer lifetime is separately selected as `McpPeerLifetime::OwnerControlled` or
+`Until`; an explicit expiry constrains startup and every later HTTP or stdio
+operation, including queued writes. Request completion does not end an
+owner-controlled peer's lifetime. Inter-attempt cleanup has a fresh finite
+30-second housekeeping deadline, constrained by any selected outer deadline.
 No application call is replayed by this mechanism.
 
 Each runtime candidate carries that server's configured operation timeout; there
@@ -78,6 +85,13 @@ startup authorities. Construction and unpolled operations are inert. Profile
 loads and exact-source revalidation run on that worker scope; network startup is
 caller-polled asynchronously, without a second executor or worker `block_on`.
 
+`start_configured`, `reload_configured` and `activate_deferred_configured` select
+the no-aggregate-cap startup mode. Their explicit-deadline counterparts remain
+available. Profile load, exact-source validation and prior-generation drain each
+receive a fresh 30-second housekeeping window, constrained by a selected outer
+deadline or peer expiry. A timed-out profile worker keeps its generation
+reservation until actual completion; timeout does not release cleanup custody.
+
 `deadline_after` explicitly observes this controller's selected monotonic clock
 and checked-adds a positive caller-selected duration. Zero is rejected before
 reading the clock; overflow is a bounded error. Callers invoke it on the first
@@ -91,7 +105,8 @@ profile snapshot. Successful optional peers append once without replacing the
 required peers, registrations or existing turn pins. Empty optional sets are a
 no-op. Deferred outcomes are cached per generation, including failures; a later
 reload is needed to retry. An individual waiting caller's cancellation does not
-cancel the shared deferred loader, whose original deadline and owner still apply.
+cancel the shared deferred loader, whose original optional deadline and owner
+still apply. Configured mode retains the same one-loader and cached-outcome rules.
 
 `reload` reads a fresh profile and requires every selected enabled server to
 succeed before full replacement. Exact source validation precedes publication;

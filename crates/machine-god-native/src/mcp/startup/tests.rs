@@ -43,7 +43,7 @@ fn options(configuration: &str) -> NativeMcpStartupOptions {
         network: None,
         #[cfg(feature = "mcp-http")]
         authentication: vec![],
-        peer_lifetime_deadline: Instant::now() + Duration::from_secs(30),
+        peer_lifetime: McpPeerLifetime::Until(Instant::now() + Duration::from_secs(30)),
         max_retained_bytes: MAX_RETAINED_BYTES,
     }
 }

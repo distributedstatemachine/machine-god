@@ -105,26 +105,45 @@ async fn discovery(socket: &mut TcpStream) {
 
 #[test]
 fn deferred_http_waiters_coalesce_and_one_cancel_does_not_cancel_loader() {
+    deferred_http_waiters(false);
+}
+
+#[test]
+fn configured_deferred_http_waiters_coalesce_with_independent_cancellation() {
+    deferred_http_waiters(true);
+}
+
+fn deferred_http_waiters(configured: bool) {
     run(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let mut fixture = Fixture::new();
         configure(&mut fixture, &listener);
+        if configured {
+            fixture.options.startup.peer_lifetime = McpPeerLifetime::OwnerControlled;
+        }
         let controller = fixture.controller();
-        controller
-            .start(
+        let deferred = |token| {
+            if configured {
+                controller.activate_deferred_configured(token)
+            } else {
+                controller.activate_deferred(token, deadline())
+            }
+        };
+        let startup = if configured {
+            controller.start_configured(NativeMcpStartupPhase::AskStartup, CancellationToken::new())
+        } else {
+            controller.start(
                 NativeMcpStartupPhase::AskStartup,
                 CancellationToken::new(),
                 deadline(),
             )
-            .await
-            .unwrap();
+        };
+        startup.await.unwrap();
         let original = lock(&controller.inner.state).active.clone().unwrap();
         let cancel = CancellationToken::new();
         let (done, first_done) = oneshot::channel();
         let first = async {
-            let result = controller
-                .activate_deferred(cancel.clone(), deadline())
-                .await;
+            let result = deferred(cancel.clone()).await;
             assert_eq!(
                 result.unwrap_err().kind(),
                 NativeMcpControllerError::Cancelled
@@ -137,11 +156,8 @@ fn deferred_http_waiters_coalesce_and_one_cancel_does_not_cancel_loader() {
             assert!(String::from_utf8_lossy(&received).contains("server/discover"));
             cancel.cancel();
             first_done.await.unwrap();
-            let (receipt, ()) = join(
-                controller.activate_deferred(CancellationToken::new(), deadline()),
-                discovery(&mut socket),
-            )
-            .await;
+            let (receipt, ()) =
+                join(deferred(CancellationToken::new()), discovery(&mut socket)).await;
             assert_eq!(
                 receipt.unwrap().publication(),
                 NativeMcpControllerPublication::Published
@@ -156,8 +172,7 @@ fn deferred_http_waiters_coalesce_and_one_cancel_does_not_cancel_loader() {
         // A settled result does not open a second connection or reload the profile.
         fixture.seed("invalid");
         assert_eq!(
-            controller
-                .activate_deferred(CancellationToken::new(), deadline())
+            deferred(CancellationToken::new())
                 .await
                 .unwrap()
                 .publication(),

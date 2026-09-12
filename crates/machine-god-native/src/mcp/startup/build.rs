@@ -23,7 +23,7 @@ pub(super) async fn build(
     startup: &NativeMcpStartup,
     phase: Phase,
     cancellation: CancellationToken,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> NativeMcpStartupBatch {
     let mut receipts: Vec<_> = startup
         .configuration
@@ -59,9 +59,9 @@ pub(super) async fn build(
         startup.configuration_generation.clone(),
         cancellation.clone(),
     ];
-    let deadline = deadline.min(startup.lifetime_deadline);
+    let deadline = lifetime_deadline(startup, deadline);
     if failure.is_none() {
-        failure = control::check(&startup.clock, &guards, deadline).err();
+        failure = control::check_optional(&startup.clock, &guards, deadline).err();
     }
     if failure.is_none() && startup.clock.now() < startup.catalog_epoch {
         failure = Some(Error::Invalid);
@@ -74,7 +74,7 @@ pub(super) async fn build(
         if receipt.state != State::NotAttempted {
             continue;
         }
-        if let Err(error) = control::check(&startup.clock, &guards, deadline) {
+        if let Err(error) = control::check_optional(&startup.clock, &guards, deadline) {
             failure = Some(error);
             break;
         }
@@ -106,7 +106,7 @@ pub(super) async fn build(
             }
             Err(error) => receipt.state = State::Failed(error),
         }
-        if let Err(error) = control::check(&startup.clock, &guards, deadline) {
+        if let Err(error) = control::check_optional(&startup.clock, &guards, deadline) {
             failure = Some(error);
         }
     }
@@ -130,7 +130,7 @@ async fn server(
     guards: &[CancellationToken],
     owner: &mut AttemptOwner,
     attempts: &mut u16,
-    deadline: Instant,
+    deadline: Option<Instant>,
     maximum: usize,
 ) -> Result<(NativeMcpServerCandidate, usize)> {
     let mut encoded = McpConfig::new();
@@ -188,8 +188,8 @@ async fn server(
         startup.configuration_generation.clone(),
     ];
     authority_cancellations.extend(generations);
-    control::check(&startup.clock, guards, deadline)?;
-    control::check(&startup.clock, &authority_cancellations, deadline)?;
+    control::check_optional(&startup.clock, guards, deadline)?;
+    control::check_optional(&startup.clock, &authority_cancellations, deadline)?;
     let charge = catalogs
         .iter()
         .try_fold(minimum, |total, catalog| {
@@ -225,7 +225,7 @@ async fn stdio_server(
     guards: &[CancellationToken],
     owner: &AttemptOwner,
     attempts: &mut u16,
-    deadline: Instant,
+    deadline: Option<Instant>,
     maximum: usize,
 ) -> Result<(NativeMcpOwnedPeer, Vec<McpDescriptorCatalog>)> {
     let McpTransportConfig::Stdio(config) = configuration.transport() else {
@@ -237,31 +237,46 @@ async fn stdio_server(
         .map_err(|_| Error::Invalid)?;
     let mut last = Error::Unavailable;
     for _ in 0..=config.restart_limit() {
-        control::check(&startup.clock, guards, deadline)?;
+        control::check_optional(&startup.clock, guards, deadline)?;
+        let cleanup_deadline = control::housekeeping_deadline(&startup.clock, deadline)?;
         owner
             .completion
-            .settle(&startup.clock, guards, deadline)
+            .settle(&startup.clock, guards, cleanup_deadline)
             .await?;
         *attempts += 1;
-        let observed = owner.completion.clone();
-        let result = control::bounded(
-            McpStdioPeer::connect_observed(
-                &mut factory,
-                startup.workers.clone(),
-                startup.clock.clone(),
-                owner.cancellation.clone(),
-                deadline,
-                Duration::from_millis(u64::from(configuration.startup_timeout_ms())),
-                Arc::new(move |completion| {
-                    observed.record(NativeMcpPeerCompletion::Stdio(completion))
-                }),
-            ),
-            &startup.clock,
-            guards,
-            deadline,
-        )
-        .await;
-        let (peer, selected_deadline) = match result {
+        let custody = owner.completion.clone();
+        let observer =
+            Arc::new(move |completion| custody.record(NativeMcpPeerCompletion::Stdio(completion)));
+        let timeout = Duration::from_millis(u64::from(configuration.startup_timeout_ms()));
+        let connect = async {
+            match deadline {
+                Some(deadline) => {
+                    McpStdioPeer::connect_observed(
+                        &mut factory,
+                        startup.workers.clone(),
+                        startup.clock.clone(),
+                        owner.cancellation.clone(),
+                        deadline,
+                        timeout,
+                        observer,
+                    )
+                    .await
+                }
+                None => {
+                    McpStdioPeer::connect_configured_observed(
+                        &mut factory,
+                        startup.workers.clone(),
+                        startup.clock.clone(),
+                        owner.cancellation.clone(),
+                        timeout,
+                        observer,
+                    )
+                    .await
+                }
+            }
+        };
+        let result = control::bounded_optional(connect, &startup.clock, guards, deadline).await;
+        let (mut peer, selected_deadline) = match result {
             Ok(Ok(value)) => value,
             Ok(Err(error)) => {
                 last = stdio_error(error);
@@ -269,6 +284,7 @@ async fn stdio_server(
             }
             Err(error) => return Err(error),
         };
+        peer.restrict_lifetime(startup.lifetime);
         let mut peer = NativeMcpOwnedPeer::Stdio(peer);
         match tools(startup, &mut peer, guards, selected_deadline, maximum).await {
             Ok(catalogs) => return Ok((peer, catalogs)),
@@ -347,7 +363,7 @@ async fn remote_server(
     remote: &crate::mcp::config::McpRemoteConfig,
     guards: &[CancellationToken],
     owner: &AttemptOwner,
-    deadline: Instant,
+    deadline: Option<Instant>,
     maximum: usize,
 ) -> Result<(
     NativeMcpOwnedPeer,
@@ -357,7 +373,7 @@ async fn remote_server(
 )> {
     use crate::mcp::{
         endpoint::McpEndpoint,
-        http_peer::{McpHttpPeer, McpHttpPeerError, McpHttpPeerOptions},
+        http_peer::{McpHttpPeer, McpHttpPeerOptions},
         protocol::TransportKind,
     };
     let network = startup.network.as_ref().ok_or(Error::Unavailable)?;
@@ -394,7 +410,7 @@ async fn remote_server(
     if authentication.len() >= maximum {
         return Err(Error::Limit);
     }
-    let observed = owner.completion.clone();
+    let custody = owner.completion.clone();
     let options = McpHttpPeerOptions {
         destination: admitted.destination,
         trust: admitted.trust,
@@ -405,29 +421,40 @@ async fn remote_server(
         } else {
             TransportKind::StreamableHttp
         },
-        lifetime_deadline: startup.lifetime_deadline,
+        lifetime: startup.lifetime,
     };
-    let (peer, selected_deadline) = control::bounded(
-        McpHttpPeer::connect_observed(
-            options,
-            owner.cancellation.clone(),
-            deadline,
-            Duration::from_millis(u64::from(configuration.startup_timeout_ms())),
-            Some(attempt_deadline),
-            Arc::new(move |completion| observed.record(NativeMcpPeerCompletion::Http(completion))),
-        ),
-        &startup.clock,
-        &selected,
-        deadline,
-    )
-    .await?
-    .map_err(|error| match error {
-        McpHttpPeerError::Authentication(_) => Error::Authentication,
-        McpHttpPeerError::Deadline => Error::Deadline,
-        McpHttpPeerError::Cancelled => Error::Cancelled,
-        McpHttpPeerError::Limit => Error::Limit,
-        _ => Error::Unavailable,
-    })?;
+    let observer =
+        Arc::new(move |completion| custody.record(NativeMcpPeerCompletion::Http(completion)));
+    let timeout = Duration::from_millis(u64::from(configuration.startup_timeout_ms()));
+    let connect = async {
+        match deadline {
+            Some(deadline) => {
+                McpHttpPeer::connect_observed(
+                    options,
+                    owner.cancellation.clone(),
+                    deadline,
+                    timeout,
+                    Some(attempt_deadline),
+                    observer,
+                )
+                .await
+            }
+            None => {
+                McpHttpPeer::connect_configured_observed(
+                    options,
+                    owner.cancellation.clone(),
+                    timeout,
+                    Some(attempt_deadline),
+                    observer,
+                )
+                .await
+            }
+        }
+    };
+    let (peer, selected_deadline) =
+        control::bounded_optional(connect, &startup.clock, &selected, deadline)
+            .await?
+            .map_err(|error| http_error(&error))?;
     let mut peer = NativeMcpOwnedPeer::Http(Box::new(peer));
     let catalogs = tools(
         startup,
@@ -440,4 +467,22 @@ async fn remote_server(
     let mut generations = vec![network.owner_cancellation()];
     generations.extend(auth_generation);
     Ok((peer, catalogs, authentication, generations))
+}
+
+fn lifetime_deadline(startup: &NativeMcpStartup, outer: Option<Instant>) -> Option<Instant> {
+    outer.map_or(startup.lifetime.deadline(), |deadline| {
+        Some(startup.lifetime.constrain(deadline))
+    })
+}
+
+#[cfg(feature = "mcp-http")]
+fn http_error(error: &crate::mcp::http_peer::McpHttpPeerError) -> Error {
+    use crate::mcp::http_peer::McpHttpPeerError;
+    match error {
+        McpHttpPeerError::Authentication(_) => Error::Authentication,
+        McpHttpPeerError::Deadline => Error::Deadline,
+        McpHttpPeerError::Cancelled => Error::Cancelled,
+        McpHttpPeerError::Limit => Error::Limit,
+        _ => Error::Unavailable,
+    }
 }

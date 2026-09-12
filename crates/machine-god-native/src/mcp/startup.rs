@@ -18,6 +18,7 @@ pub use batch::{
 };
 pub use phase::NativeMcpStartupPhase;
 
+use super::lifetime::McpPeerLifetime;
 use super::{
     config::McpConfig, runtime::NativeMcpRuntimeClock, stdio_startup::NativeMcpStdioStartup,
 };
@@ -50,7 +51,7 @@ pub struct NativeMcpStartupOptions {
     #[cfg(feature = "mcp-http")]
     pub authentication: Vec<NativeMcpStartupAuthentication>,
     /// Explicit peer lifetime, independent of each startup/operation deadline.
-    pub peer_lifetime_deadline: Instant,
+    pub peer_lifetime: McpPeerLifetime,
     /// Aggregate retained candidate data; positive and at most 256 MiB.
     pub max_retained_bytes: usize,
 }
@@ -93,7 +94,7 @@ pub struct NativeMcpStartup {
     network: Option<Arc<super::network::NativeMcpNetwork>>,
     #[cfg(feature = "mcp-http")]
     authentication: Vec<NativeMcpStartupAuthentication>,
-    lifetime_deadline: Instant,
+    lifetime: McpPeerLifetime,
     max_retained_bytes: usize,
     pending: Arc<AtomicBool>,
     cleanup: Mutex<Vec<NativeMcpStartupCompletion>>,
@@ -126,7 +127,7 @@ impl NativeMcpStartup {
             network: options.network,
             #[cfg(feature = "mcp-http")]
             authentication: options.authentication,
-            lifetime_deadline: options.peer_lifetime_deadline,
+            lifetime: options.peer_lifetime,
             max_retained_bytes: options.max_retained_bytes,
             pending: Arc::new(AtomicBool::new(false)),
             cleanup: Mutex::new(Vec::new()),
@@ -143,7 +144,19 @@ impl NativeMcpStartup {
         cancellation: CancellationToken,
         deadline: Instant,
     ) -> BoxFuture<'_, NativeMcpStartupBatch> {
-        Box::pin(build::build(self, phase, cancellation, deadline))
+        Box::pin(build::build(self, phase, cancellation, Some(deadline)))
+    }
+
+    /// Uses each server's configured attempt/restart budgets without an overall
+    /// startup cap. Owner/caller cancellation and an explicit peer expiry still
+    /// apply; cleanup stages have independent finite housekeeping deadlines.
+    #[must_use]
+    pub fn build_configured(
+        &self,
+        phase: NativeMcpStartupPhase,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, NativeMcpStartupBatch> {
+        Box::pin(build::build(self, phase, cancellation, None))
     }
 
     /// Retains observations even when a polled build future is abandoned.

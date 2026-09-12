@@ -13,18 +13,25 @@ use futures_util::{
 };
 use std::sync::{Arc, Mutex, Weak, atomic::Ordering};
 
+mod budget;
 mod publish;
+#[cfg(test)]
+mod tests;
 
 pub(super) fn request(
     inner: Weak<Inner>,
     kind: Kind,
     cancellation: CancellationToken,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> BoxFuture<'static, Result<NativeMcpControllerReceipt>> {
     Box::pin(async move {
         let inner = inner
             .upgrade()
             .ok_or_else(|| failure(NativeMcpControllerError::Closed))?;
+        let deadline = deadline
+            .map_or(inner.options.startup.peer_lifetime.deadline(), |deadline| {
+                Some(inner.options.startup.peer_lifetime.constrain(deadline))
+            });
         inner
             .check(&cancellation, deadline)
             .map_err(|data| NativeMcpControllerFailure {
@@ -41,7 +48,7 @@ pub(super) fn request(
                     let stopped = async {
                         select(
                             cancellation.cancelled(),
-                            inner.options.startup.clock.sleep_until(deadline),
+                            Box::pin(budget::elapsed(&inner.options, deadline)),
                         )
                         .await;
                     };
@@ -83,7 +90,7 @@ fn select_job(
     inner: &Arc<Inner>,
     kind: Kind,
     cancellation: &CancellationToken,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> Result<Selected> {
     let mut state = lock(&inner.state);
     if state.closed {
@@ -179,7 +186,7 @@ struct Signals {
     caller: Option<CancellationToken>,
 }
 impl Signals {
-    fn check(&self, inner: &Inner, deadline: Instant) -> std::result::Result<(), Failure> {
+    fn check(&self, inner: &Inner, deadline: Option<Instant>) -> std::result::Result<(), Failure> {
         inner.check(&self.job, deadline)?;
         if self
             .caller
@@ -190,7 +197,7 @@ impl Signals {
         }
         Ok(())
     }
-    async fn stopped(&self, options: &NativeMcpControllerOptions, deadline: Instant) {
+    async fn stopped(&self, options: &NativeMcpControllerOptions, deadline: Option<Instant>) {
         let caller = async {
             match &self.caller {
                 Some(caller) => caller.cancelled().await,
@@ -206,7 +213,7 @@ impl Signals {
         };
         select(
             Box::pin(select(Box::pin(caller), Box::pin(owner))),
-            options.startup.clock.sleep_until(deadline),
+            Box::pin(budget::elapsed(options, deadline)),
         )
         .await;
     }
@@ -218,7 +225,7 @@ fn run(
     generation: Arc<Generation>,
     kind: Kind,
     signals: Signals,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> BoxFuture<'static, JobResult> {
     Box::pin(async move {
         let operation = async {
@@ -241,7 +248,9 @@ fn run(
         .await
         {
             Either::Right((result, _)) => result,
-            Either::Left(_) => Err(if options.startup.clock.now() >= deadline {
+            Either::Left(_) => Err(if deadline
+                .is_some_and(|deadline| options.startup.clock.now() >= deadline)
+            {
                 NativeMcpControllerError::Deadline
             } else {
                 NativeMcpControllerError::Cancelled
@@ -260,7 +269,7 @@ fn run(
 fn check(
     inner: &Weak<Inner>,
     signals: &Signals,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> std::result::Result<Arc<Inner>, Failure> {
     let inner = inner.upgrade().ok_or(NativeMcpControllerError::Closed)?;
     signals.check(&inner, deadline)?;

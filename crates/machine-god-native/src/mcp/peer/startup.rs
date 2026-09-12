@@ -269,6 +269,7 @@ fn unnegotiated(
     cancellation: CancellationToken,
 ) -> McpStdioPeer {
     McpStdioPeer {
+        lifetime: super::McpPeerLifetime::OwnerControlled,
         connection,
         protocol: NegotiatedProtocol {
             transport: TransportKind::Stdio,

@@ -1,4 +1,5 @@
 use super::*;
+mod configured;
 use crate::mcp::{
     auth::{
         McpAuthClock, McpAuthConfig, McpAuthEntropy, McpAuthError, McpAuthInvalidated,

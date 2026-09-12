@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use machine_god_core::{BoxFuture, CancellationToken};
 
+use super::lifetime::McpPeerLifetime;
 use super::pagination::{McpCatalogKind, McpCatalogLimits, McpRawCatalog};
 use super::protocol::{NegotiatedProtocol, NegotiationFailure, RpcEnvelope, RpcId};
 use super::stdio::{McpStdioConnection, McpStdioError, McpStdioLaunch};
@@ -89,6 +90,7 @@ pub struct McpStdioPeer {
     capabilities: McpPeerCapabilities,
     timer: Arc<dyn McpPeerTimer>,
     cancellation: CancellationToken,
+    lifetime: McpPeerLifetime,
     next_id: Option<i64>,
     reserved: McpPendingToolReservation,
     notifications: VecDeque<RpcEnvelope>,
@@ -104,6 +106,15 @@ impl fmt::Debug for McpStdioPeer {
     }
 }
 impl McpStdioPeer {
+    /// Narrow trusted native ownership without resetting an existing expiry.
+    pub(crate) fn restrict_lifetime(&mut self, lifetime: McpPeerLifetime) {
+        self.lifetime = match self.lifetime {
+            McpPeerLifetime::OwnerControlled => lifetime,
+            McpPeerLifetime::Until(deadline) => {
+                McpPeerLifetime::Until(lifetime.constrain(deadline))
+            }
+        };
+    }
     /// Executes only the seven typed feature actions against native-selected
     /// catalogs. IDs are consumed once; failed or abandoned sends are not replayed.
     /// # Errors
@@ -221,6 +232,7 @@ impl McpStdioPeer {
     /// # Errors
     /// Rejects excessive registrations or a closed connection.
     pub fn admit_runtimes(&self, runtimes: Vec<Arc<McpSubmissionRuntime>>) -> Result<()> {
+        self.check_lifetime()?;
         self.connection.admit_runtimes(runtimes).map_err(Into::into)
     }
     /// Reserves the one pending application ID before native proof preparation.
@@ -306,8 +318,19 @@ impl McpStdioPeer {
         if self.closed || self.cancellation.is_cancelled() {
             return Err(McpPeerError::Closed);
         }
+        self.check_lifetime()?;
         if self.reserved.blocks_control() {
             return Err(McpPeerError::Capacity);
+        }
+        Ok(())
+    }
+    fn check_lifetime(&self) -> Result<()> {
+        if self
+            .lifetime
+            .deadline()
+            .is_some_and(|deadline| self.timer.now() >= deadline)
+        {
+            return Err(McpPeerError::Deadline);
         }
         Ok(())
     }

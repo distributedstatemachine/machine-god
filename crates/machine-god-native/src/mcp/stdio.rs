@@ -137,6 +137,17 @@ impl Drop for McpStdioConnection {
     }
 }
 impl McpStdioConnection {
+    #[cfg(test)]
+    pub(crate) fn inert_for_test() -> Self {
+        let scope = NativeOwnedWorkerScope::new();
+        let completion = scope.completion();
+        scope.close();
+        Self {
+            shared: Arc::new(Shared::new(WireLimits::default(), CancellationToken::new())),
+            completion,
+        }
+    }
+
     /// Stops this connection only. The completion observer includes deferred reap.
     pub fn close(&self) {
         self.shared.stop.cancel();

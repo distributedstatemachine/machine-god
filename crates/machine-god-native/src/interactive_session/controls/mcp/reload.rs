@@ -3,11 +3,7 @@
 use super::{CancelOnDrop, ControlFuture, ControlPermit, Error, NativeMcpManagementError, Receipt};
 use crate::{NativeConversationRuntime, mcp::controller::NativeMcpController};
 use machine_god_core::CancellationToken;
-use std::{sync::Arc, time::Duration};
-
-/// Explicit interactive policy; configured peer timeouts remain independently
-/// bounded by this outer reload deadline. No wall-clock timestamp is converted.
-const RELOAD_TIMEOUT: Duration = Duration::from_secs(60);
+use std::sync::Arc;
 
 pub(super) fn run(
     conversation: Arc<NativeConversationRuntime>,
@@ -21,14 +17,11 @@ pub(super) fn run(
             return Err(Error::Mcp(NativeMcpManagementError::Cancelled));
         }
         let _permit = ControlPermit::acquire(&conversation)?;
-        let deadline = controller
-            .deadline_after(RELOAD_TIMEOUT)
-            .map_err(Error::McpReload)?;
         // The controller preserves publication receipts when cancellation races
         // completion. Never select this accepted operation away or check the
         // caller's cancellation again after its exact receipt has returned.
         controller
-            .reload(cancellation, deadline)
+            .reload_configured(cancellation)
             .await
             .map(Receipt::McpReload)
             .map_err(Error::McpReload)

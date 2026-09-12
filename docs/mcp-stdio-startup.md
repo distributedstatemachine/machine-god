@@ -92,6 +92,13 @@ existing `connect` interfaces retain their 300-second admission behavior.
 the same `Instant` domain alongside their existing injected timer. Child-side
 process deadlines still use native monotonic time.
 
+The startup composer retains the selected `McpPeerLifetime` on each ready peer.
+`OwnerControlled` adds no expiry; `Until` can only narrow an existing expiry.
+Catalog, feature, proof-bearing call and runtime admission reject expired peers
+before transport effects. Their request deadlines are constrained before queue
+admission, so the owned transport also enforces expiry on queued writes and
+partial suffixes. Completing startup does not discard that policy.
+
 `McpStdioPeer::connect_configured_observed` omits an overall deadline while
 retaining the full finite configured budget for each admitted attempt. It does
 not implement an infinite attempt or a far-future timestamp. Explicit-deadline

@@ -59,9 +59,11 @@ remain unavailable, without prompt fallback. Saves still do not activate peers.
 
 On first poll each runtime control acquires the exact accepted conversation's
 file-control lifecycle permit and retains it until the operation returns its
-receipt. Reload uses a 60-second outer deadline from the controller's explicitly
-selected monotonic clock, with each configured peer timeout independently bounded
-by it. Profile work uses the controller's retained workers; network/peer futures
+receipt. Reload uses configured startup without an aggregate timeout: every peer
+attempt retains its full configured budget and caller cancellation remains live.
+Profile loading, exact-source validation and local cleanup have separate finite
+housekeeping windows on the controller's selected clock. Profile work uses the
+controller's retained workers; network/peer futures
 are polled asynchronously by the interactive owner, never blocked on a worker.
 An accepted reload returns the actual typed controller publication or failure
 receipt even when cancellation races publication; it is not automatically retried.

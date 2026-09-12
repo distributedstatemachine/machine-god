@@ -1,4 +1,22 @@
 use super::*;
+mod lifetime;
+
+#[test]
+fn every_configured_restart_retains_a_fresh_maximum_attempt_budget() {
+    let timeout = Duration::from_millis(u64::from(u32::MAX));
+    let startup = Startup {
+        deadline: None,
+        timeout,
+        observer: Some(Arc::new(|_| false)),
+    };
+    let origin = Instant::now();
+    let mut now = origin;
+    for _ in 0..=u8::MAX {
+        assert_eq!(startup.attempt_deadline(now).unwrap(), now + timeout);
+        now += timeout;
+    }
+    assert!(now > origin + timeout + timeout);
+}
 
 #[test]
 fn configured_deadlines_are_checked_bounded_and_independent_of_legacy_defaults() {

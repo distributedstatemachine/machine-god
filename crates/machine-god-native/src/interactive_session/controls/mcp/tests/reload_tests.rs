@@ -40,7 +40,9 @@ impl Fixture {
                     network: None,
                     #[cfg(feature = "mcp-http")]
                     authentication: vec![],
-                    peer_lifetime_deadline: clock.instant + Duration::from_secs(600),
+                    peer_lifetime: crate::mcp::lifetime::McpPeerLifetime::Until(
+                        clock.instant + Duration::from_secs(600),
+                    ),
                     max_retained_bytes: 1024 * 1024,
                 },
                 max_retained_generations: 4,

@@ -5,7 +5,7 @@ use super::super::{
         Failure, Generation, Inner, JobResult, Kind, Loaded, Receipt, WorkerReservation, lock,
     },
 };
-use super::{Signals, check, unchanged};
+use super::{Signals, budget, check, unchanged};
 use crate::mcp::{
     startup::{NativeMcpStartup, NativeMcpStartupOptions, NativeMcpStartupRequirement},
     store::NativeMcpConfigSnapshot,
@@ -22,14 +22,15 @@ pub(super) async fn replace(
     generation: &Arc<Generation>,
     kind: Kind,
     signals: &Signals,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> JobResult {
     drop(check(inner, signals, deadline)?);
     let expected = options.runtime.publication_checkpoint()?;
     // Returned observations keep their custody even if later profile I/O fails.
+    let cleanup_deadline = budget::housekeeping_deadline(options, deadline)?;
     let completions = options
         .runtime
-        .drain_retired(deadline, signals.job.clone())
+        .drain_retired(cleanup_deadline, signals.job.clone())
         .await?;
     let owner = inner.upgrade().ok_or(NativeMcpControllerError::Closed)?;
     lock(&owner.state).peers.extend(completions);
@@ -38,14 +39,16 @@ pub(super) async fn replace(
     let store = options.management.config_store();
     let reservation = WorkerReservation::new(generation);
     let snapshot = Arc::new(
-        options
-            .workers
-            .run(move || {
+        budget::housekeeping(
+            options,
+            deadline,
+            options.workers.run(move || {
                 let _reservation = reservation;
                 store.load()
-            })
-            .await
-            .map_err(|_| NativeMcpControllerError::Unavailable)??,
+            }),
+        )
+        .await?
+        .map_err(|_| NativeMcpControllerError::Unavailable)??,
     );
     drop(check(inner, signals, deadline)?);
     let selected = &options.startup;
@@ -62,7 +65,7 @@ pub(super) async fn replace(
         network: selected.network.clone(),
         #[cfg(feature = "mcp-http")]
         authentication: selected.authentication.clone(),
-        peer_lifetime_deadline: selected.peer_lifetime_deadline,
+        peer_lifetime: selected.peer_lifetime,
         max_retained_bytes: selected.max_retained_bytes,
     })?);
     *lock(&generation.loaded) = Some(Loaded {
@@ -70,9 +73,18 @@ pub(super) async fn replace(
         startup: startup.clone(),
         checkpoint: None,
     });
-    let batch = startup
-        .build(generation.phase, signals.job.clone(), deadline)
-        .await;
+    let batch = match deadline {
+        Some(deadline) => {
+            startup
+                .build(generation.phase, signals.job.clone(), deadline)
+                .await
+        }
+        None => {
+            startup
+                .build_configured(generation.phase, signals.job.clone())
+                .await
+        }
+    };
     let reserved: Vec<_> = options
         .reserved_tool_names
         .iter()
@@ -84,7 +96,7 @@ pub(super) async fn replace(
         NativeMcpStartupRequirement::Required
     };
     let (candidate, receipt) = batch.prepare(&options.runtime, &reserved, requirement)?;
-    validate(options, generation, snapshot).await?;
+    validate(options, generation, snapshot, deadline).await?;
     let owner = check(inner, signals, deadline)?;
     let predicted = candidate.publication_checkpoint();
     options.runtime.publish_if(candidate, &expected)?;
@@ -119,7 +131,7 @@ pub(super) async fn deferred(
     options: &Arc<NativeMcpControllerOptions>,
     generation: &Arc<Generation>,
     signals: &Signals,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> JobResult {
     drop(check(inner, signals, deadline)?);
     let (snapshot, startup, checkpoint) = {
@@ -144,17 +156,26 @@ pub(super) async fn deferred(
     {
         return Ok(unchanged());
     }
-    validate(options, generation, snapshot.clone()).await?;
+    validate(options, generation, snapshot.clone(), deadline).await?;
     drop(check(inner, signals, deadline)?);
-    let batch = startup
-        .build(
-            NativeMcpStartupPhase::AskDeferred,
-            signals.job.clone(),
-            deadline,
-        )
-        .await;
+    let batch = match deadline {
+        Some(deadline) => {
+            startup
+                .build(
+                    NativeMcpStartupPhase::AskDeferred,
+                    signals.job.clone(),
+                    deadline,
+                )
+                .await
+        }
+        None => {
+            startup
+                .build_configured(NativeMcpStartupPhase::AskDeferred, signals.job.clone())
+                .await
+        }
+    };
     let (servers, receipt) = batch.into_deferred_servers()?;
-    validate(options, generation, snapshot).await?;
+    validate(options, generation, snapshot, deadline).await?;
     let owner = check(inner, signals, deadline)?;
     if servers.is_empty() {
         return Ok(Receipt {
@@ -190,16 +211,19 @@ async fn validate(
     options: &NativeMcpControllerOptions,
     generation: &Arc<Generation>,
     snapshot: Arc<NativeMcpConfigSnapshot>,
+    deadline: Option<Instant>,
 ) -> std::result::Result<(), Failure> {
     let store = options.management.config_store();
     let reservation = WorkerReservation::new(generation);
-    options
-        .workers
-        .run(move || {
+    budget::housekeeping(
+        options,
+        deadline,
+        options.workers.run(move || {
             let _reservation = reservation;
             store.validate_unchanged(&snapshot)
-        })
-        .await
-        .map_err(|_| NativeMcpControllerError::Unavailable)??;
+        }),
+    )
+    .await?
+    .map_err(|_| NativeMcpControllerError::Unavailable)??;
     Ok(())
 }

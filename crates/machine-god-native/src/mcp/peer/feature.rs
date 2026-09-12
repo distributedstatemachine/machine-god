@@ -20,6 +20,7 @@ pub(super) async fn execute(
     deadline: Instant,
 ) -> Result<McpFeatureReply> {
     peer.check_available()?;
+    let deadline = peer.lifetime.constrain(deadline);
     routing::check(&peer.cancellation, deadline)?;
     options.codec.validate().map_err(Error::Feature)?;
     let wire = peer.connection.wire_limits();

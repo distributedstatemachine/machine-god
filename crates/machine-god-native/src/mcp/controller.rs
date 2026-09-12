@@ -7,6 +7,7 @@ mod state;
 mod tests;
 
 use super::{
+    lifetime::McpPeerLifetime,
     management::NativeMcpManagementService,
     runtime::{NativeMcpRuntime, NativeMcpRuntimeClock, NativeMcpRuntimeError},
     startup::{NativeMcpStartupError, NativeMcpStartupPhase, NativeMcpStartupReceipt},
@@ -35,7 +36,7 @@ pub struct NativeMcpControllerStartupOptions {
     pub network: Option<Arc<super::network::NativeMcpNetwork>>,
     #[cfg(feature = "mcp-http")]
     pub authentication: Vec<super::startup::NativeMcpStartupAuthentication>,
-    pub peer_lifetime_deadline: Instant,
+    pub peer_lifetime: McpPeerLifetime,
     pub max_retained_bytes: usize,
 }
 
@@ -202,7 +203,7 @@ impl NativeMcpController {
             Arc::downgrade(&self.inner),
             state::Kind::Start(phase),
             cancellation,
-            deadline,
+            Some(deadline),
         )
     }
 
@@ -220,7 +221,7 @@ impl NativeMcpController {
             Arc::downgrade(&self.inner),
             state::Kind::Reload,
             cancellation,
-            deadline,
+            Some(deadline),
         )
     }
 
@@ -239,7 +240,58 @@ impl NativeMcpController {
             Arc::downgrade(&self.inner),
             state::Kind::Deferred,
             cancellation,
-            deadline,
+            Some(deadline),
+        )
+    }
+
+    /// Activates initial startup using configured per-attempt budgets without an
+    /// overall startup cap. Housekeeping remains independently time-bounded.
+    /// # Errors
+    /// Preserves the same admission, source and required-readiness errors as start.
+    #[must_use]
+    pub fn start_configured(
+        &self,
+        phase: NativeMcpStartupPhase,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeMcpControllerReceipt>> {
+        operation::request(
+            Arc::downgrade(&self.inner),
+            state::Kind::Start(phase),
+            cancellation,
+            None,
+        )
+    }
+
+    /// Replaces all selected peers with configured per-attempt/restart budgets.
+    /// # Errors
+    /// Failed replacement preserves the old active generation, as with reload.
+    #[must_use]
+    pub fn reload_configured(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeMcpControllerReceipt>> {
+        operation::request(
+            Arc::downgrade(&self.inner),
+            state::Kind::Reload,
+            cancellation,
+            None,
+        )
+    }
+
+    /// Coalesces deferred discovery without imposing an overall loader timeout.
+    /// Cancelling a waiter does not cancel the shared owner-controlled loader.
+    /// # Errors
+    /// Preserves deferred admission, exact-generation and configured-attempt errors.
+    #[must_use]
+    pub fn activate_deferred_configured(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeMcpControllerReceipt>> {
+        operation::request(
+            Arc::downgrade(&self.inner),
+            state::Kind::Deferred,
+            cancellation,
+            None,
         )
     }
 

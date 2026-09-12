@@ -45,6 +45,9 @@ pub(super) async fn bounded<T>(
         if let Err(error) = check(cancellation, deadline) {
             return Poll::Ready(Err(error));
         }
+        if timer.now() >= deadline {
+            return Poll::Ready(Err(McpPeerError::Deadline));
+        }
         if cancelled.as_mut().poll(cx).is_ready() {
             return Poll::Ready(Err(McpPeerError::Cancelled));
         }
@@ -115,6 +118,10 @@ pub(super) async fn exchange(
     let mut response = None;
     let mut observations = 0_usize;
     loop {
+        check(cancellation, deadline)?;
+        if timer.now() >= deadline {
+            return Err(McpPeerError::Deadline);
+        }
         if writer.is_none() && response.is_some() && replies.is_empty() {
             guard.0 = None;
             return response.ok_or(McpPeerError::Correlation);
@@ -213,6 +220,8 @@ pub(super) async fn call(
     submission: McpSubmission,
     deadline: Instant,
 ) -> Result<McpStdioFrame> {
+    peer.check_lifetime()?;
+    let deadline = peer.lifetime.constrain(deadline);
     check(&peer.cancellation, deadline)?;
     if peer.closed {
         return Err(McpPeerError::Correlation);
@@ -248,6 +257,7 @@ pub(super) async fn catalog(
     deadline: Instant,
 ) -> Result<McpRawCatalog> {
     peer.check_available()?;
+    let deadline = peer.lifetime.constrain(deadline);
     check(&peer.cancellation, deadline)?;
     if matches!(
         kind,
@@ -259,7 +269,7 @@ pub(super) async fn catalog(
     }
     let mut builder = McpCatalogBuilder::new(kind, peer.protocol.version, limits)
         .map_err(|_| McpPeerError::Capacity)?;
-    if epoch > Instant::now() {
+    if epoch > peer.timer.now() {
         return Err(McpPeerError::InvalidResult);
     }
     loop {
@@ -285,7 +295,14 @@ pub(super) async fn catalog(
         )
         .await?;
         peer.closed = false;
-        let received_at_ms = u64::try_from(epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let received_at_ms = u64::try_from(
+            peer.timer
+                .now()
+                .checked_duration_since(epoch)
+                .ok_or(McpPeerError::InvalidResult)?
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX);
         if !builder
             .append_response(frame.bytes(), &id, cursor.as_deref(), received_at_ms)
             .map_err(|_| McpPeerError::InvalidResult)?

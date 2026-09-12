@@ -9,10 +9,10 @@ impl Clock {
         self.0.now()
     }
     #[cfg(feature = "mcp-http")]
-    pub fn deadline(&self, milliseconds: u32, outer: Instant) -> Result<Instant> {
+    pub fn deadline(&self, milliseconds: u32, outer: Option<Instant>) -> Result<Instant> {
         self.now()
             .checked_add(std::time::Duration::from_millis(u64::from(milliseconds)))
-            .map(|value| value.min(outer))
+            .map(|value| outer.map_or(value, |outer| value.min(outer)))
             .ok_or(Error::Limit)
     }
 }
@@ -35,9 +35,17 @@ impl crate::mcp::http::McpHttpClock for Clock {
 }
 
 pub(super) fn check(clock: &Clock, guards: &[CancellationToken], deadline: Instant) -> Result<()> {
+    check_optional(clock, guards, Some(deadline))
+}
+
+pub(super) fn check_optional(
+    clock: &Clock,
+    guards: &[CancellationToken],
+    deadline: Option<Instant>,
+) -> Result<()> {
     if guards.iter().any(CancellationToken::is_cancelled) {
         Err(Error::Cancelled)
-    } else if clock.now() >= deadline {
+    } else if deadline.is_some_and(|deadline| clock.now() >= deadline) {
         Err(Error::Deadline)
     } else {
         Ok(())
@@ -50,7 +58,24 @@ pub(super) async fn bounded<F: Future>(
     guards: &[CancellationToken],
     deadline: Instant,
 ) -> Result<F::Output> {
-    check(clock, guards, deadline)?;
+    bounded_optional(future, clock, guards, Some(deadline)).await
+}
+
+pub(super) fn housekeeping_deadline(clock: &Clock, outer: Option<Instant>) -> Result<Instant> {
+    clock
+        .now()
+        .checked_add(std::time::Duration::from_secs(30))
+        .map(|deadline| outer.map_or(deadline, |outer| deadline.min(outer)))
+        .ok_or(Error::Limit)
+}
+
+pub(super) async fn bounded_optional<F: Future>(
+    future: F,
+    clock: &Clock,
+    guards: &[CancellationToken],
+    deadline: Option<Instant>,
+) -> Result<F::Output> {
+    check_optional(clock, guards, deadline)?;
     let stopped = async {
         let cancelled = async {
             if guards.is_empty() {
@@ -65,7 +90,13 @@ pub(super) async fn bounded<F: Future>(
                 .await;
             }
         };
-        select(Box::pin(cancelled), clock.0.sleep_until(deadline)).await;
+        let elapsed = async {
+            match deadline {
+                Some(deadline) => clock.0.sleep_until(deadline).await,
+                None => std::future::pending().await,
+            }
+        };
+        select(Box::pin(cancelled), Box::pin(elapsed)).await;
     };
     let result = match select(Box::pin(future), Box::pin(stopped)).await {
         Either::Left((result, _)) => result,
@@ -77,6 +108,6 @@ pub(super) async fn bounded<F: Future>(
             });
         }
     };
-    check(clock, guards, deadline)?;
+    check_optional(clock, guards, deadline)?;
     Ok(result)
 }

@@ -43,12 +43,12 @@ impl NativeMcpToolExecutor for NeverExecute {
     }
 }
 static NEXT: AtomicUsize = AtomicUsize::new(0);
-struct Fixture {
+pub(super) struct Fixture {
     base: PathBuf,
-    options: NativeMcpControllerOptions,
+    pub(super) options: NativeMcpControllerOptions,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let base = std::env::temp_dir().join(format!(
             "mg-controller-{}-{}",
             std::process::id(),
@@ -85,14 +85,14 @@ impl Fixture {
                 network: None,
                 #[cfg(feature = "mcp-http")]
                 authentication: vec![],
-                peer_lifetime_deadline: deadline(),
+                peer_lifetime: McpPeerLifetime::Until(deadline()),
                 max_retained_bytes: 1024 * 1024,
             },
             max_retained_generations: 4,
         };
         Self { base, options }
     }
-    fn controller(&self) -> NativeMcpController {
+    pub(super) fn controller(&self) -> NativeMcpController {
         NativeMcpController::new(NativeMcpControllerOptions {
             runtime: self.options.runtime.clone(),
             management: self.options.management.clone(),
@@ -287,24 +287,40 @@ fn empty_ask_deferred_set_is_an_inert_noop_even_after_profile_changes() {
 
 #[test]
 fn failed_reload_preserves_exact_active_token_and_runtime_view() {
+    failed_reload(false);
+}
+
+#[test]
+fn configured_failed_reload_preserves_exact_active_token_and_runtime_view() {
+    failed_reload(true);
+}
+
+fn failed_reload(configured: bool) {
     run(async {
-        let fixture = Fixture::new();
+        let mut fixture = Fixture::new();
+        if configured {
+            fixture.options.startup.peer_lifetime = McpPeerLifetime::OwnerControlled;
+        }
         let controller = fixture.controller();
-        controller
-            .start(
+        let startup = if configured {
+            controller.start_configured(NativeMcpStartupPhase::All, CancellationToken::new())
+        } else {
+            controller.start(
                 NativeMcpStartupPhase::All,
                 CancellationToken::new(),
                 deadline(),
             )
-            .await
-            .unwrap();
+        };
+        startup.await.unwrap();
         let old = lock(&controller.inner.state).active.clone().unwrap();
         let checkpoint = fixture.options.runtime.publication_checkpoint().unwrap();
         fixture.seed(r#"{"mcp":{"optional":{"command":"/missing/server"}}}"#);
-        let error = controller
-            .reload(CancellationToken::new(), deadline())
-            .await
-            .unwrap_err();
+        let reloading = if configured {
+            controller.reload_configured(CancellationToken::new())
+        } else {
+            controller.reload(CancellationToken::new(), deadline())
+        };
+        let error = reloading.await.unwrap_err();
         assert!(matches!(error.kind(), NativeMcpControllerError::Startup(_)));
         assert!(error.startup().is_some());
         assert!(!old.cancellation.is_cancelled());
