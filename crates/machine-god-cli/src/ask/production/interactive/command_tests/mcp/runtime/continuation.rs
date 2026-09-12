@@ -2,6 +2,7 @@ use super::super::super::super::super::presentation::Modal;
 use super::*;
 use native::mcp::interaction::McpElicitationPromptSource;
 
+#[path = "continuation/url.rs"]
 mod url;
 
 fn input_required() -> Value {
