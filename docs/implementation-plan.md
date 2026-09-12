@@ -18,6 +18,15 @@ Observable compatibility and performance claims require retained evidence
 against the pinned upstream revision. Zig is only an upstream benchmark build
 input; it is not a machine-god product language or runtime dependency.
 
+Backward compatibility is not a product requirement. Target the selected modern
+protocols and native formats; do not add legacy negotiation, deprecated
+transports, compatibility shims or foreign-session import. The upstream pin
+remains a behavioral reference and benchmark baseline, not an obligation to
+reproduce its historical compatibility layers. Existing delivery records remain
+historical evidence, not requirements to preserve legacy code. Remove obsolete
+paths with their callers and tests in the owning feature; do not remove modern
+functionality merely because it shares an implementation with an older mode.
+
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
@@ -27,7 +36,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `authentication, URL/legacy continuation and catalog refresh; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `modern-only MCP cleanup, authentication, modern continuation and catalog refresh; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -110,7 +119,7 @@ separately scoped nextest/build-reuse advice belong in the
 Test-infrastructure maintenance is not part of subsequent product-tool work.
 
 Required permission modes/grants, native migration/recovery and guarded cleanup
-are included in the combined CLI boundary. Foreign fx import, encryption,
+are included in the combined CLI boundary. Encryption,
 record authentication, key management, secure erasure, broader persistence and
 lifecycle concurrency hardening, and hardened non-Unix construction retain
 their later milestone ownership below.
@@ -183,7 +192,7 @@ handoff.
 | M03 | Providers, native tools, permissions, sessions, configuration, and CLI | COMPLETE |
 | M04 | Security, lifecycle, concurrency, and persistence hardening | IN PROGRESS |
 | M05 | Skills, MCP, ACP, and subagent extensibility | IN PROGRESS |
-| M06 | SDK surfaces and advanced compatibility | NOT STARTED |
+| M06 | SDKs and advanced product surfaces | NOT STARTED |
 | M07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
 ## Delivered-slice inventory
@@ -296,9 +305,9 @@ the explicitly assigned M04–M07 work or assert literal upstream UI parity.
 
 | Owner | Explicitly assigned work |
 | --- | --- |
-| M04 | Required modes/grants, native migration/recovery and guarded cleanup were delivered with the combined CLI; remaining work includes foreign fx import, encryption, record authentication, key management, secure erasure, broader persistence/lifecycle concurrency hardening, and hardened non-Unix workspace/store construction |
+| M04 | Required modes/grants, native migration/recovery and guarded cleanup were delivered with the combined CLI; remaining work includes encryption, record authentication, key management, secure erasure, broader persistence/lifecycle concurrency hardening, and hardened non-Unix workspace/store construction |
 | M05 | Skills, MCP, ACP, subagents, top-level `acp`/`background`/`teams`, extension/agent slash commands, and built-in memory/search/skill/subagent/MCP tools |
-| M06 | SDKs and advanced CLI/compatibility surfaces including `pr`, `issue`, account, setup, credit, usage, upgrade, media, product, and appearance categories |
+| M06 | SDKs and advanced CLI surfaces including `pr`, `issue`, account, setup, credit, usage, upgrade, media, product, and appearance categories |
 | M07 | Claim-eligible performance comparison, thresholds, optimization, packaging evidence, and final hardening |
 
 ## Delivered background CLI boundary
@@ -343,8 +352,8 @@ claim.
 
 The [skills CLI contract](skills-cli.md) owns durable behavior and the
 [skills CLI review](reviews/m05-skills-cli-review-01.md) retains detailed evidence.
-Import components remain parked on `agent/m61-fx-session-import` at `5e77b1b4`;
-do not merge that unfinished feature.
+Import components are retained on `agent/m61-fx-session-import` at `5e77b1b4`
+for history only; foreign-session import is no longer required. Do not merge it.
 
 ## Active complete feature: production MCP and CLI
 
@@ -358,12 +367,13 @@ gates.
   browser confirmation, and logout with distinct local/remotely revoked receipts.
 - Native owns an explicitly admitted profile MCP configuration and credential
   store. Do not mutate fx roots or silently widen native schema-v7 settings.
-  Preserve pinned stdio, HTTP and legacy SSE configuration and explicit
+  Support modern stdio and Streamable HTTP configuration with explicit
   environment/header/auth selection; constructors acquire no ambient authority.
-- Implement bounded JSON-RPC framing, modern discovery and pinned legacy
-  negotiation for stdio, Streamable HTTP and deprecated HTTP+SSE. Use producer
-  fixtures from the exact upstream pin. Downgrade only on admitted protocol
-  evidence, never malformed success or an ambiguous consequential call.
+- Implement bounded JSON-RPC framing and modern discovery for stdio and
+  Streamable HTTP. Remove older protocol negotiation, downgrade/restart chains
+  and deprecated HTTP+SSE transport; reject unsupported selections before effects.
+  Keep SSE framing used by modern HTTP streaming. Use modern producer fixtures
+  from the exact upstream pin and never replay an ambiguous consequential call.
 - Publish atomic, bounded, paginated tool/resource/prompt catalogs, with stable
   naming, schema admission, TTL/notification refresh and exact executable
   generations. Failed reload preserves the previous usable runtime; superseded
@@ -374,12 +384,13 @@ gates.
   live session/incarnation/turn/call; retain the native proof through writer
   submission. Queue waits cannot bypass later revocation. Never automatically
   replay a partially submitted consequential request.
-- Add backward-compatible contextual catalog/feature hooks and forward the
+- Use contextual catalog/feature hooks and forward the
   exact `ToolContext`. Production routing rejects missing/foreign/retired turns;
   no engine-global current-session fallback or serialized authority tokens.
 - Include OAuth discovery, credential refresh, explicit browser/elicitation
   consent, bounded continuation custody, progress and owned cancellation.
-  Follow pinned modern input-required and legacy form/URL behavior. Sampling
+  Complete modern input-required form/URL behavior for tools and human feature
+  actions. Remove legacy inbound forms and URL completion/retry machinery. Sampling
   and roots are not implemented at the pin and are not added as new features.
 - Compose startup, commands, model search/select/call, seven feature actions,
   reload, continuation and finalization through the thin CLI. Test transport
@@ -421,9 +432,11 @@ and URL prompts. CLI startup/reload/settlement retain exact profile and cleanup
 custody; required readiness blocks prompts while interactive management stays open.
 Explicit auth/logout and modern URL recovery share native browser ownership.
 
-These components do not constitute a delivered runtime. Remaining composition
-must compose legacy input custody, TTL/notification refresh,
-authentication end-to-end evidence/lifetime refresh and CLI ownership. Raw pages
+These components do not constitute a delivered runtime. Existing legacy paths
+described above predate the modern-only scope decision and must be removed,
+not completed or preserved for compatibility. Remaining composition includes
+modern feature-action continuation, TTL/notification refresh, authentication
+end-to-end evidence/lifetime refresh and CLI ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
@@ -431,47 +444,6 @@ and this ledger. Subsequent transport, permission and authentication lanes use
 the agreed typed interfaces with non-overlapping files. Keep runtime/resource
 state native; core remains provider-neutral and effect-free. ACP follows this
 complete feature; pinned `teams` means account/team selection, not subagents.
-
-## Parked complete-feature scope: fx session import
-
-Retain M04 foreign-session import as one complete feature on its own branch
-after the current CLI work. This is not the existing metadata-only
-native migration or FXTP replay. Read-only analysis of the pinned source found
-legacy schema-v1/v2 snapshots and schema-v3 authority-fenced event logs; both
-are in scope. The importer must:
-
-- Accept an explicitly selected fx session directory with retained read-only
-  source authority, separate from native destination authority. Preserve source
-  bytes and never infer permission/workspace/process grants from imported data.
-- Reconstruct the exact committed v3 prefix, including chunked state
-  replacements, generation/sequence/digest validation and concurrent-writer
-  handling. Reject incomplete committed state and pending authority transitions;
-  do not replace canonical history with stale projections or migration backups.
-- Preserve all history variants, ordering, tool arguments/results, interruption
-  evidence, context/compaction boundaries and known/unknown metadata. Assign a
-  fresh native identity and stable tool-call mappings; retain non-UTF-8 source
-  evidence losslessly with explicit model/display conversion.
-- Import and verify referenced result archives, binary command replay and image
-  snapshots into native-owned storage. Resumed image history requires core
-  attachment representation, native authority and Gateway projection, not only
-  an opaque metadata copy. General advanced media commands remain M06 work.
-- Define bounded storage/reference representation without silent truncation,
-  no-overwrite publication, cancellation ownership, orphan cleanup and receipts
-  for uncertain postpublication outcomes across multiple durable objects.
-- Expose thin CLI grammar and receipts through a native import facade beside
-  session maintenance. Exercise import, catalog, inspection, archived paging
-  and resumed provider requests through the fresh release CLI after source
-  removal, without import-time provider/tool execution or restored grants.
-
-Use producer-derived fixtures for every format and replacement mode, artifact
-integrity failures, opaque bytes/identifier remapping, stale or truncated logs,
-concurrent source replacement, cancellation and destination publication faults.
-Parallel owners can implement the effect-free codec, native storage/artifacts,
-and thin CLI/scenarios after agreeing shared contracts; isolate their worktrees
-and keep integration, documentation and the full feature gate coordinator-owned.
-Encryption, record authentication, key custody/rotation, secure erasure and the
-other M04–M07 boundaries remain required after this feature, not silently closed
-by import acceptance.
 
 ## Required gates
 
