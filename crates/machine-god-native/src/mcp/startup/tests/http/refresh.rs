@@ -10,7 +10,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-struct AuthClock {
+pub(super) struct AuthClock {
     state: Mutex<ClockState>,
 }
 struct ClockState {
@@ -19,7 +19,7 @@ struct ClockState {
     waiters: Vec<Waker>,
 }
 impl AuthClock {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             state: Mutex::new(ClockState {
                 // Intentionally not the startup/HTTP clock domain. The selected
@@ -30,7 +30,7 @@ impl AuthClock {
             }),
         }
     }
-    fn advance(&self, monotonic: Duration, wall_ms: i64) {
+    pub(super) fn advance(&self, monotonic: Duration, wall_ms: i64) {
         let waiters = {
             let mut state = self.state.lock().unwrap();
             state.now += monotonic;
@@ -70,7 +70,7 @@ impl McpAuthClock for AuthClock {
     }
 }
 
-async fn authenticated(
+pub(super) async fn authenticated(
     address: SocketAddr,
     clock: Arc<AuthClock>,
 ) -> (NativeMcpStartup, Credentials, Arc<McpAuthLease>) {

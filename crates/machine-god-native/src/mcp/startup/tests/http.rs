@@ -2,6 +2,7 @@ use super::*;
 mod challenges;
 mod configured;
 mod refresh;
+mod subscriptions;
 use crate::mcp::{
     auth::{
         McpAuthClock, McpAuthConfig, McpAuthEntropy, McpAuthError, McpAuthInvalidated,
