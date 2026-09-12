@@ -59,6 +59,7 @@ fn inert(timer: Arc<dyn McpPeerTimer>) -> McpStdioPeer {
         timer,
         cancellation: CancellationToken::new(),
         lifetime: McpPeerLifetime::OwnerControlled,
+        feature_identity: Arc::new(()),
         next_id: Some(1),
         reserved: McpPendingToolReservation::default(),
         notifications: VecDeque::new(),

@@ -1,4 +1,5 @@
 use super::*;
+mod continuation;
 use crate::McpFeatureRequest;
 use crate::mcp::{
     catalog::{McpDescriptor, McpDescriptorCatalog, McpDescriptorLimits},

@@ -22,6 +22,7 @@ fn inert(options: McpHttpPeerOptions, cancellation: CancellationToken) -> Result
         capabilities: McpPeerCapabilities::default(),
         cancellation,
         completion: McpHttpPeerCompletion(Arc::new(Completion::default())),
+        feature_identity: Arc::new(()),
         next_id: Some(1),
         reserved: super::McpPendingToolReservation::default(),
         runtimes: Vec::new(),

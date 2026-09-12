@@ -206,6 +206,7 @@ fn unnegotiated(
         capabilities: McpPeerCapabilities::default(),
         timer,
         cancellation,
+        feature_identity: Arc::new(()),
         next_id: Some(1),
         reserved: super::McpPendingToolReservation::default(),
         notifications: VecDeque::new(),

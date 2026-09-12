@@ -166,6 +166,7 @@ pub struct McpHttpPeer {
     capabilities: McpPeerCapabilities,
     cancellation: CancellationToken,
     completion: McpHttpPeerCompletion,
+    feature_identity: Arc<()>,
     next_id: Option<i64>,
     reserved: McpPendingToolReservation,
     runtimes: Vec<Arc<McpSubmissionRuntime>>,
@@ -199,10 +200,31 @@ impl McpHttpPeer {
         options: super::control::McpFeatureOperationOptions,
         deadline: Instant,
     ) -> Result<super::control::McpFeatureReply> {
+        self.feature_round(request, server, catalogs, authority, options, deadline)
+            .await
+            .map(super::control::McpFeatureRound::into_reply)
+    }
+    pub(crate) async fn feature_round(
+        &mut self,
+        request: &crate::McpFeatureRequest,
+        server: &str,
+        catalogs: &[super::catalog::McpDescriptorCatalog],
+        authority: super::control::McpFeatureControlAuthority,
+        options: super::control::McpFeatureOperationOptions,
+        deadline: Instant,
+    ) -> Result<super::control::McpFeatureRound> {
         feature::execute(
             self, request, server, catalogs, authority, options, deadline,
         )
         .await
+    }
+    pub(crate) async fn resume_feature(
+        &mut self,
+        round: super::control::McpFeatureRound,
+        responses: super::mrtr::McpValidatedResponses,
+        deadline: Instant,
+    ) -> Result<super::control::McpFeatureRound> {
+        feature::resume(self, round, responses, deadline).await
     }
     /// Configured startup with bounded pre-effect cleanup observation. Returns
     /// the selected attempt deadline for initial tools catalog loading; neither

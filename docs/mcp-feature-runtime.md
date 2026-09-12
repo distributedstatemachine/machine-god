@@ -54,9 +54,26 @@ may explicitly lower matching codec bounds, but neither side silently widens a
 selected lower limit. Catalog pages still pass through the existing atomic
 assembler and descriptor admission without numeric normalization or truncation.
 
-These methods do not add subscriptions, TTL refresh, browser launch, input
-responders, continuation custody, sampling/roots implementations or a model
-output projection. Those remain separately owned native runtime integrations.
+The public methods project response data and discard private continuation
+custody. Crate-local runtime composition instead uses an owned feature round:
+only correlated modern resource reads and prompt gets can retain a pending
+round. Consuming it preserves the original typed request, arguments, selected
+descriptor snapshot, metadata, limits and control authority. It neither clones
+whole catalogs nor selects descriptors again. The original peer allocation
+identity is checked before allocating a fresh, never-reused request ID; a
+different peer cannot resume the round even at the same endpoint.
+
+The private continuation encoder revalidates answers against the retained input,
+adds exact `inputResponses`, and includes `requestState` if and only if the
+correlated response supplied it. Absent state and explicit null stay distinct;
+raw numeric spelling is preserved. Continuation does not provide a public replay
+or arbitrary-method API. Original control guards remain attached through actual
+transport writes and response admission. Unpolled futures are inert; dropping a
+polled exchange keeps the same owned-close and no-prefix-replay behavior.
+
+These transport methods do not themselves obtain consent, launch browsers, add
+subscriptions or TTL refresh, implement sampling/roots, or project model output.
+Human interaction remains separately owned native runtime composition.
 
 ## Requests and descriptor identity
 
@@ -141,6 +158,13 @@ validate requests/state and obtain explicit input consent before continuation;
 this marker neither approves input nor labels the requests fully admitted.
 Completion `input_required` responses are rejected.
 
+The owned peer-round path performs that bounded MRTR decode before retaining
+custody, while leaving the public response marker unchanged. Its retained-byte
+check jointly charges the original exchange, correlated raw response and typed
+input against the original feature codec budget. MRTR parsing also preserves its
+independent lowerable byte/node/retention limits. Each resumed envelope remains
+subject to the original request and response budgets.
+
 `McpFeatureCatalogLoad` binds a list exchange's server, family and version. Every
 page uses the existing `McpCatalogBuilder` cursor, identity, cache and aggregate
 checks. `finish` then performs complete `McpDescriptorCatalog` admission without
@@ -178,6 +202,17 @@ is bounded to 64 MiB, with at most one separately admitted 64 MiB incoming famil
 before that aggregate check, plus bounded wire/parser storage. No hidden result
 queue or detached observer retains additional generations. Catalog replies retain
 original descriptors, not discarded page-envelope metadata.
+
+Read/get input rounds compose with the same native presenter and URL launcher as
+tools. The human owner is the retained conversation principal, not model text or
+an invented turn. The runtime releases the serialized peer lane while collecting
+input but retains the operation slot and exact round. It permits at most eight
+consuming continuations, bounds each human round to 30 minutes, and starts a fresh
+configured transport deadline only after input collection. Unsupported,
+state-only or exhausted input produces a failed receipt rather than a successful
+partial feature result. Returning to transport rechecks the original authority
+and peer without rediscovery or catalog replacement. URL work retains the exact
+active round and authority until its owned cleanup completes or is dropped.
 
 ## Independent resource and projection bounds
 

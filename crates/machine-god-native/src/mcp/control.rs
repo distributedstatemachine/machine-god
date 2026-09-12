@@ -167,6 +167,9 @@ pub enum McpFeatureReply {
     Catalog(McpDescriptorCatalog),
     Response(McpFeatureResponse),
 }
+
+mod round;
+pub(crate) use round::McpFeatureRound;
 #[cfg(test)]
 pub(crate) mod tests;
 

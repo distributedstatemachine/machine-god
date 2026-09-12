@@ -15,6 +15,8 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 use std::fmt;
 
+mod continuation;
+
 #[derive(Clone, Copy, Debug)]
 pub struct McpFeatureExchangeOptions {
     pub(super) protocol: NegotiatedProtocol,
@@ -81,6 +83,7 @@ pub struct McpFeatureExchange {
     pub(super) cursor: Option<Box<str>>,
     identity: McpFeatureIdentity,
     wire: Box<RawValue>,
+    base_retained_bytes: usize,
 }
 impl fmt::Debug for McpFeatureExchange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -145,6 +148,7 @@ impl McpFeatureExchange {
         let params = Params {
             request,
             cursor,
+            continuation: None,
             metadata: McpClientMetadata::for_protocol(
                 options.protocol.version,
                 options.progress,
@@ -182,6 +186,7 @@ impl McpFeatureExchange {
             entries.checked_mul(1024).ok_or(Error::Limit)?,
             limits.max_retained_bytes,
         )?;
+        let base_retained_bytes = bytes - wire.len() * 2;
         let wire = RawValue::from_string(wire).map_err(|_| Error::InvalidRequest)?;
         Ok(Self {
             request: request.clone(),
@@ -190,6 +195,7 @@ impl McpFeatureExchange {
             cursor: cursor.map(Into::into),
             identity,
             wire,
+            base_retained_bytes,
         })
     }
     #[must_use]
@@ -320,6 +326,7 @@ struct Params<'a> {
     request: &'a McpFeatureRequest,
     cursor: Option<&'a str>,
     metadata: McpClientMetadata,
+    continuation: Option<continuation::Continuation<'a>>,
 }
 impl Serialize for Params<'_> {
     fn serialize<S: serde::Serializer>(
@@ -384,6 +391,12 @@ impl Serialize for Params<'_> {
                         },
                     )?;
                 }
+            }
+        }
+        if let Some(continuation) = &self.continuation {
+            map.serialize_entry("inputResponses", continuation.responses)?;
+            if let Some(state) = continuation.state {
+                map.serialize_entry("requestState", state)?;
             }
         }
         map.end()

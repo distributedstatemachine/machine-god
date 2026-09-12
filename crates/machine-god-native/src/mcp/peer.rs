@@ -91,6 +91,7 @@ pub struct McpStdioPeer {
     timer: Arc<dyn McpPeerTimer>,
     cancellation: CancellationToken,
     lifetime: McpPeerLifetime,
+    feature_identity: Arc<()>,
     next_id: Option<i64>,
     reserved: McpPendingToolReservation,
     notifications: VecDeque<RpcEnvelope>,
@@ -151,10 +152,31 @@ impl McpStdioPeer {
         options: super::control::McpFeatureOperationOptions,
         deadline: Instant,
     ) -> Result<super::control::McpFeatureReply> {
+        self.feature_round(request, server, catalogs, authority, options, deadline)
+            .await
+            .map(super::control::McpFeatureRound::into_reply)
+    }
+    pub(crate) async fn feature_round(
+        &mut self,
+        request: &crate::McpFeatureRequest,
+        server: &str,
+        catalogs: &[super::catalog::McpDescriptorCatalog],
+        authority: super::control::McpFeatureControlAuthority,
+        options: super::control::McpFeatureOperationOptions,
+        deadline: Instant,
+    ) -> Result<super::control::McpFeatureRound> {
         feature::execute(
             self, request, server, catalogs, authority, options, deadline,
         )
         .await
+    }
+    pub(crate) async fn resume_feature(
+        &mut self,
+        round: super::control::McpFeatureRound,
+        responses: super::mrtr::McpValidatedResponses,
+        deadline: Instant,
+    ) -> Result<super::control::McpFeatureRound> {
+        feature::resume(self, round, responses, deadline).await
     }
     /// Configured startup with pre-effect completion observation. The returned
     /// deadline also bounds initial tools catalog loading. Discovery does not
