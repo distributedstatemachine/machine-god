@@ -1,8 +1,8 @@
 use super::routing::{exchange, request};
 use super::{
-    Arc, CancellationToken, Completion, Instant, McpHttpControl, McpHttpPeer,
-    McpHttpPeerCompletion, McpHttpPeerError, McpHttpPeerOptions, McpPeerCapabilities,
-    NegotiatedProtocol, ProtocolVersion, Result, TransportKind, VecDeque,
+    Arc, CancellationToken, Completion, Instant, McpHttpPeer, McpHttpPeerCompletion,
+    McpHttpPeerError, McpHttpPeerOptions, McpPeerCapabilities, NegotiatedProtocol, ProtocolVersion,
+    Result, TransportKind, VecDeque,
 };
 use super::{Duration, McpHttpCompletionObserver};
 use crate::mcp::protocol::{HttpDiscoveryStatus, Negotiation, NegotiationAction};

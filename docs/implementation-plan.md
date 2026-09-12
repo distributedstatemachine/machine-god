@@ -402,9 +402,12 @@ contextual forwarding, endpoint/header admission, seven human feature-request
 projections, SSE framing, profile persistence, raw catalog assembly and one-shot
 submission. Native profile management and thin `/mcp` startup/dispatch/receipts
 are composed, but configuration saves explicitly do not activate a runtime.
-Owned stdio peers now drive negotiation, correlated requests, raw catalogs and
-bounded timeout snapshots. Owned HTTP peers compose modern/legacy negotiation,
-exact proof-bearing HTTP/TLS writes, SSE/session/listener routing and cleanup.
+Owned stdio peers drive modern discovery, correlated requests, raw catalogs and
+owned notification/reply queues. Owned HTTP peers compose modern discovery,
+exact proof-bearing HTTP/TLS POSTs, JSON/SSE response streams and cleanup.
+Legacy protocol variants, downgrade/restart chains, HTTP+SSE sessions/listeners,
+completion registries and completion UI have been removed; modern streaming,
+URL recovery, exact request proofs and cancellation remain.
 Exact JSON values now survive provider, permission and history codecs without
 rounding or treating literal private-looking keys as scalar values. Complete
 tool/resource/template/prompt descriptors and deterministic named candidates are
@@ -412,7 +415,7 @@ admitted separately from runtime publication and execution authority.
 Schema/index/pattern storage is now charged against independent retained-memory
 and catalog budgets; exhausted optional pattern caches still evaluate on demand.
 
-Admitted schemas now back typed tool requests, modern/legacy client metadata,
+Admitted schemas now back typed tool requests, modern client metadata,
 progress-token selection and modern HTTP argument headers. These projections
 retain the existing one-shot permission/writer boundary; raw preparation remains
 strict. Catalog page and stdio runtime capacities match the pinned per-server
@@ -432,9 +435,7 @@ and URL prompts. CLI startup/reload/settlement retain exact profile and cleanup
 custody; required readiness blocks prompts while interactive management stays open.
 Explicit auth/logout and modern URL recovery share native browser ownership.
 
-These components do not constitute a delivered runtime. Existing legacy paths
-described above predate the modern-only scope decision and must be removed,
-not completed or preserved for compatibility. Remaining composition includes
+These components do not constitute a delivered runtime. Remaining composition includes
 modern feature-action continuation, TTL/notification refresh, authentication
 end-to-end evidence/lifetime refresh and CLI ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned

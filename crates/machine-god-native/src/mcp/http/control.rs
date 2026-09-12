@@ -25,7 +25,7 @@ impl McpHttpControl {
     pub(crate) fn feature_guard(&self) -> Option<crate::mcp::control::McpFeatureControlAuthority> {
         match &self.0 {
             Kind::Protocol(control) => control.feature_guard(),
-            _ => None,
+            Kind::OAuth { .. } => None,
         }
     }
     // Private OAuth lane: only the native auth codec selects destinations and

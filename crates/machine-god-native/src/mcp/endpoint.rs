@@ -6,8 +6,6 @@ use url::{Host, Position, Url};
 
 /// Inclusive bound on a configured URL before parsing.
 pub const MAX_CONFIGURED_ENDPOINT_BYTES: usize = 4096;
-/// Inclusive bound on a deprecated SSE endpoint event before resolution.
-pub const MAX_ENDPOINT_EVENT_BYTES: usize = 8192;
 /// Inclusive bound on a retained, canonical URL after parsing/resolution.
 pub const MAX_CANONICAL_ENDPOINT_BYTES: usize = 16 * 1024;
 
@@ -16,7 +14,6 @@ pub const MAX_CANONICAL_ENDPOINT_BYTES: usize = 16 * 1024;
 pub enum McpEndpointError {
     Invalid,
     Insecure,
-    CrossOrigin,
     Limit,
 }
 
@@ -25,7 +22,6 @@ impl fmt::Display for McpEndpointError {
         f.write_str(match self {
             Self::Invalid => "invalid MCP endpoint",
             Self::Insecure => "insecure MCP endpoint",
-            Self::CrossOrigin => "cross-origin MCP endpoint",
             Self::Limit => "MCP endpoint limit exceeded",
         })
     }
@@ -58,31 +54,6 @@ impl McpEndpoint {
     /// whitespace, backslashes and malformed percent escapes are not accepted.
     pub fn parse(value: &str) -> Result<Self, McpEndpointError> {
         parse_absolute(value, MAX_CONFIGURED_ENDPOINT_BYTES)
-    }
-
-    /// Resolves an explicitly received deprecated SSE `endpoint` event.
-    ///
-    /// # Errors
-    /// Rejects invalid, oversized or cross-origin destinations. An absolute or
-    /// network-path HTTP reference must itself include an explicit loopback port;
-    /// a relative path inherits the already admitted base endpoint's port.
-    pub fn resolve_message_endpoint(&self, event: &str) -> Result<Self, McpEndpointError> {
-        validate_text(event, MAX_ENDPOINT_EVENT_BYTES)?;
-        let url = if let Some(authority) = event.strip_prefix("//") {
-            let absolute = format!("{}://{authority}", self.url.scheme());
-            parse_absolute(&absolute, MAX_ENDPOINT_EVENT_BYTES + 8)?.url
-        } else if Url::parse(event).is_ok() {
-            parse_absolute(event, MAX_ENDPOINT_EVENT_BYTES)?.url
-        } else {
-            self.url
-                .join(event)
-                .map_err(|_| McpEndpointError::Invalid)?
-        };
-        let result = Self::from_parsed(url)?;
-        if !self.same_origin(&result) {
-            return Err(McpEndpointError::CrossOrigin);
-        }
-        Ok(result)
     }
 
     /// Canonical URL. It can contain a sensitive query and must not be logged.

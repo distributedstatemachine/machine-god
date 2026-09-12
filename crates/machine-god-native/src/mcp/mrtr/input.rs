@@ -1,6 +1,6 @@
 use super::{
-    Error, McpElicitationAction, McpElicitationMode, McpMrtrLimits, Result, bounds,
-    elicitation::McpElicitationRequest, sampling,
+    Error, McpElicitationAction, McpMrtrLimits, Result, bounds, elicitation::McpElicitationRequest,
+    sampling,
 };
 use crate::mcp::protocol::ProtocolVersion;
 use serde_json::value::RawValue;
@@ -62,7 +62,6 @@ pub struct McpInputRequired {
     raw: Box<RawValue>,
     requests: Box<[McpInputRequest]>,
     state: Option<Box<RawValue>>,
-    legacy: bool,
     limits: McpMrtrLimits,
     retained_bytes: usize,
 }
@@ -70,7 +69,6 @@ impl fmt::Debug for McpInputRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("McpInputRequired")
             .field("request_count", &self.requests.len())
-            .field("legacy", &self.legacy)
             .finish_non_exhaustive()
     }
 }
@@ -94,62 +92,9 @@ impl McpInputRequired {
             raw: super::raw(result),
             requests: requests.into_boxed_slice(),
             state: object.get("requestState").map(|value| super::raw(value)),
-            legacy: false,
             limits,
             retained_bytes,
         })
-    }
-    /// Admit data from the pinned -32042 URL-required error, only on 2025-11-25.
-    /// This flag describes wire behavior, not browser consent or retry proof.
-    /// # Errors
-    /// Older/modern protocols, duplicate IDs, forms and malformed URLs fail.
-    pub fn parse_legacy_url_required(
-        data: &RawValue,
-        version: ProtocolVersion,
-        limits: McpMrtrLimits,
-    ) -> Result<Self> {
-        let retained_bytes = bounds::admit(data, limits)?;
-        if version != ProtocolVersion::Legacy20251125 {
-            return Err(Error::UnsupportedMode);
-        }
-        let object = bounds::object(data)?;
-        let entries = bounds::array(bounds::required(&object, "elicitations")?)?;
-        if entries.is_empty() || entries.len() > limits.max_requests {
-            return Err(Error::InvalidRequest);
-        }
-        let mut requests = Vec::with_capacity(entries.len());
-        for params in entries {
-            let request = McpElicitationRequest::parse(params, version, limits)?;
-            if request.mode() != McpElicitationMode::Url {
-                return Err(Error::InvalidRequest);
-            }
-            let key = request.elicitation_id().ok_or(Error::InvalidRequest)?;
-            if key.is_empty() {
-                return Err(Error::InvalidRequest);
-            }
-            if requests
-                .iter()
-                .any(|prior: &McpInputRequest| prior.key() == key)
-            {
-                return Err(Error::InvalidRequest);
-            }
-            requests.push(McpInputRequest {
-                key: key.into(),
-                payload: McpInputRequestPayload::Elicitation(Arc::new(request)),
-            });
-        }
-        let required = Self {
-            raw: super::raw(data),
-            requests: requests.into_boxed_slice(),
-            state: None,
-            legacy: true,
-            limits,
-            retained_bytes,
-        };
-        // The pin renders and reparses this map before handing it to a UI.
-        // Rendering adds method/key overhead to the original error-data array.
-        required.render_requests_json()?;
-        Ok(required)
     }
     #[must_use]
     pub fn raw_json(&self) -> &RawValue {
@@ -162,10 +107,6 @@ impl McpInputRequired {
     #[must_use]
     pub fn request_state_json(&self) -> Option<&RawValue> {
         self.state.as_deref()
-    }
-    #[must_use]
-    pub const fn legacy_retry_without_responses(&self) -> bool {
-        self.legacy
     }
     #[must_use]
     pub const fn retained_byte_charge(&self) -> usize {

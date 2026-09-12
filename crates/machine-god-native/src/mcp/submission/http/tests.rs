@@ -8,7 +8,7 @@ fn head() -> McpSubmissionHttpHead {
         &McpEndpoint::parse("https://example.test:8443/mcp?secret=query").unwrap(),
         &[
             ("Authorization", b"Bearer secret-auth"),
-            ("Mcp-Protocol-Version", b"2025-11-25"),
+            ("Mcp-Protocol-Version", b"2026-07-28"),
         ],
     )
     .unwrap()
@@ -188,7 +188,7 @@ fn http_frame_is_fixed_before_admission_and_has_no_ndjson_newline() {
     let request = driver.request_bytes().to_vec();
     let body = fixture.wire();
     let expected = format!(
-        "POST /mcp?secret=query HTTP/1.1\r\nhost: example.test:8443\r\ncontent-type: application/json\r\naccept: application/json, text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\nauthorization: Bearer secret-auth\r\nmcp-protocol-version: 2025-11-25\r\n\r\n",
+        "POST /mcp?secret=query HTTP/1.1\r\nhost: example.test:8443\r\ncontent-type: application/json\r\naccept: application/json, text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\nauthorization: Bearer secret-auth\r\nmcp-protocol-version: 2026-07-28\r\n\r\n",
         body.len()
     );
     assert_eq!(&request[..expected.len()], expected.as_bytes());
@@ -306,8 +306,8 @@ fn maximal_resolved_headers_plus_protocol_fields_fit_the_transport_head() {
         512 * 1024
     );
     borrowed.extend([
-        ("mcp-protocol-version", b"2025-11-25".as_slice()),
-        ("mcp-session-id", b"session"),
+        ("mcp-protocol-version", b"2026-07-28".as_slice()),
+        ("mcp-method", b"tools/call"),
     ]);
     let head = McpSubmissionHttpHead::new(&endpoint, &borrowed).unwrap();
     fixture

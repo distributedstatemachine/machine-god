@@ -107,7 +107,7 @@ fn path_does_not_load_invalid_configuration() {
 #[test]
 fn configured_projection_preserves_order_and_only_metadata() {
     let fixture = Fixture::new();
-    fixture.seed(br#"{"mcp":{"local":{"command":"secret-command","args":["secret-argument"],"env":{"TOKEN":"secret-value"}},"remote":{"type":"http","url":"https://example.com/secret-path","enabled":false,"required":true},"events":{"type":"sse","url":"https://example.com/events"}}}"#);
+    fixture.seed(br#"{"mcp":{"local":{"command":"secret-command","args":["secret-argument"],"env":{"TOKEN":"secret-value"}},"remote":{"type":"http","url":"https://example.com/secret-path","enabled":false,"required":true},"events":{"type":"http","url":"https://example.com/events"}}}"#);
     let receipt = fixture.execute(McpCommand::List).unwrap();
     assert_eq!(
         format!("{receipt:?}"),
@@ -124,7 +124,7 @@ fn configured_projection_preserves_order_and_only_metadata() {
     assert_eq!(servers[1].transport, McpConfiguredTransport::Http);
     assert!(!servers[1].enabled);
     assert!(servers[1].required);
-    assert_eq!(servers[2].transport, McpConfiguredTransport::Sse);
+    assert_eq!(servers[2].transport, McpConfiguredTransport::Http);
     assert_eq!(
         format!("{:?}", servers[0]),
         "McpConfiguredServer { <redacted> }"

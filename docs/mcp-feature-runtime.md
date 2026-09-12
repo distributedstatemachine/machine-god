@@ -33,7 +33,7 @@ token wakes waiters outside that lock. No callbacks are invoked under that lock.
 All signals are observed during waits and again at each actual queued stdio
 write/suffix/completion or HTTP plaintext write/flush above TLS. Model context is
 revalidated at these checkpoints independently of caller-supplied tokens. HTTP
-connect/read lifetimes and any admitted legacy GET resumption retain the same
+connect/read lifetimes retain the same
 guard. Cancelling or dropping a polled exchange closes owned transport state;
 no request or acknowledged prefix is replayed. Malformed result admission also
 retires the exchange. Successful data is rechecked against authority/deadline
@@ -41,15 +41,13 @@ before return; it does not itself publish a generation or authorize continuation
 
 Modern HTTP derives its exact `Mcp-Method` from the prepared exchange and retains
 the selected endpoint/headers. The pin supplies `Mcp-Name` only for `tools/call`,
-so feature exchanges add neither name nor parameter projection headers. Legacy
-protocol/session header behavior is unchanged. Form and URL advertisements
+so feature exchanges add neither name nor parameter projection headers. Form and URL advertisements
 default to false; enabling data advertisements does not install a responder.
 
 HTTP feature response parsing uses the explicitly selected codec bounds, up to
 the existing 16 MiB/262,144-node hard limits, then restores ordinary peer bounds.
-Persistent legacy SSE readers retain the full bounded line/data capacity needed
-for later feature calls; actual response limits and independent notification
-budgets still apply. Stdio framing limits are immutable launch authority:
+Modern SSE response readers retain bounded line/data capacity; actual response
+limits and independent notification budgets still apply. Stdio framing limits are immutable launch authority:
 `wire_limits` exposes them, and insufficient capacity rejects a feature before
 sending. A full-feature launch selects 16 MiB, depth 64 and 262,144 nodes; callers
 may explicitly lower matching codec bounds, but neither side silently widens a
@@ -92,8 +90,7 @@ because they are absent from prompt argument metadata.
 
 The shared `McpClientMetadata::for_protocol` codec supplies exactly the same
 modern protocol version, client information, elicitation advertisement and
-optional progress token for tool and feature requests. Legacy metadata is absent
-unless a progress token exists. Advertised form/URL support is data, not evidence
+optional progress token for tool and feature requests. Advertised form/URL support is data, not evidence
 of a responder or consent. Continuation responses/state are not accepted through
 the ordinary request constructor.
 
@@ -142,7 +139,7 @@ Modern read/get `input_required` results become explicitly
 handoff byte/depth bounds are established here. A separate MRTR decoder must
 validate requests/state and obtain explicit input consent before continuation;
 this marker neither approves input nor labels the requests fully admitted.
-Legacy and completion `input_required` responses are rejected.
+Completion `input_required` responses are rejected.
 
 `McpFeatureCatalogLoad` binds a list exchange's server, family and version. Every
 page uses the existing `McpCatalogBuilder` cursor, identity, cache and aggregate

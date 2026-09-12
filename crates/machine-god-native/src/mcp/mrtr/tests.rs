@@ -25,7 +25,6 @@ fn closed_requests_and_exact_correlated_responses() {
     let required = input(r#"{"inputRequests":{"sample":{"method":"sampling/createMessage","params":{"messages":[],"maxTokens":8}},"roots":{"method":"roots/list"},"form":{"method":"elicitation/create","params":{"message":"Continue?","requestedSchema":{"type":"object","properties":{"confirmed":{"type":"boolean"}},"required":["confirmed"]}}},"url":{"method":"elicitation/create","params":{"mode":"url","message":"Authenticate","url":"https://example.test/auth"}}},"requestState":"opaque"}"#).unwrap();
     assert_eq!(required.requests().len(), 4);
     assert_eq!(required.request_state_json().unwrap().get(), "\"opaque\"");
-    assert!(!required.legacy_retry_without_responses());
     let response = json(
         r#"{"sample":{"role":"assistant","content":{"type":"text","text":"done"},"model":"fixture"},"roots":{"roots":[{"uri":"file:///tmp"}]},"form":{"action":"accept","content":{"confirmed":true}},"url":{"action":"accept"}}"#,
     );
@@ -252,37 +251,22 @@ fn patterns_formats_and_secret_field_classification_match_producer() {
 }
 
 #[test]
-fn legacy_modes_url_required_and_canonical_responses_stay_distinct() {
+fn modern_forms_urls_and_canonical_responses_stay_distinct() {
     let params = json(
         r#"{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string","enum":["a"],"enumNames":["A"]}}}}"#,
     );
     assert!(
-        McpElicitationRequest::parse(
-            &params,
-            ProtocolVersion::Legacy20250618,
-            McpMrtrLimits::default()
-        )
-        .is_ok()
+        McpElicitationRequest::parse(&params, ProtocolVersion::Modern, McpMrtrLimits::default())
+            .is_ok()
     );
     let explicit = json(&params.get().replacen('{', "{\"mode\":\"form\",", 1));
     assert!(
-        McpElicitationRequest::parse(
-            &explicit,
-            ProtocolVersion::Legacy20250618,
-            McpMrtrLimits::default()
-        )
-        .is_err()
+        McpElicitationRequest::parse(&explicit, ProtocolVersion::Modern, McpMrtrLimits::default())
+            .is_ok()
     );
-    let data = json(
-        r#"{"elicitations":[{"mode":"url","message":"Authorize","url":"https://example.test/connect","elicitationId":"url-1"}]}"#,
-    );
-    let required = McpInputRequired::parse_legacy_url_required(
-        &data,
-        ProtocolVersion::Legacy20251125,
-        McpMrtrLimits::default(),
-    )
-    .unwrap();
-    assert!(required.legacy_retry_without_responses());
+    let required = input(
+        r#"{"inputRequests":{"url-1":{"method":"elicitation/create","params":{"mode":"url","message":"Authorize","url":"https://example.test/connect"}}}}"#,
+    ).unwrap();
     assert_eq!(required.requests()[0].key(), "url-1");
     assert!(required.request_state_json().is_none());
     assert!(
@@ -292,16 +276,7 @@ fn legacy_modes_url_required_and_canonical_responses_stay_distinct() {
             .get()
             .contains("elicitation/create")
     );
-    for version in [
-        ProtocolVersion::Modern,
-        ProtocolVersion::Legacy20250618,
-        ProtocolVersion::Legacy20241105,
-    ] {
-        assert!(
-            McpInputRequired::parse_legacy_url_required(&data, version, McpMrtrLimits::default())
-                .is_err()
-        );
-    }
+    assert!(input(r#"{"elicitations":[{"mode":"url","message":"Authorize","url":"https://example.test/connect","elicitationId":"url-1"}]}"#).is_err());
     let response = required
         .validate_responses(&json(
             r#"{"url-1":{"action":"decline","content":{"ignored":"private"},"future":1e400}}"#,
@@ -317,15 +292,7 @@ fn legacy_modes_url_required_and_canonical_responses_stay_distinct() {
             .validate_responses(&json(r#"{"url-1":{"action":"accept","content":null}}"#))
             .is_err()
     );
-    let duplicate = json(&data.get().replace("]}", ", {\"mode\":\"url\",\"message\":\"Again\",\"url\":\"https://example.test\",\"elicitationId\":\"url-1\"}]}"));
-    assert!(
-        McpInputRequired::parse_legacy_url_required(
-            &duplicate,
-            ProtocolVersion::Legacy20251125,
-            McpMrtrLimits::default()
-        )
-        .is_err()
-    );
+    assert!(input(r#"{"inputRequests":{"url-1":{"method":"elicitation/create","params":{"mode":"url","message":"Authorize","url":"https://example.test"}},"url-1":{"method":"roots/list"}}}"#).is_err());
 }
 
 #[test]
@@ -467,29 +434,12 @@ fn standalone_and_nested_elicitation_limits_remain_distinct() {
     );
     assert!(elicitation(&params).is_err());
     assert!(input(&format!("{{\"inputRequests\":{{\"f\":{{\"method\":\"elicitation/create\",\"params\":{params}}}}}}}")).is_ok());
-    let legacy = json(&format!(
-        "{{\"elicitations\":[{{\"mode\":\"url\",\"message\":\"{}\",\"url\":\"https://example.test\",\"elicitationId\":\"id\"}}]}}",
+    let url = format!(
+        "{{\"mode\":\"url\",\"message\":\"{}\",\"url\":\"https://example.test\"}}",
         "m".repeat(8193)
-    ));
-    assert!(
-        McpInputRequired::parse_legacy_url_required(
-            &legacy,
-            ProtocolVersion::Legacy20251125,
-            McpMrtrLimits::default()
-        )
-        .is_err()
     );
-    let legacy = json(
-        r#"{"elicitations":[{"mode":"url","message":"","url":"https://example.test","elicitationId":""}]}"#,
-    );
-    assert!(
-        McpInputRequired::parse_legacy_url_required(
-            &legacy,
-            ProtocolVersion::Legacy20251125,
-            McpMrtrLimits::default()
-        )
-        .is_err()
-    );
+    assert!(elicitation(&url).is_err());
+    assert!(input(&format!("{{\"inputRequests\":{{\"url\":{{\"method\":\"elicitation/create\",\"params\":{url}}}}}}}")).is_ok());
 }
 
 #[test]

@@ -189,23 +189,15 @@ fn peer_reservation_attachment_rejects_wrong_id_and_replacement() {
 }
 
 #[test]
-fn modern_and_legacy_envelopes_use_only_selected_metadata() {
+fn modern_envelopes_use_only_selected_metadata() {
     let (fixture, schema) = fixture(r#"{"type":"object"}"#);
-    for (index, version) in [
-        ProtocolVersion::Modern,
-        ProtocolVersion::Legacy20251125,
-        ProtocolVersion::Legacy20250618,
-        ProtocolVersion::Legacy20241105,
-    ]
-    .into_iter()
-    .enumerate()
     {
-        let request = fixture.request(&format!("call-{index}"));
+        let request = fixture.request("call");
         let projection = project(
             &fixture,
             &schema,
             &request,
-            options(version, TransportKind::Stdio),
+            options(ProtocolVersion::Modern, TransportKind::Stdio),
         )
         .unwrap();
         assert_eq!(projection.schema().raw_json(), schema.raw_json());
@@ -216,11 +208,11 @@ fn modern_and_legacy_envelopes_use_only_selected_metadata() {
         assert_eq!(envelope["id"], 42);
         assert_eq!(envelope["params"]["name"], "secret-tool");
         assert_eq!(envelope["params"]["arguments"], json!({"secret":1}));
-        if version == ProtocolVersion::Modern {
+        {
             let meta = &envelope["params"]["_meta"];
             assert_eq!(
                 meta["io.modelcontextprotocol/protocolVersion"],
-                version.as_str()
+                ProtocolVersion::Modern.as_str()
             );
             assert_eq!(
                 meta["io.modelcontextprotocol/clientInfo"]["name"],
@@ -231,8 +223,6 @@ fn modern_and_legacy_envelopes_use_only_selected_metadata() {
                 json!({})
             );
             assert!(meta.get("progressToken").is_none());
-        } else {
-            assert!(envelope["params"].get("_meta").is_none());
         }
     }
 }
@@ -240,13 +230,13 @@ fn modern_and_legacy_envelopes_use_only_selected_metadata() {
 #[test]
 fn progress_and_elicitation_advertisements_do_not_add_continuation_payloads() {
     let (fixture, schema) = fixture(r#"{"type":"object"}"#);
-    for version in [ProtocolVersion::Modern, ProtocolVersion::Legacy20251125] {
+    {
         let request = fixture.request("call");
         let projection = project(
             &fixture,
             &schema,
             &request,
-            options(version, TransportKind::Stdio)
+            options(ProtocolVersion::Modern, TransportKind::Stdio)
                 .with_progress_token(17)
                 .with_elicitation(true, false),
         )
@@ -258,14 +248,10 @@ fn progress_and_elicitation_advertisements_do_not_add_continuation_payloads() {
         assert!(params.get("requestState").is_none());
         let meta = &params["_meta"];
         assert_eq!(meta["progressToken"], 17);
-        if version == ProtocolVersion::Modern {
-            assert_eq!(
-                meta["io.modelcontextprotocol/clientCapabilities"],
-                json!({"elicitation":{"form":{}}})
-            );
-        } else {
-            assert_eq!(meta, &json!({"progressToken":17}));
-        }
+        assert_eq!(
+            meta["io.modelcontextprotocol/clientCapabilities"],
+            json!({"elicitation":{"form":{}}})
+        );
     }
 }
 
@@ -374,7 +360,7 @@ fn typed_requests_still_require_concrete_one_shot_permission_admission() {
 }
 
 #[test]
-fn application_ids_and_transport_versions_are_checked() {
+fn application_ids_are_checked() {
     assert!(
         McpToolCallOptions::new(
             NegotiatedProtocol {
@@ -388,10 +374,10 @@ fn application_ids_and_transport_versions_are_checked() {
     assert!(
         McpToolCallOptions::new(
             NegotiatedProtocol {
-                transport: TransportKind::LegacySse,
+                transport: TransportKind::StreamableHttp,
                 version: ProtocolVersion::Modern
             },
-            1
+            -1
         )
         .is_err()
     );
@@ -399,11 +385,11 @@ fn application_ids_and_transport_versions_are_checked() {
         McpToolCallOptions::new(
             NegotiatedProtocol {
                 transport: TransportKind::Stdio,
-                version: ProtocolVersion::Legacy20250326
+                version: ProtocolVersion::Modern
             },
             1
         )
-        .is_err()
+        .is_ok()
     );
 }
 

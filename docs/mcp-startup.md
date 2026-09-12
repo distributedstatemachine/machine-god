@@ -54,11 +54,12 @@ separate runtime responsibility, not an arbitrary raw startup request.
 
 Every configured startup timeout retains its full positive `u32` millisecond
 domain. HTTP authentication refresh and DNS consume the initial attempt's budget;
-modern-to-legacy fallback gets its own configured attempt budget under the outer
-deadline. Eager tools discovery uses the selected negotiation attempt's remaining
-deadline. Legacy version retry timing stays with the peer's pinned protocol rules.
+any admitted same-modern HTTP retry retains that original attempt budget under
+the outer deadline. Eager tools discovery uses the negotiation attempt's remaining
+deadline. There is no legacy negotiation or protocol fallback.
 Stdio `restart_limit` bounds retries of complete connection plus eager tools
 startup; observed prior cleanup must settle before another full startup attempt.
+Negotiation failures are terminal and do not relaunch an unsupported server.
 `build_configured` has no aggregate startup deadline: each serial server and full
 restart keeps its configured attempt budget. `build` additionally bounds all
 attempts by its explicitly supplied outer deadline. Both retain cancellation.

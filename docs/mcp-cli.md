@@ -114,7 +114,7 @@ validates the entire response against the exact queued request.
 its existing whole-turn cancellation meaning. URL approval is explicit consent
 only: this presentation code does not launch a browser, infer authentication
 completion, or resubmit a tool call. Browser execution, exact continuation
-authority and legacy completion observations remain native responsibilities.
+authority remain native responsibilities. Legacy completion is not supported.
 The shared input queue owns stale-token, cancellation and principal checks.
 This presentation adapter does not itself activate a configured MCP server.
 
@@ -128,7 +128,7 @@ its constructors and decoder grant no process, network or credential authority.
 
 The codec supports stdio/local string or vector commands, ordered arguments,
 `environment` over `env` precedence, and vector-command over separate-arguments
-precedence. HTTP and SSE configurations retain exact URL strings, headers,
+precedence. HTTP configurations retain exact URL strings, headers,
 header-environment bindings and bearer-token environment names. OAuth retains
 resource, issuer, client ID, client-secret environment name, client metadata URL
 and scopes. Required/enabled flags and nonzero `u32` startup/operation timeouts

@@ -3,9 +3,7 @@ use crate::mcp::endpoint::McpEndpoint;
 
 fn base(version: ProtocolVersion) -> McpSubmissionHttpHead {
     let mut fields = vec![("Authorization", b"Bearer secret".as_slice())];
-    if version != ProtocolVersion::Legacy20250326 {
-        fields.push(("Mcp-Protocol-Version", version.as_str().as_bytes()));
-    }
+    fields.push(("Mcp-Protocol-Version", version.as_str().as_bytes()));
     McpSubmissionHttpHead::new(
         &McpEndpoint::parse("https://example.test/mcp").unwrap(),
         &fields,
@@ -185,7 +183,13 @@ fn http_header_selection_is_exact_single_use_and_protocol_bound() {
     assert!(
         project(&fixture, &schema, &request, modern)
             .unwrap()
-            .with_http_head(&base(ProtocolVersion::Legacy20251125))
+            .with_http_head(
+                &McpSubmissionHttpHead::new(
+                    &McpEndpoint::parse("https://example.test/mcp").unwrap(),
+                    &[("Mcp-Protocol-Version", b"2025-11-25")],
+                )
+                .unwrap()
+            )
             .is_err()
     );
     assert!(
@@ -232,29 +236,19 @@ fn http_header_selection_is_exact_single_use_and_protocol_bound() {
 }
 
 #[test]
-fn legacy_http_ignores_modern_annotations_and_has_exact_version_header_policy() {
+fn http_rejects_ineligible_header_annotations() {
     let (fixture, schema) = fixture(r#"{"type":"object","x-mcp-header":"not-modern-eligible"}"#);
-    for version in [
-        ProtocolVersion::Legacy20251125,
-        ProtocolVersion::Legacy20250618,
-        ProtocolVersion::Legacy20250326,
-    ] {
+    {
         let request = fixture.request("call");
         let projection = project(
             &fixture,
             &schema,
             &request,
-            options(version, TransportKind::StreamableHttp),
+            options(ProtocolVersion::Modern, TransportKind::StreamableHttp),
         )
         .unwrap()
-        .with_http_head(&base(version))
-        .unwrap();
-        let head = projection.http_head().unwrap();
-        assert!(!head.headers().any(|(name, _)| name == "mcp-method"
-            || name == "mcp-name"
-            || name.starts_with("mcp-param-")));
-        let prepared = prepare(&fixture, &request, projection).unwrap();
-        assert!(!prepared.data.wire.ends_with(b"\n"));
+        .with_http_head(&base(ProtocolVersion::Modern));
+        assert!(projection.is_err());
     }
 }
 

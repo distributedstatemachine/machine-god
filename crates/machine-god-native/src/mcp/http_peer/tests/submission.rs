@@ -252,7 +252,14 @@ fn tool_cancellation_during_partial_sse_releases_socket_without_replay() {
                 .unwrap();
             socket.flush().await.unwrap();
             cancellation.cancel();
-            assert_eq!(socket.read(&mut [0]).await.unwrap(), 0);
+            // Cancellation may drop the client before it consumes the partial
+            // response. macOS can then report reset rather than graceful EOF;
+            // neither outcome permits any further request bytes.
+            match socket.read(&mut [0]).await {
+                Ok(0) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                other => panic!("expected closed cancelled connection, got {other:?}"),
+            }
         };
         let client = async {
             let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())

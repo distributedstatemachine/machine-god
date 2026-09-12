@@ -35,7 +35,6 @@ pub struct McpConfiguredServer {
 pub enum McpConfiguredTransport {
     Stdio,
     Http,
-    Sse,
 }
 
 /// Runtime activation is independent of filesystem publication durability.
@@ -249,7 +248,6 @@ fn project_server(server: &McpServerConfig) -> McpConfiguredServer {
         transport: match server.transport() {
             McpTransportConfig::Stdio(_) => McpConfiguredTransport::Stdio,
             McpTransportConfig::Http(_) => McpConfiguredTransport::Http,
-            McpTransportConfig::Sse(_) => McpConfiguredTransport::Sse,
         },
         enabled: server.enabled(),
         required: server.required(),

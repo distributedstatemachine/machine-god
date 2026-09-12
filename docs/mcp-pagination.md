@@ -33,7 +33,7 @@ numeric TTLs, including negative fractions, mean zero. Nonnegative values must
 be mathematically integral and fit `u64`; decimal/exponent spellings are allowed.
 Lexemes are bounded to 4 KiB and absolute normalized/explicit exponents to one
 million, without expanding the number. The enclosing protocol wire admission
-still applies. Missing TTL is zero for modern MCP and indefinite for legacy MCP.
+still applies. Missing TTL is zero, so the catalog expires immediately.
 Absolute expiry saturates at `u64::MAX`; the catalog retains the earliest page
 expiry and the first page's receive timestamp. A public cache hint does not
 authorize cross-owner or cross-generation publication.

@@ -159,7 +159,7 @@ async fn server(
             .await?;
             (peer, catalogs, Arc::<[u8]>::from([]), Vec::new())
         }
-        McpTransportConfig::Http(remote) | McpTransportConfig::Sse(remote) => {
+        McpTransportConfig::Http(remote) => {
             #[cfg(feature = "mcp-http")]
             {
                 *attempts = 1;
@@ -280,6 +280,11 @@ async fn stdio_server(
             Ok(Ok(value)) => value,
             Ok(Err(error)) => {
                 last = stdio_error(error);
+                // An unsupported or malformed discovery response is terminal,
+                // not evidence that another modern process should be launched.
+                if matches!(error, McpPeerError::Negotiation(_)) {
+                    return Err(last);
+                }
                 continue;
             }
             Err(error) => return Err(error),
@@ -422,7 +427,7 @@ async fn remote_server(
         return Err(Error::Limit);
     }
     let custody = owner.completion.clone();
-    let options = http_options(startup, configuration, admitted, headers);
+    let options = http_options(startup, admitted, headers);
     let observer =
         Arc::new(move |completion| custody.record(NativeMcpPeerCompletion::Http(completion)));
     let timeout = Duration::from_millis(u64::from(configuration.startup_timeout_ms()));
@@ -485,7 +490,6 @@ fn lifetime_deadline(startup: &NativeMcpStartup, outer: Option<Instant>) -> Opti
 #[cfg(feature = "mcp-http")]
 fn http_options(
     startup: &NativeMcpStartup,
-    configuration: &McpServerConfig,
     admitted: crate::mcp::auth::McpAuthDestination,
     headers: crate::mcp::headers::McpResolvedHeaders,
 ) -> crate::mcp::http_peer::McpHttpPeerOptions {
@@ -495,11 +499,7 @@ fn http_options(
         trust: admitted.trust,
         headers,
         clock: startup.clock.clone(),
-        transport: if matches!(configuration.transport(), McpTransportConfig::Sse(_)) {
-            TransportKind::LegacySse
-        } else {
-            TransportKind::StreamableHttp
-        },
+        transport: TransportKind::StreamableHttp,
         lifetime: startup.lifetime,
     }
 }

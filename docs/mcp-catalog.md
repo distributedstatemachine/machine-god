@@ -75,7 +75,7 @@ decisions from the shared modern-HTTP input-header validator. This module does
 not duplicate its parser. Only `ExcludeModernHttpHeaders` decisions omit tools
 from exposure; exclusions retain their descriptor and reason, and do not reserve
 names. All descriptors undergo complete schema/field admission before this step.
-Standard stdio/legacy policies do not apply modern-HTTP exclusions.
+Standard stdio policies do not apply modern-HTTP exclusions.
 
 Missing/empty tool descriptions project as `MCP tool`. Search tags use the
 producer's ASCII tokenization/lowercasing, stable deduplication and 16-tag bound.

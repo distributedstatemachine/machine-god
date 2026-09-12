@@ -24,7 +24,7 @@ authority to retry or roll back a mutation.
 
 ## Available commands and receipts
 
-- `/mcp` and `/mcp list` show configured server names, stdio/HTTP/SSE transport,
+- `/mcp` and `/mcp list` show configured server names, stdio/HTTP transport,
   enabled status and required status. These are explicitly **configured, not
   connected** observations, not a health check or executable catalog.
 - `/mcp path` shows the selected native `mcp.json` path with terminal controls

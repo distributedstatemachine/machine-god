@@ -40,15 +40,12 @@ literal private-looking object keys are not rounded or coerced.
 
 ## Elicitation forms and URLs
 
-`McpElicitationRequest::parse` also admits direct elicitation parameters for
-modern MCP, `2025-11-25`, and `2025-06-18`. The oldest supported elicitation
-revision allows only omitted-mode forms, enum/enumNames choices and primitive
-fields; explicit mode, patterns, titled oneOf and multi-select arrays fail.
-Other protocol revisions are not silently treated as one of these wires.
+`McpElicitationRequest::parse` admits modern elicitation parameters only.
+Omitted-mode forms, explicit form/URL modes, patterns, titled oneOf and
+multi-select arrays follow the same modern schema grammar.
 Standalone parsing uses the pinned elicitation ceilings of 8 KiB messages,
 64 fields/options and 1 KiB labels. Nested modern MRTR explicitly inherits
-its 64 KiB string/message/label and 256 field/option bounds. Legacy URL-required
-errors retain the standalone 8 KiB message preflight before request-map admission.
+its 64 KiB string/message/label and 256 field/option bounds.
 
 Forms expose typed fields and choices, original schemas/defaults, names,
 titles, descriptions and field-level validation. The restricted form language
@@ -80,8 +77,8 @@ or HTTP with the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 The original URL and decoded host are retained without browser/network effects;
 alternate numeric loopback spellings are not normalized into allowed hosts.
 Punycode and non-ASCII hosts are classified for a warning, not denied merely
-because of their spelling. Modern URL parameters reject elicitationId;
-`2025-11-25` requires it. Accepted URL responses cannot contain content.
+because of their spelling. URL parameters reject elicitationId.
+Accepted URL responses cannot contain content.
 `url_host_bytes()` preserves decoded non-UTF-8 bytes; `url_host()` is available
 only when those bytes are UTF-8. The pinned structural URI parser is deliberately
 not full RFC/hostname admission: invalid percent escapes remain literal, and
@@ -89,12 +86,9 @@ its 255-byte decoding buffer applies only to hosts containing a percent sign.
 Unescaped hosts remain bounded by the original URL limit. These quirks are inert
 compatibility data, not permission to launch a browser against an unchecked URL.
 
-`parse_legacy_url_required` admits the data of `2025-11-25` error `-32042`
-only. Its nonempty URL request list rejects duplicate IDs and forms.
-`legacy_retry_without_responses()` describes the originating wire, not a retry
-decision. Browser acceptance, matching completion notifications or explicit
-manual retry, and exact context/generation custody belong to the native owner.
-The codec does not turn an accepted URL action into completion proof.
+Legacy URL-error decoding and retry-without-responses APIs are absent. Error
+`-32042` remains a protocol failure and cannot create input custody. The codec
+does not turn an accepted URL action into completion proof.
 
 ## Independent bounds and ownership
 
@@ -131,8 +125,8 @@ The [native archived executor](mcp-tool-execution.md#consented-modern-input-cont
 separately composes correlated modern form and explicitly configured URL requests
 with the real typed prompt inbox, original native proof custody and fresh bounded
 submissions. Its private
-round allocation is not obtainable from these public codecs. Legacy completion
-retry, sampling and roots remain outside that modern continuation path.
+round allocation is not obtainable from these public codecs. Sampling and roots
+remain outside that continuation path.
 
 ## Native URL recovery
 

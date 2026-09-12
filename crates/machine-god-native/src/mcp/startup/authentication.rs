@@ -75,7 +75,7 @@ impl NativeMcpStartup {
     pub fn authentication_config(&self, server: &str) -> Result<McpAuthConfig> {
         let configuration = self.configuration.server(server).ok_or(Error::Invalid)?;
         let remote = match configuration.transport() {
-            McpTransportConfig::Http(remote) | McpTransportConfig::Sse(remote) => remote,
+            McpTransportConfig::Http(remote) => remote,
             McpTransportConfig::Stdio(_) => return Err(Error::Invalid),
         };
         self.auth_config(remote, self.authentication_selection(server))

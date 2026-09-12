@@ -235,11 +235,6 @@ fn input_required_retains_exact_context_and_is_not_a_complete_result() {
             .get()
             .contains("9007199254740993.0")
     );
-    assert!(
-        decoder
-            .admit(context(None, ProtocolVersion::Legacy20251125), response)
-            .is_err()
-    );
     assert!(admit(r#"{"resultType":"input_required"}"#, None).is_err());
 }
 
@@ -247,8 +242,8 @@ fn input_required_retains_exact_context_and_is_not_a_complete_result() {
 fn protocol_failures_remain_distinct_and_do_not_expose_data_in_debug() {
     let decoder = NativeMcpToolResultAdmission::new(McpToolResultLimits::default()).unwrap();
     let response = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-32042,"message":"secret-message","data":{"unknown":9007199254740993.0}}}"#;
-    for version in [ProtocolVersion::Modern, ProtocolVersion::Legacy20251125] {
-        let selected = context(None, version);
+    {
+        let selected = context(None, ProtocolVersion::Modern);
         assert!(!format!("{selected:?}").contains("secret-server"));
         let disposition = decoder.admit(selected, response).unwrap();
         assert!(!format!("{disposition:?}").contains("secret-message"));
@@ -262,24 +257,17 @@ fn protocol_failures_remain_distinct_and_do_not_expose_data_in_debug() {
 }
 
 #[test]
-fn only_the_pinned_legacy_url_error_enters_input_custody() {
+fn legacy_url_error_remains_a_protocol_failure_without_input_custody() {
     let decoder = NativeMcpToolResultAdmission::new(McpToolResultLimits::default()).unwrap();
     let response = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-32042,"message":"Authorize","data":{"elicitations":[{"mode":"url","message":"Continue","url":"https://example.test/connect","elicitationId":"url-1"}]}}}"#;
-    let McpToolResponseDisposition::InputRequired(custody) = decoder
-        .admit(context(None, ProtocolVersion::Legacy20251125), response)
+    let McpToolResponseDisposition::ProtocolFailure(failure) = decoder
+        .admit(context(None, ProtocolVersion::Modern), response)
         .unwrap()
     else {
         panic!()
     };
-    assert!(custody.required().legacy_retry_without_responses());
-    assert_eq!(custody.required().requests()[0].key(), "url-1");
-    assert!(custody.required().request_state_json().is_none());
-    for version in [ProtocolVersion::Modern, ProtocolVersion::Legacy20250618] {
-        assert!(matches!(
-            decoder.admit(context(None, version), response),
-            Ok(McpToolResponseDisposition::ProtocolFailure(_))
-        ));
-    }
+    assert_eq!(failure.code(), -32042);
+    assert!(failure.raw_json().get().contains("elicitationId"));
 }
 
 #[test]

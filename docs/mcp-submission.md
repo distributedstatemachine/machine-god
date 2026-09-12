@@ -79,7 +79,7 @@ review must still receive the schema and its required-schema flag.
 
 The typed serializer adds modern namespaced protocol version, machine-god client
 identity and explicitly selected elicitation capability metadata, plus an optional
-progress token. Legacy requests contain only progress metadata when selected.
+progress token. Metadata is always present on typed modern requests.
 Advertising a capability does not provide consent or an input responder. IDs must
 be nonnegative and reserved by the owning peer; unsupported protocol/transport
 combinations are rejected. There is no arbitrary metadata or continuation-byte
@@ -92,7 +92,7 @@ before permission. Header annotations must occur only on declared properties,
 use unique case-insensitive token suffixes and an exact string/integer/boolean
 type, without reference/union ambiguity. Nested declared properties are supported;
 annotations in arrays, conditionals, definitions or other locations reject modern
-HTTP eligibility. Legacy transports do not interpret these annotations.
+HTTP eligibility. Stdio does not project HTTP headers.
 
 Missing/null optional header values produce no field. After ordinary schema
 validation fails, only optional top-level annotated nulls may be omitted from a

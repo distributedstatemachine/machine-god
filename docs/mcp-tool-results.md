@@ -10,7 +10,7 @@ the execution owner must retain and revalidate its actual turn and route.
 The complete duplicate-free JSON-RPC envelope is bounded before raw-field
 admission. Null/foreign IDs, request envelopes, mixed result/error fields,
 malformed content and unknown result types are rejected. Missing `resultType`
-remains a complete result under both modern and legacy protocols, as at the pin.
+remains a complete modern result, as at the pin.
 
 ## Distinct outcomes
 
@@ -24,8 +24,8 @@ remains a complete result under both modern and legacy protocols, as at the pin.
   the message, configuration, authentication identity or response payload.
 - `InputRequired` owns typed validated requests/state together with exact
   response provenance. Modern input-required data never becomes successful tool
-  output. The pinned legacy 2025-11 URL-required error can enter the same custody;
-  malformed legacy extension data remains a protocol failure.
+  output. Legacy URL-required errors remain protocol failures, regardless of
+  their extension data; they never enter input custody.
 
 Input custody is not cloneable or serializable. Its read-only getters and
 consuming `into_parts` expose data, never a write grant. Native continuation

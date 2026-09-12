@@ -39,7 +39,7 @@ impl McpToolCallOptions {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(super) fn metadata(self) -> Option<McpClientMetadata> {
+    pub(super) fn metadata(self) -> McpClientMetadata {
         McpClientMetadata::for_protocol(
             self.protocol.version,
             self.progress_token,
@@ -118,7 +118,7 @@ impl McpToolRequest {
     }
 
     /// Validates the exact immutable runtime schema and canonical invocation,
-    /// then encodes pinned modern/legacy metadata without acquiring a slot.
+    /// then encodes modern metadata without acquiring a slot.
     /// Optional top-level header nulls are omitted only for validation fallback;
     /// the transmitted and permission-reviewed arguments remain unchanged.
     ///
@@ -309,8 +309,8 @@ struct Envelope<'a> {
 struct Params<'a> {
     name: &'a str,
     arguments: &'a RawValue,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    metadata: Option<McpClientMetadata>,
+    #[serde(rename = "_meta")]
+    metadata: McpClientMetadata,
 }
 
 fn validate_arguments(schema: &McpSchema, value: &Value, bytes: &[u8]) -> Result<()> {

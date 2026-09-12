@@ -400,20 +400,10 @@ fn template_operators_literal_percent_bytes_and_shared_work_match_the_pin() {
 }
 
 #[test]
-fn legacy_metadata_and_modern_advertisements_reuse_the_tool_codec() {
+fn modern_advertisements_reuse_the_tool_codec() {
     use crate::mcp::protocol::McpClientMetadata;
-    let legacy = ProtocolVersion::Legacy20250618;
-    assert!(McpClientMetadata::for_protocol(legacy, None, true, true).is_none());
-    assert_eq!(
-        serde_json::to_string(
-            &McpClientMetadata::for_protocol(legacy, Some(9), true, true).unwrap()
-        )
-        .unwrap(),
-        r#"{"progressToken":9}"#
-    );
     let metadata =
-        McpClientMetadata::for_protocol(ProtocolVersion::Modern, Some(u64::MAX), true, true)
-            .unwrap();
+        McpClientMetadata::for_protocol(ProtocolVersion::Modern, Some(u64::MAX), true, true);
     let text = serde_json::to_string(&metadata).unwrap();
     assert!(text.contains("18446744073709551615"));
     let value = machine_god_core::json::from_str(&text).unwrap();
@@ -426,12 +416,12 @@ fn legacy_metadata_and_modern_advertisements_reuse_the_tool_codec() {
         &request,
         "srv",
         &[],
-        options(legacy, 7),
+        options(ProtocolVersion::Modern, 7),
         None,
         McpFeatureCodecLimits::default(),
     )
     .unwrap();
-    assert!(!exchange.wire_json().get().contains("_meta"));
+    assert!(exchange.wire_json().get().contains("_meta"));
 }
 
 #[test]

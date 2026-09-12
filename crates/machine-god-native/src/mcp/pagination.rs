@@ -322,13 +322,7 @@ impl McpCatalogBuilder {
         if raw.items.len() != items.len() {
             return Err(E::InvalidResponse);
         }
-        let ttl = raw
-            .ttl
-            .unwrap_or(if self.version == ProtocolVersion::Modern {
-                0
-            } else {
-                u64::MAX
-            });
+        let ttl = raw.ttl.unwrap_or(0);
         let (identity_field, max_identity) = self.kind.identity();
         for (item, raw) in items.iter().zip(raw.items) {
             let identity = item

@@ -82,26 +82,17 @@ fn empty_cursor_is_an_outstanding_page_not_a_completed_catalog() {
 }
 
 #[test]
-fn missing_ttl_matches_modern_immediate_and_legacy_indefinite() {
-    for version in [
-        ProtocolVersion::Modern,
-        ProtocolVersion::Legacy20251125,
-        ProtocolVersion::Legacy20250618,
-        ProtocolVersion::Legacy20250326,
-        ProtocolVersion::Legacy20241105,
+fn missing_ttl_expires_immediately() {
+    for kind in [
+        McpCatalogKind::Tools,
+        McpCatalogKind::Resources,
+        McpCatalogKind::Prompts,
     ] {
-        let mut b = builder(McpCatalogKind::Prompts, version);
-        append(&mut b, json!({"prompts":[]}), None, 30).unwrap();
+        let mut b = builder(kind, ProtocolVersion::Modern);
+        append(&mut b, json!({kind.field():[]}), None, 30).unwrap();
         let catalog = b.finish().unwrap();
-        assert_eq!(
-            catalog.expires_at_ms(),
-            if version == ProtocolVersion::Modern {
-                30
-            } else {
-                u64::MAX
-            }
-        );
-        assert_eq!(catalog.version(), version);
+        assert_eq!(catalog.expires_at_ms(), 30);
+        assert_eq!(catalog.version(), ProtocolVersion::Modern);
     }
 }
 

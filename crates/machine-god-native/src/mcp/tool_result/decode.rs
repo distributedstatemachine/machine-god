@@ -57,7 +57,7 @@ impl NativeMcpToolResultAdmission {
             .ok_or(Error::InvalidResponse)?;
         let object = fields::object(result).map_err(|_| Error::InvalidResponse)?;
         if kind == RpcKind::Error {
-            return self.protocol_failure(context, result, &object);
+            return self.protocol_failure(result, &object);
         }
         match fields::optional(&object, "resultType", 32)
             .map_err(|_| Error::InvalidResponse)?
@@ -132,7 +132,6 @@ impl NativeMcpToolResultAdmission {
 
     fn protocol_failure(
         &self,
-        context: McpToolResponseContext,
         raw: &RawValue,
         object: &fields::Object<'_>,
     ) -> Result<McpToolResponseDisposition> {
@@ -145,19 +144,6 @@ impl NativeMcpToolResultAdmission {
             .ok_or(Error::InvalidResponse)?;
         if let Some(data) = object.get("data") {
             content::compact_size(data, 128 * 1024).map_err(content_error)?;
-            if context.protocol().version == ProtocolVersion::Legacy20251125 && code == -32042 {
-                // Only the pinned legacy URL-required shape enters input custody.
-                // Malformed extension data remains a protocol failure, as upstream.
-                if let Ok(required) = McpInputRequired::parse_legacy_url_required(
-                    data,
-                    context.protocol().version,
-                    McpMrtrLimits::default(),
-                ) {
-                    return Ok(McpToolResponseDisposition::InputRequired(Box::new(
-                        McpToolInputRequired { context, required },
-                    )));
-                }
-            }
         }
         Ok(McpToolResponseDisposition::ProtocolFailure(
             McpToolProtocolFailure {

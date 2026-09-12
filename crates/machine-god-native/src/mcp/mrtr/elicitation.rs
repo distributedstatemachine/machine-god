@@ -30,7 +30,6 @@ pub struct McpElicitationRequest {
     form: Option<McpFormSchema>,
     url: Option<Box<str>>,
     host: Option<Box<[u8]>>,
-    id: Option<Box<str>>,
     limits: McpMrtrLimits,
     retained_bytes: usize,
 }
@@ -43,7 +42,7 @@ impl fmt::Debug for McpElicitationRequest {
     }
 }
 impl McpElicitationRequest {
-    /// Admit inert elicitation parameters, including direct legacy form requests.
+    /// Admit inert modern elicitation parameters.
     /// # Errors
     /// Unsupported revision/mode, unsafe form fields, invalid URL and bounds fail.
     pub fn parse(
@@ -83,20 +82,12 @@ impl McpElicitationRequest {
         form_bounds: bounds::FormBounds,
         retained_bytes: usize,
     ) -> Result<Self> {
-        if !matches!(
-            version,
-            ProtocolVersion::Modern
-                | ProtocolVersion::Legacy20250618
-                | ProtocolVersion::Legacy20251125
-        ) {
+        if version != ProtocolVersion::Modern {
             return Err(Error::UnsupportedMode);
         }
         let fields = bounds::object(params)?;
         let mode = match fields.get("mode") {
             None => McpElicitationMode::Form,
-            Some(_) if version == ProtocolVersion::Legacy20250618 => {
-                return Err(Error::UnsupportedMode);
-            }
             Some(raw) => match bounds::text(raw, limits.max_name_bytes)?.as_ref() {
                 "form" => McpElicitationMode::Form,
                 "url" => McpElicitationMode::Url,
@@ -104,15 +95,13 @@ impl McpElicitationRequest {
             },
         };
         let message = bounds::text(bounds::required(&fields, "message")?, form_bounds.message)?;
-        let (form, url, host, id) = match mode {
+        let (form, url, host) = match mode {
             McpElicitationMode::Form => (
                 Some(McpFormSchema::parse_admitted(
                     bounds::required(&fields, "requestedSchema")?,
-                    version,
                     limits,
                     form_bounds,
                 )?),
-                None,
                 None,
                 None,
             ),
@@ -122,18 +111,10 @@ impl McpElicitationRequest {
                 }
                 let url = bounds::text(bounds::required(&fields, "url")?, limits.max_string_bytes)?;
                 let host = strings::url_host(&url)?;
-                let id = if version == ProtocolVersion::Legacy20251125 {
-                    Some(bounds::text(
-                        bounds::required(&fields, "elicitationId")?,
-                        limits.max_name_bytes,
-                    )?)
-                } else {
-                    if fields.contains_key("elicitationId") {
-                        return Err(Error::InvalidRequest);
-                    }
-                    None
-                };
-                (None, Some(url), Some(host), id)
+                if fields.contains_key("elicitationId") {
+                    return Err(Error::InvalidRequest);
+                }
+                (None, Some(url), Some(host))
             }
         };
         Ok(Self {
@@ -144,7 +125,6 @@ impl McpElicitationRequest {
             form,
             url,
             host,
-            id,
             limits,
             retained_bytes,
         })
@@ -187,10 +167,6 @@ impl McpElicitationRequest {
     #[must_use]
     pub fn url_host_bytes(&self) -> Option<&[u8]> {
         self.host.as_deref()
-    }
-    #[must_use]
-    pub fn elicitation_id(&self) -> Option<&str> {
-        self.id.as_deref()
     }
     #[must_use]
     pub fn host_classification(&self) -> Option<McpHostClassification> {

@@ -3,10 +3,7 @@ use super::{
     bounds::{self, Object},
     strings,
 };
-use crate::mcp::{
-    protocol::ProtocolVersion,
-    schema::pattern::{Pattern, PatternError},
-};
+use crate::mcp::schema::pattern::{Pattern, PatternError};
 use serde_json::value::RawValue;
 use std::{cmp::Ordering, fmt};
 
@@ -210,7 +207,6 @@ impl McpFormSchema {
     }
     pub(super) fn parse_admitted(
         raw: &RawValue,
-        version: ProtocolVersion,
         limits: McpMrtrLimits,
         form_bounds: bounds::FormBounds,
     ) -> Result<Self> {
@@ -261,7 +257,6 @@ impl McpFormSchema {
                 name.into_boxed_str(),
                 raw,
                 required,
-                version,
                 limits,
                 form_bounds,
             )?);
@@ -296,7 +291,6 @@ fn parse_field(
     name: Box<str>,
     raw: &RawValue,
     required: bool,
-    version: ProtocolVersion,
     limits: McpMrtrLimits,
     form_bounds: bounds::FormBounds,
 ) -> Result<McpFormField> {
@@ -312,7 +306,7 @@ fn parse_field(
             "number" => McpFormFieldKind::Number,
             "integer" => McpFormFieldKind::Integer,
             "boolean" => McpFormFieldKind::Boolean,
-            "array" if version != ProtocolVersion::Legacy20250618 => McpFormFieldKind::MultiSelect,
+            "array" => McpFormFieldKind::MultiSelect,
             _ => return Err(Error::UnsupportedSchema),
         };
     let mut field = McpFormField {
@@ -334,7 +328,7 @@ fn parse_field(
     };
     match kind {
         McpFormFieldKind::String => {
-            string_constraints(&mut field, &schema, version, limits, form_bounds)?;
+            string_constraints(&mut field, &schema, limits, form_bounds)?;
         }
         McpFormFieldKind::Number | McpFormFieldKind::Integer => {
             number_constraints(&mut field, &schema, limits)?;
@@ -356,7 +350,6 @@ fn parse_field(
 fn string_constraints(
     field: &mut McpFormField,
     schema: &Object<'_>,
-    version: ProtocolVersion,
     limits: McpMrtrLimits,
     form_bounds: bounds::FormBounds,
 ) -> Result<()> {
@@ -371,15 +364,9 @@ fn string_constraints(
     }
     field.pattern = bounds::optional_text(schema, "pattern", limits.max_pattern_bytes)?;
     if let Some(pattern) = &field.pattern {
-        if version == ProtocolVersion::Legacy20250618 {
-            return Err(Error::UnsupportedSchema);
-        }
         compile(pattern, limits)?;
     }
     if let Some(choices) = schema.get("oneOf") {
-        if version == ProtocolVersion::Legacy20250618 {
-            return Err(Error::UnsupportedSchema);
-        }
         field.choices = titled_choices(choices, limits, form_bounds)?;
         field.kind = McpFormFieldKind::SingleSelect;
     } else if let Some(choices) = schema.get("enum") {

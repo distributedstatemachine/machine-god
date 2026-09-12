@@ -20,7 +20,7 @@ fn configured_receipts_are_metadata_only_and_terminal_safe() {
             McpConfiguredServer {
                 enabled: false,
                 required: true,
-                ..row("legacy", McpConfiguredTransport::Sse)
+                ..row("disabled", McpConfiguredTransport::Http)
             },
         ]
         .into_boxed_slice(),
@@ -29,7 +29,7 @@ fn configured_receipts_are_metadata_only_and_terminal_safe() {
     assert!(text.contains("3 configured servers (configured, not connected)"));
     assert!(text.contains("stdio; enabled; optional"));
     assert!(text.contains("http; enabled; optional"));
-    assert!(text.contains("sse; disabled; required"));
+    assert!(text.contains("http; disabled; required"));
     assert!(!text.contains('\u{1b}'));
     assert!(text.contains("name\\u001b[31m\\n"));
 }

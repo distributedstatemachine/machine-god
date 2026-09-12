@@ -41,13 +41,6 @@ fn insecure_or_normalized_loopback_aliases_are_not_admitted() {
     let explicit_default = McpEndpoint::parse("http://LOCALHOST:80/mcp").unwrap();
     assert_eq!(explicit_default.port(), 80);
     assert_eq!(explicit_default.as_str(), "http://localhost/mcp");
-    assert_eq!(
-        explicit_default
-            .resolve_message_endpoint("messages")
-            .unwrap()
-            .as_str(),
-        "http://localhost/messages"
-    );
 }
 
 #[test]
@@ -74,45 +67,15 @@ fn invalid_urls_and_silent_parser_repairs_are_rejected() {
 }
 
 #[test]
-fn pinned_sse_endpoint_resolution_is_same_origin() {
-    let base = McpEndpoint::parse("https://example.test/events/sse").unwrap();
-    assert_eq!(
-        base.resolve_message_endpoint("../messages?session=one")
-            .unwrap()
-            .as_str(),
-        "https://example.test/messages?session=one"
-    );
-    for event in [
+fn endpoint_origin_comparison_is_exact() {
+    let base = McpEndpoint::parse("https://example.test/rpc").unwrap();
+    for value in [
         "https://other.test/messages",
-        "//other.test/messages",
         "https://example.test:444/messages",
-        "http://example.test:443/messages",
-        "https://user@example.test/messages",
-        "//@example.test/messages",
-        "https://example.test/messages#fragment",
-        "#fragment",
-        "\\other.test/messages",
-        "javascript:alert(1)",
-        "https:example.test/messages",
-        "https:///example.test/messages",
-        "",
     ] {
-        assert!(base.resolve_message_endpoint(event).is_err(), "{event}");
+        assert!(!base.same_origin(&McpEndpoint::parse(value).unwrap()));
     }
-    assert_eq!(
-        base.resolve_message_endpoint("//EXAMPLE.test:443/messages")
-            .unwrap()
-            .as_str(),
-        "https://example.test/messages"
-    );
-    let local = McpEndpoint::parse("http://127.0.0.1:4321/sse").unwrap();
-    assert_eq!(
-        local
-            .resolve_message_endpoint("http://127.0.0.1:4321/messages")
-            .unwrap()
-            .as_str(),
-        "http://127.0.0.1:4321/messages"
-    );
+    assert!(base.same_origin(&McpEndpoint::parse("https://EXAMPLE.test:443/messages").unwrap()));
 }
 
 #[test]
@@ -127,22 +90,14 @@ fn endpoint_budgets_are_inclusive_before_and_after_canonicalization() {
         McpEndpoint::parse(&(exact + "a")).unwrap_err(),
         McpEndpointError::Limit
     );
-    let base = McpEndpoint::parse(prefix).unwrap();
-    assert!(
-        base.resolve_message_endpoint(&"a".repeat(MAX_ENDPOINT_EVENT_BYTES))
-            .is_ok()
-    );
-    assert_eq!(
-        base.resolve_message_endpoint(&"a".repeat(MAX_ENDPOINT_EVENT_BYTES + 1))
-            .unwrap_err(),
-        McpEndpointError::Limit
-    );
     // Valid UTF-8 can expand threefold when canonicalized as an HTTP URI.
-    assert_eq!(
-        base.resolve_message_endpoint(&"é".repeat(MAX_ENDPOINT_EVENT_BYTES / 2))
-            .unwrap_err(),
-        McpEndpointError::Limit
+    let unicode = format!(
+        "{prefix}{}",
+        "é".repeat((MAX_CONFIGURED_ENDPOINT_BYTES - prefix.len()) / 2)
     );
+    let expanded = McpEndpoint::parse(&unicode).unwrap();
+    assert!(expanded.as_str().len() > unicode.len());
+    assert!(expanded.as_str().len() <= MAX_CANONICAL_ENDPOINT_BYTES);
 }
 
 #[test]
@@ -151,9 +106,7 @@ fn debug_errors_and_origin_checks_do_not_expose_queries() {
     let b = McpEndpoint::parse("https://EXAMPLE.test:443/b?other=private").unwrap();
     assert!(a.same_origin(&b));
     assert!(!format!("{a:?}").contains("private"));
-    let error = a
-        .resolve_message_endpoint("https://other.test/?secret=private")
-        .unwrap_err();
-    assert_eq!(error, McpEndpointError::CrossOrigin);
+    let error = McpEndpoint::parse("https://user:private@other.test/?secret=private").unwrap_err();
+    assert_eq!(error, McpEndpointError::Invalid);
     assert!(!format!("{error:?}: {error}").contains("private"));
 }

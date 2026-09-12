@@ -69,7 +69,6 @@ fn configured(text: &mut BoundedOutput, servers: &[McpConfiguredServer]) -> Resu
             match server.transport {
                 McpConfiguredTransport::Stdio => "stdio",
                 McpConfiguredTransport::Http => "http",
-                McpConfiguredTransport::Sse => "sse",
             },
             if server.enabled {
                 "enabled"

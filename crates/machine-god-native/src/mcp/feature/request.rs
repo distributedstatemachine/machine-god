@@ -319,7 +319,7 @@ struct Envelope<'a> {
 struct Params<'a> {
     request: &'a McpFeatureRequest,
     cursor: Option<&'a str>,
-    metadata: Option<McpClientMetadata>,
+    metadata: McpClientMetadata,
 }
 impl Serialize for Params<'_> {
     fn serialize<S: serde::Serializer>(
@@ -328,9 +328,7 @@ impl Serialize for Params<'_> {
     ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(None)?;
-        if let Some(metadata) = &self.metadata {
-            map.serialize_entry("_meta", metadata)?;
-        }
+        map.serialize_entry("_meta", &self.metadata)?;
         let request = self.request;
         match request.action() {
             Action::ResourceList | Action::ResourceTemplates | Action::PromptList => {

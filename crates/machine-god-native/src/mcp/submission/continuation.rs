@@ -178,8 +178,8 @@ struct Envelope<'a> {
 struct Params<'a> {
     name: &'a str,
     arguments: &'a RawValue,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    metadata: Option<McpClientMetadata>,
+    #[serde(rename = "_meta")]
+    metadata: McpClientMetadata,
     #[serde(rename = "inputResponses")]
     responses: &'a RawValue,
     #[serde(rename = "requestState", skip_serializing_if = "Option::is_none")]

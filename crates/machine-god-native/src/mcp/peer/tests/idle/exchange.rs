@@ -90,8 +90,7 @@ fn later_primary_cannot_extend_inherited_reply_deadline() {
                 context(&mut peer),
                 writer,
                 &RpcId::Integer(1),
-                timer.at(3000),
-                false
+                timer.at(3000)
             )
             .await,
             Err(McpPeerError::Deadline)
