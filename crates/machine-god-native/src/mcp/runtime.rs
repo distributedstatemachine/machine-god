@@ -3,6 +3,7 @@
 mod call;
 mod candidate;
 mod executor;
+mod features;
 mod peer;
 mod route;
 #[cfg(test)]
@@ -14,6 +15,7 @@ pub use candidate::{NativeMcpRuntimeCandidate, NativeMcpServerCandidate};
 pub use executor::{
     NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy, NativeMcpToolExecutor,
 };
+pub use features::{NativeMcpFeatureError, NativeMcpFeatureResult, NativeMcpHumanCommand};
 pub use peer::{NativeMcpOwnedPeer, NativeMcpPeerCompletion};
 
 use super::{context::NativeMcpContexts, submission::McpSubmissionRegistry};
@@ -108,6 +110,7 @@ pub struct NativeMcpRuntime {
     identity: Arc<()>,
     executor: Arc<dyn NativeMcpToolExecutor>,
     policy: NativeMcpToolExecutionPolicy,
+    feature_operations: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl fmt::Debug for NativeMcpRuntime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -133,6 +136,7 @@ impl NativeMcpRuntime {
             identity: Arc::new(()),
             executor,
             policy: policy.validate()?,
+            feature_operations: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 

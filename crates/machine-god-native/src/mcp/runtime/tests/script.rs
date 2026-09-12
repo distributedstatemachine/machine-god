@@ -1,4 +1,5 @@
 use super::*;
+mod feature;
 use crate::mcp::submission::{
     McpPendingToolReservation, McpSubmission, McpSubmissionRuntime, McpSubmissionWriter,
     McpToolReservation,

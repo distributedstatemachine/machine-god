@@ -76,7 +76,7 @@ pub(super) struct Publication {
     pub servers: Vec<Arc<ServerRoute>>,
     pub tools: BTreeMap<ToolName, Arc<ToolRoute>>,
     pub snapshot: McpToolCatalogSnapshot,
-    pub retired: AtomicBool,
+    pub retired: Arc<AtomicBool>,
     pub descriptors: McpCatalogCandidate,
     pub retained_bytes: usize,
 }
@@ -212,7 +212,7 @@ impl NativeMcpRuntime {
                 servers: owners,
                 tools,
                 snapshot,
-                retired: AtomicBool::new(false),
+                retired: Arc::new(AtomicBool::new(false)),
                 descriptors,
                 retained_bytes: charge,
             }),

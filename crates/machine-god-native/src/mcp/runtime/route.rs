@@ -89,11 +89,40 @@ impl ServerRoute {
         context: &NativeMcpTurnContext,
         cancellation: &CancellationToken,
     ) -> Result<PeerGuard<'a>> {
-        context.revalidate().map_err(|_| Error::Unavailable)?;
+        self.acquire_checked(
+            || {
+                context.revalidate().map_err(|_| Error::Unavailable)?;
+                if cancellation.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+            async {
+                select(cancellation.cancelled(), context.cancelled()).await;
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn acquire_feature(
+        &self,
+        authority: &crate::mcp::control::McpFeatureControlAuthority,
+    ) -> Result<PeerGuard<'_>> {
+        self.acquire_checked(
+            || authority.is_live().then_some(()).ok_or(Error::Cancelled),
+            authority.cancelled(),
+        )
+        .await
+    }
+
+    async fn acquire_checked(
+        &self,
+        check: impl Fn() -> Result<()>,
+        principal_cancelled: impl std::future::Future<Output = ()>,
+    ) -> Result<PeerGuard<'_>> {
+        check()?;
         self.check_authority()?;
-        if cancellation.is_cancelled() {
-            return Err(Error::Cancelled);
-        }
         self.pending
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < self.max_pending).then_some(count + 1)
@@ -107,9 +136,7 @@ impl ServerRoute {
             .ok_or(Error::Limit)?;
         let cancelled = async {
             select(
-                Box::pin(async {
-                    select(cancellation.cancelled(), context.cancelled()).await;
-                }),
+                Box::pin(principal_cancelled),
                 Box::pin(async {
                     select(Box::pin(self.cancelled()), self.clock.sleep_until(deadline)).await;
                 }),
@@ -120,9 +147,9 @@ impl ServerRoute {
             Either::Left((guard, _)) => guard,
             Either::Right(_) => return Err(Error::Cancelled),
         };
-        context.revalidate().map_err(|_| Error::Unavailable)?;
+        check()?;
         self.check_authority()?;
-        if cancellation.is_cancelled() || self.clock.now() >= deadline {
+        if self.clock.now() >= deadline {
             return Err(Error::Cancelled);
         }
         Ok(PeerGuard {

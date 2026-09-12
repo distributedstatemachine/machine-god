@@ -11,6 +11,8 @@ pub mod commands;
 pub mod config;
 pub mod context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod control;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod endpoint;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod execution;

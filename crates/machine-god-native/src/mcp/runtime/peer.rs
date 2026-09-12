@@ -21,6 +21,35 @@ impl std::fmt::Debug for NativeMcpOwnedPeer {
     }
 }
 impl NativeMcpOwnedPeer {
+    pub(super) async fn feature(
+        &mut self,
+        request: &crate::McpFeatureRequest,
+        server: &str,
+        catalogs: &[crate::mcp::catalog::McpDescriptorCatalog],
+        authority: crate::mcp::control::McpFeatureControlAuthority,
+        options: crate::mcp::control::McpFeatureOperationOptions,
+        deadline: std::time::Instant,
+    ) -> super::features::Result<crate::mcp::control::McpFeatureReply> {
+        match self {
+            #[cfg(test)]
+            Self::Script(peer) => peer.feature(request, server, catalogs, &authority, options),
+            Self::Stdio(peer) => peer
+                .feature(request, server, catalogs, authority, options, deadline)
+                .await
+                .map_err(|error| match error {
+                    crate::mcp::peer::McpPeerError::Feature(error) => error.into(),
+                    _ => Error::Unavailable.into(),
+                }),
+            #[cfg(feature = "mcp-http")]
+            Self::Http(peer) => peer
+                .feature(request, server, catalogs, authority, options, deadline)
+                .await
+                .map_err(|error| match error {
+                    crate::mcp::http_peer::McpHttpPeerError::Feature(error) => error.into(),
+                    _ => Error::Unavailable.into(),
+                }),
+        }
+    }
     pub(super) fn supports_tools(&self) -> bool {
         match self {
             #[cfg(test)]

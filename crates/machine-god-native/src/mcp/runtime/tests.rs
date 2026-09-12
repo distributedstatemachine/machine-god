@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 mod execution;
+mod features;
 mod fixture;
 mod lifecycle;
 mod publication;

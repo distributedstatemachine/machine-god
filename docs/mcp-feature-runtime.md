@@ -150,6 +150,38 @@ checks. `finish` then performs complete `McpDescriptorCatalog` admission without
 rewriting pages or duplicating descriptor/schema parsing. Any failure closes the
 load; unfinished or malformed candidates cannot replace prior usable catalogs.
 
+## Native model and human routing
+
+`NativeMcpRuntime::feature_for_turn` selects the actual registered turn and its
+existing publication pin. A foreign or retired context cannot select a current
+replacement. `human_command()` instead creates an explicit non-clone command
+lifetime with a weak runtime reference; it never manufactures a model turn.
+Construction and unpolled operations perform no I/O or clock observation.
+Each polled operation selects the exact case-sensitive configured server.
+
+Both routes use the same bounded peer queue as tools and retain the original
+turn/command, operation, configuration/authentication and runtime signals through
+the final transport write, response admission and returned result. Publication's
+shared retirement flag is checked at its atomic cutoff, before deferred token
+wakeups. Closing a command cancels its pending operations; it does not close an
+unrelated server or another command.
+
+Non-list actions lazily fetch their required catalog families through guarded
+typed exchanges under one operation deadline. Exact resources avoid a needless
+template fetch; template fallback uses the existing admitted matcher. No caller
+catalog or expired startup snapshot supplies identity evidence. This path does
+not cache results: TTL/notification-driven caching remains separate work.
+
+`NativeMcpFeatureResult` retains the original selection and exposes data through
+`reply()`, with separate `revalidate()` and `cancelled()` checks for projection
+and archive composition. Reading data alone asserts no continuing authority.
+At most two operations/results coexist per runtime (or the lower configured
+pending limit); keeping a result retains its slot until drop. Catalog accumulation
+is bounded to 64 MiB, with at most one separately admitted 64 MiB incoming family
+before that aggregate check, plus bounded wire/parser storage. No hidden result
+queue or detached observer retains additional generations. Catalog replies retain
+original descriptors, not discarded page-envelope metadata.
+
 ## Independent resource and projection bounds
 
 Complete envelopes have lowerable limits of 16 MiB, 262,144 JSON values/keys and
