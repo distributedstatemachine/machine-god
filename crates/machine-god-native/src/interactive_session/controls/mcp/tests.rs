@@ -296,7 +296,7 @@ fn returned_feature_witness_cannot_rebind_to_replacement() {
 fn protocol_failure_and_input_required_are_observations_not_continuations() {
     for terminal in [
         r#""error":{"code":-32000,"message":"PRIVATE PEER ERROR"}"#,
-        r#""result":{"resultType":"input_required","requests":[],"state":"opaque"}"#,
+        r#""result":{"resultType":"input_required","inputRequests":{},"requestState":"opaque"}"#,
     ] {
         let conversation = conversation();
         let (runtime, clock) = runtime();

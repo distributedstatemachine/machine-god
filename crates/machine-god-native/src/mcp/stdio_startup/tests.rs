@@ -291,10 +291,14 @@ fn disabled_and_remote_configurations_cannot_mint_stdio_factories() {
     for json in [
         r#"{"mcp":{"fixture":{"command":"target","enabled":false}}}"#,
         r#"{"mcp":{"fixture":{"type":"http","url":"https://example.com/mcp"}}}"#,
-        r#"{"mcp":{"fixture":{"type":"sse","url":"https://example.com/mcp"}}}"#,
     ] {
         assert!(startup.factory(server(json)).is_err());
     }
+    // Deprecated HTTP+SSE cannot reach factory selection at all.
+    assert!(
+        McpConfig::decode(br#"{"mcp":{"fixture":{"type":"sse","url":"https://example.com/mcp"}}}"#)
+            .is_err()
+    );
 }
 
 #[test]
