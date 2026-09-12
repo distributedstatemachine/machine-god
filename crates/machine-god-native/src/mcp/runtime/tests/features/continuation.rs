@@ -393,7 +393,7 @@ impl NativeMcpRuntimeClock for ManualClock {
 
 #[test]
 fn human_budget_is_thirty_minutes_and_success_gets_a_fresh_network_deadline() {
-    for seconds in [1799, 1800] {
+    for (seconds, queued_seconds) in [(1799, 0), (1799, 119), (1799, 120), (1800, 0)] {
         let gate = CancellationToken::new();
         let presenter = Arc::new(Presenter {
             gate: Some(gate.clone()),
@@ -423,14 +423,14 @@ fn human_budget_is_thirty_minutes_and_success_gets_a_fresh_network_deadline() {
                 .unwrap()
                 .contains(&(initial + Duration::from_secs(1800)))
         );
+        let publication = runtime.state.lock().unwrap().active.clone().unwrap();
+        let lane = futures_executor::block_on(publication.servers[0].peer.lock());
         clock.advance(Duration::from_secs(seconds));
         gate.cancel();
-        let Poll::Ready(result) = operation.as_mut().poll(&mut cx) else {
-            panic!("ready answer or expired human budget")
-        };
-        assert_eq!(result.is_ok(), seconds == 1799);
-        assert_eq!(sent(&writes).len(), if seconds == 1799 { 3 } else { 2 });
         if seconds == 1799 {
+            // A ready inert peer never polls its timer. Holding the actual peer
+            // lane makes the resumed queue observe its fresh transport deadline.
+            assert!(operation.as_mut().poll(&mut cx).is_pending());
             assert!(
                 clock
                     .deadlines
@@ -438,7 +438,15 @@ fn human_budget_is_thirty_minutes_and_success_gets_a_fresh_network_deadline() {
                     .unwrap()
                     .contains(&(initial + Duration::from_secs(seconds + 120)))
             );
+            clock.advance(Duration::from_secs(queued_seconds));
         }
+        drop(lane);
+        let Poll::Ready(result) = operation.as_mut().poll(&mut cx) else {
+            panic!("ready answer or expired human/transport budget")
+        };
+        let successful = seconds == 1799 && queued_seconds < 120;
+        assert_eq!(result.is_ok(), successful);
+        assert_eq!(sent(&writes).len(), if successful { 3 } else { 2 });
     }
 }
 
