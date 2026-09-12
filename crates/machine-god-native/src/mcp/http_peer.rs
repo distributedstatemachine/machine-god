@@ -186,6 +186,17 @@ pub struct McpHttpPeer {
     authentication: Option<Arc<super::auth::McpAuthLease>>,
     subscription: Option<subscription::Subscription>,
 }
+/// An inert whitelist replacement under the exact peer's exclusive lane.
+/// Dropping it preserves the original table; commit performs no callback or I/O.
+pub(crate) struct PreparedHttpRuntimeSet<'a> {
+    peer: &'a mut McpHttpPeer,
+    runtimes: Vec<Arc<McpSubmissionRuntime>>,
+}
+impl PreparedHttpRuntimeSet<'_> {
+    pub(crate) fn commit(self) -> Vec<Arc<McpSubmissionRuntime>> {
+        std::mem::replace(&mut self.peer.runtimes, self.runtimes)
+    }
+}
 impl McpHttpPeer {
     pub(crate) fn readiness(&self) -> McpHttpPeerReadiness {
         McpHttpPeerReadiness {
@@ -342,6 +353,13 @@ impl McpHttpPeer {
     /// # Errors
     /// Rejects closed peers, duplicate identities and over 2,048 allocations.
     pub fn admit_runtimes(&mut self, runtimes: Vec<Arc<McpSubmissionRuntime>>) -> Result<()> {
+        self.prepare_runtime_set(runtimes)?.commit();
+        Ok(())
+    }
+    pub(crate) fn prepare_runtime_set(
+        &mut self,
+        runtimes: Vec<Arc<McpSubmissionRuntime>>,
+    ) -> Result<PreparedHttpRuntimeSet<'_>> {
         self.available()?;
         if runtimes.len() > 2048
             || runtimes.iter().enumerate().any(|(index, value)| {
@@ -352,8 +370,10 @@ impl McpHttpPeer {
         {
             return Err(McpHttpPeerError::Limit);
         }
-        self.runtimes = runtimes;
-        Ok(())
+        Ok(PreparedHttpRuntimeSet {
+            peer: self,
+            runtimes,
+        })
     }
     /// # Errors
     /// Rejects a second reservation, retirement or integer exhaustion.

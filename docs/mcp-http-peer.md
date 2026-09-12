@@ -104,6 +104,12 @@ another request's reservation. The manual `reserve_tool_id` API is exclusive
 and cannot mix with live owned reservations. Discarding a manual reservation
 does not reuse its ID.
 
+Same-peer catalog publication stages runtime-whitelist replacement while holding
+the exact peer's exclusive lane. Preparation checks capacity and unique allocation
+identities without changing the live table. Dropping the stage preserves that
+table; commit swaps it without allocation, callbacks or I/O and returns the old
+allocations for disposal outside the runtime publication lock.
+
 Typed catalogs return raw candidates, not executable publication. The separate
 [feature API](mcp-feature-runtime.md) executes seven native-selected actions
 with fixed method headers, exact IDs, original command/turn guards and complete
