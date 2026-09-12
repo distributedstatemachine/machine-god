@@ -95,6 +95,13 @@ indeterminate handoff. A successful launcher exit is only `Opened`; a failed
 exit does not prove no browser opened. Neither URL admission nor any launch
 receipt is user consent, OAuth success, completion notification or retry proof.
 
+Native interactive sessions derive their MCP launcher from the already-bound
+background URL opener. Both retain the exact same executable, captured environment,
+host worker scope and one active admission through direct-child reap; there is no
+second launcher capture or owner. Missing or invalid optional desktop-launcher
+authority disables both paths without preventing interactive startup. This inert
+composition changes neither public startup options nor consent requirements.
+
 ## Credentials and generations
 
 The explicitly selected directory owns `mcp-credentials.json`, with separate

@@ -94,6 +94,16 @@ impl fmt::Debug for NativeBackgroundUrlOpener {
 }
 
 impl NativeBackgroundUrlOpener {
+    /// Shares the already-bound launcher and its admission without recapturing
+    /// executable, environment or worker ownership. This does not grant consent.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    #[must_use]
+    pub(crate) fn mcp_launcher(&self) -> crate::mcp::browser_launcher::NativeMcpBrowserLauncher {
+        crate::mcp::browser_launcher::NativeMcpBrowserLauncher::from_shared_launcher(
+            self.launcher.clone(),
+        )
+    }
+
     /// Binds explicit executable and environment authority without filesystem I/O.
     ///
     /// The supplied program must accept one HTTP(S) URL argument. Its installation
@@ -135,5 +145,7 @@ impl NativeBackgroundUrlOpener {
             .open(LauncherUrl::Background(url), cancellation, revoked, None)
     }
 }
+#[cfg(test)]
+mod mcp_composition_tests;
 #[cfg(test)]
 mod tests;

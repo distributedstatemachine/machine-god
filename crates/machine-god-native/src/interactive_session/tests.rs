@@ -22,6 +22,8 @@ mod undo;
 #[path = "clipboard/tests.rs"]
 mod clipboard;
 
+mod browser_composition;
+
 #[path = "../skills_queue/interactive_tests.rs"]
 mod skills_queue;
 

@@ -250,6 +250,7 @@ pub struct NativeInteractiveSession {
     next_control: u64,
     clipboard: Result<crate::NativeClipboard, crate::NativeClipboardError>,
     background_opener: Option<crate::NativeBackgroundUrlOpener>,
+    mcp_browser_launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
     copy: Option<clipboard::OwnedCopy>,
     copy_outcome: Option<NativeInteractiveCopyOutcome>,
     next_copy: u64,
@@ -337,6 +338,9 @@ impl NativeInteractiveSession {
                         )
                         .ok()
                     });
+            let mcp_browser_launcher = background_opener
+                .as_ref()
+                .map(crate::NativeBackgroundUrlOpener::mcp_launcher);
             Ok(Self {
                 host,
                 options,
@@ -353,6 +357,7 @@ impl NativeInteractiveSession {
                 next_control: 1,
                 clipboard,
                 background_opener,
+                mcp_browser_launcher,
                 copy: None,
                 copy_outcome: None,
                 next_copy: 1,

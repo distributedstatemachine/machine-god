@@ -117,6 +117,13 @@ impl fmt::Debug for NativeMcpBrowserLauncher {
 }
 
 impl NativeMcpBrowserLauncher {
+    /// Retains an actual existing launcher allocation without acquiring effects.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    #[must_use]
+    pub(crate) fn from_shared_launcher(launcher: OwnedUrlLauncher) -> Self {
+        Self { launcher }
+    }
+
     /// Inert binding; never discovers an executable or reads the environment.
     /// The host must protect the retained executable installation until cleanup.
     ///
