@@ -37,6 +37,9 @@ pub(super) struct NativeMcpToolRefresh {
     retirement: RetiredCatalog,
 }
 impl NativeMcpToolRefresh {
+    pub(super) fn is_changed(&self) -> bool {
+        self.replacement.is_some()
+    }
     pub(super) fn publication_checkpoint(&self) -> NativeMcpPublicationCheckpoint {
         NativeMcpPublicationCheckpoint::for_publication(
             self.replacement.as_ref().unwrap_or(&self.previous),
@@ -48,6 +51,7 @@ impl NativeMcpToolRefresh {
 /// after their old publication itself has disappeared. It never retains peers.
 pub(super) struct RetiredCatalog {
     publication: Weak<Publication>,
+    previous: Option<Weak<Publication>>,
     tools: Vec<Weak<ToolRoute>>,
     bindings: Vec<Weak<McpSubmissionRuntime>>,
     charge: usize,
@@ -55,6 +59,10 @@ pub(super) struct RetiredCatalog {
 impl RetiredCatalog {
     fn live(&self) -> bool {
         self.publication.strong_count() != 0
+            || self
+                .previous
+                .as_ref()
+                .is_some_and(|view| view.strong_count() != 0)
             || self.tools.iter().any(|tool| tool.strong_count() != 0)
             || self
                 .bindings
@@ -126,6 +134,7 @@ impl NativeMcpRuntime {
             server: server.clone(),
             retirement: RetiredCatalog {
                 publication: Arc::downgrade(&previous),
+                previous: previous.previous.as_ref().map(Arc::downgrade),
                 tools: Vec::new(),
                 bindings: Vec::new(),
                 charge: previous.retained_bytes,
