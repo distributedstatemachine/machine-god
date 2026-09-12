@@ -17,6 +17,8 @@ use machine_god_native::{
     },
 };
 use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -101,6 +103,7 @@ fn actual_reload_and_failure_observations_remain_separate_from_saved_credentials
             assert!(text.contains("full configured reload observation (not a targeted reconnect)"));
             assert!(text.contains("Publication: published"));
             assert!(text.contains("Startup observation: AskStartup; 0 servers"));
+            failed_server_observations(&controller, &fixture.workspace).await;
             controller.close();
             let failure = controller
                 .reload(CancellationToken::new(), deadline)
@@ -133,4 +136,46 @@ fn actual_reload_and_failure_observations_remain_separate_from_saved_credentials
     workers.completion().wait_on_worker().unwrap();
     assert!(fixture.transport.requests().is_empty());
     fixture.finish();
+}
+
+async fn failed_server_observations(controller: &NativeMcpController, workspace: &std::path::Path) {
+    let profile = workspace.parent().unwrap().join("mcp-profile");
+    fs::create_dir(&profile).unwrap();
+    fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
+    let path = profile.join("mcp.json");
+    fs::write(&path, br#"{"mcp":{"demo":{"command":"/missing/server"}}}"#).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let activation = controller
+        .reload_configured(CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(activation.startup().unwrap().required_ready());
+    let text = rendered(&NativeMcpAuthenticationReceipt::Authenticated {
+        server: "demo".into(),
+        usable: true,
+        activation: Some(Ok(activation)),
+    });
+    assert!(text.contains("Credential persistence: confirmed"));
+    assert!(text.contains("Publication: published"));
+    assert!(text.contains("Startup observation: All; 1 servers; failures: true"));
+    assert!(text.contains("demo: startup failed; optional"));
+    fs::write(
+        &path,
+        br#"{"mcp":{"demo":{"command":"/missing/server","required":true}}}"#,
+    )
+    .unwrap();
+    let failure = controller
+        .reload_configured(CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(!failure.startup().unwrap().required_ready());
+    let text = rendered(&NativeMcpAuthenticationReceipt::Authenticated {
+        server: "demo".into(),
+        usable: true,
+        activation: Some(Err(failure)),
+    });
+    assert!(text.contains("Credential persistence: confirmed"));
+    assert!(text.contains("Reload failed (Startup(RequiredUnavailable))"));
+    assert!(text.contains("demo: startup failed; required"));
+    assert!(!text.contains("Publication: published"));
 }

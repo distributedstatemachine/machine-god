@@ -1,9 +1,7 @@
 use super::super::{
     NativeMcpControllerError, NativeMcpControllerOptions, NativeMcpControllerPublication,
     NativeMcpStartupPhase,
-    state::{
-        Failure, Generation, Inner, JobResult, Kind, Loaded, Receipt, WorkerReservation, lock,
-    },
+    state::{Failure, Generation, Inner, JobResult, Loaded, Receipt, WorkerReservation, lock},
 };
 use super::{Signals, budget, check, unchanged};
 use crate::mcp::{startup::NativeMcpStartupRequirement, store::NativeMcpConfigSnapshot};
@@ -17,7 +15,6 @@ pub(super) async fn replace(
     inner: &Weak<Inner>,
     options: &Arc<NativeMcpControllerOptions>,
     generation: &Arc<Generation>,
-    kind: Kind,
     signals: &Signals,
     deadline: Option<Instant>,
 ) -> JobResult {
@@ -73,12 +70,11 @@ pub(super) async fn replace(
         .iter()
         .map(ToolName::as_str)
         .collect();
-    let requirement = if kind == Kind::Reload {
-        NativeMcpStartupRequirement::AllSelected
-    } else {
-        NativeMcpStartupRequirement::Required
-    };
-    let (candidate, receipt) = batch.prepare(&options.runtime, &reserved, requirement)?;
+    let (candidate, receipt) = batch.prepare(
+        &options.runtime,
+        &reserved,
+        NativeMcpStartupRequirement::Required,
+    )?;
     validate(options, generation, snapshot, deadline).await?;
     let owner = check(inner, signals, deadline)?;
     let predicted = candidate.publication_checkpoint();

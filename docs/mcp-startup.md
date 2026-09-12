@@ -30,9 +30,9 @@ servers can only be transferred to a separately authorized additive publication
 path. They must not replace an existing required-server set.
 
 `NativeMcpStartupBatch::prepare` performs private runtime admission, not publication.
-`Required` permits explicitly tolerated optional-server failures. `AllSelected`
-rejects any selected-server failure and is suitable for retaining an old runtime
-when reload cannot construct its complete replacement. Required-server failure,
+`Required` permits optional-server failures and is the controller's startup and
+reload policy. `AllSelected` remains available to callers explicitly requiring
+every selected server to succeed. Required-server failure,
 global cancellation/deadline and aggregate admission failure reject either policy.
 The caller owns the eventual atomic publish operation. Rejection or abandonment
 drops only the new candidates and retains their cleanup observations.
@@ -120,13 +120,17 @@ Signal cancellation and owner closure still stop interactive startup. The latest
 loaded source, including failed discovery, is retained as one already-budgeted
 generation for historical management observations, never as live peer authority.
 
-`reload` reads a fresh profile and requires every selected enabled server to
-succeed before full replacement. Exact source validation precedes publication;
-the runtime compare-and-swap checks the original publication witness. Predicted
+`reload` reads a fresh profile and attempts all enabled servers. Full replacement
+requires every required server to succeed. Optional-server failures permit a
+degraded replacement and remain visible in its startup receipt, matching pinned
+fx behavior, including the full reload after explicit authentication. Exact source
+validation precedes publication; the runtime compare-and-swap checks the original
+publication witness. Predicted
 candidate checkpoints are captured before publication, never inferred from a
 later runtime read. Failure leaves the previous configuration lifetime token and
-active publication intact. These checks do not reserve the profile against later
-external filesystem edits. Captured environment, network and authentication
+active publication intact; independently revoked credential authority is not
+restored by retaining that publication. These checks do not reserve the profile
+against later external filesystem edits. Captured environment, network and authentication
 selections are reused explicitly; they are not recaptured from ambient state.
 
 Only one mutation is admitted. A positive bound of at most eight generations

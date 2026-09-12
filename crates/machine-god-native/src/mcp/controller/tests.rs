@@ -321,7 +321,7 @@ fn failed_reload(configured: bool) {
         startup.await.unwrap();
         let old = lock(&controller.inner.state).active.clone().unwrap();
         let checkpoint = fixture.options.runtime.publication_checkpoint().unwrap();
-        fixture.seed(r#"{"mcp":{"optional":{"command":"/missing/server"}}}"#);
+        fixture.seed(r#"{"mcp":{"required":{"command":"/missing/server","required":true}}}"#);
         let reloading = if configured {
             controller.reload_configured(CancellationToken::new())
         } else {
@@ -329,7 +329,7 @@ fn failed_reload(configured: bool) {
         };
         let error = reloading.await.unwrap_err();
         assert!(matches!(error.kind(), NativeMcpControllerError::Startup(_)));
-        assert!(error.startup().is_some());
+        assert!(!error.startup().unwrap().required_ready());
         assert!(!old.cancellation.is_cancelled());
         assert!(Arc::ptr_eq(
             &old,
@@ -345,6 +345,68 @@ fn failed_reload(configured: bool) {
             .runtime
             .publish_if(candidate, &checkpoint)
             .unwrap();
+        assert!(
+            controller
+                .settle(deadline(), CancellationToken::new())
+                .await
+                .unwrap()
+                .complete
+        );
+    });
+}
+
+#[test]
+fn optional_failure_reload_publishes_degraded_replacement() {
+    optional_failure_reload(false);
+}
+
+#[test]
+fn configured_optional_failure_reload_publishes_degraded_replacement() {
+    optional_failure_reload(true);
+}
+
+fn optional_failure_reload(configured: bool) {
+    run(async {
+        let mut fixture = Fixture::new();
+        fixture.options.startup.peer_lifetime = McpPeerLifetime::OwnerControlled;
+        let controller = fixture.controller();
+        controller
+            .start_configured(NativeMcpStartupPhase::All, CancellationToken::new())
+            .await
+            .unwrap();
+        let old = lock(&controller.inner.state).active.clone().unwrap();
+        let previous = fixture.options.runtime.publication_checkpoint().unwrap();
+        fixture.seed(r#"{"mcp":{"optional":{"command":"/missing/server"}}}"#);
+        let reloading = if configured {
+            controller.reload_configured(CancellationToken::new())
+        } else {
+            controller.reload(CancellationToken::new(), deadline())
+        };
+        let receipt = reloading.await.unwrap();
+        assert_eq!(
+            receipt.publication(),
+            NativeMcpControllerPublication::Published
+        );
+        let startup = receipt.startup().unwrap();
+        assert_eq!(startup.phase, NativeMcpStartupPhase::All);
+        assert!(startup.required_ready());
+        assert!(startup.has_failures());
+        assert_eq!(startup.servers.len(), 1);
+        assert!(!startup.servers[0].required);
+        assert!(old.cancellation.is_cancelled());
+        let candidate = fixture
+            .options
+            .runtime
+            .prepare_candidate(vec![], &[])
+            .unwrap();
+        assert!(
+            fixture
+                .options
+                .runtime
+                .publish_if(candidate, &previous)
+                .is_err()
+        );
+        assert!(controller.required_readiness().is_ok());
         assert!(
             controller
                 .settle(deadline(), CancellationToken::new())

@@ -239,7 +239,7 @@ fn run(
             if kind == Kind::Deferred {
                 publish::deferred(&inner, &options, &generation, &signals, deadline).await
             } else {
-                publish::replace(&inner, &options, &generation, kind, &signals, deadline).await
+                publish::replace(&inner, &options, &generation, &signals, deadline).await
             }
         };
         // Observe an already-signalled cutoff before advancing another startup
