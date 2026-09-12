@@ -41,6 +41,7 @@ impl NativeMcpStartup {
     }
 
     pub(in crate::mcp::startup) fn authentication_slot(&self, server: &str) -> Result<()> {
+        self.authentication_identity_slot(server)?;
         let selected = self.selected_leases();
         if selected.iter().any(|entry| entry.server.as_ref() == server) {
             return Err(Error::Unavailable);

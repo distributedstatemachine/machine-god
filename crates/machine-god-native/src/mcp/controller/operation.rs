@@ -328,8 +328,18 @@ fn run(
         };
         if kind == Kind::Deferred {
             *lock(&generation.deferred) = Some(result.clone());
+            #[cfg(feature = "mcp-http")]
+            if result.is_err() {
+                let startup = lock(&generation.loaded)
+                    .as_ref()
+                    .map(|loaded| loaded.startup.clone());
+                if let Some(startup) = startup {
+                    startup.prune_authentication_identities();
+                }
+            }
         } else if result.is_err() {
             generation.cancellation.cancel();
+            generation.release_authentication();
         }
         result
     })

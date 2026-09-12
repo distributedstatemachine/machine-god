@@ -156,10 +156,16 @@ pub struct NativeMcpStartupBatch {
     pub(super) _permit: Option<BuildPermit>,
 }
 
-pub(super) struct BuildPermit(pub Arc<AtomicBool>);
+pub(super) struct BuildPermit {
+    pub pending: Arc<AtomicBool>,
+    #[cfg(feature = "mcp-http")]
+    pub identities: Option<super::authentication::IdentityCleanup>,
+}
 impl Drop for BuildPermit {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        #[cfg(feature = "mcp-http")]
+        drop(self.identities.take());
+        self.pending.store(false, Ordering::Release);
     }
 }
 impl NativeMcpStartupBatch {

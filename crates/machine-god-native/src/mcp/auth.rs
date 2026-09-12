@@ -19,6 +19,7 @@ pub use codec::{McpAuthChallenge, McpAuthConfig, McpAuthIdentity};
 pub use profile::NativeMcpAuthProfile;
 #[cfg(any(test, feature = "ai-gateway-http"))]
 pub(crate) use profile::{CommandCustody, SelectedConfig};
+pub(crate) use service::McpAuthSelection;
 pub use service::{McpAuthLease, NativeMcpAuthCleanup, NativeMcpAuthService};
 pub use store::NativeMcpCredentialStore;
 

@@ -1,4 +1,5 @@
 use super::*;
+mod retirement;
 use crate::mcp::{
     http::{McpHttpClock, tests::request},
     network::{McpResolverConfig, NativeMcpNetwork},

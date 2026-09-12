@@ -28,6 +28,11 @@ pub(super) async fn build(
     cancellation: CancellationToken,
     deadline: Option<Instant>,
 ) -> NativeMcpStartupBatch {
+    // Declared before candidate peers so abandoned-future cleanup observes their
+    // actual destruction, not merely an in-progress receipt.
+    #[cfg(feature = "mcp-http")]
+    let _identity_cleanup =
+        super::authentication::IdentityCleanup(startup.authentication_identities.clone());
     let mut receipts: Vec<_> = startup
         .configuration
         .servers()
@@ -53,7 +58,13 @@ pub(super) async fn build(
         .pending
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .ok()
-        .map(|_| BuildPermit(startup.pending.clone()));
+        .map(|_| BuildPermit {
+            pending: startup.pending.clone(),
+            #[cfg(feature = "mcp-http")]
+            identities: Some(super::authentication::IdentityCleanup(
+                startup.authentication_identities.clone(),
+            )),
+        });
     if permit.is_none() {
         failure = Some(Error::Unavailable);
     }
@@ -150,6 +161,8 @@ async fn server(
     }
     #[cfg(feature = "mcp-http")]
     let mut lease = None;
+    #[cfg(feature = "mcp-http")]
+    let mut identity_owner = None;
     let (peer, catalogs, refresh, authentication, generations) = match configuration.transport() {
         McpTransportConfig::Stdio(_) => {
             let (peer, catalogs, refresh) = stdio_server(
@@ -168,18 +181,26 @@ async fn server(
             #[cfg(feature = "mcp-http")]
             {
                 *attempts = 1;
-                let (peer, catalogs, refresh, authentication, generations, selected_lease) =
-                    remote_server(
-                        startup,
-                        &configuration,
-                        remote,
-                        guards,
-                        owner,
-                        deadline,
-                        maximum - minimum,
-                    )
-                    .await?;
+                let (
+                    peer,
+                    catalogs,
+                    refresh,
+                    authentication,
+                    generations,
+                    selected_lease,
+                    selected_identity,
+                ) = remote_server(
+                    startup,
+                    &configuration,
+                    remote,
+                    guards,
+                    owner,
+                    deadline,
+                    maximum - minimum,
+                )
+                .await?;
                 lease = selected_lease;
+                identity_owner = selected_identity;
                 (peer, catalogs, refresh, authentication, generations)
             }
             #[cfg(not(feature = "mcp-http"))]
@@ -213,6 +234,14 @@ async fn server(
     #[cfg(feature = "mcp-http")]
     if let Some(lease) = lease {
         startup.retain_authentication(configuration.name(), lease, owner.completion.clone())?;
+    }
+    #[cfg(feature = "mcp-http")]
+    if let Some(selection) = identity_owner {
+        startup.retain_authentication_identity(
+            configuration.name(),
+            selection,
+            owner.completion.clone(),
+        )?;
     }
     Ok((
         NativeMcpServerCandidate {
@@ -430,6 +459,7 @@ async fn remote_server(
     Arc<[u8]>,
     Vec<CancellationToken>,
     Option<Arc<crate::mcp::auth::McpAuthLease>>,
+    Option<crate::mcp::auth::McpAuthSelection>,
 )> {
     use crate::mcp::{endpoint::McpEndpoint, http_peer::McpHttpPeer};
     let network = startup.network.as_ref().ok_or(Error::Unavailable)?;
@@ -439,7 +469,7 @@ async fn remote_server(
     let attempt_deadline = startup
         .clock
         .deadline(configuration.startup_timeout_ms(), deadline)?;
-    let (headers, lease) = control::bounded(
+    let (headers, lease, identity_owner) = control::bounded(
         startup.headers(
             configuration.name(),
             remote,
@@ -507,7 +537,15 @@ async fn remote_server(
     .await?;
     let mut generations = vec![network.owner_cancellation()];
     generations.extend(auth_generation);
-    Ok((peer, catalogs, refresh, authentication, generations, lease))
+    Ok((
+        peer,
+        catalogs,
+        refresh,
+        authentication,
+        generations,
+        lease,
+        identity_owner,
+    ))
 }
 
 fn lifetime_deadline(startup: &NativeMcpStartup, outer: Option<Instant>) -> Option<Instant> {

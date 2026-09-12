@@ -11,6 +11,8 @@ use std::{fmt, sync::Arc, time::Instant};
 mod lease;
 mod lifetime;
 mod persistence;
+mod selection;
+pub(crate) use selection::McpAuthSelection;
 mod state;
 #[cfg(test)]
 mod tests;

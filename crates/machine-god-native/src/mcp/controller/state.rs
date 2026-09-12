@@ -90,6 +90,17 @@ pub(super) struct Generation {
     pub workers: std::sync::atomic::AtomicUsize,
 }
 impl Generation {
+    pub fn release_authentication(&self) {
+        #[cfg(feature = "mcp-http")]
+        {
+            let startup = lock(&self.loaded)
+                .as_ref()
+                .map(|loaded| loaded.startup.clone());
+            if let Some(startup) = startup {
+                startup.release_authentication_identities();
+            }
+        }
+    }
     pub fn cleanup_complete(&self) -> bool {
         self.workers.load(Ordering::Acquire) == 0
             && lock(&self.loaded).as_ref().is_none_or(|loaded| {
@@ -169,6 +180,7 @@ impl Inner {
         }
         for generation in generations {
             generation.cancellation.cancel();
+            generation.release_authentication();
         }
         self.options.runtime.close();
         drop(active);
@@ -220,6 +232,21 @@ impl Inner {
     }
     pub fn prune(&self) {
         self.release_completed();
+        #[cfg(feature = "mcp-http")]
+        {
+            let startups: Vec<_> = lock(&self.state)
+                .generations
+                .iter()
+                .filter_map(|generation| {
+                    lock(&generation.loaded)
+                        .as_ref()
+                        .map(|loaded| loaded.startup.clone())
+                })
+                .collect();
+            for startup in startups {
+                startup.prune_authentication_identities();
+            }
+        }
         let mut state = lock(&self.state);
         state.peers.retain(|value| !value.is_complete());
         state.generations.retain(|generation| {

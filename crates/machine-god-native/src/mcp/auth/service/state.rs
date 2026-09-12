@@ -16,7 +16,7 @@ use std::{
 };
 
 const MAX_OPERATIONS: usize = 128;
-const MAX_IDENTITIES: usize = 64;
+pub(super) const MAX_IDENTITIES: usize = 128;
 
 pub(super) struct Inner {
     pub store: Arc<NativeMcpCredentialStore>,
@@ -30,11 +30,15 @@ pub(super) struct Inner {
 #[derive(Default)]
 pub(super) struct State {
     pub closed: bool,
-    entries: BTreeMap<McpAuthIdentity, Entry>,
+    pub(super) entries: BTreeMap<McpAuthIdentity, Entry>,
+    pub(super) selections: usize,
     pub operations: Vec<Arc<Observation>>,
 }
-struct Entry {
-    slot: Arc<Slot>,
+pub(super) struct Entry {
+    pub(super) slot: Arc<Slot>,
+    pub(super) selection: std::sync::Weak<()>,
+    pub(super) selection_count: usize,
+    pub(super) managed: bool,
     operations: Vec<Arc<Observation>>,
     retirement: Option<Arc<Observation>>,
 }
@@ -90,7 +94,7 @@ pub(super) fn cancel(token: &CancellationToken) {
 }
 
 impl Entry {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             slot: Arc::new(Slot {
                 generation: Mutex::new(Generation {
@@ -102,10 +106,27 @@ impl Entry {
             }),
             operations: Vec::new(),
             retirement: None,
+            selection: std::sync::Weak::new(),
+            selection_count: 0,
+            managed: false,
         }
     }
-    fn prune(&mut self) {
+    pub(super) fn prune(&mut self) {
         self.operations.retain(|value| !value.done.is_cancelled());
+    }
+    pub(super) fn pending(&self) -> bool {
+        self.operations
+            .iter()
+            .any(|operation| !operation.done.is_cancelled())
+    }
+    pub(super) fn renew(&mut self) {
+        let selection = self.selection.clone();
+        let selection_count = self.selection_count;
+        let managed = self.managed;
+        *self = Self::new();
+        self.selection = selection;
+        self.selection_count = selection_count;
+        self.managed = managed;
     }
 }
 impl Inner {
@@ -150,6 +171,7 @@ impl Inner {
         cutoff: bool,
     ) -> Result<(Operation, Vec<Arc<Observation>>)> {
         self.authority.check(caller, deadline)?;
+        self.prune_retired_selections();
         let mut state = lock(&self.state);
         if state.closed {
             return Err(McpAuthError::Unavailable);
@@ -175,7 +197,7 @@ impl Inner {
             return Err(McpAuthError::Busy);
         }
         if !cutoff && entry.slot.cutoff.load(Ordering::Acquire) {
-            *entry = Entry::new();
+            entry.renew();
         }
         let previous = if cutoff {
             entry.operations.clone()
@@ -223,11 +245,9 @@ impl Inner {
     }
     pub fn release_retired(&self, guard: &Guard) {
         let mut state = lock(&self.state);
-        if state
-            .entries
-            .get(&guard.identity)
-            .is_some_and(|entry| Arc::ptr_eq(&entry.slot, &guard.slot))
-        {
+        if state.entries.get(&guard.identity).is_some_and(|entry| {
+            Arc::ptr_eq(&entry.slot, &guard.slot) && entry.selection_count == 0
+        }) {
             state.entries.remove(&guard.identity);
         }
     }

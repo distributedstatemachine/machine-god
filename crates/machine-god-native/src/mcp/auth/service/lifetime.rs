@@ -14,6 +14,7 @@ impl NativeMcpAuthService {
     /// Snapshot of this service's obligations, not host thread-join evidence.
     #[must_use]
     pub fn cleanup_status(&self) -> NativeMcpAuthCleanup {
+        self.inner.prune_retired_selections();
         let state = lock(&self.inner.state);
         let pending_operations = state
             .operations

@@ -52,6 +52,7 @@ pub(in crate::mcp::controller) struct CommandOwner {
     reservation: WorkerReservation,
     cancellation: CancellationToken,
     deadline: Instant,
+    identity: Mutex<Option<crate::mcp::auth::McpAuthSelection>>,
 }
 impl CommandCustody for CommandOwner {
     fn check(&self) -> Result<(), McpAuthError> {
@@ -92,11 +93,25 @@ impl Selection {
     }
     fn selected(&self) -> Result<SelectedConfig, McpAuthError> {
         self.check()?;
+        let config = self
+            .startup
+            .authentication_config(&self.server)
+            .map_err(|_| McpAuthError::Invalid)?;
+        if lock(&self.owner.identity).is_none() {
+            let identity = self.service.retain_identity(config.identity())?;
+            let unused = {
+                let mut selected = lock(&self.owner.identity);
+                if selected.is_none() {
+                    *selected = Some(identity);
+                    None
+                } else {
+                    Some(identity)
+                }
+            };
+            drop(unused);
+        }
         Ok(SelectedConfig {
-            config: self
-                .startup
-                .authentication_config(&self.server)
-                .map_err(|_| McpAuthError::Invalid)?,
+            config,
             profile: self.profile.clone(),
         })
     }
@@ -230,6 +245,7 @@ fn reserve(
         reservation: WorkerReservation::new(&generation),
         cancellation,
         deadline,
+        identity: Mutex::new(None),
     });
     state.generations.push(generation);
     state.authenticating = Arc::downgrade(&owner);

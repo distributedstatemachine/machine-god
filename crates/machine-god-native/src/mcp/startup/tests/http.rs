@@ -2,6 +2,7 @@ use super::*;
 mod challenges;
 mod configured;
 mod refresh;
+mod retirement;
 mod subscriptions;
 use crate::mcp::{
     auth::{

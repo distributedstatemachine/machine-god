@@ -100,6 +100,8 @@ pub struct NativeMcpStartup {
     challenges: Arc<Mutex<authentication::Challenges>>,
     #[cfg(feature = "mcp-http")]
     authentication_leases: Mutex<Vec<Arc<authentication::RetainedLease>>>,
+    #[cfg(feature = "mcp-http")]
+    authentication_identities: Arc<Mutex<Vec<authentication::RetainedIdentity>>>,
     lifetime: McpPeerLifetime,
     max_retained_bytes: usize,
     pending: Arc<AtomicBool>,
@@ -137,6 +139,8 @@ impl NativeMcpStartup {
             challenges: Arc::new(Mutex::new(authentication::Challenges::default())),
             #[cfg(feature = "mcp-http")]
             authentication_leases: Mutex::default(),
+            #[cfg(feature = "mcp-http")]
+            authentication_identities: Arc::default(),
             lifetime: options.peer_lifetime,
             max_retained_bytes: options.max_retained_bytes,
             pending: Arc::new(AtomicBool::new(false)),

@@ -97,6 +97,7 @@ pub(super) async fn replace(
     };
     if let Some(previous) = previous {
         previous.cancellation.cancel();
+        previous.release_authentication();
     }
     // Retiring the old owner may synchronously wake a caller which closes us.
     let closed = closed || lock(&owner.state).closed;

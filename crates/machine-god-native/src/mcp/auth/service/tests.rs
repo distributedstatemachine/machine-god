@@ -15,6 +15,7 @@ use std::{
 
 mod lease_acquisition;
 mod profile;
+mod selection;
 mod workers;
 
 type Hook = Mutex<Option<Arc<dyn Fn() + Send + Sync>>>;

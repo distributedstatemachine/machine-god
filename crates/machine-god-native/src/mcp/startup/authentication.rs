@@ -8,9 +8,12 @@ use machine_god_core::CancellationToken;
 use std::{fmt, os::unix::ffi::OsStrExt, sync::Arc, time::Instant};
 
 mod challenges;
+mod identities;
 mod leases;
 pub(super) use challenges::Challenges;
 pub use challenges::NativeMcpStartupAuthChallenge;
+pub(super) use identities::IdentityCleanup;
+pub(super) use identities::RetainedIdentity;
 pub(super) use leases::RetainedLease;
 
 /// Explicit endpoint authentication choice. None of these variants can open a
@@ -106,12 +109,17 @@ impl NativeMcpStartup {
         remote: &McpRemoteConfig,
         cancellation: &CancellationToken,
         deadline: Instant,
-    ) -> Result<(McpResolvedHeaders, Option<Arc<McpAuthLease>>)> {
+    ) -> Result<(
+        McpResolvedHeaders,
+        Option<Arc<McpAuthLease>>,
+        Option<crate::mcp::auth::McpAuthSelection>,
+    )> {
         let selection = self.authentication_selection(name);
         let additional: Vec<_> = selection
             .into_iter()
             .flat_map(|selection| selection.additional_headers.iter())
             .collect();
+        let mut identity_owner = None;
         let lease = match selection.map(|selection| &selection.source) {
             None | Some(NativeMcpStartupAuthSource::Configured) => None,
             Some(NativeMcpStartupAuthSource::Lease(lease)) => {
@@ -125,6 +133,11 @@ impl NativeMcpStartup {
             }
             Some(NativeMcpStartupAuthSource::Stored(service)) => {
                 let expected = self.auth_config(remote, selection)?;
+                identity_owner = Some(
+                    service
+                        .retain_identity(expected.identity())
+                        .map_err(|_| Error::Authentication)?,
+                );
                 match service
                     .access_token(expected.identity(), cancellation, deadline)
                     .await
@@ -136,6 +149,11 @@ impl NativeMcpStartup {
             }
             Some(NativeMcpStartupAuthSource::ProfileStored { service, profile }) => {
                 let expected = self.auth_config(remote, selection)?;
+                identity_owner = Some(
+                    service
+                        .retain_identity(expected.identity())
+                        .map_err(|_| Error::Authentication)?,
+                );
                 match service
                     .access_token_for_profile(
                         expected.identity(),
@@ -158,7 +176,7 @@ impl NativeMcpStartup {
         let headers =
             McpResolvedHeaders::resolve(remote, |name| self.lookup(name), token, &additional)
                 .map_err(|_| Error::Authentication)?;
-        Ok((headers, lease))
+        Ok((headers, lease, identity_owner))
     }
 }
 

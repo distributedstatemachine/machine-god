@@ -179,7 +179,8 @@ timer only when polled. It creates no detached watcher and does not change the
 meaning of the original generation cancellation token.
 
 One service serializes authorization/refresh for each identity and retains at
-most 64 identities and 128 pending operation reservations, including retired
+most 128 transient identities, 128 live selection owners and 128 pending
+operation reservations, including retired
 operations and worker results that have not been consumed. Async credential
 loads and publications run on the injected actual host worker scope; OAuth and
 browser futures stay on the existing caller runtime. `status_owned` provides
@@ -200,8 +201,25 @@ Successful refresh retires the previous lease. Typed invalidation events and
 lease cancellation observers let the runtime retire the matching executable
 allocations. Hooks and cancellation wakeups run outside coordinator locks.
 Separate processes share file CAS, not an in-memory generation coordinator.
-Runtime reload/removal calls local-only `retire` for superseded identities to
-release their slots without deleting persisted credentials or contacting OAuth.
+Native stored-auth startup retains an exact service-and-identity selection
+before loading credentials, including a `Missing` result. At most 64 identities
+belong to one startup; the transient service cap permits bounded old-plus-new
+configuration overlap without increasing the persisted file's 64-entry cap.
+Simultaneous selections of the same identity share custody. Rejected or
+abandoned candidates release only their own selections; successful controller
+publication releases the previous configuration's selections after cutover.
+Removal and controller close release those selections even when historical
+startup or publication receipts remain retained. Batch cleanup also releases
+completed peers' selections. An explicit auth/logout command retains its own
+selection through the actual profile worker and returned lease custody.
+
+The last selection's drop cuts off only its matching live slot and notifies
+outside coordinator locks. It performs no file mutation or OAuth request and
+does not claim retirement acknowledgement: pending workers and their results
+keep retired slots charged until actual completion. Subsequent admission and
+cleanup observations prune settled slots. The public async `retire` operation
+remains available when an explicit acknowledgement is needed. A live overlapping
+selection prevents unrelated candidate failure from retiring its identity.
 
 Logout reports local unchanged/removed/ambiguous/failed separately from remote
 confirmed/unsupported/ambiguous/not-attempted. A local write failure is not
