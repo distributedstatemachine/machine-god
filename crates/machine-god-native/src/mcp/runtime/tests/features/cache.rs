@@ -35,6 +35,8 @@ impl NativeMcpRuntimeClock for CacheClock {
 
 struct Producer {
     ttl: u64,
+    result_ttl: AtomicU64,
+    revision: AtomicU64,
     description_bytes: usize,
     text: &'static str,
     fail_resources: AtomicBool,
@@ -44,6 +46,8 @@ impl Producer {
     fn new(ttl: u64, description_bytes: usize, text: &'static str) -> Arc<Self> {
         Arc::new(Self {
             ttl,
+            result_ttl: AtomicU64::new(0),
+            revision: AtomicU64::new(0),
             description_bytes,
             text,
             fail_resources: AtomicBool::new(false),
@@ -63,7 +67,7 @@ impl Producer {
         }
         let mut result = match method {
             "resources/list" => {
-                json!({"resources":[{"uri":"test://fixed","name":"fixed","description":"x".repeat(self.description_bytes)}]})
+                json!({"resources":[{"uri":"test://fixed","name":format!("fixed-{}", self.revision.load(Ordering::Acquire)),"description":"x".repeat(self.description_bytes)}]})
             }
             "resources/templates/list" => {
                 json!({"resourceTemplates":[{"uriTemplate":"test:///{id}","name":"dynamic"}]})
@@ -88,6 +92,8 @@ impl Producer {
             "resources/list" | "resources/templates/list" | "prompts/list"
         ) {
             result["ttlMs"] = json!(self.ttl);
+        } else if matches!(method, "resources/read" | "prompts/get") {
+            result["ttlMs"] = json!(self.result_ttl.load(Ordering::Acquire));
         }
         serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"result":result}))
             .unwrap()
@@ -156,6 +162,75 @@ fn execute(owner: &NativeMcpHumanCommand, command: &str) {
 }
 const READ: &str = "resource read fixture test://fixed";
 const GET: &str = r#"prompt get fixture review {"topic":"rust"}"#;
+
+#[test]
+fn complete_results_hit_without_new_request_ids_and_arguments_stay_exact() {
+    let clock = CacheClock::new();
+    let runtime = cached_runtime(
+        clock.clone(),
+        NativeMcpRuntimeLimits::default().max_retained_bytes,
+    );
+    let producer = Producer::new(1000, 0, "retained");
+    producer.result_ttl.store(100, Ordering::Release);
+    let writes = install_cache(&runtime, producer);
+    let owner = runtime.human_command();
+    for _ in 0..2 {
+        execute(&owner, READ);
+        execute(&owner, GET);
+    }
+    assert_eq!(count(&writes, "resources/read"), 1);
+    assert_eq!(count(&writes, "prompts/get"), 1);
+    execute(&owner, r#"prompt get fixture review {"topic":"Rust"}"#);
+    assert_eq!(count(&writes, "prompts/get"), 2);
+    assert!(
+        futures_executor::block_on(owner.feature(
+            &request(r#"prompt get fixture review {"topic":"rust","unknown":"x"}"#),
+            CancellationToken::new()
+        ))
+        .is_err()
+    );
+    assert_eq!(count(&writes, "prompts/get"), 2);
+    clock.advance(99);
+    execute(&owner, READ);
+    assert_eq!(count(&writes, "resources/read"), 1);
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert!(futures_executor::block_on(owner.feature(&request(READ), cancelled)).is_err());
+    clock.advance(100);
+    execute(&owner, READ);
+    assert_eq!(count(&writes, "resources/read"), 2);
+    for (index, request) in sent(&writes).iter().enumerate() {
+        assert_eq!(request["id"].as_u64(), Some(index as u64 + 1));
+    }
+    assert_eq!(runtime.feature_operations.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn refreshed_descriptor_and_replaced_partition_cannot_hit_old_results() {
+    let clock = CacheClock::new();
+    let runtime = cached_runtime(clock, NativeMcpRuntimeLimits::default().max_retained_bytes);
+    let producer = Producer::new(0, 0, "old partition");
+    producer.result_ttl.store(1000, Ordering::Release);
+    let writes = install_cache(&runtime, producer.clone());
+    let owner = runtime.human_command();
+    execute(&owner, READ);
+    execute(&owner, READ);
+    assert_eq!(count(&writes, "resources/list"), 2);
+    assert_eq!(count(&writes, "resources/read"), 1);
+    producer.revision.store(1, Ordering::Release);
+    execute(&owner, READ);
+    assert_eq!(count(&writes, "resources/read"), 2);
+    let replacement = Producer::new(1000, 0, "new partition");
+    replacement.result_ttl.store(1000, Ordering::Release);
+    let new_writes = install_cache(&runtime, replacement);
+    let reply = futures_executor::block_on(owner.feature(&request(READ), CancellationToken::new()))
+        .unwrap();
+    let McpFeatureReply::Response(response) = reply.reply() else {
+        panic!("response")
+    };
+    assert!(response.result_json().get().contains("new partition"));
+    assert_eq!(count(&new_writes, "resources/read"), 1);
+}
 
 #[test]
 fn positive_ttl_reuses_all_lazy_prerequisites_but_direct_lists_stay_explicit() {

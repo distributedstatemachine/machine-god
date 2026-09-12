@@ -26,6 +26,19 @@ impl fmt::Debug for McpFeatureRound {
     }
 }
 impl McpFeatureRound {
+    /// Cached complete data cannot mint an exchange, request ID or continuation.
+    pub(crate) fn cached(response: crate::mcp::feature::McpFeatureResponse) -> Result<Self, Error> {
+        if !matches!(
+            response.outcome(),
+            McpFeatureOutcome::Resource { .. } | McpFeatureOutcome::Prompt { .. }
+        ) {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(Self {
+            reply: McpFeatureReply::Response(response),
+            pending: None,
+        })
+    }
     pub(crate) fn new(
         reply: McpFeatureReply,
         exchange: McpFeatureExchange,

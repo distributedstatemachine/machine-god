@@ -12,6 +12,7 @@ mod features;
 mod peer;
 mod readiness;
 mod refresh;
+mod result_cache;
 mod route;
 mod subscriptions;
 #[cfg(test)]

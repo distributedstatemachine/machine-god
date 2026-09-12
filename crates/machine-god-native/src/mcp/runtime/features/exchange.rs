@@ -11,6 +11,7 @@ use crate::{
         feature::McpFeatureCodecError,
         runtime::{
             NativeMcpRuntimeError,
+            result_cache::{self, Lookup, Ticket},
             route::{PeerGuard, ServerRoute},
         },
     },
@@ -22,11 +23,70 @@ pub(super) async fn run(
     request: &McpFeatureRequest,
     authority: &McpFeatureControlAuthority,
     options: McpFeatureOperationOptions,
-) -> Result<McpFeatureRound> {
+) -> Result<(McpFeatureRound, Option<Ticket>)> {
     if server.clock.now() < server.catalog_epoch {
         return Err(NativeMcpRuntimeError::Invalid.into());
     }
-    super::super::subscriptions::drain(lane, server).await?;
+    let deadline = lane.deadline;
+    timed(server, authority, deadline, async {
+        super::super::subscriptions::ensure(lane, server)
+            .await
+            .map_err(Into::into)
+    })
+    .await?;
+    let catalogs = prerequisites(lane, server, request, authority, options).await?;
+    let key = result_cache::key(request, &catalogs)?;
+    if request.action() == Action::ResourceRead && authority.is_human() {
+        let uri = request
+            .identity()
+            .ok_or(McpFeatureCodecError::InvalidRequest)?;
+        timed(server, authority, deadline, async {
+            super::super::subscriptions::ensure_resource(lane, server, uri)
+                .await
+                .map_err(Into::into)
+        })
+        .await?;
+    }
+    let ticket = if let Some(key) = key {
+        let invalidation = invalidation(server)?;
+        let now = super::super::catalog_driver::elapsed(server)?;
+        let lookup = server
+            .results
+            .lock()
+            .map_err(|_| NativeMcpRuntimeError::Unavailable)?
+            .begin(key, request.action(), invalidation, now)?;
+        match lookup {
+            Lookup::Hit(response) => {
+                if !authority.is_live() || server.clock.now() >= deadline {
+                    return Err(NativeMcpRuntimeError::Cancelled.into());
+                }
+                return Ok((McpFeatureRound::cached(response)?, None));
+            }
+            Lookup::Fetch(ticket) => Some(ticket),
+        }
+    } else {
+        None
+    };
+    let response = lane.peer.feature_round(
+        request,
+        &server.name,
+        &catalogs,
+        authority.clone(),
+        options,
+        lane.deadline,
+    );
+    timed(server, authority, lane.deadline, response)
+        .await
+        .map(|round| (round, ticket))
+}
+
+async fn prerequisites(
+    lane: &mut PeerGuard<'_>,
+    server: &ServerRoute,
+    request: &McpFeatureRequest,
+    authority: &McpFeatureControlAuthority,
+    options: McpFeatureOperationOptions,
+) -> Result<Vec<McpDescriptorCatalog>> {
     let mut catalogs = Vec::new();
     // Only this exact peer's admitted partition supplies identity evidence.
     // A retained snapshot never extends the command/turn's authority.
@@ -65,15 +125,47 @@ pub(super) async fn run(
         )
         .await?;
     }
-    let response = lane.peer.feature_round(
-        request,
-        &server.name,
-        &catalogs,
-        authority.clone(),
-        options,
-        lane.deadline,
-    );
-    timed(server, authority, lane.deadline, response).await
+    Ok(catalogs)
+}
+
+fn invalidation(server: &ServerRoute) -> Result<(u64, u64)> {
+    let state = server
+        .catalogs
+        .lock()
+        .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
+    state
+        .policy
+        .result_cache_invalidation(&state.generation)
+        .map_err(|_| NativeMcpRuntimeError::Unavailable.into())
+}
+
+pub(super) async fn retain(
+    server: &ServerRoute,
+    authority: &McpFeatureControlAuthority,
+    ticket: Option<Ticket>,
+    reply: &McpFeatureReply,
+) -> Result<()> {
+    let (Some(ticket), McpFeatureReply::Response(response)) = (ticket, reply) else {
+        return Ok(());
+    };
+    // Continuations release the lane for consent; drain newly arrived changes
+    // before a conditional insertion without rebasing the response timestamp.
+    let mut lane = server.acquire_feature(authority).await?;
+    let deadline = lane.deadline;
+    timed(server, authority, deadline, async {
+        super::super::subscriptions::drain(&mut lane, server)
+            .await
+            .map_err(Into::into)
+    })
+    .await?;
+    let invalidation = invalidation(server)?;
+    let now = super::super::catalog_driver::elapsed(server)?;
+    server
+        .results
+        .lock()
+        .map_err(|_| NativeMcpRuntimeError::Unavailable)?
+        .finish(ticket, response, invalidation, server.catalog_epoch, now)?;
+    Ok(())
 }
 
 async fn load(
@@ -145,6 +237,9 @@ async fn catalog(
     );
     let reply = timed(server, authority, lane.deadline, response).await;
     let now = super::super::catalog_driver::elapsed(server)?;
+    // Revalidating a native context can release its last owner and invoke host
+    // cleanup. It must not run while holding the catalog cache mutex.
+    let may_fallback = authority.is_live() && server.clock.now() < lane.deadline;
     let mut state = server
         .catalogs
         .lock()
@@ -153,10 +248,7 @@ async fn catalog(
         Ok(McpFeatureReply::Catalog(catalog)) => catalog,
         failure => {
             state.fail(ticket, now)?;
-            if authority.is_live()
-                && server.clock.now() < lane.deadline
-                && let Some(cached) = cached
-            {
+            if may_fallback && let Some(cached) = cached {
                 return Ok(cached);
             }
             return Err(failure

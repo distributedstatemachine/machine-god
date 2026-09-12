@@ -71,6 +71,15 @@ pub enum McpFeatureIdentity {
     ResourceTemplate(McpResourceTemplateDescriptor),
     Prompt(McpPromptDescriptor),
 }
+impl McpFeatureIdentity {
+    /// Data admission only, shared with the actual exchange preparation path.
+    pub(crate) fn admit(
+        request: &McpFeatureRequest,
+        catalogs: &[McpDescriptorCatalog],
+    ) -> Result<Self> {
+        admit_identity(request, catalogs)
+    }
+}
 impl fmt::Debug for McpFeatureIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("McpFeatureIdentity { .. }")

@@ -266,7 +266,7 @@ impl NativeMcpRuntime {
             options.form = true;
             options.url = endpoint.launcher.is_some();
         }
-        let round = {
+        let (round, cache_ticket) = {
             let mut lane = server.acquire_feature(&authority).await?;
             publication.check()?;
             exchange::run(&mut lane, server, request, &authority, options).await?
@@ -279,6 +279,7 @@ impl NativeMcpRuntime {
             }
             None => round.into_reply(),
         };
+        exchange::retain(server, &authority, cache_ticket, &reply).await?;
         publication.check()?;
         server.check_authority()?;
         if !authority.is_live() {

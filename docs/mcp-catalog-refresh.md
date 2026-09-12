@@ -114,8 +114,31 @@ at 16 MiB and further limited by the selected runtime retained-byte ceiling.
 Cache pressure preserves old metadata and backoff while the current operation may
 use its separately bounded fresh response. Cache retention never prolongs command,
 turn, configuration, authentication or peer authority. Direct list commands still
-perform their explicit requested exchange; response/content caching and selected
-resource-URI expansion are separate runtime composition work.
+perform their explicit requested exchange.
+
+## Complete read/get result retention
+
+Resource reads and prompt gets retain only complete admitted data, never input
+requests, errors, request reservations or continuation authority. The per-peer
+cache holds at most 64 combined FIFO entries and shares the lazy catalog cache's
+16 MiB/runtime-selected byte ceiling. Optional keys are bounded to 128 KiB;
+larger legal descriptors remain usable without caching. Keys include the exact
+admitted descriptor, selected identity and sorted, byte-exact string arguments.
+Even public scope remains within the same peer/configuration/authentication
+partition. Replaced peers cannot inherit the old cache.
+
+Each use admits the current descriptor and revalidates the original command or
+turn. TTL starts at response receipt, not cache insertion, hits, or return from
+human consent. Missing/zero TTL is immediately expired. Expired results are not
+served on request failure. Read invalidation clears all resource entries; prompt
+list invalidation clears prompt entries. Listener termination/handoff invalidates
+both. A notification or newer fetch during human input prevents the old result
+from replacing current cache state. Clock regression and counter exhaustion fail
+closed. Cache pressure only skips retention of the separately bounded response.
+
+Prompt-get TTL caching is a native extension: the pin caches resource reads but
+gets prompts directly. This does not claim literal upstream cache behavior or a
+measured performance improvement. No legacy restart or retry path is introduced.
 
 ## Pinned behavior
 

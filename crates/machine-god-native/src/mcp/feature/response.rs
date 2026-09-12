@@ -7,7 +7,7 @@ use crate::mcp::{
     schema::{McpSchema, McpSchemaLimits, McpSchemaValidation, McpSchemaViolation},
 };
 use serde_json::value::RawValue;
-use std::fmt;
+use std::{fmt, sync::Arc, time::Instant};
 
 #[derive(Clone, Copy, Debug)]
 pub struct McpFeatureCacheHints {
@@ -72,10 +72,16 @@ impl fmt::Debug for McpFeatureOutcome {
         f.write_str("McpFeatureOutcome { .. }")
     }
 }
+#[derive(Clone)]
 pub struct McpFeatureResponse {
+    data: Arc<AdmittedResponse>,
+    received_at: Option<Instant>,
+}
+struct AdmittedResponse {
     raw: Box<RawValue>,
     result: Box<RawValue>,
     outcome: McpFeatureOutcome,
+    retained_bytes: usize,
 }
 impl fmt::Debug for McpFeatureResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -85,16 +91,26 @@ impl fmt::Debug for McpFeatureResponse {
 impl McpFeatureResponse {
     #[must_use]
     pub fn raw_json(&self) -> &RawValue {
-        &self.raw
+        &self.data.raw
     }
     /// Complete original result/error object, including unknown metadata.
     #[must_use]
     pub fn result_json(&self) -> &RawValue {
-        &self.result
+        &self.data.result
     }
     #[must_use]
     pub fn outcome(&self) -> &McpFeatureOutcome {
-        &self.outcome
+        &self.data.outcome
+    }
+    pub(crate) fn received_at(&self) -> Option<Instant> {
+        self.received_at
+    }
+    pub(crate) fn observed_at(mut self, now: Instant) -> Self {
+        self.received_at = Some(now);
+        self
+    }
+    pub(crate) fn retained_byte_charge(&self) -> usize {
+        self.data.retained_bytes
     }
 }
 impl McpFeatureExchange {
@@ -195,9 +211,13 @@ impl McpFeatureExchange {
             }
         };
         Ok(McpFeatureResponse {
-            raw: raw.to_owned(),
-            result: result.to_owned(),
-            outcome,
+            data: Arc::new(AdmittedResponse {
+                raw: raw.to_owned(),
+                result: result.to_owned(),
+                outcome,
+                retained_bytes: retained,
+            }),
+            received_at: None,
         })
     }
     fn resource_result(

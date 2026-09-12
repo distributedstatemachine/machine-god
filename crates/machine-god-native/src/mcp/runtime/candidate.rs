@@ -162,6 +162,9 @@ impl NativeMcpRuntime {
                 configuration: server.configuration,
                 authentication: server.authentication,
                 catalogs: std::sync::Mutex::new(catalogs),
+                results: std::sync::Mutex::new(super::result_cache::FeatureResultCache::new(
+                    self.cache_budget.clone(),
+                )),
                 catalog_epoch: server.catalog_epoch,
                 protocol: peer.protocol(),
                 readiness: peer.readiness(),

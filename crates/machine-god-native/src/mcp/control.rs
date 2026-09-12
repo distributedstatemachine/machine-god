@@ -34,6 +34,9 @@ impl fmt::Debug for McpFeatureControlAuthority {
     }
 }
 impl McpFeatureControlAuthority {
+    pub(crate) fn is_human(&self) -> bool {
+        matches!(self.0.principal, Principal::Human(_))
+    }
     pub(crate) fn for_model(
         context: Arc<NativeMcpTurnContext>,
         operation: CancellationToken,
@@ -233,6 +236,7 @@ pub(crate) fn admit(
     let Some(builder) = load else {
         return exchange
             .admit_response(bytes)
+            .map(|response| response.observed_at(now))
             .map(McpFeatureReply::Response)
             .map(Some);
     };

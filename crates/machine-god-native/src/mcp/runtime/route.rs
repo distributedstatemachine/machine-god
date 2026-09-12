@@ -30,6 +30,7 @@ pub(super) struct ServerRoute {
     pub configuration: Arc<[u8]>,
     pub authentication: Arc<[u8]>,
     pub catalogs: std::sync::Mutex<super::NativeMcpCatalogState>,
+    pub results: std::sync::Mutex<super::result_cache::FeatureResultCache>,
     pub catalog_epoch: Instant,
     pub protocol: NegotiatedProtocol,
     pub peer: Mutex<NativeMcpOwnedPeer>,
