@@ -106,6 +106,13 @@ partition. Caller-driven polling drains at most 64 ready notifications before
 catalog admission; a larger ready backlog rejects that attempt instead of claiming
 a fresh cache hit. Partial transport reads remain peer-owned across observations.
 
+Ordinary tool calls and consuming continuation rounds settle already queued
+notifications before and after their exchange under the same original caller,
+peer lane, deadline and exact server policy. Progress is consumed; selected
+subscription invalidations update only that partition's policy. This settlement
+does not poll new socket data, refresh tools, switch an existing turn pin or
+replay a request. Listener cancellation retains its exact owned close path.
+
 Already negotiated direct candidates start their advertised modern subscription
 on first catalog demand. Startup and demand both require exact filter ACKs, not
 merely a successful POST. The entire demand is selected against its original

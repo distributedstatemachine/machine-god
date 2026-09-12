@@ -204,7 +204,12 @@ impl NativeMcpRuntimeToolCall {
             self.revalidate()?;
             let deadline = peer.deadline;
             let response = match select(
-                Box::pin(peer.peer.call(submission, deadline)),
+                Box::pin(async {
+                    super::subscriptions::drain_queued(&mut peer).await?;
+                    let response = peer.peer.call(submission, deadline).await?;
+                    super::subscriptions::drain_queued(&mut peer).await?;
+                    Ok::<_, super::NativeMcpRuntimeError>(response)
+                }),
                 Box::pin(async {
                     select(self.cancelled(), original_cancelled).await;
                 }),
@@ -354,7 +359,12 @@ impl NativeMcpRuntimeToolCall {
                 let original_cancelled = submission.cancelled_owned();
                 let deadline = peer.deadline;
                 let bytes = match select(
-                    Box::pin(peer.peer.call(submission, deadline)),
+                    Box::pin(async {
+                        super::subscriptions::drain_queued(&mut peer).await?;
+                        let response = peer.peer.call(submission, deadline).await?;
+                        super::subscriptions::drain_queued(&mut peer).await?;
+                        Ok::<_, super::NativeMcpRuntimeError>(response)
+                    }),
                     Box::pin(async {
                         select(self.cancelled(), original_cancelled).await;
                     }),

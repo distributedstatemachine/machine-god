@@ -5,6 +5,9 @@ use futures_util::StreamExt;
 use std::{os::unix::fs::DirBuilderExt, path::PathBuf};
 
 mod continuation;
+#[cfg(feature = "mcp-http")]
+mod http;
+mod notifications;
 
 struct Archive {
     path: PathBuf,

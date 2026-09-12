@@ -113,6 +113,12 @@ pub(super) async fn call(
         .take(submission.rpc_id(), submission.tool_reservation())
         .ok_or(McpHttpPeerError::Correlation)?;
     let mut operation = Operation::begin(peer);
+    let limits = crate::mcp::tool_result::McpToolResultLimits::default();
+    operation.peer.response_limits = super::WireLimits {
+        max_frame_bytes: limits.max_response_bytes,
+        max_depth: 33,
+        max_nodes: limits.max_nodes,
+    };
     let mut cancelled = submission.cancelled_owned();
     let connection = operation.peer.connection(projected, deadline)?;
     let writer = connection.submit(submission, runtime);

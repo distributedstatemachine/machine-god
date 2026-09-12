@@ -134,7 +134,14 @@ impl NativeMcpHumanCommand {
                 .ok_or(NativeMcpRuntimeError::Unavailable)?;
             match futures_util::future::select(
                 self.cancellation.cancelled(),
-                controller.refresh_authentication_configured(cancellation.clone()),
+                Box::pin(async {
+                    controller
+                        .refresh_authentication_configured(cancellation.clone())
+                        .await?;
+                    controller
+                        .activate_deferred_configured(cancellation.clone())
+                        .await
+                }),
             )
             .await
             {

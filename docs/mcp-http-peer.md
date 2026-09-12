@@ -130,8 +130,11 @@ remain native runtime responsibilities.
 IDs are positive signed-64-bit integers and fail on exhaustion. Limits are
 2,048 runtime allocations, eight live exchange observations, 64 queued events
 totaling 1 MiB, 4,096 admitted events per operation, and 1,024 events per response
-stream. Ordinary JSON frames are at most 8 MiB. Typed feature operations may
-select up to 16 MiB and 262,144 nodes without widening notification bounds.
+stream. Ordinary JSON frames are at most 8 MiB. Tool calls select the complete
+tool-result codec's 16 MiB, 262,144-node and depth-33 envelope limits; typed
+feature operations likewise select their codec limits. These operation-scoped
+limits do not widen queued notifications' default wire/node or 1 MiB queue
+bounds. Result limits reset on settlement or abandonment.
 Connector/SSE byte, line and depth budgets apply independently; one stream's
 default body budget is 64 MiB. Queue retention does not reset between operations.
 Authentication challenges retain at most eight fields totaling 16 KiB.

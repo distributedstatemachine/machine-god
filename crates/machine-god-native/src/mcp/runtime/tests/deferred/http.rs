@@ -39,6 +39,158 @@ fn configured(listener: &TcpListener) -> Fixture {
 }
 
 #[test]
+fn human_feature_activates_optional_ask_server_without_switching_existing_pin() {
+    run(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let fixture = configured(&listener);
+        let controller = fixture.controller();
+        fixture.runtime.bind_controller(&controller).unwrap();
+        controller
+            .start(
+                NativeMcpStartupPhase::AskStartup,
+                CancellationToken::new(),
+                deadline(),
+            )
+            .await
+            .unwrap();
+        let (_engine, _conversation, _turn, context) =
+            addition::conversation(&fixture.runtime, "pinned-empty");
+        let exact = fixture
+            .runtime
+            .contexts
+            .snapshot_for_tool(&context)
+            .unwrap();
+        let pinned = fixture
+            .runtime
+            .for_turn(&exact.registry().unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(pinned.servers.is_empty());
+        let human = fixture.runtime.human_command();
+        let query = crate::mcp::control::tests::request("resource list optional");
+        drop(human.feature(&query, CancellationToken::new()));
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert!(human.feature(&query, cancelled).await.is_err());
+        assert!(listener.accept().now_or_never().is_none());
+        let server = async {
+            for (id, method, result) in [
+                (
+                    1,
+                    "server/discover",
+                    json!({"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"resources":{}}}),
+                ),
+                (
+                    2,
+                    "resources/list",
+                    json!({"resultType":"complete","resources":[{"uri":"test://fixed","name":"fixed"}]}),
+                ),
+                (
+                    3,
+                    "resources/list",
+                    json!({"resultType":"complete","resources":[{"uri":"test://fixed","name":"fixed"}]}),
+                ),
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let received = request(&mut socket).await;
+                assert!(
+                    String::from_utf8_lossy(&received).contains(&format!("mcp-method: {method}"))
+                );
+                let body =
+                    serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"result":result})).unwrap();
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+                socket.flush().await.unwrap();
+            }
+        };
+        let client = async {
+            assert!(matches!(
+                human
+                    .feature(&query, CancellationToken::new())
+                    .await
+                    .unwrap()
+                    .reply(),
+                crate::mcp::control::McpFeatureReply::Catalog(_)
+            ));
+            assert!(
+                fixture
+                    .runtime
+                    .snapshot_for_turn(context, CancellationToken::new())
+                    .await
+                    .unwrap()
+                    .tools()
+                    .is_empty()
+            );
+            let selected = fixture
+                .runtime
+                .for_turn(&exact.registry().unwrap())
+                .unwrap()
+                .unwrap();
+            assert!(Arc::ptr_eq(&selected, &pinned));
+            // Completed deferred discovery never loads a later saved edit.
+            fixture.seed("invalid");
+            assert!(
+                human
+                    .feature(&query, CancellationToken::new())
+                    .await
+                    .is_ok()
+            );
+        };
+        join(client, server).await;
+        assert!(
+            controller
+                .settle(deadline(), CancellationToken::new())
+                .await
+                .unwrap()
+                .complete
+        );
+    });
+}
+
+#[test]
+fn human_deferred_demand_rejects_saved_edit_before_any_connection() {
+    run(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let fixture = configured(&listener);
+        let controller = fixture.controller();
+        fixture.runtime.bind_controller(&controller).unwrap();
+        controller
+            .start(
+                NativeMcpStartupPhase::AskStartup,
+                CancellationToken::new(),
+                deadline(),
+            )
+            .await
+            .unwrap();
+        fixture.seed(r#"{"mcp":{}}"#);
+        let human = fixture.runtime.human_command();
+        let query = crate::mcp::control::tests::request("resource list optional");
+        assert!(
+            human
+                .feature(&query, CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert!(listener.accept().now_or_never().is_none());
+        assert!(
+            fixture
+                .runtime
+                .feature_publication()
+                .unwrap()
+                .servers
+                .is_empty()
+        );
+        assert!(
+            controller
+                .settle(deadline(), CancellationToken::new())
+                .await
+                .unwrap()
+                .complete
+        );
+    });
+}
+
+#[test]
 fn actual_turn_catalog_and_feature_waiters_share_discovery_without_cancelled_pins() {
     run(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();

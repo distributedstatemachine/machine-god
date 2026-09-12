@@ -121,6 +121,28 @@ pub(super) async fn ensure_resource(
     ensure(lane, server).await
 }
 
+/// Settle ordinary-exchange notifications under the original caller's lane and
+/// guards. Never read ahead after a completed response or refresh a pinned view.
+pub(super) async fn drain_queued(lane: &mut PeerGuard<'_>) -> Result<()> {
+    let server = lane.server;
+    check(lane, server)?;
+    let mut close = false;
+    // Both peer queues admit at most 64 frames. The exclusive lane prevents any
+    // producer from appending while these already admitted frames are consumed.
+    for _ in 0..64 {
+        check(lane, server)?;
+        let Some(envelope) = lane.peer.take_notification() else {
+            break;
+        };
+        close |= state(server)?.observe(&envelope)?;
+    }
+    if close {
+        check(lane, server)?;
+        lane.peer.close_subscription(lane.deadline).await?;
+    }
+    check(lane, server)
+}
+
 pub(super) async fn drain(lane: &mut PeerGuard<'_>, server: &ServerRoute) -> Result<()> {
     check(lane, server)?;
     for _ in 0..64 {

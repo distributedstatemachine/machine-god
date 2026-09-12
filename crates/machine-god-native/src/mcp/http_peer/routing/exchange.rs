@@ -64,7 +64,10 @@ async fn response_stream(
         charge_event(peer)?;
         let frame = McpHttpPeerFrame::parse_with_limits(
             event.data().as_bytes().into(),
-            peer.response_limits,
+            super::super::WireLimits {
+                max_depth: super::super::WireLimits::default().max_depth,
+                ..peer.response_limits
+            },
         )?;
         peer.check(deadline)?;
         match frame.envelope.kind() {
@@ -73,9 +76,20 @@ async fn response_stream(
                     .envelope
                     .correlate(expected, discovery)
                     .map_err(|_| McpHttpPeerError::Correlation)?;
-                return Ok(frame);
+                if peer.response_limits.max_depth == super::super::WireLimits::default().max_depth {
+                    return Ok(frame);
+                }
+                let McpHttpPeerFrame { bytes, envelope } = frame;
+                drop(envelope);
+                return McpHttpPeerFrame::parse_with_limits(bytes, peer.response_limits);
             }
-            RpcKind::Notification => peer.retain(frame)?,
+            // Method-specific result capacity cannot widen ordinary queued
+            // notification admission, including its independent node budget.
+            RpcKind::Notification => {
+                let McpHttpPeerFrame { bytes, envelope } = frame;
+                drop(envelope);
+                peer.retain(McpHttpPeerFrame::parse(bytes)?)?;
+            }
             RpcKind::Request => return Err(McpHttpPeerError::Protocol),
         }
         read = reader.next();

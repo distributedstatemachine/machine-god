@@ -7,6 +7,19 @@ use crate::mcp::{
 use std::time::Instant;
 
 impl NativeMcpOwnedPeer {
+    /// Removes only already admitted ordinary-exchange data; never polls I/O.
+    pub(crate) fn take_notification(&mut self) -> Option<RpcEnvelope> {
+        match self {
+            #[cfg(test)]
+            Self::Script(_) => None,
+            Self::Stdio(peer) => peer.take_notification(),
+            #[cfg(feature = "mcp-http")]
+            Self::Http(peer) => peer
+                .take_notification()
+                .map(crate::mcp::http_peer::McpHttpPeerFrame::into_envelope),
+        }
+    }
+
     pub(crate) fn capabilities(&self) -> McpPeerCapabilities {
         match self {
             #[cfg(test)]

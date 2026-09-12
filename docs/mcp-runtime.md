@@ -152,6 +152,14 @@ waiters share the controller-owned discovery; caller cancellation or turn
 retirement ends that wait without cancelling another turn's discovery. The
 original context, registry and caller cancellation are revalidated after the wait.
 
+A new human feature command also awaits configured deferred discovery after
+authentication refresh and before selecting its publication. This makes an
+optional-only Ask startup usable by immediate human resource/prompt demand.
+The command and caller retain cancellation ownership throughout that wait.
+Activation validates the original configured source; it cannot activate saved
+edits without explicit reload. Already selected human continuations and model
+turn pins never enter this new-publication selection path.
+
 An existing turn pin bypasses discovery and never changes to a newer view.
 All-mode and completed deferred discovery are controller no-ops. Ordinary
 optional-server failures preserve the usable required publication; global
