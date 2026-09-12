@@ -104,7 +104,10 @@ fn mcp_commands_cancel_and_session_switch_record_observations_without_replay() {
     terminal.wait_for(b"]\n> ");
     assert_eq!(gateway.mcp_requests(), requests);
     command(&mut terminal, "/resume");
-    terminal.wait_for(b"MCP session marker");
+    // The ordinary turn makes the sole previous session resumable; it does not
+    // rename it. The exact adopted identity is checked through /status below.
+    terminal.wait_for("> Untitled session · workspace · ".as_bytes());
+    terminal.wait_for(b"1 turns");
     terminal.wait_for(b"Esc cancel");
     terminal.output.clear();
     terminal.send(b"\r");
