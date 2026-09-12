@@ -28,7 +28,7 @@ impl FeatureCacheBudget {
             maximum,
         }
     }
-    fn reserve(self: &Arc<Self>, bytes: usize) -> Option<Charge> {
+    pub(super) fn reserve(self: &Arc<Self>, bytes: usize) -> Option<Charge> {
         self.bytes
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current
@@ -42,7 +42,7 @@ impl FeatureCacheBudget {
         })
     }
 }
-struct Charge {
+pub(super) struct Charge {
     budget: Arc<FeatureCacheBudget>,
     bytes: usize,
 }
@@ -65,6 +65,7 @@ pub struct NativeMcpCatalogState {
     budget: Option<Arc<FeatureCacheBudget>>,
     pub(super) subscription: Option<RpcId>,
     pub(super) acknowledged: bool,
+    pub(super) subscription_stopped: bool,
     pub(super) uris: Vec<Box<str>>,
 }
 impl std::fmt::Debug for NativeMcpCatalogState {
@@ -94,6 +95,7 @@ impl NativeMcpCatalogState {
             budget: None,
             subscription: None,
             acknowledged: false,
+            subscription_stopped: false,
             uris: Vec::new(),
         })
     }

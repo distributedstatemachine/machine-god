@@ -75,6 +75,11 @@ byte-exact resource URIs. Unsupported acknowledgement filters request owned
 listener closure, not fallback. Stale IDs, duplicate acknowledgements, unrelated
 messages, non-notification envelopes and unselected resources cannot invalidate
 catalogs. Correlated server cancellation requests closure of only that listener.
+Listener end and unsupported/cancelled admission expire all catalog and result
+epochs immediately. `end_subscription` accepts only the currently selected ID;
+repeated or late termination cannot invalidate a replacement listener. Independent
+resource-read and prompt epochs let result caches compare their exact partition
+without clearing another owner's observations.
 
 Tool and prompt list changes invalidate only their respective catalog family.
 Resource list changes invalidate both resource and template catalogs and all
@@ -100,6 +105,26 @@ runtime retains that state with the original peer, catalog epoch and configurati
 partition. Caller-driven polling drains at most 64 ready notifications before
 catalog admission; a larger ready backlog rejects that attempt instead of claiming
 a fresh cache hit. Partial transport reads remain peer-owned across observations.
+
+Already negotiated direct candidates start their advertised modern subscription
+on first catalog demand. Startup and demand both require exact filter ACKs, not
+merely a successful POST. The entire demand is selected against its original
+command/turn authority and deadline. Dropping an ACK wait retains the exact ID,
+filters and partial peer-owned read; a later authorized demand resumes that read
+under its own bounds without replaying the listen request. Unsupported ACKs and
+correlated cancellation disable automatic restart for that partition. Ordinary
+listener completion expires snapshots and permits a subsequent demand to start a
+new ID; failed reads do not replay any application request. Peer retirement still
+owns socket/process cleanup, and abandoned stdio writes fail the peer closed.
+
+An unrestricted admitted resource read expands the exact watched-URI union before
+result-cache lookup. Existing selected URIs survive expansion. The full next set
+is checked against 64 URIs and 64 KiB before the current listener is disturbed;
+duplicate demand does not restart it. Handoff expires snapshots before closing the
+old listener or performing replacement I/O, and requires the replacement ACK.
+HTTP closes the owned stream; stdio sends exact cancellation and retains its
+bounded late-response IDs. Capacity failure cannot bypass the 64 retired-ID bound.
+No cache mutex is held across listen, cancellation, polling or owner callbacks.
 
 Before a new turn is pinned or a human feature selects its publication, due tools
 refresh on the same serialized peer. Exact unchanged descriptors update freshness

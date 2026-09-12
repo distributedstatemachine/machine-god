@@ -125,6 +125,40 @@ const ALL: &[McpCatalogKind] = &[
 const SUBSCRIPTION_ID: &str = "io.modelcontextprotocol/subscriptionId";
 
 impl McpCatalogRefresh {
+    /// Expires snapshots before resource-subscription replacement I/O, including
+    /// the first URI listener when no list-change subscription was advertised.
+    /// # Errors
+    /// Rejects foreign generations, closed state and invalidation exhaustion.
+    pub fn invalidate_subscription_handoff(
+        &mut self,
+        generation: &McpRefreshGeneration,
+    ) -> Result<()> {
+        self.check(generation)?;
+        self.invalidate(ALL, true)
+    }
+
+    /// Retires only the selected listener and expires all snapshots before any
+    /// replacement I/O. A late end from an older listener cannot affect its heir.
+    /// # Errors
+    /// Rejects foreign generations, closed state and invalidation exhaustion.
+    pub fn end_subscription(
+        &mut self,
+        generation: &McpRefreshGeneration,
+        request_id: i64,
+    ) -> Result<bool> {
+        self.check(generation)?;
+        if !self
+            .subscription
+            .as_ref()
+            .is_some_and(|selected| selected.id == request_id)
+        {
+            return Ok(false);
+        }
+        self.invalidate(ALL, true)?;
+        self.subscription = None;
+        Ok(true)
+    }
+
     /// The owner supplies the exact peer-reserved listen ID and retains this
     /// filter allocation through encoding and acknowledgement admission.
     /// # Errors
@@ -178,7 +212,8 @@ impl McpCatalogRefresh {
         };
         if envelope.method() == Some("notifications/cancelled") {
             if params.get("requestId").and_then(Value::as_i64) == Some(subscription.id) {
-                self.subscription = None;
+                let id = subscription.id;
+                self.end_subscription(generation, id)?;
                 return Ok(McpRefreshNotification::CloseCancelled);
             }
             return Ok(McpRefreshNotification::Ignored);
@@ -196,7 +231,8 @@ impl McpCatalogRefresh {
                 return Ok(McpRefreshNotification::Ignored);
             }
             if !subscription.filters.accepts(params.get("notifications")) {
-                self.subscription = None;
+                let id = subscription.id;
+                self.end_subscription(generation, id)?;
                 return Ok(McpRefreshNotification::CloseUnsupported);
             }
             subscription.acknowledged = true;

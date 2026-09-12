@@ -4,6 +4,22 @@ use super::{
 };
 
 impl McpCatalogRefresh {
+    /// Exact partition-local result-cache epochs: resource reads, then prompts.
+    /// A cache owner compares these before returning retained content; observing
+    /// them does not clear another owner's invalidations.
+    /// # Errors
+    /// Rejects foreign generations and closed policy state.
+    pub fn result_cache_invalidation(
+        &self,
+        generation: &McpRefreshGeneration,
+    ) -> Result<(u64, u64)> {
+        self.check(generation)?;
+        Ok((
+            self.resource_reads,
+            self.families[super::index(McpCatalogKind::Prompts)].invalidation,
+        ))
+    }
+
     /// Decides one requested family using milliseconds from the catalog's
     /// original monotonic epoch. It performs no refresh or publication itself.
     /// # Errors

@@ -112,7 +112,7 @@ impl NativeMcpRuntime {
     ) -> Result<bool> {
         caller.check()?;
         server.check_authority()?;
-        super::subscriptions::drain(lane, server).await?;
+        super::subscriptions::ensure(lane, server).await?;
         if !lane.peer.supports_tools() {
             return Ok(false);
         }
