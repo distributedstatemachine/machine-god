@@ -12,8 +12,6 @@ pub mod catalog;
 #[cfg(all(feature = "mcp-http", any(target_os = "linux", target_os = "macos")))]
 pub mod clock;
 pub mod commands;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub mod completion;
 pub mod config;
 pub mod context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

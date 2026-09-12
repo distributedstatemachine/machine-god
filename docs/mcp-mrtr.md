@@ -134,72 +134,19 @@ submissions. Its private
 round allocation is not obtainable from these public codecs. Legacy completion
 retry, sampling and roots remain outside that modern continuation path.
 
-## Native legacy completion observations
+## Native URL recovery
 
-The typed native presenter has additive URL recovery and legacy completion
-hooks; an unsupported live presenter returns `Unavailable`. Recovery yields
-`ContinueManually`, `RetryBrowser`, or `Cancel`; the distinct completion question
-yields `Retry` or `Cancel`. Neither is a JSON elicitation action, browser effect,
-notification observation, or continuation grant. Both use the original model
-context and the existing bounded inbox, exact activation/token checks, response
-charges, cancellation and CLI flush acknowledgement. Dropping a pending question
-invalidates its token, including when the real completion observer wins its race.
-The collector separately owns browser launching, the three-prompt recovery budget,
-completion correlation and consuming retry custody. Recovery/completion rendering
-does not repeat the URL. These hooks alone do not enable URL execution or create
-a human-command origin from fabricated model fields.
+The typed native presenter exposes URL recovery; an unsupported live presenter
+returns `Unavailable`. Recovery yields `ContinueManually`, `RetryBrowser`, or
+`Cancel`. These choices are data, not browser effects or continuation grants.
+Recovery uses the original model context and the existing bounded inbox, exact
+activation/token checks, response charges, cancellation and CLI flush
+acknowledgement. Dropping a pending question invalidates its token.
+The collector owns browser launching, the three-prompt recovery budget and
+consuming continuation custody. Recovery rendering does not repeat the URL or
+create a human-command origin from fabricated model fields.
 
-`mcp::completion` classifies exact `notifications/elicitation/complete` envelopes
-and retains bounded native observation windows. A source is a unique local
-allocation selected for one runtime/connection/client/authentication lifetime;
-remote JSON and equal generation numbers cannot recreate it. Native routing must
-open the window before submitting the originating operation and register every
-exact elicitation ID atomically before presenting browser consent.
-
-Private native routing can first `register_candidates` into a non-clone opaque
-ticket, then consume that exact ticket with `bind` immediately before consent.
-The registration timestamp only expires/promotes the early-notification journal;
-it is not a human deadline. No placeholder deadline, timer or task is created.
-The finite human budget begins at binding and covers consent plus completion
-waiting without being reset. Notifications received between the two stages stay
-correlated to the complete registered ID set, including when all IDs complete
-before binding. Source, window and cancellation checks still apply at binding.
-This follows the pinned `mcp_runtime.zig` ordering: `observeLegacyResponse`
-registers candidates before `callToolFromSnapshot` selects `elicitationDeadline` and
-`handleLegacyUrlRequiredInteraction` binds the waiter before the consent callback.
-
-Tickets reserve the same waiter, candidate and byte capacity as bound waiters.
-Successful consuming transfer preserves the original registration allocation;
-it does not cancel or re-register IDs. Abandonment or failed binding removes the
-waiter reservation while retaining bounded source-wide duplicate tombstones.
-Unbound handles retain their byte charge even after source/window removal.
-The public `register_ids` API composes these stages while retaining its existing
-effect-free expired-deadline preflight and all-or-nothing ID admission.
-
-Unknown early notifications are retained in every matching open window, never
-only the first. Registration promotes matching records from its own window.
-Duplicates do not extend the ten-minute early-record lifetime; records at the
-exact expiry timestamp remain eligible, matching the pin. Verified candidates
-remain source-wide duplicate tombstones until invalidation; they are not an
-unbounded history. Dropping a window discards its unverified early records and
-cancels its waiters. Source invalidation permanently closes that allocation;
-replacement requires a fresh source.
-
-Independent lowerable ceilings are 32 windows, 32 waiters, 64 early records per
-window, 1,024 candidates and 4 MiB conservatively charged retained ownership.
-Each waiter admits at most 32 nonempty IDs of at most 256 UTF-8 bytes. Charge
-permits stay with outstanding handles and observations even after registry
-removal; fixed reservations also cover container capacity retained by the
-registry and each window after entries expire or are removed.
-Constructors and unpolled waits start no clock, transport or task;
-observations receive explicit timestamps, and pending waits use an injected
-monotonic clock. Each waiter admits only one active asynchronous subscription
-owner; dropping that wait releases its slot. Cancellation and completion wake
-callbacks outside state locks.
-
-An opaque observation binds the exact source, window and complete ID set. It is
-not browser consent, an execution grant or a reusable retry permit. The native
-operation still must obtain actual consent, preserve its original proof, verify
-current ownership and consume its separately owned continuation before any
-legacy retry. Transport driving, browser launching and that consuming operation
-remain distinct composition responsibilities, not effects of this registry.
+There is no legacy completion-notification registry or public completion-window
+API. Modern URL consent does not depend on legacy elicitation IDs or
+`notifications/elicitation/complete`; its result is submitted through the modern
+input-response continuation. Browser acceptance is not proof of remote completion.
