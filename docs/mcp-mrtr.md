@@ -132,3 +132,40 @@ separately composes correlated modern form requests with the real typed prompt
 inbox, original native proof custody and fresh bounded submissions. Its private
 round allocation is not obtainable from these public codecs. URL/legacy retry,
 sampling and roots remain outside that form continuation path.
+
+## Native legacy completion observations
+
+`mcp::completion` classifies exact `notifications/elicitation/complete` envelopes
+and retains bounded native observation windows. A source is a unique local
+allocation selected for one runtime/connection/client/authentication lifetime;
+remote JSON and equal generation numbers cannot recreate it. Native routing must
+open the window before submitting the originating operation and register every
+exact elicitation ID atomically before presenting browser consent.
+
+Unknown early notifications are retained in every matching open window, never
+only the first. Registration promotes matching records from its own window.
+Duplicates do not extend the ten-minute early-record lifetime; records at the
+exact expiry timestamp remain eligible, matching the pin. Verified candidates
+remain source-wide duplicate tombstones until invalidation; they are not an
+unbounded history. Dropping a window discards its unverified early records and
+cancels its waiters. Source invalidation permanently closes that allocation;
+replacement requires a fresh source.
+
+Independent lowerable ceilings are 32 windows, 32 waiters, 64 early records per
+window, 1,024 candidates and 4 MiB conservatively charged retained ownership.
+Each waiter admits at most 32 nonempty IDs of at most 256 UTF-8 bytes. Charge
+permits stay with outstanding handles and observations even after registry
+removal; fixed reservations also cover container capacity retained by the
+registry and each window after entries expire or are removed.
+Constructors and unpolled waits start no clock, transport or task;
+observations receive explicit timestamps, and pending waits use an injected
+monotonic clock. Each waiter admits only one active asynchronous subscription
+owner; dropping that wait releases its slot. Cancellation and completion wake
+callbacks outside state locks.
+
+An opaque observation binds the exact source, window and complete ID set. It is
+not browser consent, an execution grant or a reusable retry permit. The native
+operation still must obtain actual consent, preserve its original proof, verify
+current ownership and consume its separately owned continuation before any
+legacy retry. Transport driving, browser launching and that consuming operation
+remain distinct composition responsibilities, not effects of this registry.
