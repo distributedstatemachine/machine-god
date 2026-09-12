@@ -79,7 +79,7 @@ pub(super) struct Publication {
     pub tools: BTreeMap<ToolName, Arc<ToolRoute>>,
     pub snapshot: McpToolCatalogSnapshot,
     pub retired: Arc<AtomicBool>,
-    /// One ordinary segment, or the original and deferred segments in order.
+    /// Ordinary/deferred segments, or at most one refreshed segment per server.
     pub descriptors: Box<[McpCatalogCandidate]>,
     /// One retained old view keeps its weak turn pins resolvable after addition.
     /// Both views share `retired`; full replacement invalidates the whole lineage.

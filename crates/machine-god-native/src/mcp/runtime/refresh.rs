@@ -110,15 +110,16 @@ impl NativeMcpRuntime {
         }
         server.check_authority()?;
         let original = catalogs(&previous, &server.name)?;
+        let same_descriptors = original
+            .iter()
+            .find(|item| item.kind() == McpCatalogKind::Tools)
+            .is_some_and(|old| same_tools(old, &catalog));
         let names = reserved_for(&previous, server, reserved)?;
         let mut selected_catalogs = original.to_vec();
         selected_catalogs.retain(|item| item.kind() != McpCatalogKind::Tools);
-        selected_catalogs.push(catalog.clone());
+        selected_catalogs.push(catalog);
         let selected_segment = admit_segment(server, &selected_catalogs, &names)?;
-        let unchanged = original
-            .iter()
-            .find(|item| item.kind() == McpCatalogKind::Tools)
-            .is_some_and(|old| same_tools(old, &catalog))
+        let unchanged = same_descriptors
             && selected_segment.tools().iter().all(|exposed| {
                 machine_god_core::ToolName::new(exposed.name())
                     .ok()

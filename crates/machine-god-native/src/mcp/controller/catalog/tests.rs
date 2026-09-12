@@ -11,7 +11,8 @@ fn selected(fixture: &Fixture) -> (NativeMcpController, Arc<Generation>) {
     let snapshot = Arc::new(fixture.options.management.config_store().load().unwrap());
     let cancellation = CancellationToken::new();
     let startup =
-        configuration::startup(&controller.inner.options, &snapshot, cancellation.clone()).unwrap();
+        configuration::startup(&controller.inner.options, &snapshot, cancellation.clone())
+            .unwrap_or_else(|_| panic!("empty controller catalog fixture must admit"));
     fixture
         .options
         .runtime
