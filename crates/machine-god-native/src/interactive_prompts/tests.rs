@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake, Waker};
 mod elicitation;
+mod url;
 
 fn context() -> ToolContext {
     ToolContext {

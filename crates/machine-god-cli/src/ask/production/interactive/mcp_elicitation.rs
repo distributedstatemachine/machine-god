@@ -13,6 +13,7 @@ use std::{collections::BTreeMap, fmt::Write};
 
 #[cfg(test)]
 mod tests;
+pub(super) mod url;
 
 // Each source page expands to at most 48 KiB after terminal-safe escaping.
 const PAGE_BYTES: usize = 8 * 1024;

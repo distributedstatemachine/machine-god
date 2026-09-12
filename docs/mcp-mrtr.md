@@ -135,6 +135,19 @@ sampling and roots remain outside that form continuation path.
 
 ## Native legacy completion observations
 
+The typed native presenter has additive URL recovery and legacy completion
+hooks; an unsupported live presenter returns `Unavailable`. Recovery yields
+`ContinueManually`, `RetryBrowser`, or `Cancel`; the distinct completion question
+yields `Retry` or `Cancel`. Neither is a JSON elicitation action, browser effect,
+notification observation, or continuation grant. Both use the original model
+context and the existing bounded inbox, exact activation/token checks, response
+charges, cancellation and CLI flush acknowledgement. Dropping a pending question
+invalidates its token, including when the real completion observer wins its race.
+The collector separately owns browser launching, the three-prompt recovery budget,
+completion correlation and consuming retry custody. Recovery/completion rendering
+does not repeat the URL. These hooks alone do not enable URL execution or create
+a human-command origin from fabricated model fields.
+
 `mcp::completion` classifies exact `notifications/elicitation/complete` envelopes
 and retains bounded native observation windows. A source is a unique local
 allocation selected for one runtime/connection/client/authentication lifetime;

@@ -77,6 +77,102 @@ impl fmt::Debug for McpElicitationPromptRequest {
     }
 }
 
+/// An inert recovery question for an already selected URL request. Construction
+/// does not assert a failed launch or authorize another browser attempt.
+#[derive(Debug)]
+pub struct McpUrlRecoveryPromptRequest {
+    source: McpElicitationPromptRequest,
+}
+impl McpUrlRecoveryPromptRequest {
+    /// # Errors
+    /// Rejects non-URL elicitation requests.
+    pub fn new(source: McpElicitationPromptRequest) -> Result<Self, McpElicitationPromptError> {
+        if source.request().mode() != super::mrtr::McpElicitationMode::Url {
+            return Err(McpElicitationPromptError::InvalidSource);
+        }
+        Ok(Self { source })
+    }
+    #[must_use]
+    pub const fn source(&self) -> &McpElicitationPromptRequest {
+        &self.source
+    }
+    #[must_use]
+    pub fn retained_byte_charge(&self) -> usize {
+        self.source.retained_byte_charge().saturating_add(64)
+    }
+}
+
+/// An explicit human completion question. It retains no authorization URL or
+/// notification identity and cannot itself prove remote completion.
+pub struct McpLegacyUrlCompletionPromptRequest {
+    context: ToolContext,
+    server: Arc<str>,
+    tool: ToolName,
+}
+impl McpLegacyUrlCompletionPromptRequest {
+    /// # Errors
+    /// Rejects empty or over-256-byte server identities.
+    pub fn new(
+        context: ToolContext,
+        server: Arc<str>,
+        tool: ToolName,
+    ) -> Result<Self, McpElicitationPromptError> {
+        if server.is_empty() || server.len() > 256 {
+            return Err(McpElicitationPromptError::InvalidSource);
+        }
+        Ok(Self {
+            context,
+            server,
+            tool,
+        })
+    }
+    #[must_use]
+    pub const fn context(&self) -> &ToolContext {
+        &self.context
+    }
+    #[must_use]
+    pub fn server(&self) -> &str {
+        &self.server
+    }
+    #[must_use]
+    pub const fn tool(&self) -> &ToolName {
+        &self.tool
+    }
+    #[must_use]
+    pub fn retained_byte_charge(&self) -> usize {
+        [
+            self.context.session_id.as_str(),
+            self.context.session_incarnation_id.as_str(),
+            self.context.turn_id.as_str(),
+            self.context.call_id.as_str(),
+            self.server(),
+            self.tool.as_str(),
+        ]
+        .iter()
+        .fold(256usize, |total, text| total.saturating_add(text.len()))
+    }
+}
+impl fmt::Debug for McpLegacyUrlCompletionPromptRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("McpLegacyUrlCompletionPromptRequest { .. }")
+    }
+}
+
+/// Human choice data, not browser or continuation authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum McpUrlRecoveryAnswer {
+    ContinueManually,
+    RetryBrowser,
+    Cancel,
+}
+
+/// Explicit manual retry data, not a matching remote completion observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum McpLegacyUrlCompletionAnswer {
+    Retry,
+    Cancel,
+}
+
 /// Bounded UI input. Construction is not validation against a queued request.
 pub struct McpElicitationAnswerInput {
     raw: Box<RawValue>,
@@ -167,6 +263,36 @@ pub trait McpElicitationPresenter: Send + Sync {
         request: McpElicitationPromptRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpElicitationAnswer, McpElicitationPromptError>>;
+
+    fn recover_url(
+        &self,
+        request: McpUrlRecoveryPromptRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpUrlRecoveryAnswer, McpElicitationPromptError>> {
+        unavailable(request, cancellation)
+    }
+
+    fn complete_legacy_url(
+        &self,
+        request: McpLegacyUrlCompletionPromptRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpLegacyUrlCompletionAnswer, McpElicitationPromptError>> {
+        unavailable(request, cancellation)
+    }
+}
+
+fn unavailable<T: Send + 'static, R: 'static>(
+    request: T,
+    cancellation: CancellationToken,
+) -> BoxFuture<'static, Result<R, McpElicitationPromptError>> {
+    Box::pin(async move {
+        drop(request);
+        Err(if cancellation.is_cancelled() {
+            McpElicitationPromptError::Cancelled
+        } else {
+            McpElicitationPromptError::Unavailable
+        })
+    })
 }
 
 #[derive(Default, Debug)]
@@ -177,13 +303,6 @@ impl McpElicitationPresenter for UnavailableMcpElicitationPresenter {
         request: McpElicitationPromptRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpElicitationAnswer, McpElicitationPromptError>> {
-        Box::pin(async move {
-            drop(request);
-            Err(if cancellation.is_cancelled() {
-                McpElicitationPromptError::Cancelled
-            } else {
-                McpElicitationPromptError::Unavailable
-            })
-        })
+        unavailable(request, cancellation)
     }
 }

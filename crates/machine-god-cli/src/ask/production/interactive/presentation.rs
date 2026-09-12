@@ -44,6 +44,12 @@ impl Modal {
         }
     }
     pub fn render(&self) -> Result<Vec<u8>, ()> {
+        if let Some(request) = self.view.url_recovery() {
+            return super::mcp_elicitation::url::render_recovery(request);
+        }
+        if let Some(request) = self.view.legacy_url_completion() {
+            return super::mcp_elicitation::url::render_completion(request);
+        }
         if let Some(request) = self.view.elicitation() {
             return self.elicitation.render(
                 request.request(),
@@ -100,6 +106,16 @@ impl Modal {
     ) -> Result<Option<NativeInteractivePromptResponse>, ()> {
         if !self.displayed || binding != &self.binding() {
             return Err(());
+        }
+        if self.view.url_recovery().is_some() {
+            let response = super::mcp_elicitation::url::answer_recovery(line)?;
+            self.displayed = false;
+            return Ok(Some(response));
+        }
+        if self.view.legacy_url_completion().is_some() {
+            let response = super::mcp_elicitation::url::answer_completion(line)?;
+            self.displayed = false;
+            return Ok(Some(response));
         }
         if let Some(request) = self.view.elicitation() {
             let response = self.elicitation.answer(request.request(), line)?;

@@ -13,7 +13,8 @@ use machine_god_core::{BackgroundOutputOwner, BoxFuture, PermissionRequest, Tool
 
 use crate::mcp::interaction::{
     McpElicitationAnswer, McpElicitationAnswerInput, McpElicitationPresenter,
-    McpElicitationPromptError, McpElicitationPromptRequest,
+    McpElicitationPromptError, McpElicitationPromptRequest, McpLegacyUrlCompletionAnswer,
+    McpLegacyUrlCompletionPromptRequest, McpUrlRecoveryAnswer, McpUrlRecoveryPromptRequest,
 };
 use crate::{
     PermissionPromptDecision, PermissionPromptError, PermissionPrompter, QuestionPromptError,
@@ -150,20 +151,34 @@ impl NativeInteractivePromptView {
     pub fn permission(&self) -> Option<&PermissionRequest> {
         match self.payload.as_ref() {
             Payload::Permission { request, .. } => Some(request),
-            Payload::Question { .. } | Payload::Elicitation { .. } => None,
+            _ => None,
         }
     }
     #[must_use]
     pub fn question(&self) -> Option<(&ToolContext, &QuestionPromptRequest)> {
         match self.payload.as_ref() {
             Payload::Question { context, request } => Some((context, request)),
-            Payload::Permission { .. } | Payload::Elicitation { .. } => None,
+            _ => None,
         }
     }
     #[must_use]
     pub fn elicitation(&self) -> Option<&McpElicitationPromptRequest> {
         match self.payload.as_ref() {
             Payload::Elicitation { request } => Some(request),
+            _ => None,
+        }
+    }
+    #[must_use]
+    pub fn url_recovery(&self) -> Option<&McpUrlRecoveryPromptRequest> {
+        match self.payload.as_ref() {
+            Payload::UrlRecovery { request } => Some(request),
+            _ => None,
+        }
+    }
+    #[must_use]
+    pub fn legacy_url_completion(&self) -> Option<&McpLegacyUrlCompletionPromptRequest> {
+        match self.payload.as_ref() {
+            Payload::LegacyUrlCompletion { request } => Some(request),
             _ => None,
         }
     }
@@ -189,6 +204,8 @@ pub enum NativeInteractivePromptResponse {
     Permission(PermissionPromptDecision),
     Question(QuestionPromptOutcome),
     Elicitation(McpElicitationAnswerInput),
+    UrlRecovery(McpUrlRecoveryAnswer),
+    LegacyUrlCompletion(McpLegacyUrlCompletionAnswer),
 }
 impl fmt::Debug for NativeInteractivePromptResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -288,10 +305,55 @@ impl McpElicitationPresenter for NativeInteractivePromptBridge {
         request: McpElicitationPromptRequest,
         cancellation: machine_god_core::CancellationToken,
     ) -> BoxFuture<'_, Result<McpElicitationAnswer, McpElicitationPromptError>> {
+        let future = self.mcp_prompt(Payload::Elicitation { request }, cancellation);
+        Box::pin(async move {
+            match future.await? {
+                AcceptedResponse::Elicitation(answer) => Ok(answer),
+                _ => Err(McpElicitationPromptError::InvalidResponse),
+            }
+        })
+    }
+    fn recover_url(
+        &self,
+        request: McpUrlRecoveryPromptRequest,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'_, Result<McpUrlRecoveryAnswer, McpElicitationPromptError>> {
+        let future = self.mcp_prompt(Payload::UrlRecovery { request }, cancellation);
+        Box::pin(async move {
+            match future.await? {
+                AcceptedResponse::UrlRecovery(answer) => Ok(answer),
+                _ => Err(McpElicitationPromptError::InvalidResponse),
+            }
+        })
+    }
+    fn complete_legacy_url(
+        &self,
+        request: McpLegacyUrlCompletionPromptRequest,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'_, Result<McpLegacyUrlCompletionAnswer, McpElicitationPromptError>> {
+        let future = self.mcp_prompt(Payload::LegacyUrlCompletion { request }, cancellation);
+        Box::pin(async move {
+            match future.await? {
+                AcceptedResponse::LegacyUrlCompletion(answer) => Ok(answer),
+                _ => Err(McpElicitationPromptError::InvalidResponse),
+            }
+        })
+    }
+}
+
+impl NativeInteractivePromptBridge {
+    fn mcp_prompt(
+        &self,
+        payload: Payload,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> impl std::future::Future<Output = Result<AcceptedResponse, McpElicitationPromptError>>
+    + Send
+    + 'static
+    + use<> {
         let scope = self.shared.scope();
         let shared = Arc::clone(&self.shared);
-        let payload = Arc::new(Payload::Elicitation { request });
-        Box::pin(async move {
+        let payload = Arc::new(payload);
+        async move {
             use futures_util::future::{Either, select};
             if cancellation.is_cancelled() {
                 return Err(McpElicitationPromptError::Cancelled);
@@ -314,12 +376,8 @@ impl McpElicitationPresenter for NativeInteractivePromptBridge {
             if cancellation.is_cancelled() {
                 return Err(McpElicitationPromptError::Cancelled);
             }
-            match result {
-                Ok(AcceptedResponse::Elicitation(answer)) => Ok(answer),
-                Ok(_) => Err(McpElicitationPromptError::InvalidResponse),
-                Err(error) => Err(McpElicitationPromptError::Inbox(error)),
-            }
-        })
+            result.map_err(McpElicitationPromptError::Inbox)
+        }
     }
 }
 
