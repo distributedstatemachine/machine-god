@@ -5,12 +5,15 @@ fn configured_deadlines_are_checked_bounded_and_independent_of_legacy_defaults()
     let now = Instant::now();
     let maximum = Duration::from_millis(u64::from(u32::MAX));
     let mut startup = Startup {
-        deadline: now + maximum,
+        deadline: Some(now + maximum),
         timeout: maximum,
         observer: Some(Arc::new(|_| false)),
     };
     startup.validate(now).unwrap();
-    assert_eq!(startup.attempt_deadline(now).unwrap(), startup.deadline);
+    assert_eq!(
+        Some(startup.attempt_deadline(now).unwrap()),
+        startup.deadline
+    );
     startup.timeout += Duration::from_millis(1);
     assert!(startup.validate(now).is_err());
     startup.timeout = Duration::ZERO;
@@ -20,14 +23,82 @@ fn configured_deadlines_are_checked_bounded_and_independent_of_legacy_defaults()
         startup.attempt_deadline(now).unwrap(),
         now + startup.timeout
     );
-    startup.deadline = now + Duration::from_millis(500);
-    assert_eq!(startup.attempt_deadline(now).unwrap(), startup.deadline);
+    startup.deadline = Some(now + Duration::from_millis(500));
+    assert_eq!(
+        Some(startup.attempt_deadline(now).unwrap()),
+        startup.deadline
+    );
     startup.observer = None;
-    startup.deadline = now + Duration::from_secs(301);
+    startup.deadline = Some(now + Duration::from_secs(301));
     assert!(startup.validate(now).is_err());
-    startup.deadline = now + Duration::from_secs(300);
+    startup.deadline = Some(now + Duration::from_secs(300));
     startup.validate(now).unwrap();
-    assert_eq!(startup.attempt_deadline(now).unwrap(), startup.deadline);
+    assert_eq!(
+        Some(startup.attempt_deadline(now).unwrap()),
+        startup.deadline
+    );
+}
+
+#[test]
+fn configured_attempts_keep_the_full_timeout_without_an_overall_cap() {
+    let origin = Instant::now();
+    let maximum = Duration::from_millis(u64::from(u32::MAX));
+    let startup = Startup {
+        deadline: None,
+        timeout: maximum,
+        observer: Some(Arc::new(|_| false)),
+    };
+    startup.validate(origin).unwrap();
+    assert_eq!(startup.attempt_deadline(origin).unwrap(), origin + maximum);
+    let after_previous_attempt = origin + maximum + Duration::from_secs(30);
+    assert_eq!(
+        startup.attempt_deadline(after_previous_attempt).unwrap(),
+        after_previous_attempt + maximum
+    );
+    assert_eq!(
+        startup.cleanup_deadline(origin).unwrap(),
+        origin + Duration::from_secs(30)
+    );
+    let bounded = Startup {
+        deadline: Some(origin),
+        ..startup
+    };
+    assert_eq!(
+        bounded.cleanup_deadline(after_previous_attempt).unwrap(),
+        origin
+    );
+    assert_eq!(
+        bounded.attempt_deadline(after_previous_attempt).unwrap(),
+        origin
+    );
+}
+
+#[test]
+fn configured_owner_cancellation_precedes_any_factory_effect() {
+    struct Timer;
+    impl McpPeerTimer for Timer {
+        fn sleep_until(&self, _: Instant) -> machine_god_core::BoxFuture<'_, ()> {
+            Box::pin(std::future::pending())
+        }
+    }
+    let host = NativeOwnedWorkerScope::new();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let mut factory = || panic!("cancelled startup cannot acquire a launch");
+    let future = McpStdioPeer::connect_configured_observed(
+        &mut factory,
+        host.clone(),
+        Arc::new(Timer),
+        cancellation,
+        Duration::from_millis(u64::from(u32::MAX)),
+        Arc::new(|_| panic!("cancelled startup cannot observe")),
+    );
+    assert!(matches!(
+        futures_executor::block_on(future),
+        Err(McpPeerError::Cancelled)
+    ));
+    host.close();
+    assert!(host.completion().is_complete());
 }
 
 #[test]

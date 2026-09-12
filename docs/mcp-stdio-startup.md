@@ -86,11 +86,20 @@ to the composer under the configured `restart_limit` (0–255), not an additiona
 peer retry loop. Application requests are never replayed by startup.
 
 Configured timeouts are positive and at most `u32::MAX` milliseconds. Deadline
-addition is checked and always bounded by the caller's outer deadline. The
+addition is checked and bounded by an outer deadline when the caller selects one. The
 existing `connect` interfaces retain their 300-second admission behavior.
 `McpPeerTimer::now` defaults to native monotonic time; explicit hosts can provide
 the same `Instant` domain alongside their existing injected timer. Child-side
 process deadlines still use native monotonic time.
+
+`McpStdioPeer::connect_configured_observed` omits an overall deadline while
+retaining the full finite configured budget for each admitted attempt. It does
+not implement an infinite attempt or a far-future timestamp. Explicit-deadline
+callers retain their existing outer cutoff. Cancelled owner admission fails
+before the launch factory or observation callback. Native inter-attempt cleanup
+has a separate 30-second bound when no overall deadline was selected; legacy
+disconnect/relaunch also remains inside that legacy attempt's budget. Unsettled
+cleanup rejects restart and retains the existing worker/completion ownership.
 
 The pinned `connectionAttemptControl` gives modern discovery one configured
 attempt, then modern-to-legacy fallback a fresh attempt. All subsequent legacy

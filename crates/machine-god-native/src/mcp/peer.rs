@@ -143,7 +143,30 @@ impl McpStdioPeer {
             host,
             timer,
             cancellation,
-            outer_deadline,
+            Some(outer_deadline),
+            startup_timeout,
+            observer,
+        )
+        .await
+    }
+    /// Uses each configured attempt's full finite timeout, without an overall
+    /// startup cap. Cancellation and observed cleanup still bound ownership.
+    /// # Errors
+    /// Rejects invalid timeout, failed observation, startup or negotiation.
+    pub async fn connect_configured_observed(
+        factory: &mut dyn McpStdioLaunchFactory,
+        host: NativeOwnedWorkerScope,
+        timer: Arc<dyn McpPeerTimer>,
+        cancellation: CancellationToken,
+        startup_timeout: Duration,
+        observer: McpStdioCompletionObserver,
+    ) -> Result<(Self, Instant)> {
+        startup::connect_observed(
+            factory,
+            host,
+            timer,
+            cancellation,
+            None,
             startup_timeout,
             observer,
         )

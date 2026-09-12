@@ -29,7 +29,7 @@ pub(super) async fn connect(
         timer,
         cancellation,
         Startup {
-            deadline,
+            deadline: Some(deadline),
             timeout: discovery_timeout,
             observer: None,
         },
@@ -43,7 +43,7 @@ pub(super) async fn connect_observed(
     host: NativeOwnedWorkerScope,
     timer: Arc<dyn McpPeerTimer>,
     cancellation: CancellationToken,
-    deadline: Instant,
+    deadline: Option<Instant>,
     startup_timeout: Duration,
     observer: McpStdioCompletionObserver,
 ) -> Result<(McpStdioPeer, Instant)> {
@@ -62,7 +62,7 @@ pub(super) async fn connect_observed(
 }
 
 struct Startup {
-    deadline: Instant,
+    deadline: Option<Instant>,
     timeout: Duration,
     observer: Option<McpStdioCompletionObserver>,
 }
@@ -75,7 +75,10 @@ impl Startup {
         };
         if self.timeout.is_zero()
             || self.timeout > maximum
-            || (self.observer.is_none() && self.deadline.saturating_duration_since(now) > maximum)
+            || (self.observer.is_none()
+                && self
+                    .deadline
+                    .is_none_or(|deadline| deadline.saturating_duration_since(now) > maximum))
         {
             return Err(McpPeerError::Capacity);
         }
@@ -83,12 +86,56 @@ impl Startup {
     }
     fn attempt_deadline(&self, now: Instant) -> Result<Instant> {
         if self.observer.is_none() {
-            return Ok(self.deadline);
+            return self.deadline.ok_or(McpPeerError::Capacity);
         }
-        Ok(now
+        let selected = now
             .checked_add(self.timeout)
-            .ok_or(McpPeerError::Capacity)?
-            .min(self.deadline))
+            .ok_or(McpPeerError::Capacity)?;
+        Ok(self
+            .deadline
+            .map_or(selected, |deadline| selected.min(deadline)))
+    }
+    fn live(&self, cancellation: &CancellationToken, timer: &dyn McpPeerTimer) -> Result<()> {
+        match self.deadline {
+            Some(deadline) => live(cancellation, timer, deadline),
+            None if cancellation.is_cancelled() => Err(McpPeerError::Cancelled),
+            None => Ok(()),
+        }
+    }
+    fn cleanup_deadline(&self, now: Instant) -> Result<Instant> {
+        self.deadline.map_or_else(
+            || {
+                now.checked_add(Duration::from_secs(30))
+                    .ok_or(McpPeerError::Capacity)
+            },
+            Ok,
+        )
+    }
+    fn exchange_deadline(&self, now: Instant, selected: Instant, modern: bool) -> Result<Instant> {
+        if modern && self.observer.is_none() {
+            let discovery = now
+                .checked_add(self.timeout)
+                .ok_or(McpPeerError::Capacity)?;
+            Ok(discovery.min(self.deadline.ok_or(McpPeerError::Capacity)?))
+        } else {
+            Ok(selected)
+        }
+    }
+    async fn initial_peer(
+        &self,
+        factory: &mut dyn McpStdioLaunchFactory,
+        host: NativeOwnedWorkerScope,
+        timer: Arc<dyn McpPeerTimer>,
+        cancellation: CancellationToken,
+    ) -> Result<(McpStdioPeer, Instant)> {
+        self.live(&cancellation, &*timer)?;
+        self.validate(timer.now())?;
+        let deadline = self.attempt_deadline(timer.now())?;
+        live(&cancellation, &*timer, deadline)?;
+        let connection = self
+            .launch(factory, host, cancellation.clone(), deadline)
+            .await?;
+        Ok((unnegotiated(connection, timer, cancellation), deadline))
     }
     async fn launch(
         &self,
@@ -121,31 +168,30 @@ async fn connect_inner(
     cancellation: CancellationToken,
     startup: Startup,
 ) -> Result<(McpStdioPeer, Instant)> {
-    let deadline = startup.deadline;
-    live(&cancellation, &*timer, deadline)?;
-    startup.validate(timer.now())?;
-    let mut selected_deadline = startup.attempt_deadline(timer.now())?;
-    live(&cancellation, &*timer, selected_deadline)?;
-    let connection = startup
-        .launch(
-            factory,
-            host.clone(),
-            cancellation.clone(),
-            selected_deadline,
-        )
+    let (mut peer, mut selected_deadline) = startup
+        .initial_peer(factory, host.clone(), timer, cancellation)
         .await?;
-    let mut peer = unnegotiated(connection, timer, cancellation);
     let (mut negotiation, mut action) = Negotiation::new(TransportKind::Stdio);
     let mut was_modern = true;
     loop {
-        live(&peer.cancellation, &*peer.timer, deadline)?;
+        startup.live(&peer.cancellation, &*peer.timer)?;
         let version = match action {
             NegotiationAction::SendDiscover => ProtocolVersion::Modern,
             NegotiationAction::RestartInitialize(version) => {
                 if was_modern {
                     selected_deadline = startup.attempt_deadline(peer.timer.now())?;
                 }
-                settle(&peer, &host, deadline, true).await?;
+                // Pinned legacy connection control starts before disconnecting
+                // the previous child; cleanup consumes this attempt's budget.
+                settle(
+                    &peer,
+                    &host,
+                    startup
+                        .cleanup_deadline(peer.timer.now())?
+                        .min(selected_deadline),
+                    true,
+                )
+                .await?;
                 live(&peer.cancellation, &*peer.timer, selected_deadline)?;
                 peer.connection = startup
                     .launch(
@@ -173,15 +219,8 @@ async fn connect_inner(
         };
         let modern = version == ProtocolVersion::Modern;
         was_modern = modern;
-        let attempt_deadline = if modern && startup.observer.is_none() {
-            peer.timer
-                .now()
-                .checked_add(startup.timeout)
-                .ok_or(McpPeerError::Capacity)?
-                .min(deadline)
-        } else {
-            selected_deadline
-        };
+        let attempt_deadline =
+            startup.exchange_deadline(peer.timer.now(), selected_deadline, modern)?;
         let id = peer.allocate()?;
         let (method, params) = startup_params(version);
         let control = request(&id, method, params, version)?;
@@ -196,7 +235,10 @@ async fn connect_inner(
             peer.connection.control(control, attempt_deadline),
             &id,
             attempt_deadline,
-            modern && attempt_deadline < deadline,
+            modern
+                && startup
+                    .deadline
+                    .is_none_or(|deadline| attempt_deadline < deadline),
         )
         .await;
         match response {
@@ -207,8 +249,15 @@ async fn connect_inner(
                 action = negotiation.response(frame.envelope(), &id, HttpDiscoveryStatus::Ordinary);
             }
             Err(error) => {
-                action =
-                    unavailable(&peer, &host, &mut negotiation, modern, error, deadline).await?;
+                action = unavailable(
+                    &peer,
+                    &host,
+                    &mut negotiation,
+                    modern,
+                    error,
+                    startup.cleanup_deadline(peer.timer.now())?,
+                )
+                .await?;
             }
         }
     }
