@@ -59,8 +59,39 @@ impl McpCatalogRefresh {
         catalog: &McpDescriptorCatalog,
         now_ms: u64,
     ) -> Result<()> {
-        self.check_ticket(&ticket)?;
-        self.observe_time(now_ms)?;
+        if let Err(error) = self.validate_replacement(&ticket, catalog, now_ms) {
+            if error == McpRefreshError::ClockRegression {
+                self.closed = true;
+            }
+            return Err(error);
+        }
+        self.last_now = now_ms;
+        let family = &mut self.families[index(ticket.kind)];
+        family.times = Some(times(catalog));
+        family.handled = ticket.invalidation;
+        family.active = None;
+        family.attempt = 0;
+        family.retry_at = None;
+        Ok(())
+    }
+
+    /// Checks the same preconditions as `finish` without changing policy state.
+    /// The owner must keep policy access serialized through conditional runtime
+    /// publication and `finish` using these same inputs; validation grants no
+    /// publication authority and is not a reservation against later changes.
+    /// # Errors
+    /// Rejects foreign tickets, closed state, clock regression, wrong families
+    /// and invalid replacement timestamps. Errors have no policy side effects.
+    pub fn validate_replacement(
+        &self,
+        ticket: &McpRefreshTicket,
+        catalog: &McpDescriptorCatalog,
+        now_ms: u64,
+    ) -> Result<()> {
+        self.check_ticket(ticket)?;
+        if now_ms < self.last_now {
+            return Err(McpRefreshError::ClockRegression);
+        }
         if catalog.kind() != ticket.kind
             || catalog.fetched_at_ms() > now_ms
             || self.families[index(ticket.kind)]
@@ -69,12 +100,6 @@ impl McpCatalogRefresh {
         {
             return Err(McpRefreshError::Invalid);
         }
-        let family = &mut self.families[index(ticket.kind)];
-        family.times = Some(times(catalog));
-        family.handled = ticket.invalidation;
-        family.active = None;
-        family.attempt = 0;
-        family.retry_at = None;
         Ok(())
     }
 
@@ -110,7 +135,7 @@ impl McpCatalogRefresh {
         Ok(())
     }
 
-    fn invalidate(&mut self, families: &[McpCatalogKind], reads: bool) -> Result<()> {
+    pub(super) fn invalidate(&mut self, families: &[McpCatalogKind], reads: bool) -> Result<()> {
         if families
             .iter()
             .any(|kind| self.families[index(*kind)].invalidation == u64::MAX)

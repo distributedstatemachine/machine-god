@@ -251,3 +251,43 @@ fn duplicate_or_excess_catalog_families_are_rejected_without_retention() {
     );
     assert!(McpCatalogRefresh::new(generation, &vec![catalog; 5]).is_err());
 }
+
+#[test]
+fn replacement_prevalidation_is_inert_for_foreign_ticket_family_and_time() {
+    let generation = McpRefreshGeneration::new();
+    let mut policy = McpCatalogRefresh::new(generation.clone(), &[]).unwrap();
+    let pending = ticket(&mut policy, &generation, McpCatalogKind::Tools, 10);
+    let tools = catalog(McpCatalogKind::Tools, 10, "");
+    for foreign_generation in [generation.clone(), McpRefreshGeneration::new()] {
+        let mut other = McpCatalogRefresh::new(foreign_generation.clone(), &[]).unwrap();
+        let other_ticket = ticket(&mut other, &foreign_generation, McpCatalogKind::Tools, 10);
+        assert_eq!(
+            other.validate_replacement(&pending, &tools, 11),
+            Err(McpRefreshError::Foreign)
+        );
+        assert_eq!(other.last_now, 10);
+        assert!(!other.closed);
+        assert!(matches!(
+            other
+                .begin(&foreign_generation, McpCatalogKind::Tools, 10)
+                .unwrap(),
+            McpRefreshDecision::AlreadyRefreshing { .. }
+        ));
+        drop(other_ticket);
+    }
+    let prompts = catalog(McpCatalogKind::Prompts, 10, "");
+    assert_eq!(
+        policy.validate_replacement(&pending, &prompts, 11),
+        Err(McpRefreshError::Invalid)
+    );
+    assert_eq!(
+        policy.validate_replacement(&pending, &tools, 9),
+        Err(McpRefreshError::ClockRegression)
+    );
+    assert_eq!(policy.last_now, 10);
+    assert!(!policy.closed);
+    policy.validate_replacement(&pending, &tools, 11).unwrap();
+    assert_eq!(policy.last_now, 10);
+    policy.finish(pending, &tools, 11).unwrap();
+    assert_eq!(policy.last_now, 11);
+}

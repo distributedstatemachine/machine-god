@@ -31,9 +31,13 @@ Existing same-partition data can remain available during refresh or failure, but
 the owner must independently revalidate current executable authority before use.
 Failures preserve old metadata and use the pinned 100 ms doubling backoff capped
 at five seconds. Successful `finish` resets backoff and accepts only the original
-family, ticket allocation and valid time partition. The owner serializes policy
-settlement with successful conditional publication; `finish` itself publishes
-nothing and cannot approve a stale asynchronous candidate.
+family, ticket allocation and valid time partition. `validate_replacement`
+borrows the ticket and applies the same checks without mutation. The owner keeps
+policy access serialized across that prevalidation, conditional runtime
+publication and `finish` with the same inputs. Callbacks and cleanup remain
+outside global runtime publication locks. Neither method publishes anything,
+approves a stale asynchronous candidate or promises rollback of a failed commit;
+`finish` remains fallible and fail-closed.
 
 A non-clone ticket retains one tiny atomic in-flight marker. Dropping or
 cancelling an unfinished ticket only clears that marker: no callback, lock,
