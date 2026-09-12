@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+mod checkpoint;
 mod execution;
 mod features;
 mod fixture;

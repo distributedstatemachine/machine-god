@@ -72,6 +72,13 @@ lock, before retiring old bindings. Revocation after preparation rejects the
 replacement without changing the active runtime, including feature-only servers
 with no executable tools. These checks observe tokens, not an injected callback.
 
+`publication_checkpoint()` observes the exact current publication, including an
+empty runtime, without retaining peers or pinning a model turn. `publish_if`
+checks that runtime-bound observation under the publication lock before any
+retirement. A stale or foreign asynchronous startup/reload result therefore
+cannot replace a newer usable generation. The checkpoint does not reserve the
+profile file or authorize execution; profile revalidation remains separate.
+
 Each candidate retains its explicitly selected monotonic catalog timestamp origin.
 `catalog_epoch(server)` exposes that origin without reading a clock or deciding
 freshness. Published server ownership preserves it, so relative fetched/expiry

@@ -2,6 +2,7 @@
 
 mod call;
 mod candidate;
+mod checkpoint;
 mod executor;
 mod features;
 mod peer;
@@ -12,6 +13,7 @@ mod tool;
 
 pub use call::{NativeMcpRuntimeToolCall, NativeMcpRuntimeToolResponse};
 pub use candidate::{NativeMcpRuntimeCandidate, NativeMcpServerCandidate};
+pub use checkpoint::NativeMcpPublicationCheckpoint;
 pub use executor::{
     NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy, NativeMcpToolExecutor,
 };
@@ -146,6 +148,27 @@ impl NativeMcpRuntime {
     /// # Errors
     /// Rejects a foreign candidate, closed runtime or exhausted cleanup capacity.
     pub fn publish(&self, candidate: NativeMcpRuntimeCandidate) -> Result<()> {
+        self.publish_selected(candidate, None)
+    }
+
+    /// Publishes only if the observed publication is still exact. Obsolete
+    /// asynchronous startup/reload results cannot replace a newer generation.
+    /// # Errors
+    /// Rejects foreign/stale checkpoints and the ordinary publication failures,
+    /// without retiring or cancelling the current usable generation.
+    pub fn publish_if(
+        &self,
+        candidate: NativeMcpRuntimeCandidate,
+        expected: &NativeMcpPublicationCheckpoint,
+    ) -> Result<()> {
+        self.publish_selected(candidate, Some(expected))
+    }
+
+    fn publish_selected(
+        &self,
+        candidate: NativeMcpRuntimeCandidate,
+        expected: Option<&NativeMcpPublicationCheckpoint>,
+    ) -> Result<()> {
         let candidate = candidate.publication;
         if !Arc::ptr_eq(&self.identity, &candidate.identity) {
             return Err(NativeMcpRuntimeError::Invalid);
@@ -156,6 +179,9 @@ impl NativeMcpRuntime {
             .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
         if state.closed {
             return Err(NativeMcpRuntimeError::Unavailable);
+        }
+        if let Some(expected) = expected {
+            expected.check(self, &state)?;
         }
         // Preparation is not activation: selected authority may have been
         // revoked while the private candidate was waiting for publication.
