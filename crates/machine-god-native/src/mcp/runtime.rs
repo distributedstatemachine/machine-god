@@ -3,13 +3,17 @@
 mod addition;
 mod call;
 mod candidate;
+mod catalog_driver;
+mod catalog_state;
 mod checkpoint;
 mod deferred;
 mod executor;
 mod features;
 mod peer;
 mod readiness;
+mod refresh;
 mod route;
+mod subscriptions;
 #[cfg(test)]
 mod tests;
 #[cfg(all(test, feature = "ai-gateway-http"))]
@@ -19,6 +23,7 @@ mod tool;
 pub use addition::NativeMcpRuntimeAddition;
 pub use call::{NativeMcpRuntimeToolCall, NativeMcpRuntimeToolResponse};
 pub use candidate::{NativeMcpRuntimeCandidate, NativeMcpServerCandidate};
+pub use catalog_state::NativeMcpCatalogState;
 pub use checkpoint::NativeMcpPublicationCheckpoint;
 pub use executor::{
     NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy, NativeMcpToolExecutor,
@@ -104,6 +109,7 @@ struct State {
     active: Option<Arc<candidate::Publication>>,
     retired: Vec<Arc<route::ServerRoute>>,
     retired_byte_charge: usize,
+    retired_catalogs: Vec<refresh::RetiredCatalog>,
     completions: Vec<NativeMcpPeerCompletion>,
     turns: Vec<TurnPin>,
     closed: bool,
@@ -122,6 +128,7 @@ pub struct NativeMcpRuntime {
     policy: NativeMcpToolExecutionPolicy,
     feature_operations: Arc<std::sync::atomic::AtomicUsize>,
     feature_input: Option<features::human::FeatureInputEndpoint>,
+    pub(super) cache_budget: Arc<catalog_state::FeatureCacheBudget>,
 }
 impl fmt::Debug for NativeMcpRuntime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -150,6 +157,9 @@ impl NativeMcpRuntime {
             policy: policy.validate()?,
             feature_operations: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             feature_input: None,
+            cache_budget: Arc::new(catalog_state::FeatureCacheBudget::new(
+                limits.max_retained_bytes.min(16 * 1024 * 1024),
+            )),
         })
     }
 
@@ -226,8 +236,10 @@ impl NativeMcpRuntime {
             .retired_byte_charge
             .checked_add(previous_charge)
             .ok_or(NativeMcpRuntimeError::Limit)?;
+        let catalog_charge = refresh::retained_catalog_charge(&mut state)?;
         if retired_charge
             .checked_add(candidate.retained_bytes)
+            .and_then(|bytes| bytes.checked_add(catalog_charge))
             .is_none_or(|total| total > self.limits.max_retained_bytes)
         {
             return Err(NativeMcpRuntimeError::Limit);

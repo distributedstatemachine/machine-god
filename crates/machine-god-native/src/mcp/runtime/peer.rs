@@ -5,6 +5,7 @@ use crate::mcp::{
     submission::{McpSubmission, McpSubmissionRuntime, McpToolReservation},
 };
 use std::sync::Arc;
+mod subscriptions;
 
 /// Concrete already negotiated peers. Admission/launch/network selection belong
 /// to the native startup owner; metadata cannot manufacture this authority.
@@ -21,6 +22,35 @@ impl std::fmt::Debug for NativeMcpOwnedPeer {
     }
 }
 impl NativeMcpOwnedPeer {
+    pub(super) fn prepare_runtime_set(
+        &mut self,
+        runtimes: Vec<Arc<McpSubmissionRuntime>>,
+    ) -> Result<PreparedRuntimeSet<'_>> {
+        match self {
+            #[cfg(test)]
+            Self::Script(peer) => {
+                if peer.closed.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(Error::Unavailable);
+                }
+                if runtimes.len() > crate::mcp::stdio::MAX_MCP_STDIO_RUNTIMES {
+                    return Err(Error::Limit);
+                }
+                Ok(PreparedRuntimeSet::Script {
+                    table: &mut peer.runtimes,
+                    runtimes,
+                })
+            }
+            Self::Stdio(peer) => peer
+                .prepare_runtime_set(runtimes)
+                .map(PreparedRuntimeSet::Stdio)
+                .map_err(|_| Error::Unavailable),
+            #[cfg(feature = "mcp-http")]
+            Self::Http(peer) => peer
+                .prepare_runtime_set(runtimes)
+                .map(PreparedRuntimeSet::Http)
+                .map_err(|_| Error::Unavailable),
+        }
+    }
     pub(super) fn readiness(&self) -> NativeMcpPeerReadiness {
         match self {
             #[cfg(test)]
@@ -186,6 +216,46 @@ impl NativeMcpOwnedPeer {
             Self::Stdio(peer) => peer.close(),
             #[cfg(feature = "mcp-http")]
             Self::Http(peer) => peer.close(),
+        }
+    }
+}
+
+pub(super) enum PreparedRuntimeSet<'a> {
+    #[cfg(test)]
+    Script {
+        table: &'a mut Vec<Arc<McpSubmissionRuntime>>,
+        runtimes: Vec<Arc<McpSubmissionRuntime>>,
+    },
+    Stdio(crate::mcp::stdio::PreparedStdioRuntimeSet<'a>),
+    #[cfg(feature = "mcp-http")]
+    Http(crate::mcp::http_peer::PreparedHttpRuntimeSet<'a>),
+}
+impl PreparedRuntimeSet<'_> {
+    pub(super) fn commit(self) -> RetiredRuntimeSet {
+        match self {
+            #[cfg(test)]
+            Self::Script { table, runtimes } => {
+                RetiredRuntimeSet::Vector(std::mem::replace(table, runtimes))
+            }
+            Self::Stdio(staged) => RetiredRuntimeSet::Boxed(staged.commit()),
+            #[cfg(feature = "mcp-http")]
+            Self::Http(staged) => RetiredRuntimeSet::Vector(staged.commit()),
+        }
+    }
+}
+pub(super) enum RetiredRuntimeSet {
+    Boxed(Box<[Arc<McpSubmissionRuntime>]>),
+    #[cfg(any(test, feature = "mcp-http"))]
+    Vector(Vec<Arc<McpSubmissionRuntime>>),
+}
+impl RetiredRuntimeSet {
+    pub(super) fn release(self) {
+        // Explicitly release after publication unlock, without changing capacity
+        // or allocating a common representation while committing the swap.
+        match self {
+            Self::Boxed(values) => drop(values),
+            #[cfg(any(test, feature = "mcp-http"))]
+            Self::Vector(values) => drop(values),
         }
     }
 }

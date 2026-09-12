@@ -30,6 +30,8 @@ pub struct NativeMcpServerCandidate {
     pub configuration: Arc<[u8]>,
     pub authentication: Arc<[u8]>,
     pub catalogs: Vec<McpDescriptorCatalog>,
+    /// Optional startup-owned modern notification/cache state for these catalogs.
+    pub refresh: Option<super::NativeMcpCatalogState>,
     /// Explicit monotonic origin for every relative catalog timestamp.
     pub catalog_epoch: std::time::Instant,
     pub peer: NativeMcpOwnedPeer,
@@ -82,6 +84,8 @@ pub(super) struct Publication {
     /// One retained old view keeps its weak turn pins resolvable after addition.
     /// Both views share `retired`; full replacement invalidates the whole lineage.
     pub previous: Option<Arc<Publication>>,
+    /// Independent of retained views: refresh must not reopen deferred startup.
+    pub deferred_sealed: bool,
     pub retained_bytes: usize,
 }
 impl Publication {
@@ -144,19 +148,18 @@ impl NativeMcpRuntime {
                 .iter()
                 .filter(|tool| tool.server_index() == index)
                 .collect();
-            let mut bindings = Vec::with_capacity(selected.len());
-            for exposed in &selected {
-                bindings.push(shared_binding(&server, exposed)?);
-            }
-            let mut peer = server.peer;
-            peer.admit_runtimes(
-                bindings
-                    .iter()
-                    .map(|(_, binding)| binding.clone())
-                    .collect(),
-            )?;
+            let mut catalogs = match server.refresh {
+                Some(state) if state.initial_matches(&server.catalogs) => state,
+                Some(_) => return Err(Error::Invalid),
+                None => super::NativeMcpCatalogState::new(&server.catalogs)?,
+            };
+            catalogs.bind_budget(self.cache_budget.clone());
+            let peer = server.peer;
             let route = Arc::new(ServerRoute {
                 name: server.server,
+                configuration: server.configuration,
+                authentication: server.authentication,
+                catalogs: std::sync::Mutex::new(catalogs),
                 catalog_epoch: server.catalog_epoch,
                 protocol: peer.protocol(),
                 readiness: peer.readiness(),
@@ -168,57 +171,32 @@ impl NativeMcpRuntime {
                 timeout: server.operation_timeout,
                 authority_cancellations: server.authority_cancellations,
             });
-            for (exposed, (owner, binding)) in selected.into_iter().zip(bindings) {
-                let name = ToolName::new(exposed.name()).map_err(|_| Error::Invalid)?;
-                let input_schema = machine_god_core::json::from_str(
-                    exposed.descriptor().input_schema().raw_json(),
-                )
-                .map_err(|_| Error::Invalid)?;
-                let parsed_charge = model_value_charge(&input_schema)?;
-                let spec = ToolSpec {
-                    name: name.clone(),
-                    description: exposed.descriptor().effective_description().into(),
-                    input_schema,
-                };
-                let tool = Arc::new(ToolRoute {
-                    name: name.clone(),
-                    spec,
-                    descriptor: exposed.descriptor().clone(),
-                    server: Arc::downgrade(&route),
-                    binding,
-                    owner,
-                    contexts: self.contexts.clone(),
-                    executor: self.executor.clone(),
-                    policy: self.policy,
-                });
-                // Charge conservative per-tool native/map/registration overhead,
-                // the parsed model schema, and duplicated searchable metadata.
-                let spec_bytes = exposed.descriptor().input_schema().raw_json().len();
-                let estimate = spec_bytes
-                    .checked_mul(4)
-                    .and_then(|n| n.checked_add(parsed_charge))
-                    .and_then(|n| n.checked_add(exposed.search_text().len() * 2))
-                    .and_then(|n| {
-                        n.checked_add(exposed.descriptor().effective_description().len() * 2 + 2048)
-                    })
-                    .ok_or(Error::Limit)?;
-                add_charge(&mut charge, estimate, self.limits.max_retained_bytes)?;
-                let entry = McpToolMetadata::new(
-                    exposed.name(),
-                    route.name.as_ref(),
-                    exposed.descriptor().effective_description(),
-                    exposed.search_text(),
-                    exposed.tags().iter().map(ToString::to_string).collect(),
-                )
-                .map_err(|_| Error::Limit)?
-                .with_shared_tool(Arc::new(super::tool::RuntimeTool(tool.clone())))
-                .map_err(|_| Error::Limit)?;
+            for exposed in selected {
+                let (name, tool, entry) = self.prepare_tool(&route, exposed)?;
+                add_charge(
+                    &mut charge,
+                    tool.retained_bytes,
+                    self.limits.max_retained_bytes,
+                )?;
                 tools.insert(name, tool);
                 metadata.push(entry);
             }
             owners.push(route);
         }
         let snapshot = McpToolCatalogSnapshot::new(metadata).map_err(|_| Error::Limit)?;
+        // All descriptor/spec/allocation work precedes even fresh-peer admission.
+        for route in &owners {
+            let runtimes = tools
+                .values()
+                .filter(|tool| tool.server.ptr_eq(&Arc::downgrade(route)))
+                .map(|tool| tool.binding.clone())
+                .collect();
+            route
+                .peer
+                .try_lock()
+                .ok_or(Error::Unavailable)?
+                .admit_runtimes(runtimes)?;
+        }
         Ok(NativeMcpRuntimeCandidate {
             publication: Arc::new(Publication {
                 identity: self.identity.clone(),
@@ -228,9 +206,62 @@ impl NativeMcpRuntime {
                 retired: Arc::new(AtomicBool::new(false)),
                 descriptors: Box::new([descriptors]),
                 previous: None,
+                deferred_sealed: false,
                 retained_bytes: charge,
             }),
         })
+    }
+    pub(super) fn prepare_tool(
+        &self,
+        route: &Arc<ServerRoute>,
+        exposed: &crate::mcp::catalog::McpExposedTool,
+    ) -> Result<(ToolName, Arc<ToolRoute>, McpToolMetadata)> {
+        let (owner, binding) = shared_binding(route, exposed)?;
+        let name = ToolName::new(exposed.name()).map_err(|_| Error::Invalid)?;
+        let input_schema =
+            machine_god_core::json::from_str(exposed.descriptor().input_schema().raw_json())
+                .map_err(|_| Error::Invalid)?;
+        let parsed_charge = model_value_charge(&input_schema)?;
+        let retained_bytes = exposed
+            .descriptor()
+            .input_schema()
+            .raw_json()
+            .len()
+            .checked_mul(4)
+            .and_then(|n| n.checked_add(parsed_charge))
+            .and_then(|n| n.checked_add(exposed.search_text().len() * 2))
+            .and_then(|n| {
+                n.checked_add(exposed.descriptor().effective_description().len() * 2 + 2048)
+            })
+            .filter(|n| *n <= self.limits.max_retained_bytes)
+            .ok_or(Error::Limit)?;
+        let tool = Arc::new(ToolRoute {
+            name: name.clone(),
+            spec: ToolSpec {
+                name: name.clone(),
+                description: exposed.descriptor().effective_description().into(),
+                input_schema,
+            },
+            descriptor: exposed.descriptor().clone(),
+            server: Arc::downgrade(route),
+            binding,
+            owner,
+            contexts: self.contexts.clone(),
+            executor: self.executor.clone(),
+            policy: self.policy,
+            retained_bytes,
+        });
+        let entry = McpToolMetadata::new(
+            exposed.name(),
+            route.name.as_ref(),
+            exposed.descriptor().effective_description(),
+            exposed.search_text(),
+            exposed.tags().iter().map(ToString::to_string).collect(),
+        )
+        .map_err(|_| Error::Limit)?
+        .with_shared_tool(Arc::new(super::tool::RuntimeTool(tool.clone())))
+        .map_err(|_| Error::Limit)?;
+        Ok((name, tool, entry))
     }
     fn admit_descriptors(
         &self,
@@ -330,7 +361,7 @@ impl NativeMcpRuntime {
     }
 }
 fn shared_binding(
-    server: &NativeMcpServerCandidate,
+    server: &ServerRoute,
     exposed: &crate::mcp::catalog::McpExposedTool,
 ) -> Result<(
     McpSubmissionRuntimeOwner,
@@ -338,7 +369,7 @@ fn shared_binding(
 )> {
     let name = ToolName::new(exposed.name()).map_err(|_| Error::Invalid)?;
     let binding = McpSubmissionRuntimeBinding::shared(
-        server.server.clone(),
+        server.name.clone(),
         name,
         Arc::from(exposed.descriptor().name()),
         server.configuration.clone(),
@@ -352,7 +383,7 @@ fn shared_binding(
         .map_err(|_| Error::Unavailable)?;
     Ok((owner, binding))
 }
-fn add_charge(total: &mut usize, amount: usize, maximum: usize) -> Result<()> {
+pub(super) fn add_charge(total: &mut usize, amount: usize, maximum: usize) -> Result<()> {
     *total = total.checked_add(amount).ok_or(Error::Limit)?;
     if *total > maximum {
         Err(Error::Limit)

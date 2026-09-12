@@ -125,6 +125,7 @@ fn scripted_candidate(
                 configuration: Arc::from(&b"configuration"[..]),
                 authentication: Arc::from(&b"credential"[..]),
                 catalogs: vec![catalog],
+                refresh: None,
                 catalog_epoch: Instant::now(),
                 operation_timeout: Duration::from_secs(120),
                 authority_cancellations: Arc::from([]),

@@ -85,7 +85,7 @@ impl NativeMcpRuntime {
         expected.check(self, &state)?;
         let previous = state.active.clone().ok_or(Error::Unavailable)?;
         drop(state);
-        if previous.previous.is_some() {
+        if previous.deferred_sealed {
             return Err(Error::Limit);
         }
         previous.check()?;
@@ -113,9 +113,11 @@ impl NativeMcpRuntime {
         for server in &candidate.servers {
             server.check_authority()?;
         }
+        let catalog_charge = super::refresh::retained_catalog_charge(&mut state)?;
         if state
             .retired_byte_charge
             .checked_add(candidate.retained_bytes)
+            .and_then(|bytes| bytes.checked_add(catalog_charge))
             .is_none_or(|bytes| bytes > self.limits.max_retained_bytes)
         {
             return Err(Error::Limit);
@@ -204,6 +206,7 @@ fn merge(
             .cloned()
             .collect(),
         previous: Some(previous),
+        deferred_sealed: true,
         retained_bytes,
     })
 }

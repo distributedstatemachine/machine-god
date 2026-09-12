@@ -35,6 +35,7 @@ fn guarded_candidate(
                 configuration: Arc::from(&b"configuration"[..]),
                 authentication: Arc::from(&b"authentication"[..]),
                 catalogs: vec![catalog],
+                refresh: None,
                 catalog_epoch: epoch,
                 operation_timeout: Duration::from_secs(120),
                 authority_cancellations: guards,

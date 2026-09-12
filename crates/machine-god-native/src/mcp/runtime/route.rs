@@ -27,6 +27,9 @@ use std::{
 
 pub(super) struct ServerRoute {
     pub name: Arc<str>,
+    pub configuration: Arc<[u8]>,
+    pub authentication: Arc<[u8]>,
+    pub catalogs: std::sync::Mutex<super::NativeMcpCatalogState>,
     pub catalog_epoch: Instant,
     pub protocol: NegotiatedProtocol,
     pub peer: Mutex<NativeMcpOwnedPeer>,
@@ -48,6 +51,7 @@ pub(super) struct ToolRoute {
     pub contexts: Arc<NativeMcpContexts>,
     pub executor: Arc<dyn super::NativeMcpToolExecutor>,
     pub policy: super::NativeMcpToolExecutionPolicy,
+    pub retained_bytes: usize,
 }
 struct Pending<'a>(&'a AtomicUsize);
 impl Drop for Pending<'_> {
@@ -56,6 +60,7 @@ impl Drop for Pending<'_> {
     }
 }
 pub(super) struct PeerGuard<'a> {
+    pub server: &'a ServerRoute,
     pub peer: MutexGuard<'a, NativeMcpOwnedPeer>,
     pub deadline: Instant,
     _pending: Pending<'a>,
@@ -154,6 +159,7 @@ impl ServerRoute {
             return Err(Error::Cancelled);
         }
         Ok(PeerGuard {
+            server: self,
             peer: guard,
             deadline,
             _pending: pending,

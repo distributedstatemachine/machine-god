@@ -21,6 +21,7 @@ mod fixture;
 mod lifecycle;
 mod publication;
 mod readiness;
+mod refresh;
 pub(super) mod script;
 use fixture::*;
 
@@ -77,6 +78,7 @@ fn feature_only_server_does_not_require_an_unadvertised_tools_catalog() {
                 configuration: Arc::from(&b"configuration"[..]),
                 authentication: Arc::from(&b"credential"[..]),
                 catalogs: vec![catalog],
+                refresh: None,
                 catalog_epoch: Instant::now(),
                 peer: NativeMcpOwnedPeer::Script(peer),
                 operation_timeout: std::time::Duration::from_secs(120),
@@ -203,6 +205,7 @@ fn candidate(
                 configuration: Arc::from(&b"configuration"[..]),
                 authentication: Arc::from(&b"credential"[..]),
                 catalogs: vec![catalog],
+                refresh: None,
                 catalog_epoch: Instant::now(),
                 peer: NativeMcpOwnedPeer::Script(script::ScriptPeer::new(writes)),
                 operation_timeout: std::time::Duration::from_secs(120),

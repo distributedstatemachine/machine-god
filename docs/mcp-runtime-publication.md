@@ -99,8 +99,8 @@ An added publication retains one strong original catalog view so existing weak
 turn pins remain resolvable and continue seeing only their original tools. New
 turns see the merged catalog. Both views share the same retirement cutoff, so
 already returned feature witnesses remain valid across addition but not full
-replacement or closure. At most two descriptor segments and two catalog views
-exist per lineage. Before merged copies, the runtime conservatively charges twice
+replacement or closure. The addition retains at most two catalog views.
+Before merged copies, the runtime conservatively charges twice
 the sum of the original and new candidate charges plus 4 KiB for merged ownership;
 the existing server/tool/cardinality and snapshot limits also apply. Final
 publication rechecks every existing and new server authority guard and the
@@ -108,6 +108,48 @@ active-plus-retired byte budget under its lock. Failed preparation/publication
 does not retire existing bindings or close their peers. Full replacement and
 closure invalidate the shared cutoff and retain each unique merged peer once for
 draining, without counting shared required peers twice.
+
+## Existing-peer tool refresh
+
+Tool catalog refresh has a separate private transaction. It never submits an
+existing peer through ordinary replacement publication, cancels that peer, or
+adds it to the peer-retirement queue. The caller retains the selected peer lane
+from catalog acquisition through cache-policy prevalidation and publication.
+Preparation retains the exact prior checkpoint and original server allocation,
+including immutable configuration/authentication bytes even for a zero-tool
+server. It builds every descriptor, stable exposed name, schema, executable
+binding, captured registration, whitelist allocation and byte charge privately.
+Other servers keep their exact tool names, bindings and captured registrations.
+
+An exact unchanged descriptor/exposure view is metadata-only: it preserves the
+publication checkpoint, registrations and pending consent, while the catalog
+owner may update TTL metadata. Changed views use a fresh publication cutoff and
+retire the selected server's old executable allocations. Already selected turns
+and feature witnesses are not rebound: new selection must occur before a new
+model pin or human feature authority is created. Original ready submissions for
+replaced tools fail their existing final binding checks, including write suffixes.
+
+Commit checks the exact peer-lane owner, expected publication, every retained
+server authority and active-plus-retired byte limits. The staged transport table
+is locked/validated before any mutation; abandoned staging leaves it untouched.
+After all fallible preparation, old bindings are marked retired, the exact
+whitelist is swapped and the prepared publication becomes visible without a
+fallible step or suspension. Deferred cancellation, old whitelist storage and
+old publication owners are released outside the publication lock. There is no
+transient union whitelist, publication rollback or automatic request replay.
+The catalog owner serializes its prevalidation, this commit and cache-policy
+finish; a failed commit must not mark the replacement catalog current.
+
+Refreshed views flatten descriptor storage to at most one segment per admitted
+server, with no retained predecessor chain. An explicit deferred-startup seal
+survives flattening, so refresh cannot reopen the one permitted optional batch.
+Retired catalog/binding records are separate from retired peers, capped by the
+configured retirement count and charged together with active publications and
+retired-peer generations. Weak observations cover both captured old tool routes
+and old submission bindings, not merely publication lifetime. Charges are
+pruned only when those owners disappear; draining peers cannot reset these
+catalog charges. Repeated refresh therefore remains finite even when a caller
+holds an old registration or unsent submission.
 
 Each candidate retains its explicitly selected monotonic catalog timestamp origin.
 `catalog_epoch(server)` exposes that origin without reading a clock or deciding

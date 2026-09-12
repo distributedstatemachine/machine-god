@@ -3,7 +3,7 @@ use futures_executor::block_on;
 use machine_god_testkit::{InMemorySessionStore, ScriptedModelProvider, ScriptedPermissionHandler};
 use std::sync::atomic::AtomicBool;
 
-fn server(name: &str, tools: &[&str]) -> NativeMcpServerCandidate {
+pub(super) fn server(name: &str, tools: &[&str]) -> NativeMcpServerCandidate {
     let mut builder = McpCatalogBuilder::new(
         McpCatalogKind::Tools,
         ProtocolVersion::Modern,
@@ -30,6 +30,7 @@ fn server(name: &str, tools: &[&str]) -> NativeMcpServerCandidate {
                 .unwrap(),
         ],
         catalog_epoch: Instant::now(),
+        refresh: None,
         peer: NativeMcpOwnedPeer::Script(script::ScriptPeer::new(Arc::default())),
         operation_timeout: Duration::from_secs(120),
         authority_cancellations: Arc::from([]),
