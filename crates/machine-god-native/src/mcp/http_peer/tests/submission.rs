@@ -2,6 +2,48 @@ use super::*;
 use crate::mcp::submission::tests::Fixture;
 
 #[test]
+fn staged_runtime_whitelist_is_inert_until_commit_and_returns_retired_allocations() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let selected = options(
+            listener.local_addr().unwrap(),
+            TransportKind::StreamableHttp,
+        );
+        let server = accept_reply(&listener, 200, JSON, &modern(1));
+        let client = async {
+            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
+                .await
+                .unwrap();
+            let original = Fixture::new();
+            let replacement = Fixture::new();
+            peer.admit_runtimes(vec![original.runtime.clone()]).unwrap();
+            drop(
+                peer.prepare_runtime_set(vec![replacement.runtime.clone()])
+                    .unwrap(),
+            );
+            assert!(Arc::ptr_eq(&peer.runtimes[0], &original.runtime));
+            assert!(
+                peer.prepare_runtime_set(vec![
+                    replacement.runtime.clone(),
+                    replacement.runtime.clone()
+                ])
+                .is_err()
+            );
+            assert!(Arc::ptr_eq(&peer.runtimes[0], &original.runtime));
+            let retired = peer
+                .prepare_runtime_set(vec![replacement.runtime.clone()])
+                .unwrap()
+                .commit();
+            assert_eq!(retired.len(), 1);
+            assert!(Arc::ptr_eq(&retired[0], &original.runtime));
+            assert!(Arc::ptr_eq(&peer.runtimes[0], &replacement.runtime));
+        };
+        join(client, server).await;
+        assert!(futures_util::poll!(Box::pin(listener.accept())).is_pending());
+    });
+}
+
+#[test]
 fn leased_requests_release_only_their_own_slots_and_reject_manual_interference() {
     executor().block_on(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
