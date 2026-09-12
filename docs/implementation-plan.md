@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `catalog refresh/subscription runtime composition and authentication end-to-end evidence; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `configured activation, authentication and CLI end-to-end acceptance; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -450,11 +450,16 @@ compose with per-server policy state. Demand-driven tools refresh conditionally
 rebinds on the same peer and preserves controller publication custody; unchanged
 descriptors avoid rebinding. Lazy feature catalogs use bounded TTL/backoff caches.
 Original caller cancellation is checked at the final publication boundary.
+Complete read/get result caches share the bounded catalog budget and retain
+original receipt expiry, descriptor identity and invalidation epochs. Demand-owned
+subscriptions activate direct candidates and expand admitted human resource URIs.
+Scoped credential identity owners compose missing credentials, overlapping reloads,
+failed candidates and retirement without historical receipts extending selection.
+Literal slash-command and human-modal acceptance fixtures are integrated.
 
-These components do not constitute a delivered runtime. Remaining composition includes
-read/get result caching, resource-URI subscription expansion and direct-candidate
-listener activation, authentication identity retirement/end-to-end evidence and
-CLI ownership. Raw pages
+These components do not constitute a delivered runtime. Remaining acceptance includes
+configured startup through model search/select/call, authentication/browser/logout
+end-to-end evidence and CLI process/recording/session-transition ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
 Complete continuation and CLI process acceptance still requires the fresh-release
