@@ -308,3 +308,37 @@ fn exact_listener_completion_invalidates_before_later_demand_restarts() {
         join(client, wire).await;
     });
 }
+
+#[test]
+fn uri_expansion_observes_ordinary_stream_cancellation_before_handoff() {
+    executor().block_on(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let server = route(&listener).await;
+        let wire = async {
+            let mut subscription = listen(&listener, 2, filters(&[])).await;
+            subscription.write_all(&ack_bytes(2, filters(&[]))).await.unwrap();
+            let (mut catalog, _) = listener.accept().await.unwrap();
+            let received = request(&mut catalog).await;
+            assert!(String::from_utf8_lossy(&received).contains("resources/list"));
+            let body = b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":2}}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"resultType\":\"complete\",\"resources\":[]}}\n\n";
+            catalog.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+            catalog.write_all(body).await.unwrap();
+            let mut byte = [0];
+            assert_eq!(subscription.read(&mut byte).await.unwrap(), 0);
+        };
+        let client = async {
+            let owner = authority();
+            let mut lane = server.acquire_feature(&owner).await.unwrap();
+            ensure(&mut lane, &server).await.unwrap();
+            let deadline = lane.deadline;
+            let NativeMcpOwnedPeer::Http(peer) = &mut *lane.peer else { panic!() };
+            peer.catalog(McpCatalogKind::Resources, crate::mcp::pagination::McpCatalogLimits::default(), server.catalog_epoch, deadline).await.unwrap();
+            ensure_resource(&mut lane, &server, "file:///not-restarted").await.unwrap();
+            assert!(state(&server).unwrap().subscription_stopped);
+            assert!(state(&server).unwrap().uris.is_empty());
+            assert!(lane.peer.active_subscription().is_none());
+            assert!(listener.accept().now_or_never().is_none());
+        };
+        join(client, wire).await;
+    });
+}

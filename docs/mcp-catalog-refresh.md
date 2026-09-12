@@ -118,7 +118,9 @@ new ID; failed reads do not replay any application request. Peer retirement stil
 owns socket/process cleanup, and abandoned stdio writes fail the peer closed.
 
 An unrestricted admitted resource read expands the exact watched-URI union before
-result-cache lookup. Existing selected URIs survive expansion. The full next set
+result-cache lookup. Already admitted notifications, including cancellations from
+ordinary response streams, drain before selecting that handoff. Existing selected
+URIs survive expansion. The full next set
 is checked against 64 URIs and 64 KiB before the current listener is disturbed;
 duplicate demand does not restart it. Handoff expires snapshots before closing the
 old listener or performing replacement I/O, and requires the replacement ACK.

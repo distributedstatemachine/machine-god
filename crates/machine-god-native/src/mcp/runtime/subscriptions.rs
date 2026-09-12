@@ -56,13 +56,6 @@ pub(super) async fn ensure(lane: &mut PeerGuard<'_>, server: &ServerRoute) -> Re
     // Per-observation cap: unrelated ready traffic cannot starve this caller.
     for _ in 0..64 {
         check(lane, server)?;
-        if state(server)?.acknowledged {
-            if lane.peer.active_subscription() != state(server)?.subscription {
-                state(server)?.ended()?;
-                return Err(Error::Unavailable);
-            }
-            return Ok(());
-        }
         let result = lane.peer.poll_subscription(lane.deadline).await;
         let Some(envelope) = observe_poll(lane, server, result)? else {
             return Err(Error::Unavailable);
@@ -70,6 +63,13 @@ pub(super) async fn ensure(lane: &mut PeerGuard<'_>, server: &ServerRoute) -> Re
         if state(server)?.observe(&envelope)? {
             lane.peer.close_subscription(lane.deadline).await?;
             return Err(Error::Unavailable);
+        }
+        if state(server)?.acknowledged {
+            if lane.peer.active_subscription() != state(server)?.subscription {
+                state(server)?.ended()?;
+                return Err(Error::Unavailable);
+            }
+            return Ok(());
         }
     }
     Err(Error::Limit)
@@ -83,6 +83,7 @@ pub(super) async fn ensure_resource(
     uri: &str,
 ) -> Result<()> {
     check(lane, server)?;
+    drain(lane, server).await?;
     if !lane.peer.capabilities().resources_subscribe() {
         return ensure(lane, server).await;
     }
