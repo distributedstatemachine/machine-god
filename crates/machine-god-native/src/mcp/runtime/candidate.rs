@@ -77,7 +77,11 @@ pub(super) struct Publication {
     pub tools: BTreeMap<ToolName, Arc<ToolRoute>>,
     pub snapshot: McpToolCatalogSnapshot,
     pub retired: Arc<AtomicBool>,
-    pub descriptors: McpCatalogCandidate,
+    /// One ordinary segment, or the original and deferred segments in order.
+    pub descriptors: Box<[McpCatalogCandidate]>,
+    /// One retained old view keeps its weak turn pins resolvable after addition.
+    /// Both views share `retired`; full replacement invalidates the whole lineage.
+    pub previous: Option<Arc<Publication>>,
     pub retained_bytes: usize,
 }
 impl Publication {
@@ -90,9 +94,17 @@ impl Publication {
     }
 }
 impl NativeMcpRuntimeCandidate {
+    /// Observes this exact private candidate without retaining it or publishing.
+    /// Capture before publication and retain only after success; rereading the
+    /// runtime afterward could instead observe a concurrent replacement.
+    #[must_use]
+    pub fn publication_checkpoint(&self) -> super::NativeMcpPublicationCheckpoint {
+        super::NativeMcpPublicationCheckpoint::for_publication(&self.publication)
+    }
+
     #[must_use]
     pub fn descriptors(&self) -> &McpCatalogCandidate {
-        &self.publication.descriptors
+        &self.publication.descriptors[0]
     }
     #[must_use]
     pub fn retained_byte_charge(&self) -> usize {
@@ -213,7 +225,8 @@ impl NativeMcpRuntime {
                 tools,
                 snapshot,
                 retired: Arc::new(AtomicBool::new(false)),
-                descriptors,
+                descriptors: Box::new([descriptors]),
+                previous: None,
                 retained_bytes: charge,
             }),
         })

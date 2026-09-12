@@ -1,5 +1,6 @@
 //! Atomic native publication of explicitly admitted, owned MCP server peers.
 
+mod addition;
 mod call;
 mod candidate;
 mod checkpoint;
@@ -11,6 +12,7 @@ mod route;
 mod tests;
 mod tool;
 
+pub use addition::NativeMcpRuntimeAddition;
 pub use call::{NativeMcpRuntimeToolCall, NativeMcpRuntimeToolResponse};
 pub use candidate::{NativeMcpRuntimeCandidate, NativeMcpServerCandidate};
 pub use checkpoint::NativeMcpPublicationCheckpoint;

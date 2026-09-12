@@ -19,6 +19,13 @@ impl fmt::Debug for NativeMcpPublicationCheckpoint {
     }
 }
 impl NativeMcpPublicationCheckpoint {
+    pub(super) fn for_publication(publication: &Arc<Publication>) -> Self {
+        Self {
+            runtime: Arc::downgrade(&publication.identity),
+            publication: Some(Arc::downgrade(publication)),
+        }
+    }
+
     pub(super) fn check(&self, runtime: &NativeMcpRuntime, state: &State) -> Result<()> {
         if !self.runtime.ptr_eq(&Arc::downgrade(&runtime.identity)) {
             return Err(Error::Invalid);

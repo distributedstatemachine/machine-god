@@ -78,6 +78,36 @@ checks that runtime-bound observation under the publication lock before any
 retirement. A stale or foreign asynchronous startup/reload result therefore
 cannot replace a newer usable generation. The checkpoint does not reserve the
 profile file or authorize execution; profile revalidation remains separate.
+Both ordinary candidates and additions expose `publication_checkpoint()` for
+their exact prospective view. Capture it before consuming publication and use
+it only after success. This avoids accidentally selecting a concurrent external
+replacement by rereading the runtime afterward. Prospective checkpoints neither
+activate nor retain their candidate, and do not match until that exact view is
+published; supersession makes them stale.
+
+`prepare_addition(servers, reserved, checkpoint)` prepares a separate opaque
+`NativeMcpRuntimeAddition`; `publish_addition` conditionally exposes it against
+that exact checkpoint. This is the single nonempty `AskDeferred` batch following
+`AskStartup`, not an incremental replacement API. A lineage permits at most one
+addition; empty batches are explicit controller no-ops, while empty additions,
+absent publications, duplicate servers, stale/foreign checkpoints and a second
+addition are rejected. New names reserve both supplied builtin names and every
+existing exposed name. Existing peer, binding, registration and tool-name
+allocations are shared unchanged; required servers are never reopened.
+
+An added publication retains one strong original catalog view so existing weak
+turn pins remain resolvable and continue seeing only their original tools. New
+turns see the merged catalog. Both views share the same retirement cutoff, so
+already returned feature witnesses remain valid across addition but not full
+replacement or closure. At most two descriptor segments and two catalog views
+exist per lineage. Before merged copies, the runtime conservatively charges twice
+the sum of the original and new candidate charges plus 4 KiB for merged ownership;
+the existing server/tool/cardinality and snapshot limits also apply. Final
+publication rechecks every existing and new server authority guard and the
+active-plus-retired byte budget under its lock. Failed preparation/publication
+does not retire existing bindings or close their peers. Full replacement and
+closure invalidate the shared cutoff and retain each unique merged peer once for
+draining, without counting shared required peers twice.
 
 Each candidate retains its explicitly selected monotonic catalog timestamp origin.
 `catalog_epoch(server)` exposes that origin without reading a clock or deciding
