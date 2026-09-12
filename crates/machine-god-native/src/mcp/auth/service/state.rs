@@ -381,7 +381,7 @@ impl Operation {
                     .invalidate(McpAuthInvalidated {
                         identity: self.guard.identity.clone(),
                         generation: old.token,
-                    })
+                    });
             });
         }
         Ok(issued.lease(token, self.profile.clone()))
