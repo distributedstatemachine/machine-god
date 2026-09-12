@@ -1,6 +1,6 @@
 //! Actual session admission using production profile-auth composition. These
-//! scenarios require the fresh release helper even though they expect no child,
-//! browser or model request; execute only in the coordinated runtime window.
+//! scenarios require the fresh release helper; execute only in the coordinated
+//! runtime window. OAuth acceptance uses an explicitly bound local mock browser.
 
 use super::*;
 use machine_god_native::{
@@ -18,6 +18,10 @@ use machine_god_native::{
 };
 use std::net::{Ipv4Addr, TcpListener};
 
+mod browser;
+mod oauth;
+mod server;
+
 struct Fixture {
     host: Option<Arc<NativeReferenceHost>>,
     runtime: TokioWebSearchRuntime,
@@ -28,6 +32,17 @@ struct Fixture {
 
 impl Fixture {
     fn new(secret: bool, required: bool) -> Self {
+        Self::configured(|endpoint| {
+            if secret {
+                serde_json::json!({"type":"http", "url":endpoint, "enabled":required, "required":required,
+                    "oauth":{"client_id":"selected-client", "client_secret_env":"UNAVAILABLE_MCP_FIXTURE_SECRET"}})
+            } else {
+                serde_json::json!({"type":"http", "url":endpoint, "enabled":false})
+            }
+        })
+    }
+
+    fn configured(remote: impl FnOnce(&str) -> serde_json::Value) -> Self {
         let directory = ScopedTestDirectory::new("mcp-auth-controls");
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -35,12 +50,7 @@ impl Fixture {
             "http://127.0.0.1:{}/mcp",
             listener.local_addr().unwrap().port()
         );
-        let remote = if secret {
-            serde_json::json!({"type":"http", "url":endpoint, "enabled":required, "required":required,
-                "oauth":{"client_id":"selected-client", "client_secret_env":"UNAVAILABLE_MCP_FIXTURE_SECRET"}})
-        } else {
-            serde_json::json!({"type":"http", "url":endpoint, "enabled":false})
-        };
+        let remote = remote(&endpoint);
         let config = serde_json::json!({"mcp":{
             "remote":remote, "local":{"command":"/unexecuted-server", "enabled":false}
         }});
@@ -87,13 +97,22 @@ impl Fixture {
     }
 
     async fn session(&self) -> NativeInteractiveSession {
+        self.session_with_options(|options| options).await
+    }
+
+    async fn session_with_options(
+        &self,
+        select: impl FnOnce(NativeInteractiveSessionOptions) -> NativeInteractiveSessionOptions,
+    ) -> NativeInteractiveSession {
         NativeInteractiveSession::open(
             self.host().clone(),
-            NativeInteractiveSessionOptions::new(
-                self.host().workspace_root().to_owned(),
-                self.host().loaded_config().config().model_preferences(),
-            )
-            .unwrap(),
+            select(
+                NativeInteractiveSessionOptions::new(
+                    self.host().workspace_root().to_owned(),
+                    self.host().loaded_config().config().model_preferences(),
+                )
+                .unwrap(),
+            ),
             NativeInteractiveInitialSession::Fresh,
             1,
         )

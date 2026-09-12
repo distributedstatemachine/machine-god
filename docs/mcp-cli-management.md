@@ -37,6 +37,12 @@ authority to retry or roll back a mutation.
   host controller. Failure preserves the previously active generation.
 - The seven `/mcp resource` and `/mcp prompt` actions use the actual selected
   native runtime and return bounded, observed external data.
+- `/mcp auth NAME` requests explicit confirmation with `--open`, without OAuth
+  network, credential loading or browser effects. `/mcp auth NAME --open` uses
+  the selected native profile, approved browser owner and local callback, saves
+  credentials, then reports a separate configured activation receipt.
+- `/mcp logout NAME` reports local credential removal and remote revocation
+  independently. It does not implicitly reload the runtime.
 
 Mutation receipts separately report confirmed or ambiguous save durability,
 changed or unchanged configuration, and runtime activation not attempted.
@@ -46,16 +52,17 @@ environment values, remote URLs, headers and credentials are never included in
 configuration-list receipts.
 
 Reload and resource/prompt actions require selected runtime authority separately
-from profile-management authority. Authentication/logout remain recognized but
-unavailable in this host. Missing authority reports the native unavailable error
+from profile-management authority. Authentication/logout require the selected
+native authorization service; browser authorization additionally requires the
+retained desktop launcher and explicit `--open` consent. Missing authority reports the native unavailable error
 without effects, prompt fallback or automatic retry.
 
 ## Native runtime controls
 
 The native interactive owner dispatches reload and all seven resource/prompt
 actions separately from profile management. These operations use only the actual
-host controller/runtime; absent runtime authority and authentication/logout
-remain unavailable, without prompt fallback. Saves still do not activate peers.
+host controller/runtime; absent runtime authority remains unavailable, without
+prompt fallback. Configuration saves still do not activate peers.
 
 On first poll each runtime control acquires the exact accepted conversation's
 file-control lifecycle permit and retains it until the operation returns its
@@ -67,6 +74,16 @@ controller's retained workers; network/peer futures
 are polled asynchronously by the interactive owner, never blocked on a worker.
 An accepted reload returns the actual typed controller publication or failure
 receipt even when cancellation races publication; it is not automatically retried.
+
+Authentication can select a disabled or failed remote configuration. The real
+conversation admission, exact profile, original cancellation and native worker
+custody remain retained through credential publication. Successful authorization
+then attempts configured activation; failed activation does not undo a confirmed
+credential save. Populated logout revokes the refresh and access tokens separately
+when supported. An unsuccessful remote revocation remains ambiguous even after
+confirmed local removal. Authorization URLs and credentials never enter command
+receipts or recorded output. The [authorization contract](mcp-auth.md) owns the
+browser, callback, persistence and cleanup details.
 
 Feature commands pass through the existing bounded request conversion and select
 an exact native human-command lifetime, not a fabricated model turn. Successful
@@ -105,5 +122,6 @@ publication/unchanged/closed-after-publication, per-server startup facts and
 local cleanup observations; it does not claim remote revocation or infer runtime
 success from a configuration save.
 
-These controls do not grant model tool permissions or implement OAuth. The
+These controls do not grant model tool permissions; OAuth effects remain native.
+The
 [implementation plan](implementation-plan.md) remains the live delivery ledger.

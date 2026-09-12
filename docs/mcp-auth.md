@@ -122,6 +122,16 @@ reports local removal and remote revocation independently, without implicit
 runtime reload. Secret-bearing authorization URLs go directly to the retained
 native launcher and are never placed in recorded CLI output.
 
+Composed acceptance exercises this boundary through actual interactive command
+admission, a private explicitly bound mock browser executable, localhost OAuth
+discovery and registration, the exact state/issuer callback, token publication,
+configured activation and an authenticated MCP resource request. Populated logout
+checks both confirmed and unsuccessful remote revocation after local removal.
+Wrong-state callbacks cannot exchange tokens or publish credentials; failed
+authenticated activation retains its already-confirmed credential save. These
+fixtures use no external provider or real desktop browser, and require the same
+fresh host helper and owned worker shutdown as other session acceptance.
+
 Authentication may reuse the latest failed startup's challenge bytes only after
 freshly validating that observation's exact profile source. This is a new
 explicit command selection, not revival of the failed startup's cancelled
