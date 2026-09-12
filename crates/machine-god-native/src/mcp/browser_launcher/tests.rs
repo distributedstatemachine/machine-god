@@ -1,4 +1,5 @@
 use super::*;
+mod guard;
 use futures_executor::block_on;
 use std::{
     fs::File,
