@@ -279,6 +279,36 @@ impl Terminal {
         }
         (status, self.output)
     }
+
+    /// Physical master closure is hangup, not a Ctrl-D gesture or clean EOF.
+    pub fn hangup(self) -> ExitStatus {
+        let Self {
+            master,
+            slave,
+            mut child,
+            settings,
+            ..
+        } = self;
+        drop(master);
+        let deadline = Instant::now() + DEADLINE;
+        let status = loop {
+            if let Some(status) = child.poll() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "CLI did not settle physical PTY hangup"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        match rustix::termios::tcgetattr(slave.as_ref().unwrap()) {
+            Ok(restored) => assert_eq!(format!("{restored:?}"), settings),
+            // Some PTYs reject termios queries once their master has gone.
+            Err(rustix::io::Errno::IO) => {}
+            Err(error) => panic!("unexpected hangup termios error: {error}"),
+        }
+        status
+    }
 }
 
 fn pty() -> (File, File) {

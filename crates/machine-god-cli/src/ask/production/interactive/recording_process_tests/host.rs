@@ -20,6 +20,9 @@ use machine_god_native::{
 };
 use std::{fs::File, net::SocketAddr, os::fd::AsFd, path::PathBuf, sync::Arc};
 
+#[path = "host/mcp.rs"]
+mod mcp;
+
 pub(super) struct Host {
     pub required: bool,
 }
@@ -137,6 +140,12 @@ fn prepare(
         environment.clone(),
         terminal_environment,
     )?;
+    let mcp = mcp::prepare(
+        &prepared.roots,
+        &prepared.terminal,
+        &environment,
+        bridge.clone(),
+    )?;
     let mut options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
         .with_workspace(authority, Arc::new(NativeWorkspaceContexts::new()))
         .with_model_routes(Arc::clone(&model_routes))
@@ -145,6 +154,11 @@ fn prepare(
         .with_permissions(super::super::super::capture_permission_options());
     if let Some(service) = prepared.service {
         options = options.with_skills(service);
+    }
+    if let Some((management, runtime)) = mcp {
+        options = options
+            .with_mcp_management(management)
+            .with_mcp_runtime(runtime);
     }
     let host =
         NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(

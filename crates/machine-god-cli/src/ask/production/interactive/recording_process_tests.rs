@@ -2,6 +2,7 @@
 
 mod gateway;
 mod host;
+mod mcp;
 mod resume;
 mod skills;
 mod support;

@@ -11,16 +11,28 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "gateway/mcp.rs"]
+mod mcp;
+
 pub(super) struct Gateway {
     pub address: SocketAddr,
     pub inference: Arc<AtomicUsize>,
     bodies: Arc<Mutex<Vec<Vec<u8>>>>,
+    mcp: Option<Arc<mcp::Requests>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl Gateway {
     pub fn new() -> Self {
+        Self::configured(false)
+    }
+
+    pub fn new_with_mcp() -> Self {
+        Self::configured(true)
+    }
+
+    fn configured(with_mcp: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
@@ -30,6 +42,8 @@ impl Gateway {
         let requests = Arc::clone(&inference);
         let bodies = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&bodies);
+        let mcp = with_mcp.then(|| Arc::new(mcp::Requests::default()));
+        let selected = mcp.clone();
         let worker = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(30);
             let mut count = 0;
@@ -44,7 +58,7 @@ impl Gateway {
                             return Err(io::ErrorKind::InvalidData.into());
                         }
                         count += 1;
-                        serve(&mut connection, &requests, &captured)?;
+                        serve(&mut connection, &requests, &captured, selected.as_deref())?;
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(2));
@@ -59,6 +73,7 @@ impl Gateway {
             address,
             inference,
             bodies,
+            mcp,
             stop,
             worker: Some(worker),
         }
@@ -71,6 +86,10 @@ impl Gateway {
             .iter()
             .map(|body| serde_json::from_slice(body).unwrap())
             .collect()
+    }
+
+    pub fn mcp_requests(&self) -> Vec<serde_json::Value> {
+        self.mcp.as_ref().unwrap().snapshot()
     }
 
     pub fn finish(mut self) {
@@ -92,6 +111,7 @@ fn serve(
     connection: &mut TcpStream,
     inference: &AtomicUsize,
     bodies: &Mutex<Vec<Vec<u8>>>,
+    mcp: Option<&mcp::Requests>,
 ) -> io::Result<()> {
     connection.set_read_timeout(Some(Duration::from_millis(100)))?;
     connection.set_write_timeout(Some(Duration::from_secs(1)))?;
@@ -132,7 +152,7 @@ fn serve(
     let (content_type, body) = if line.starts_with("GET /catalog ") {
         (
             "application/json",
-            "{\"data\":[{\"id\":\"zai/glm-5.2\",\"type\":\"language\"}]}",
+            "{\"data\":[{\"id\":\"zai/glm-5.2\",\"type\":\"language\"}]}".to_owned(),
         )
     } else if line.starts_with("POST /inference ") {
         let _: serde_json::Value =
@@ -151,7 +171,13 @@ fn serve(
             concat!(
                 "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"local fixture answer\"}\n\n",
                 "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n",
-            ),
+            ).to_owned(),
+        )
+    } else if line.starts_with("POST /mcp ") {
+        (
+            "application/json",
+            mcp.ok_or(io::ErrorKind::InvalidData)?
+                .reply(&request[header_end..header_end + body_len])?,
         )
     } else {
         return Err(io::ErrorKind::InvalidData.into());
