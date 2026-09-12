@@ -60,16 +60,15 @@ pub(super) async fn execute(
             );
         }
         let outgoing = McpHttpControl::feature(&exchange, authority.clone())?;
-        let head = Arc::new(peer.make_head(Some(exchange.method()), None)?);
+        let head = Arc::new(peer.make_head(Some(exchange.method()))?);
         let writer = peer.connection(head, deadline)?.control(outgoing);
         let frame = control::guarded(
             &authority,
-            routing::exchange(peer, writer, &exchange.request_id(), false, false, deadline),
+            routing::exchange(peer, writer, &exchange.request_id(), false, deadline),
         )
         .await
         .map_err(|()| Error::Cancelled)??
-        .frame
-        .ok_or(Error::Protocol)?;
+        .frame;
         let reply = control::admit(
             &mut load,
             &exchange,

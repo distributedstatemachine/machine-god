@@ -31,7 +31,7 @@ pub(super) fn media(headers: &McpHttpHeaders) -> Result<Media> {
         Err(McpHttpPeerError::Protocol)
     }
 }
-pub(super) fn status(response: &McpHttpResponse, has_session: bool) -> Result<()> {
+pub(super) fn status(response: &McpHttpResponse) -> Result<()> {
     if (300..400).contains(&response.status) {
         return Err(McpHttpPeerError::Redirect);
     }
@@ -56,31 +56,6 @@ pub(super) fn status(response: &McpHttpResponse, has_session: bool) -> Result<()
             challenges: challenges.into_boxed_slice(),
         }));
     }
-    if response.status == 404 && has_session {
-        return Err(McpHttpPeerError::SessionExpired);
-    }
-    Ok(())
-}
-pub(super) fn session(headers: &McpHttpHeaders) -> Result<Option<Box<str>>> {
-    singleton(headers, "mcp-session-id")?
-        .map(|bytes| {
-            if bytes.is_empty()
-                || bytes.len() > 1024
-                || !bytes.iter().all(|byte| (0x21..=0x7e).contains(byte))
-            {
-                return Err(McpHttpPeerError::Protocol);
-            }
-            Ok(std::str::from_utf8(bytes)
-                .map_err(|_| McpHttpPeerError::Protocol)?
-                .into())
-        })
-        .transpose()
-}
-pub(super) fn stable_session(headers: &McpHttpHeaders, selected: Option<&str>) -> Result<()> {
-    if let Some(observed) = session(headers)?
-        && Some(observed.as_ref()) != selected
-    {
-        return Err(McpHttpPeerError::Protocol);
-    }
+
     Ok(())
 }

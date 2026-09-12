@@ -44,11 +44,9 @@ acknowledgements advance only the written prefix; no code retries the request.
 The response reader retains the owned cancellation observers after final flush.
 
 `McpHttpControl` uses the existing strict protocol-control admission for
-discovery/catalog requests, initialized/cancelled notifications and fixed
-unsupported-method replies. Explicit GET listener and DELETE session-teardown
-forms are separate bodiless typed operations with an SSE-only Accept header.
-The runtime must supply admitted session
-headers and authorize teardown; protocol metadata cannot mint that authority.
+modern discovery/catalog requests. There is no initialized notification,
+legacy reply, listener GET or session DELETE control. Private OAuth metadata
+GETs and token/registration/revocation POSTs retain separate native admission.
 Arbitrary tool calls, application feature methods and successful continuation
 replies cannot enter this control lane.
 
@@ -76,7 +74,7 @@ bound simultaneous exchanges and caller-retained response chunks/observers.
 
 Status, headers, trailers and body bytes remain uncommitted observations.
 Duplicate header names are preserved rather than silently overwritten. The
-runtime must validate content type, status, JSON/SSE, generation, session ID,
+runtime must validate content type, status, JSON/SSE, generation,
 authentication and protocol-specific metadata before publication. SSE data can
 feed the existing [bounded decoder](mcp-sse.md); this transport does not interpret
 events or publish resume cursors.
@@ -93,20 +91,8 @@ request writes,
 response head and every body read, including buffered bytes. Userspace waits are
 bounded; synchronous OS/library work and scheduling are not real-time guarantees.
 
-The native peer has one private exception for persistent read-only GET listeners:
-after exact successful status, session and SSE validation (and same-origin
-endpoint admission for deprecated HTTP+SSE), it may promote that existing body's
-read lifetime to the selected peer ownership. Connect, TLS, GET writes, response
-headers and initial endpoint discovery retain the original finite deadline.
-Promotion requires the actual GET-listener lane, rejects repeat promotion, and
-never resets framing, byte budgets or completion ownership. A feature-scoped
-guard retained through GET acquisition is revalidated at transfer; only that
-operation observer is detached as the listener becomes peer-owned. Peer
-cancellation and explicit expiry remain. Ordinary protocol, OAuth, application and resumed response bodies
-cannot acquire this ownership policy. Public raw constructors remain unchanged.
-Owner-controlled listening observes cancellation until explicit close; an
-explicit peer expiry remains enforced. Every caller-driven listener observation
-still has a finite deadline outside its retained parser future.
+Every response body retains the original finite exchange deadline. There is no
+listener promotion, read-lifetime transfer or cursor-based resumption API.
 
 `with_clock` explicitly injects the monotonic clock and timer used at every
 acquisition/write/read boundary; the existing `new` constructor retains its
@@ -128,7 +114,7 @@ remote execution success or proof that ambiguous writes had no effect. Its
 completion observer does not drive the operation: the host must continue polling
 or drop the owner. Debug and error output omit endpoint, header and payload data.
 
-Runtime DNS selection, protocol negotiation, listeners/subscriptions, catalog
+Runtime DNS selection, protocol negotiation, notification processing, catalog
 publication, OAuth, application feature/continuation authority and CLI activation
 remain separate native composition. The [implementation plan](implementation-plan.md)
 owns complete-feature status and gates.

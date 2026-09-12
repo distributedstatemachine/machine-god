@@ -178,7 +178,10 @@ fn cancelled_request_and_dropped_pending_body_close_without_replay() {
             assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
         };
         let client = async {
-            let mut response = client.control(McpHttpControl::listen()).await.unwrap();
+            let mut response = client
+                .control(McpHttpControl::discovery(DISCOVER).unwrap())
+                .await
+                .unwrap();
             let mut read = Box::pin(response.body.next_chunk());
             assert!(futures_util::poll!(read.as_mut()).is_pending());
             drop(read);
@@ -190,7 +193,10 @@ fn cancelled_request_and_dropped_pending_body_close_without_replay() {
         let observation = client.observation();
         cancel.cancel();
         assert_eq!(
-            client.control(McpHttpControl::listen()).await.unwrap_err(),
+            client
+                .control(McpHttpControl::discovery(DISCOVER).unwrap())
+                .await
+                .unwrap_err(),
             McpHttpError::Cancelled
         );
         assert!(!observation.was_attempted());
@@ -203,7 +209,6 @@ fn typed_controls_and_address_authority_reject_bypasses() {
     for method in ["tools/call", "resources/read", "prompts/get", "evil/method"] {
         let bytes = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{}}}}"#);
         assert!(McpHttpControl::discovery(bytes.as_bytes()).is_err());
-        assert!(McpHttpControl::notification(bytes.as_bytes()).is_err());
     }
     let endpoint = McpEndpoint::parse("http://localhost:8000/mcp").unwrap();
     for addresses in [

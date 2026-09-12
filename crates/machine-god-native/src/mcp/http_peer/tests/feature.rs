@@ -216,26 +216,3 @@ fn lowered_feature_response_bound_rejects_atomically_and_unpolled_call_consumes_
         join(server, client).await;
     });
 }
-
-#[test]
-fn legacy_feature_list_preserves_session_headers_and_legacy_result_shape() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(listener.local_addr().unwrap(), TransportKind::StreamableHttp);
-        let server = async {
-            legacy_start(&listener, "2025-11-25", "selected-session").await;
-            let raw = accept_reply(&listener, 200, JSON, br#"{"jsonrpc":"2.0","id":3,"result":{"resources":[{"name":"resource","uri":"test://fixed"}]}}"#).await;
-            let raw = String::from_utf8(raw).unwrap();
-            assert!(raw.contains("mcp-protocol-version: 2025-11-25\r\n"));
-            assert!(raw.contains("mcp-session-id: selected-session\r\n"));
-            assert!(!raw.contains("mcp-method:"));
-            assert!(!raw.contains("clientCapabilities"));
-        };
-        let client = async {
-            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline()).await.unwrap();
-            let reply = peer.feature(&feature_request("resource list srv"), "srv", &[], human(CancellationToken::new()), McpFeatureOperationOptions::new(Instant::now()), deadline()).await.unwrap();
-            assert!(matches!(reply, McpFeatureReply::Catalog(_)));
-        };
-        join(server, client).await;
-    });
-}

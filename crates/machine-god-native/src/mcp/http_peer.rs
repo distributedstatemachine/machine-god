@@ -1,4 +1,4 @@
-//! Owned HTTP MCP negotiation, sessions and explicitly polled notification streams.
+//! Owned HTTP MCP negotiation, modern POST exchanges and queued notifications.
 
 use super::{
     headers::McpResolvedHeaders,
@@ -54,8 +54,6 @@ pub enum McpHttpPeerError {
     Deadline,
     Closed,
     Redirect,
-    SessionExpired,
-    ListenerUnsupported,
     Feature(super::feature::McpFeatureCodecError),
 }
 impl fmt::Display for McpHttpPeerError {
@@ -159,29 +157,15 @@ impl McpHttpPeerCompletion {
         })
     }
 }
-/// A remote DELETE receipt is independent of local socket completion.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum McpHttpSessionTeardown {
-    NotNeeded,
-    NotAttempted,
-    Confirmed,
-    Unsupported,
-    Ambiguous,
-}
-
-/// One serialized application lane and at most one persistent listener. All
+/// One serialized application lane. All
 /// socket work is driven by the caller; no detached listener task is spawned.
 pub struct McpHttpPeer {
     options: McpHttpPeerOptions,
     destination: McpHttpDestination,
     protocol: NegotiatedProtocol,
     capabilities: McpPeerCapabilities,
-    session: Option<Box<str>>,
     cancellation: CancellationToken,
     completion: McpHttpPeerCompletion,
-    listener: Option<stream::Read>,
-    listener_resume: stream::Resume,
-    listener_reconnects: usize,
     next_id: Option<i64>,
     reserved: McpPendingToolReservation,
     runtimes: Vec<Arc<McpSubmissionRuntime>>,
@@ -224,7 +208,7 @@ impl McpHttpPeer {
     /// the selected attempt deadline for initial tools catalog loading; neither
     /// observation nor successful startup grants application execution authority.
     /// `first_attempt_deadline` preserves time already spent on auth/DNS and
-    /// can only shorten the first phase, never a fresh admitted legacy fallback.
+    /// can only shorten the discovery budget.
     /// # Errors
     /// Rejects invalid timeout, observer capacity, transport or negotiation.
     pub async fn connect_observed(
@@ -266,7 +250,7 @@ impl McpHttpPeer {
         )
         .await
     }
-    /// Performs actual bounded discovery/initialization and legacy notifications.
+    /// Performs actual bounded modern discovery.
     /// # Errors
     /// Rejects invalid authority, malformed negotiation, authentication, redirects,
     /// cancellation, deadlines and resource exhaustion. No application replay.
@@ -289,20 +273,14 @@ impl McpHttpPeer {
     pub fn completion(&self) -> McpHttpPeerCompletion {
         self.completion.clone()
     }
-    /// Stops local streams and invalidates reservations; does not issue DELETE.
+    /// Stops local streams and invalidates reservations without network effects.
     pub fn close(&mut self) {
         self.closed = true;
         self.reserved = McpPendingToolReservation::default();
-        self.listener.take();
         self.runtimes.clear();
         self.notifications.clear();
         self.notification_bytes = 0;
         self.completion.0.closed.cancel();
-    }
-    /// Explicit cleanup authority, under its own deadline even after cancellation.
-    /// It never retries DELETE or asserts that application effects were revoked.
-    pub async fn shutdown(&mut self, deadline: Instant) -> McpHttpSessionTeardown {
-        routing::shutdown(self, deadline).await
     }
     /// Registers exact executable allocation identities, not execution grants.
     /// # Errors
@@ -353,7 +331,7 @@ impl McpHttpPeer {
     /// Rejects closed/cancelled peers and invalid protocol header composition.
     pub fn request_head(&self) -> Result<McpSubmissionHttpHead> {
         self.check_owner()?;
-        self.make_head(None, None)
+        self.make_head(None)
     }
     /// Uses the reserved ID and an admitted runtime allocation. The projected
     /// head must preserve every selected base field; final bytes remain guarded.
@@ -379,22 +357,7 @@ impl McpHttpPeer {
     ) -> Result<McpRawCatalog> {
         routing::catalog(self, kind, limits, epoch, deadline).await
     }
-    /// Starts the optional legacy Streamable HTTP notification GET. Deprecated
-    /// HTTP+SSE already owns its required listener; modern HTTP is stateless.
-    /// # Errors
-    /// Rejects unsupported GET, expiration, changed session and transport errors.
-    pub async fn start_listener(&mut self, deadline: Instant) -> Result<()> {
-        routing::start_listener(self, deadline).await
-    }
-    /// Drives the owned listener until one untrusted notification is available.
-    /// Dropping this observation retains the healthy peer's pending read or GET
-    /// reconnect. Its deadline bounds observation, not the listener lifetime;
-    /// a retained reconnect keeps its original finite acquisition deadline.
-    /// # Errors
-    /// Rejects retired listeners, malformed events and exhausted bounds.
-    pub async fn next_notification(&mut self, deadline: Instant) -> Result<McpHttpPeerFrame> {
-        routing::next_notification(self, deadline).await
-    }
+    /// Takes an already queued notification; does not acquire network authority.
     pub fn take_notification(&mut self) -> Option<McpHttpPeerFrame> {
         let frame = self.notifications.pop_front()?;
         self.notification_bytes -= frame.bytes.len();
@@ -431,28 +394,14 @@ impl McpHttpPeer {
         self.next_id = id.checked_add(1);
         Ok(RpcId::Integer(id))
     }
-    fn make_head(
-        &self,
-        method: Option<&str>,
-        resume: Option<&str>,
-    ) -> Result<McpSubmissionHttpHead> {
+    fn make_head(&self, method: Option<&str>) -> Result<McpSubmissionHttpHead> {
         let mut headers: Vec<_> = self.options.headers.iter().collect();
-        if self.protocol.sends_http_protocol_header() {
-            headers.push((
-                "mcp-protocol-version",
-                self.protocol.version.as_str().as_bytes(),
-            ));
-        }
-        if self.protocol.version == ProtocolVersion::Modern
-            && let Some(method) = method
-        {
+        headers.push((
+            "mcp-protocol-version",
+            self.protocol.version.as_str().as_bytes(),
+        ));
+        if let Some(method) = method {
             headers.push(("mcp-method", method.as_bytes()));
-        }
-        if let Some(session) = &self.session {
-            headers.push(("mcp-session-id", session.as_bytes()));
-        }
-        if let Some(resume) = resume {
-            headers.push(("last-event-id", resume.as_bytes()));
         }
         McpSubmissionHttpHead::new(self.destination.endpoint(), &headers)
             .map_err(|_| McpHttpPeerError::Invalid)

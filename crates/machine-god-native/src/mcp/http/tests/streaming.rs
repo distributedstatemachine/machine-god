@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn event_stream_bytes_feed_the_existing_bounded_sse_decoder() {
     executor().block_on(async {
-        use crate::mcp::sse::{SseDecoder, SseLimits, SseMode};
+        use crate::mcp::sse::{SseDecoder, SseLimits};
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let client = connection(listener.local_addr().unwrap(), CancellationToken::new());
         let observation = client.observation();
@@ -12,9 +12,9 @@ fn event_stream_bytes_feed_the_existing_bounded_sse_decoder() {
                 b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"ok\":true}\n\n").await
         };
         let client = async {
-            let mut response = client.control(McpHttpControl::listen()).await.unwrap();
+            let mut response = client.control(McpHttpControl::discovery(DISCOVER).unwrap()).await.unwrap();
             assert_eq!(response.headers.iter().collect::<Vec<_>>(), vec![("content-type", &b"text/event-stream"[..])]);
-            let mut decoder = SseDecoder::new(SseMode::Modern, SseLimits::default()).unwrap();
+            let mut decoder = SseDecoder::new(SseLimits::default()).unwrap();
             let mut events = Vec::new();
             while let Some(bytes) = response.body.next_chunk().await.unwrap() {
                 let mut remaining = bytes.as_ref();
@@ -29,7 +29,7 @@ fn event_stream_bytes_feed_the_existing_bounded_sse_decoder() {
             assert_eq!(events[0].data(), "{\"ok\":true}");
         };
         let ((), written) = join(client, server).await;
-        assert!(written.starts_with(b"GET /mcp?private=query HTTP/1.1\r\n"));
+        assert!(written.starts_with(b"POST /mcp?private=query HTTP/1.1\r\n"));
         assert!(observation.is_complete());
     });
 }
@@ -58,7 +58,9 @@ fn deadline_covers_pending_response_head_and_body() {
                 assert_eq!(stream.read(&mut [0]).await.unwrap(), 0);
             };
             let client = async {
-                let response = client.control(McpHttpControl::listen()).await;
+                let response = client
+                    .control(McpHttpControl::discovery(DISCOVER).unwrap())
+                    .await;
                 if head {
                     assert_eq!(
                         response.unwrap().body.next_chunk().await,
@@ -113,7 +115,9 @@ fn response_head_body_and_wire_budgets_close_at_the_boundary() {
             let observation = client.observation();
             let server = async { serve(listener.accept().await.unwrap().0, wire).await };
             let client = async {
-                let result = client.control(McpHttpControl::listen()).await;
+                let result = client
+                    .control(McpHttpControl::discovery(DISCOVER).unwrap())
+                    .await;
                 if let Ok(mut response) = result {
                     assert!(collect(&mut response.body).await.is_err());
                 }

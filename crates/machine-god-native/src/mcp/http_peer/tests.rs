@@ -100,19 +100,6 @@ async fn accept_reply(listener: &TcpListener, status: u16, headers: &str, body: 
 }
 const JSON: &str = "Content-Type: application/json\r\n";
 const SSE: &str = "Content-Type: text/event-stream\r\n";
-async fn legacy_start(listener: &TcpListener, version: &str, session: &str) {
-    accept_reply(listener, 404, "", b"").await;
-    let header = format!("{JSON}Mcp-Session-Id: {session}\r\n");
-    let received = accept_reply(listener, 200, &header, &success(2, serde_json::json!({"protocolVersion":version,"capabilities":{"tools":{},"resources":{}}}))).await;
-    assert!(!String::from_utf8_lossy(&received).contains("mcp-protocol-version:"));
-    let initialized = accept_reply(listener, 202, "", b"").await;
-    assert!(String::from_utf8_lossy(&initialized).contains("notifications/initialized"));
-    assert!(String::from_utf8_lossy(&initialized).contains(&format!("mcp-session-id: {session}")));
-    assert_eq!(
-        String::from_utf8_lossy(&initialized).contains("mcp-protocol-version:"),
-        version != "2025-03-26"
-    );
-}
 
 #[test]
 fn modern_discovery_catalog_and_notifications_preserve_exact_raw_numbers() {
@@ -141,44 +128,18 @@ fn modern_discovery_catalog_and_notifications_preserve_exact_raw_numbers() {
 }
 
 #[test]
-fn legacy_session_initialization_versions_and_explicit_delete_receipts() {
-    executor().block_on(async {
-        for version in ["2025-11-25", "2025-06-18", "2025-03-26"] {
-            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-            let selected = options(
-                listener.local_addr().unwrap(),
-                TransportKind::StreamableHttp,
-            );
-            let server = async {
-                legacy_start(&listener, version, "owned-session").await;
-                let request = accept_reply(&listener, 204, "", b"").await;
-                assert!(request.starts_with(b"DELETE /mcp HTTP/1.1\r\n"));
-                assert!(
-                    String::from_utf8_lossy(&request).contains("mcp-session-id: owned-session")
-                );
-            };
-            let client = async {
-                let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
-                    .await
-                    .unwrap();
-                assert_eq!(peer.protocol().version.as_str(), version);
-                let completion = peer.completion();
-                assert_eq!(
-                    peer.shutdown(deadline()).await,
-                    McpHttpSessionTeardown::Confirmed
-                );
-                assert!(completion.is_complete());
-            };
-            join(client, server).await;
-        }
-    });
-}
-
-#[test]
-fn malformed_success_redirect_and_authentication_never_downgrade() {
+fn malformed_success_redirect_authentication_and_old_endpoints_never_retry() {
     executor().block_on(async {
         for (status, headers, bytes) in [
             (200, JSON, &b"{}"[..]),
+            (404, "", b""),
+            (405, "", b""),
+            (200, SSE, b"event: endpoint\ndata: /messages\n\n"),
+            (
+                200,
+                "Content-Type: application/json\r\nMcp-Session-Id: old\r\n",
+                b"{}",
+            ),
             (302, "Location: https://foreign.test/\r\n", b""),
             (401, "WWW-Authenticate: Bearer secret-challenge\r\n", b""),
         ] {
@@ -207,50 +168,7 @@ fn malformed_success_redirect_and_authentication_never_downgrade() {
 }
 
 #[test]
-fn duplicate_and_invalid_session_headers_fail_before_initialized() {
-    executor().block_on(async {
-        for value in [
-            "Mcp-Session-Id: a\r\nMcp-Session-Id: a\r\n",
-            "Mcp-Session-Id: has space\r\n",
-            "Mcp-Session-Id: \r\n",
-        ] {
-            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-            let selected = options(
-                listener.local_addr().unwrap(),
-                TransportKind::StreamableHttp,
-            );
-            let server = async {
-                accept_reply(&listener, 404, "", b"").await;
-                accept_reply(
-                    &listener,
-                    200,
-                    &format!("{JSON}{value}"),
-                    &success(
-                        2,
-                        serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{}}),
-                    ),
-                )
-                .await;
-            };
-            let client = async {
-                assert!(
-                    McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
-                        .await
-                        .is_err()
-                );
-            };
-            join(client, server).await;
-            assert!(
-                tokio::time::timeout(Duration::from_millis(10), listener.accept())
-                    .await
-                    .is_err()
-            );
-        }
-    });
-}
-
-#[test]
-fn legacy_post_sse_resumes_with_get_and_never_reposts_catalog_request() {
+fn dropped_polled_catalog_closes_peer_and_owned_response() {
     executor().block_on(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let selected = options(
@@ -258,130 +176,7 @@ fn legacy_post_sse_resumes_with_get_and_never_reposts_catalog_request() {
             TransportKind::StreamableHttp,
         );
         let server = async {
-            legacy_start(&listener, "2025-11-25", "resume").await;
-            let initial =
-                accept_reply(&listener, 200, SSE, b"id: cursor-one\nretry: 0\ndata:\n\n").await;
-            assert!(initial.starts_with(b"POST "));
-            let final_body = b"data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"tools\":[]}}\n\n";
-            let resumed = accept_reply(&listener, 200, SSE, final_body).await;
-            assert!(resumed.starts_with(b"GET "));
-            assert!(String::from_utf8_lossy(&resumed).contains("last-event-id: cursor-one"));
-            assert!(String::from_utf8_lossy(&resumed).contains("accept: text/event-stream"));
-        };
-        let client = async {
-            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
-                .await
-                .unwrap();
-            peer.catalog(
-                McpCatalogKind::Tools,
-                McpCatalogLimits::default(),
-                Instant::now(),
-                deadline(),
-            )
-            .await
-            .unwrap();
-        };
-        join(client, server).await;
-    });
-}
-
-#[test]
-fn legacy_listener_reconnects_and_preserves_committed_cursor() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(listener.local_addr().unwrap(), TransportKind::StreamableHttp);
-        let server = async {
-            legacy_start(&listener, "2025-06-18", "listener").await;
-            accept_reply(&listener, 200, SSE, b"id: first\n\n").await;
-            let request = accept_reply(&listener, 200, SSE, b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/list_changed\"}\n\n").await;
-            assert!(String::from_utf8_lossy(&request).contains("last-event-id: first"));
-        };
-        let client = async {
-            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline()).await.unwrap();
-            peer.start_listener(deadline()).await.unwrap();
-            assert_eq!(peer.next_notification(deadline()).await.unwrap().envelope().method(), Some("notifications/resources/list_changed"));
-            let completion = peer.completion();
-            peer.close();
-            assert!(completion.is_complete());
-        };
-        join(client, server).await;
-    });
-}
-
-#[test]
-fn deprecated_sse_owns_get_and_correlates_response_before_post_ack() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(listener.local_addr().unwrap(), TransportKind::LegacySse);
-        let server = async {
-            let (mut events, _) = listener.accept().await.unwrap();
-            let get = request(&mut events).await;
-            assert!(get.starts_with(b"GET /mcp "));
-            events.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nevent: endpoint\ndata: /messages?session=one\n\n").await.unwrap();
-            let (mut post, _) = listener.accept().await.unwrap();
-            let init = request(&mut post).await;
-            assert!(init.starts_with(b"POST /messages?session=one "));
-            let body = format!("data: {}\n\n", String::from_utf8(success(1, serde_json::json!({"protocolVersion":"2024-11-05","capabilities":{}}))).unwrap());
-            events.write_all(body.as_bytes()).await.unwrap();
-            tokio::task::yield_now().await;
-            post.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n").await.unwrap();
-            accept_reply(&listener, 202, "", b"").await;
-            events.write_all(b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n").await.unwrap();
-            let mut scratch = [0];
-            assert_eq!(events.read(&mut scratch).await.unwrap(), 0);
-        };
-        let client = async {
-            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline()).await.unwrap();
-            assert_eq!(peer.protocol().version, ProtocolVersion::Legacy20241105);
-            assert_eq!(peer.next_notification(deadline()).await.unwrap().envelope().method(), Some("notifications/tools/list_changed"));
-            let completion = peer.completion();
-            drop(peer);
-            completion.completed().await;
-        };
-        join(client, server).await;
-    });
-}
-
-#[test]
-fn deprecated_sse_endpoint_cannot_widen_selected_authority() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(listener.local_addr().unwrap(), TransportKind::LegacySse);
-        let client = async {
-            assert!(
-                McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
-                    .await
-                    .is_err()
-            );
-        };
-        join(
-            client,
-            accept_reply(
-                &listener,
-                200,
-                SSE,
-                b"event: endpoint\ndata: https://foreign.test/messages\n\n",
-            ),
-        )
-        .await;
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), listener.accept())
-                .await
-                .is_err()
-        );
-    });
-}
-
-#[test]
-fn dropped_polled_catalog_closes_peer_and_persistent_listener() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(
-            listener.local_addr().unwrap(),
-            TransportKind::StreamableHttp,
-        );
-        let server = async {
-            legacy_start(&listener, "2025-11-25", "drop").await;
+            accept_reply(&listener, 200, JSON, &modern(1)).await;
             let (mut socket, _) = listener.accept().await.unwrap();
             request(&mut socket).await;
             let mut byte = [0];

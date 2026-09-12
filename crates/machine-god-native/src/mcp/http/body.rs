@@ -21,7 +21,6 @@ pub struct McpHttpBody {
     limits: McpHttpLimits,
     remaining: u64,
     trailers: Option<McpHttpHeaders>,
-    listener_promotion: bool,
 }
 impl fmt::Debug for McpHttpBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -29,27 +28,7 @@ impl fmt::Debug for McpHttpBody {
     }
 }
 impl McpHttpBody {
-    // Only the native peer may promote a validated GET SSE body. Its remaining
-    // HTTP framing, byte budgets, cancellation and completion owner are retained.
-    pub(in crate::mcp) fn promote_listener(
-        &mut self,
-        lifetime: crate::mcp::lifetime::McpPeerLifetime,
-    ) -> Result<()> {
-        if !self.listener_promotion {
-            return Err(McpHttpError::Invalid);
-        }
-        match &mut self.io {
-            Some(io) => io.promote_listener(lifetime)?,
-            // A valid empty GET body has already released its socket. Preserve
-            // clean EOF without manufacturing a new owner or resetting framing.
-            None if matches!(self.framing, Framing::Done) => {}
-            None => return Err(McpHttpError::Closed),
-        }
-        self.listener_promotion = false;
-        Ok(())
-    }
     pub(super) fn new(io: Buffered, framing: Framing, limits: McpHttpLimits) -> Self {
-        let listener_promotion = io.is_listener();
         Self {
             io: if matches!(framing, Framing::Done) {
                 None
@@ -60,7 +39,6 @@ impl McpHttpBody {
             limits,
             remaining: limits.body_bytes,
             trailers: None,
-            listener_promotion,
         }
     }
     /// Returns at most 16 KiB, closing the socket at normal completion or error.

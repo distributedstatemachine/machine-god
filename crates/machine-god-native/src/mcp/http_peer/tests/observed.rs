@@ -101,7 +101,7 @@ fn observation_precedes_network_and_survives_rejection_cancellation_and_drop() {
 }
 
 #[test]
-fn configured_fallback_refreshes_deadline_and_returns_remaining_catalog_budget() {
+fn configured_modern_retry_preserves_original_deadline_and_catalog_budget() {
     executor().block_on(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let clock = Arc::new(SelectedClock {
@@ -117,20 +117,16 @@ fn configured_fallback_refreshes_deadline_and_returns_remaining_catalog_budget()
         let capture = observed.clone();
         let server = async {
             let mut socket = listener.accept().await.unwrap().0;
-            // Time changes before the modern mismatch is consumed. No sleeps.
+            // Time changes before the permitted modern retry. Its budget cannot restart.
             clock.millis.store(100, Ordering::SeqCst);
-            reply(&mut socket, 404, "", b"").await;
+            reply(&mut socket, 400, JSON, br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"version","data":{"supportedVersions":["2026-07-28"]}}}"#).await;
             accept_reply(
                 &listener,
                 200,
                 JSON,
-                &success(
-                    2,
-                    serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}),
-                ),
+                &modern(2),
             )
             .await;
-            accept_reply(&listener, 202, "", b"").await;
             accept_reply(
                 &listener,
                 200,
@@ -153,7 +149,7 @@ fn configured_fallback_refreshes_deadline_and_returns_remaining_catalog_budget()
             )
             .await
             .unwrap();
-            assert_eq!(attempt, clock.origin + Duration::from_millis(1100));
+            assert_eq!(attempt, clock.origin + Duration::from_millis(500));
             assert_eq!(observed.lock().unwrap().len(), 1);
             peer.catalog(
                 McpCatalogKind::Tools,

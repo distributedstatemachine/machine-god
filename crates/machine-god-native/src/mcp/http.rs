@@ -308,7 +308,7 @@ impl McpHttpConnection {
         Box::pin(async move { io::submit(self, submission, runtime).await })
     }
 
-    /// Explicit startup/listener/control authority, never an arbitrary tool call.
+    /// Explicit startup/control authority, never an arbitrary tool call.
     #[must_use]
     pub fn control(self, control: McpHttpControl) -> BoxFuture<'static, Result<McpHttpResponse>> {
         Box::pin(async move { io::control(self, control).await })

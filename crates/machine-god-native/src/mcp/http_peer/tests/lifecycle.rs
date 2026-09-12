@@ -1,77 +1,5 @@
 use super::*;
 
-#[test]
-fn resumed_post_stream_requires_fresh_evidence_for_a_second_get() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(
-            listener.local_addr().unwrap(),
-            TransportKind::StreamableHttp,
-        );
-        let server = async {
-            legacy_start(&listener, "2025-11-25", "fresh-evidence").await;
-            accept_reply(&listener, 200, SSE, b"id: once\n\n").await;
-            let request = accept_reply(&listener, 200, SSE, b"").await;
-            assert!(request.starts_with(b"GET "));
-        };
-        let client = async {
-            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
-                .await
-                .unwrap();
-            assert!(
-                peer.catalog(
-                    McpCatalogKind::Tools,
-                    McpCatalogLimits::default(),
-                    Instant::now(),
-                    deadline()
-                )
-                .await
-                .is_err()
-            );
-        };
-        join(client, server).await;
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), listener.accept())
-                .await
-                .is_err()
-        );
-    });
-}
-
-#[test]
-fn incomplete_initialization_cannot_use_unadmitted_session_to_resume() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(
-            listener.local_addr().unwrap(),
-            TransportKind::StreamableHttp,
-        );
-        let server = async {
-            accept_reply(&listener, 404, "", b"").await;
-            accept_reply(
-                &listener,
-                200,
-                "Content-Type: text/event-stream\r\nMcp-Session-Id: not-yet-owned\r\n",
-                b"id: unadmitted\n\n",
-            )
-            .await;
-        };
-        let client = async {
-            assert!(
-                McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
-                    .await
-                    .is_err()
-            );
-        };
-        join(client, server).await;
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), listener.accept())
-                .await
-                .is_err()
-        );
-    });
-}
-
 struct FixedClock(Instant);
 impl McpHttpClock for FixedClock {
     fn now(&self) -> Instant {
@@ -143,7 +71,6 @@ fn completed_operations_do_not_exhaust_event_or_owner_lifetime_budgets() {
                 routing::charge_event(&mut peer),
                 Err(McpHttpPeerError::Limit)
             ));
-            peer.listener_reconnects = 32;
             let notification = br#"{"jsonrpc":"2.0","method":"notifications/progress"}"#;
             peer.retain(McpHttpPeerFrame::parse(notification.as_slice().into()).unwrap())
                 .unwrap();
@@ -156,7 +83,6 @@ fn completed_operations_do_not_exhaust_event_or_owner_lifetime_budgets() {
             .await
             .unwrap();
             assert_eq!(peer.operation_events, 0);
-            assert_eq!(peer.listener_reconnects, 0);
             assert_eq!(peer.take_notification().unwrap().bytes(), notification);
             routing::charge_event(&mut peer).unwrap();
             assert!(!peer.completion().is_complete());
@@ -166,58 +92,12 @@ fn completed_operations_do_not_exhaust_event_or_owner_lifetime_budgets() {
 }
 
 #[test]
-fn unsupported_listener_preserves_peer_but_expired_session_retires_it() {
-    executor().block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let selected = options(
-            listener.local_addr().unwrap(),
-            TransportKind::StreamableHttp,
-        );
-        let server = async {
-            legacy_start(&listener, "2025-11-25", "expires").await;
-            accept_reply(&listener, 405, "", b"").await;
-            accept_reply(&listener, 404, "", b"").await;
-        };
-        let client = async {
-            let mut peer = McpHttpPeer::connect(selected, CancellationToken::new(), deadline())
-                .await
-                .unwrap();
-            assert!(matches!(
-                peer.start_listener(deadline()).await,
-                Err(McpHttpPeerError::ListenerUnsupported)
-            ));
-            assert_eq!(peer.reserve_tool_id().unwrap(), RpcId::Integer(3));
-            peer.discard_tool_id();
-            assert!(matches!(
-                peer.catalog(
-                    McpCatalogKind::Tools,
-                    McpCatalogLimits::default(),
-                    Instant::now(),
-                    deadline()
-                )
-                .await,
-                Err(McpHttpPeerError::SessionExpired)
-            ));
-            assert!(peer.completion().is_complete());
-            assert_eq!(
-                peer.shutdown(deadline()).await,
-                McpHttpSessionTeardown::NotAttempted
-            );
-            assert!(peer.completion().is_complete());
-        };
-        join(client, server).await;
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), listener.accept())
-                .await
-                .is_err()
-        );
-    });
-}
-
-#[test]
 fn modern_sse_resume_hints_and_wrong_response_ids_cannot_trigger_reconnect() {
     executor().block_on(async {
         for bytes in [
+            b"data: {".as_slice(),
+            b"data: {}\n".as_slice(),
+            b"data: {\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"elicitation/create\",\"params\":{}}\n\n".as_slice(),
             b"id: cursor\nretry: 0\ndata:\n\n".as_slice(),
             b"data: {\"jsonrpc\":\"2.0\",\"id\":999,\"result\":{}}\n\n",
         ] {

@@ -2,7 +2,7 @@ use super::{
     McpHttpConnection, McpHttpControl, McpHttpDestination, McpHttpError, McpHttpObservation,
     McpHttpResponse, McpHttpTrust, McpSubmission, McpSubmissionRuntime, Result,
 };
-use crate::mcp::{lifetime::McpPeerLifetime, submission::McpSubmissionWriter};
+use crate::mcp::submission::McpSubmissionWriter;
 use futures_util::future::poll_fn;
 use machine_god_core::{BoxFuture, CancellationToken};
 use std::{
@@ -41,8 +41,6 @@ pub(super) struct Lifetime {
     tool: Option<BoxFuture<'static, ()>>,
     clock: Arc<dyn super::McpHttpClock>,
     feature: Option<crate::mcp::control::McpFeatureControlAuthority>,
-    listener: bool,
-    listener_policy: Option<McpPeerLifetime>,
 }
 impl Lifetime {
     pub fn new(
@@ -56,8 +54,6 @@ impl Lifetime {
             tool: None,
             clock,
             feature: None,
-            listener: false,
-            listener_policy: None,
         }
     }
     fn check(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -70,17 +66,10 @@ impl Lifetime {
         {
             return Err(McpHttpError::Cancelled);
         }
-        if self
-            .read_deadline()
-            .is_some_and(|deadline| self.clock.now() >= deadline)
-        {
+        if self.clock.now() >= self.deadline {
             return Err(McpHttpError::Deadline);
         }
         Ok(())
-    }
-    fn read_deadline(&self) -> Option<Instant> {
-        self.listener_policy
-            .map_or(Some(self.deadline), McpPeerLifetime::deadline)
     }
     pub(super) fn guard_feature(&mut self, guard: crate::mcp::control::McpFeatureControlAuthority) {
         self.tool = Some(guard.cancelled());
@@ -90,18 +79,13 @@ impl Lifetime {
         let mut future = std::pin::pin!(future);
         let mut cancelled = std::pin::pin!(self.cancellation.cancelled());
         let clock = self.clock.clone();
-        let mut timeout = self
-            .read_deadline()
-            .map(|deadline| clock.sleep_until(deadline));
+        let mut timeout = clock.sleep_until(self.deadline);
         poll_fn(|cx| {
             self.check(cx)?;
             if cancelled.as_mut().poll(cx).is_ready() {
                 return Poll::Ready(Err(McpHttpError::Cancelled));
             }
-            if timeout
-                .as_mut()
-                .is_some_and(|future| future.as_mut().poll(cx).is_ready())
-            {
+            if timeout.as_mut().poll(cx).is_ready() {
                 return Poll::Ready(Err(McpHttpError::Deadline));
             }
             let result = future.as_mut().poll(cx);
@@ -337,7 +321,6 @@ pub(super) async fn control(
         completion,
         ..
     } = connection;
-    lifetime.listener = control.is_listener();
     if let Some(feature) = feature {
         lifetime.guard_feature(feature);
     }
@@ -390,37 +373,6 @@ pub(super) struct Buffered {
     remaining_wire: u64,
 }
 impl Buffered {
-    pub(super) fn is_listener(&self) -> bool {
-        self.lifetime.listener
-    }
-    pub(super) fn promote_listener(&mut self, lifetime: McpPeerLifetime) -> Result<()> {
-        if !self.lifetime.listener
-            || self.lifetime.tool.is_some() && self.lifetime.feature.is_none()
-            || self.lifetime.listener_policy.is_some()
-        {
-            return Err(McpHttpError::Invalid);
-        }
-        if self.lifetime.cancellation.is_cancelled()
-            || self
-                .lifetime
-                .feature
-                .as_ref()
-                .is_some_and(|guard| !guard.is_live())
-        {
-            return Err(McpHttpError::Cancelled);
-        }
-        let now = self.lifetime.clock.now();
-        if now >= self.lifetime.deadline || lifetime.is_expired(now) {
-            return Err(McpHttpError::Deadline);
-        }
-        self.lifetime.listener_policy = Some(lifetime);
-        // Only the typed GET listener is transferred, never the application
-        // response it may help carry. Its acquisition guard remains live through
-        // this point; later reads belong to the peer rather than that old turn.
-        self.lifetime.feature = None;
-        self.lifetime.tool = None;
-        Ok(())
-    }
     fn new(
         stream: Stream,
         lifetime: Lifetime,

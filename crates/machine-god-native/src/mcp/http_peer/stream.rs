@@ -1,7 +1,7 @@
-use super::{BoxFuture, McpHttpPeerError, McpHttpPeerFrame, NegotiatedProtocol, Result};
+use super::{BoxFuture, McpHttpPeerError, McpHttpPeerFrame, Result};
 use crate::mcp::{
     http::McpHttpBody,
-    sse::{SseDecoder, SseEvent, SseLimits, SseMode},
+    sse::{SseDecoder, SseEvent, SseLimits},
 };
 
 pub(super) type Read = BoxFuture<'static, (Box<Reader>, Result<Option<SseEvent>>)>;
@@ -12,17 +12,10 @@ pub(super) struct Reader {
     offset: usize,
 }
 impl Reader {
-    pub fn promote_listener(
-        &mut self,
-        lifetime: crate::mcp::lifetime::McpPeerLifetime,
-    ) -> Result<()> {
-        self.body.promote_listener(lifetime)?;
-        Ok(())
-    }
-    pub fn new(body: McpHttpBody, mode: SseMode, limits: SseLimits) -> Result<Box<Self>> {
+    pub fn new(body: McpHttpBody, limits: SseLimits) -> Result<Box<Self>> {
         Ok(Box::new(Self {
             body,
-            decoder: SseDecoder::new(mode, limits).map_err(|_| McpHttpPeerError::Limit)?,
+            decoder: SseDecoder::new(limits).map_err(|_| McpHttpPeerError::Limit)?,
             buffered: Box::new([]),
             offset: 0,
         }))
@@ -78,43 +71,5 @@ pub(super) fn response_limits(wire: super::WireLimits) -> SseLimits {
         max_line_bytes: wire.max_frame_bytes.saturating_add(6).min(16 * 1024 * 1024),
         max_data_bytes: wire.max_frame_bytes,
         ..SseLimits::default()
-    }
-}
-pub(super) fn listener_limits() -> SseLimits {
-    SseLimits {
-        max_line_bytes: 16 * 1024 * 1024,
-        max_data_bytes: 16 * 1024 * 1024,
-        ..SseLimits::default()
-    }
-}
-
-#[derive(Default)]
-pub(super) struct Resume {
-    pub id: Option<Box<str>>,
-    pub retry_ms: u32,
-    pub priming: bool,
-}
-impl Resume {
-    /// Called only after this event's data and exact stream owner were admitted.
-    pub fn commit(&mut self, event: &SseEvent) -> Result<()> {
-        if let Some(id) = event.id() {
-            if id.len() > 4096
-                || !id
-                    .bytes()
-                    .all(|byte| byte == b'\t' || (byte >= b' ' && byte != 0x7f))
-            {
-                return Err(McpHttpPeerError::Protocol);
-            }
-            self.priming |= id.is_empty() && event.data().is_empty();
-            self.id = Some(id.into());
-        }
-        if let Some(delay) = event.retry_ms() {
-            self.retry_ms = delay;
-        }
-        Ok(())
-    }
-    pub fn resumable(&self, protocol: NegotiatedProtocol) -> bool {
-        self.id.as_ref().is_some_and(|id| !id.is_empty())
-            || protocol.allows_legacy_http_poll_close() && self.priming
     }
 }

@@ -54,16 +54,6 @@ impl McpHttpDestination {
     pub fn endpoint(&self) -> &McpEndpoint {
         &self.endpoint
     }
-    /// Resolve a deprecated SSE message endpoint without widening selected addresses.
-    /// # Errors
-    /// Rejects cross-origin or malformed endpoint events before any acquisition.
-    pub fn message_endpoint(&self, event: &str) -> Result<Self> {
-        let endpoint = self
-            .endpoint
-            .resolve_message_endpoint(event)
-            .map_err(|_| McpHttpError::Invalid)?;
-        Self::new(endpoint, &self.addresses)
-    }
 }
 
 /// Certificate-verifying TLS, built from explicit trust anchors, not custom verifiers.

@@ -26,12 +26,6 @@ fn actual_proof_bearing_exchange_sends_only_exact_admitted_request() {
                 .submit(submission, fixture.runtime.clone())
                 .await
                 .unwrap();
-            assert_eq!(
-                response
-                    .body
-                    .promote_listener(crate::mcp::lifetime::McpPeerLifetime::OwnerControlled),
-                Err(McpHttpError::Invalid)
-            );
             assert_eq!(collect(&mut response.body).await.unwrap(), b"{}");
         };
         let ((), written) = join(client, server).await;
