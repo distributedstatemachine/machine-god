@@ -15,6 +15,60 @@ impl fmt::Debug for McpStdioControl {
     }
 }
 impl McpStdioControl {
+    pub(crate) fn subscription(
+        id: &RpcId,
+        filters: &crate::mcp::catalog_refresh::McpSubscriptionFilters,
+        version: crate::mcp::protocol::ProtocolVersion,
+    ) -> Result<Self> {
+        use crate::mcp::protocol::McpClientMetadata;
+        use serde::Serialize;
+        let RpcId::Integer(id) = id else {
+            return Err(McpStdioError::Invalid);
+        };
+        if *id < 0 || filters.is_empty() {
+            return Err(McpStdioError::Invalid);
+        }
+        #[derive(Serialize)]
+        struct Params<'a> {
+            #[serde(rename = "_meta")]
+            metadata: McpClientMetadata,
+            notifications: &'a crate::mcp::catalog_refresh::McpSubscriptionFilters,
+        }
+        #[derive(Serialize)]
+        struct Request<'a> {
+            jsonrpc: &'static str,
+            id: i64,
+            method: &'static str,
+            params: Params<'a>,
+        }
+        let bytes = serde_json::to_vec(&Request {
+            jsonrpc: "2.0",
+            id: *id,
+            method: "subscriptions/listen",
+            params: Params {
+                metadata: McpClientMetadata::for_protocol(version, None, false, false),
+                notifications: filters,
+            },
+        })
+        .map_err(|_| McpStdioError::Invalid)?;
+        Self::framed(&bytes)
+    }
+
+    pub(crate) fn cancel_subscription(id: &RpcId) -> Result<Self> {
+        let RpcId::Integer(id) = id else {
+            return Err(McpStdioError::Invalid);
+        };
+        if *id < 0 {
+            return Err(McpStdioError::Invalid);
+        }
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc":"2.0", "method":"notifications/cancelled",
+            "params":{"requestId":id,"reason":"Cancelled"}
+        }))
+        .map_err(|_| McpStdioError::Invalid)?;
+        Self::framed(&bytes)
+    }
+
     pub(crate) fn feature(
         exchange: &McpFeatureExchange,
         guard: McpFeatureControlAuthority,

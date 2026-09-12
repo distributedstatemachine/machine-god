@@ -105,6 +105,11 @@ behavior. Full descriptor/schema admission, atomic executable publication, runti
 permissions, callback authority, refresh subscriptions and CLI activation remain
 native runtime composition responsibilities.
 
+Subscription control construction uses the admitted typed filter selection and a
+nonnegative integer request ID, with modern client metadata and the existing
+bounded control frame size. Empty filters are rejected. This constructor does not
+widen the public raw discovery method allowlist or establish acknowledgement.
+
 Modern behavior is informed by fx `b1774fbf6c7602b503026f96f6e960e946c692ef`,
 especially `mcp_runtime.zig` request metadata, capability parsing and modern
 stdio discovery, and `protocol_negotiation.zig`. Strict duplicate-free wire
