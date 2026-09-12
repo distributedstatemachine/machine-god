@@ -85,6 +85,13 @@ bounded generation and clears its results before acknowledging that generation;
 later notifications remain pending. Subscription handoff invalidates all four
 catalog families and read results without creating refresh or relaunch work.
 
+`validate_subscription_response` checks only a listen request's terminal success:
+both the response ID and complete-result subscription metadata must match the
+original nonnegative integer ID. It borrows an admitted envelope, does not decode
+JSON again, and cannot substitute for the separate acknowledgement or create
+subscription authority. Transports retain their own cancellation and late-response
+ownership rules.
+
 ## Pinned behavior
 
 Behavior is based on fx `b1774fbf6c7602b503026f96f6e960e946c692ef`:

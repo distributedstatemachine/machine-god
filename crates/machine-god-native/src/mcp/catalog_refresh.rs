@@ -12,10 +12,12 @@ use std::{
 
 mod notification;
 mod state;
+mod subscription;
 #[cfg(test)]
 mod tests;
 
 pub use notification::{McpRefreshNotification, McpSubscriptionFilters};
+pub use subscription::validate_subscription_response;
 
 /// Opaque policy partition identity, not a runtime publication or effect grant.
 #[derive(Clone, Default)]
