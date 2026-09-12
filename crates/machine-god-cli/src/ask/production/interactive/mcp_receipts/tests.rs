@@ -1,5 +1,7 @@
 use super::*;
 
+mod reload;
+
 fn row(name: &str, transport: McpConfiguredTransport) -> McpConfiguredServer {
     McpConfiguredServer {
         name: name.into(),

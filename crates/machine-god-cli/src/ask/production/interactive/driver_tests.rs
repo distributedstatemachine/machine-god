@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake, Waker};
 use std::time::Duration;
 
+#[path = "driver_tests/mcp_paging.rs"]
+mod mcp_paging;
+
 struct Harness {
     driver: Driver,
     input_writer: std::io::PipeWriter,

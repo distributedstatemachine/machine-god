@@ -17,6 +17,7 @@ mod framing;
 mod history_view;
 mod input_lines;
 mod mcp_elicitation;
+mod mcp_feature_pages;
 mod mcp_receipts;
 mod picker;
 mod picker_driver;
@@ -542,6 +543,7 @@ struct Driver {
     skills_warning: Option<&'static [u8]>,
     outcome: Option<NativeInteractiveOutcome>,
     control_outcome: Option<NativeInteractiveControlOutcome>,
+    control_page: mcp_feature_pages::Paging,
     copy_outcome: Option<NativeInteractiveCopyOutcome>,
     scope_active: bool,
     shutting_down: bool,
@@ -608,6 +610,7 @@ impl Driver {
             outcome: None,
             skills_warning: None,
             control_outcome: None,
+            control_page: mcp_feature_pages::Paging::default(),
             copy_outcome: None,
             scope_active: true,
             shutting_down: false,

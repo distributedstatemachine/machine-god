@@ -113,6 +113,7 @@ impl Driver {
             skills_warning: self.skills_warning,
             outcomes,
             controls,
+            control_page: self.control_page,
             copies,
             result,
             native_failed,
@@ -540,7 +541,9 @@ impl Driver {
                     self.picker_rejection.take();
                 }
                 Some(ReceiptKind::Control) => {
-                    self.control_outcome.take();
+                    if self.control_page.acknowledge() {
+                        self.control_outcome.take();
+                    }
                 }
                 Some(ReceiptKind::Copy) => {
                     self.copy_outcome.take();
@@ -636,7 +639,11 @@ impl Driver {
         let (bytes, confirm, receipt) = if let Some(outcome) = &self.outcome {
             (render_outcome(outcome), None, Some(ReceiptKind::Outcome))
         } else if let Some(outcome) = &self.control_outcome {
-            (render_control(outcome), None, Some(ReceiptKind::Control))
+            (
+                render_control_page(outcome, &mut self.control_page),
+                None,
+                Some(ReceiptKind::Control),
+            )
         } else if let Some(outcome) = &self.copy_outcome {
             (
                 super::clipboard::render(outcome),
@@ -756,6 +763,7 @@ pub(super) struct FinalPresentation {
     skills_warning: Option<&'static [u8]>,
     outcomes: std::collections::VecDeque<NativeInteractiveOutcome>,
     controls: std::collections::VecDeque<NativeInteractiveControlOutcome>,
+    control_page: super::mcp_feature_pages::Paging,
     copies: std::collections::VecDeque<NativeInteractiveCopyOutcome>,
     result: TurnDriveResult,
     native_failed: bool,
@@ -783,6 +791,7 @@ impl FinalPresentation {
             skills_warning: None,
             outcomes: std::collections::VecDeque::new(),
             controls: std::collections::VecDeque::new(),
+            control_page: super::mcp_feature_pages::Paging::default(),
             copies: std::collections::VecDeque::new(),
             result: TurnDriveResult {
                 outcome,
@@ -873,7 +882,9 @@ impl FinalPresentation {
                                 self.outcomes.pop_front();
                             }
                             Some(ReceiptKind::Control) => {
-                                self.controls.pop_front();
+                                if self.control_page.acknowledge() {
+                                    self.controls.pop_front();
+                                }
                             }
                             Some(ReceiptKind::Copy) => {
                                 self.copies.pop_front();
@@ -892,7 +903,10 @@ impl FinalPresentation {
             let next = if let Some(outcome) = self.outcomes.front() {
                 Some((render_outcome(outcome), Some(ReceiptKind::Outcome)))
             } else if let Some(control) = self.controls.front() {
-                Some((render_control(control), Some(ReceiptKind::Control)))
+                Some((
+                    render_control_page(control, &mut self.control_page),
+                    Some(ReceiptKind::Control),
+                ))
             } else if let Some(copy) = self.copies.front() {
                 Some((super::clipboard::render(copy), Some(ReceiptKind::Copy)))
             } else if let Some(warning) = self.skills_warning.take() {
@@ -1171,6 +1185,15 @@ fn render_profile_control(
 ) -> Option<Result<Vec<u8>, ()>> {
     use machine_god_native::NativeInteractiveControlError;
     Some(match &outcome.result {
+        Ok(NativeInteractiveControlReceipt::McpReload(receipt)) => {
+            super::mcp_receipts::render_reload(outcome.id.get(), Ok(receipt))
+        }
+        Err(NativeInteractiveControlError::McpReload(error)) => {
+            super::mcp_receipts::render_reload(outcome.id.get(), Err(error))
+        }
+        Err(NativeInteractiveControlError::McpFeature(error)) => {
+            super::mcp_receipts::render_feature_error(outcome.id.get(), *error)
+        }
         Ok(NativeInteractiveControlReceipt::Mcp(receipt)) => {
             super::mcp_receipts::render(outcome.id.get(), Ok(receipt))
         }
@@ -1185,6 +1208,17 @@ fn render_profile_control(
         }
         _ => return None,
     })
+}
+
+fn render_control_page(
+    outcome: &NativeInteractiveControlOutcome,
+    paging: &mut super::mcp_feature_pages::Paging,
+) -> Result<Vec<u8>, ()> {
+    if let Ok(NativeInteractiveControlReceipt::McpFeature(receipt)) = &outcome.result {
+        paging.render(outcome.id.get(), receipt)
+    } else {
+        render_control(outcome)
+    }
 }
 
 pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Result<Vec<u8>, ()> {
@@ -1279,9 +1313,10 @@ pub(super) fn render_control(outcome: &NativeInteractiveControlOutcome) -> Resul
         Ok(NativeInteractiveControlReceipt::Skills(_)) => {
             unreachable!("skills uses its separately bounded renderer")
         }
-        Ok(NativeInteractiveControlReceipt::Mcp(_)) => {
+        Ok(NativeInteractiveControlReceipt::Mcp(_) | NativeInteractiveControlReceipt::McpReload(_)) => {
             unreachable!("MCP uses its separately bounded renderer")
         }
+        Ok(NativeInteractiveControlReceipt::McpFeature(_)) => return Err(()),
     }
     .map_err(|_| ())?;
     text.write_str("]\n> ").map_err(|_| ())?;

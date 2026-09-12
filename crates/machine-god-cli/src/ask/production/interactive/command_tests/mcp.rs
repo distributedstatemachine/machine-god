@@ -23,13 +23,12 @@ fn mcp_slash_recognition_and_help_preserve_the_global_envelope() {
     ));
     assert!(submission(&(maximum + " ")).is_err());
     let help = std::str::from_utf8(super::super::HELP).unwrap();
-    assert!(help.contains("/mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME]"));
+    assert!(help.contains("/mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME|reload]"));
     assert!(help.contains("Add replaces an existing name"));
-    assert!(
-        help.contains(
-            "reload, auth/logout and resource/prompt operations are currently unavailable"
-        )
-    );
+    assert!(help.contains("resource complete SERVER TEMPLATE ARGUMENT [VALUE]"));
+    assert!(help.contains("prompt get") || help.contains("get SERVER NAME [ARGUMENTS_JSON]"));
+    assert!(help.contains("require selected native runtime authority"));
+    assert!(help.contains("auth/logout are currently unavailable"));
 }
 
 #[test]

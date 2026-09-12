@@ -32,10 +32,16 @@ Cmd/Super+R opens the all-workspace session picker.\n\
 /background [open|logs|stop [terminal-id|last]]\n\
 /skills [list|show NAME|path|create NAME|add SOURCE|install SOURCE|remove NAME]\n\
 Skill create/install replacement requires an explicit outer --replace flag.\n\
-/mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME]\n\
+/mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME|reload]\n\
 MCP lists configured servers, not connections. Add replaces an existing name;\n\
 arguments are literal whitespace-separated tokens, not shell expressions.\n\
-MCP reload, auth/logout and resource/prompt operations are currently unavailable.\n> ";
+/mcp resource list SERVER | templates SERVER | read SERVER URI\n\
+/mcp resource complete SERVER TEMPLATE ARGUMENT [VALUE]\n\
+/mcp prompt list SERVER | get SERVER NAME [ARGUMENTS_JSON]\n\
+/mcp prompt complete SERVER NAME ARGUMENT [VALUE]\n\
+Reload and resource/prompt commands require selected native runtime authority.\n\
+External results are paged historical data, never queued model prompts.\n\
+MCP auth/logout are currently unavailable in this host.\n> ";
 
 enum Submission<'a> {
     Empty,
@@ -131,7 +137,7 @@ impl Driver {
                 Ok(command) => {
                     self.control_command(NativeInteractiveControl::Mcp { command }, now_ms);
                 }
-                Err(_) => self.note(b"\n[usage: /mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME]; reload, auth/logout and resource/prompt operations are currently unavailable]\n> "),
+                Err(_) => self.note(b"\n[usage: /mcp [list|path|add NAME COMMAND [ARGS...]|remove NAME|reload|resource ...|prompt ...]; /help lists resource/prompt forms]\n> "),
             },
             Command::Sandbox => self.sandbox_command(payload),
             Command::Model => self.model_command(payload, now_ms),
