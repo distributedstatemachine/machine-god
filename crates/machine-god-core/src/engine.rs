@@ -226,6 +226,16 @@ impl EngineBuilder {
         self
     }
 
+    /// Borrows registration-time captured names in deterministic sorted order.
+    /// Creating and advancing the iterator allocates nothing, clones no names or
+    /// schemas, and invokes no tool callbacks. This is metadata observation, not
+    /// build validation or an execution grant; duplicate registrations still make
+    /// [`Self::build`] fail.
+    #[must_use]
+    pub fn registered_tool_names(&self) -> impl ExactSizeIterator<Item = &ToolName> {
+        self.tools.keys()
+    }
+
     /// Constructs the engine after validating its explicit dependencies.
     ///
     /// # Errors

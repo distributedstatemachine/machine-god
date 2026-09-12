@@ -100,6 +100,13 @@ defaults. [`EventSink`](crate::EventSink) is observational and defaults to
 [`NoopEventSink`](crate::NoopEventSink). Tools are registered explicitly and are
 looked up by validated [`ToolName`](crate::ToolName).
 
+`EngineBuilder::registered_tool_names()` borrows the registration-time captured
+names in deterministic sorted order through an exact-size iterator. Iteration
+allocates nothing, clones no names or schemas, and invokes no tool callbacks.
+This metadata can support host composition before `build`; it neither validates
+the builder nor grants execution authority. Duplicate registrations still cause
+`build` to fail even though the iterator contains only distinct stored keys.
+
 `EngineBuilder::host_resource` optionally binds one opaque `Send + Sync` value
 to real `Engine` and `Session` handles, including their clones. It is not stored
 with provider/tool dependencies or durable session data. Constructors invoke no
