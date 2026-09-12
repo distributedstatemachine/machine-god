@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+mod construction;
 mod mcp;
 mod permissions;
 pub(crate) mod workspace_binding;
@@ -1450,23 +1451,18 @@ impl NativeReferenceHost {
         permission_options: Option<NativeReferenceHostPermissionOptions>,
         mcp_options: Option<NativeReferenceHostMcpOptions>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        let permission_setup = permission_options
-            .map(|options| PermissionComposition::new(options, &workspace_tools))
-            .transpose()?;
+        let workspace_binding = workspace_tools.workspace_binding.clone();
+        let (workspace_tools, permission_setup) =
+            permissions::install_workspace(workspace_tools, permission_options)?;
         let permission_contexts = permission_setup
             .as_ref()
             .map(|setup| Arc::clone(&setup.contexts));
-        let workspace_binding = workspace_tools.workspace_binding.clone();
-        let workspace_tools = match &permission_setup {
-            Some(setup) => setup.install_files(workspace_tools),
-            None => workspace_tools,
-        };
         let model = loaded_config.config().model().to_owned();
-        let (provider, engine_limits) = if terminal_selection.is_some() {
-            compose_full_terminal_provider(model.clone(), Arc::clone(&transport))?
-        } else {
-            compose_provider(model.clone(), Arc::clone(&transport))?
-        };
+        let (provider, engine_limits) = compose_selected_provider(
+            model.clone(),
+            Arc::clone(&transport),
+            terminal_selection.is_some(),
+        )?;
         let mut catalog =
             ReferenceHostToolCatalog::new(observations, engine_limits, permission_setup.is_some());
         let authority = catalog.workspace(
@@ -1487,6 +1483,9 @@ impl NativeReferenceHost {
             model_routes,
         )?;
         let web_fetch = compose_web_fetch()?;
+        // Declare before the resource: failed/unwound assembly drops every
+        // actual owner before this observer joins the newly created scope.
+        let mut construction = construction::Construction::default();
         let selected_terminal = compose_selected_terminal(
             authority.terminal_root,
             authority.canonical_workspace,
@@ -1496,6 +1495,7 @@ impl NativeReferenceHost {
             terminal_selection,
             TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
+        construction.observe(selected_terminal.resource.as_ref());
         let (mcp, mcp_catalog) = mcp::select(
             mcp_options,
             &selected_terminal,
@@ -1548,6 +1548,7 @@ impl NativeReferenceHost {
         )
         .map(|mut host| {
             host.workspace_binding = workspace_binding;
+            construction.transfer();
             host
         })
     }
@@ -1576,6 +1577,7 @@ impl NativeReferenceHost {
         let terminal_background = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::background_requester);
+        let reserved_tool_names = builder.registered_tool_names().cloned().collect();
         let builder = match (host_resource, &mcp_runtime) {
             (Some(resource), Some(runtime)) => builder.host_resource(mcp::HostResource {
                 mcp: runtime.clone(),
@@ -1594,11 +1596,7 @@ impl NativeReferenceHost {
             )?;
 
         Ok(Self {
-            reserved_tool_names: engine
-                .tool_specs()
-                .into_iter()
-                .map(|spec| spec.name)
-                .collect(),
+            reserved_tool_names,
             engine,
             mcp_runtime,
             mcp_management: None,
@@ -1674,6 +1672,18 @@ fn compose_network_tools(
         web_search,
         terminal_wait_delay,
     })
+}
+
+fn compose_selected_provider(
+    model: String,
+    transport: Arc<dyn AiGatewayTransport>,
+    full_terminal: bool,
+) -> Result<(AiGatewayProvider, EngineLimits), NativeReferenceHostBuildError> {
+    if full_terminal {
+        compose_full_terminal_provider(model, transport)
+    } else {
+        compose_provider(model, transport)
+    }
 }
 
 fn compose_full_terminal_provider(

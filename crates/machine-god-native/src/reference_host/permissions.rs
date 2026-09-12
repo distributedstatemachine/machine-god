@@ -57,6 +57,20 @@ pub(super) fn error() -> NativeReferenceHostBuildError {
     NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::PermissionConfig)
 }
 
+pub(super) fn install_workspace(
+    tools: WorkspaceTools,
+    options: Option<NativeReferenceHostPermissionOptions>,
+) -> Result<(WorkspaceTools, Option<PermissionComposition>), NativeReferenceHostBuildError> {
+    let setup = options
+        .map(|options| PermissionComposition::new(options, &tools))
+        .transpose()?;
+    let tools = match &setup {
+        Some(setup) => setup.install_files(tools),
+        None => tools,
+    };
+    Ok((tools, setup))
+}
+
 pub(super) struct PermissionComposition {
     workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
     root: File,

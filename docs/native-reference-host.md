@@ -220,6 +220,12 @@ portable bounds; no contextless fallback is added.
 `mcp_runtime()` returns this exact runtime without activating servers.
 `reserved_tool_names()` borrows names captured from the engine's successful
 fixed registrations, without cloning schemas or polling an extension catalog.
+Host assembly copies only the builder's already captured names, before building
+the engine; it does not reacquire complete specifications for this inventory.
+After terminal-resource acquisition, failed or unwound synchronous assembly
+releases its actual owners and joins that new worker scope on the constructor's
+caller worker. Successful assembly transfers that obligation to the returned
+host. Drop invalidation alone is not treated as completed construction cleanup.
 Startup/reload candidate construction and atomic publication remain explicit
 caller operations. Options and host construction do not connect MCP peers or
 perform authentication, discovery, browser launch or application requests.
