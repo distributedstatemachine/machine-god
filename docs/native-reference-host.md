@@ -197,6 +197,11 @@ presentation endpoint and supplies it to the concrete executor before its runtim
 policy is selected. Without that endpoint, form support is not advertised.
 Selecting it is inert and does not advertise URL completion support.
 
+With the native `mcp-http` feature, `mcp::clock::TokioMcpClock` is an explicit
+production clock selection for both runtime/startup and HTTP deadlines. Its
+unpolled timers are inert and use the host's existing Tokio runtime on poll;
+they create no separate runtime, detached task or worker owner.
+
 The concrete executor receives the same archive adapter allocation as terminal
 input/result publishers and `read_tool_result`, including its existing quota
 owner and native worker scope. It does not create another archive directory,
