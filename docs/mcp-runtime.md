@@ -104,6 +104,13 @@ separate from endpoint, configuration and connection-generation admission.
 
 ### Transport and runtime ownership
 
+Linux/macOS MCP runtime and explicitly supplied browser-launcher ownership are
+available without default features or the AI Gateway HTTP feature. The shared
+native URL launcher retains its selected executable, environment and host worker
+scope; exposing it does not select HTTP transport or acquire network authority.
+MCP HTTP transport remains separately feature-gated, and unsupported platforms
+do not gain native launcher support through this composition.
+
 The [owned stdio connection](mcp-stdio.md) supplies bounded bidirectional process
 I/O, proof-bearing submission and host-collected cleanup. Negotiation and catalog
 publication remain runtime responsibilities, separate from connection readiness.

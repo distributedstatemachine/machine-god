@@ -22,11 +22,11 @@ pub(super) fn startup(
         clock: selected.clock.clone(),
         catalog_epoch: selected.catalog_epoch,
         owner_cancellation: selected.owner_cancellation.clone(),
-        configuration_cancellation: cancellation.clone(),
         #[cfg(feature = "mcp-http")]
         network: selected.network.clone(),
         #[cfg(feature = "mcp-http")]
-        authentication: super::authentication::selections(options, snapshot, cancellation)?,
+        authentication: super::authentication::selections(options, snapshot, cancellation.clone())?,
+        configuration_cancellation: cancellation,
         peer_lifetime: selected.peer_lifetime,
         max_retained_bytes: selected.max_retained_bytes,
     })?))

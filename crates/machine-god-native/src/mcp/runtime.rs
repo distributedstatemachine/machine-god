@@ -12,7 +12,7 @@ mod readiness;
 mod route;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "ai-gateway-http"))]
 pub(crate) use tests::script::ScriptPeer;
 mod tool;
 

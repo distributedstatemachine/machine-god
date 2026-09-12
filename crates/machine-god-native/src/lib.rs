@@ -82,18 +82,16 @@ mod background_supervisor;
     any(target_os = "linux", target_os = "macos")
 ))]
 mod background_terminal_inspection;
-#[cfg(all(
-    any(test, feature = "ai-gateway-http"),
-    any(target_os = "linux", target_os = "macos")
-))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_url_opener;
 #[cfg(all(
     any(test, feature = "ai-gateway-http"),
     any(target_os = "linux", target_os = "macos")
 ))]
+pub use background_url_opener::NativeBackgroundUrlOpener;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use background_url_opener::{
     NativeBackgroundOpenError, NativeBackgroundOpenOutcome, NativeBackgroundUrlExecutable,
-    NativeBackgroundUrlOpener,
 };
 mod model_catalog_cache;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

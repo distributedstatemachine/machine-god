@@ -2,9 +2,10 @@
 use super::{
     NativeBackgroundOpenError, NativeBackgroundOpenOutcome, NativeBackgroundUrlExecutable,
 };
+#[cfg(any(test, feature = "ai-gateway-http"))]
+use crate::background_commands::url::BackgroundServerUrl;
 use crate::{
     NativeOwnedWorkerScope,
-    background_commands::url::BackgroundServerUrl,
     background_process::{BackgroundProcessError, TmuxChild, ValidatedBackgroundEnvironment},
 };
 use machine_god_core::{BoxFuture, CancellationToken};
@@ -30,6 +31,7 @@ pub(crate) trait LauncherGuard: Send + Sync {
 
 /// Each caller moves its own admitted representation without copying URL bytes.
 pub(crate) enum LauncherUrl {
+    #[cfg(any(test, feature = "ai-gateway-http"))]
     Background(BackgroundServerUrl),
     Mcp(Box<str>),
 }
@@ -37,6 +39,7 @@ pub(crate) enum LauncherUrl {
 impl LauncherUrl {
     fn as_str(&self) -> &str {
         match self {
+            #[cfg(any(test, feature = "ai-gateway-http"))]
             Self::Background(url) => url.as_str(),
             Self::Mcp(url) => url,
         }
@@ -81,6 +84,7 @@ impl OwnedUrlLauncher {
         })
     }
 
+    #[cfg(any(test, feature = "ai-gateway-http"))]
     pub(crate) fn open(
         &self,
         url: LauncherUrl,

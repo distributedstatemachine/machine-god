@@ -1,8 +1,12 @@
 //! Explicit desktop URL handoff with bounded, host-owned direct-child cleanup.
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 use crate::NativeOwnedWorkerScope;
+#[cfg(any(test, feature = "ai-gateway-http"))]
 use crate::background_commands::url::BackgroundServerUrl;
+#[cfg(any(test, feature = "ai-gateway-http"))]
 use machine_god_core::{BoxFuture, CancellationToken};
+#[cfg(any(test, feature = "ai-gateway-http"))]
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
@@ -11,6 +15,7 @@ use std::path::{Component, PathBuf};
 use std::sync::Arc;
 
 pub(crate) mod launcher;
+#[cfg(any(test, feature = "ai-gateway-http"))]
 use launcher::{LauncherUrl, OwnedUrlLauncher};
 
 /// Fixed pre-launch failures never expose the URL, environment or executable.
@@ -47,6 +52,7 @@ pub enum NativeBackgroundOpenOutcome {
 /// capability lifetime. Identity revalidation is not protection against an
 /// attacker allowed to replace that installation between validation and exec.
 #[derive(Clone)]
+#[cfg(any(test, feature = "ai-gateway-http"))]
 pub struct NativeBackgroundUrlOpener {
     launcher: OwnedUrlLauncher,
 }
@@ -85,6 +91,7 @@ impl NativeBackgroundUrlExecutable {
     }
 }
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 impl fmt::Debug for NativeBackgroundUrlOpener {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -93,10 +100,10 @@ impl fmt::Debug for NativeBackgroundUrlOpener {
     }
 }
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 impl NativeBackgroundUrlOpener {
     /// Shares the already-bound launcher and its admission without recapturing
     /// executable, environment or worker ownership. This does not grant consent.
-    #[cfg(any(test, feature = "ai-gateway-http"))]
     #[must_use]
     pub(crate) fn mcp_launcher(&self) -> crate::mcp::browser_launcher::NativeMcpBrowserLauncher {
         crate::mcp::browser_launcher::NativeMcpBrowserLauncher::from_shared_launcher(
