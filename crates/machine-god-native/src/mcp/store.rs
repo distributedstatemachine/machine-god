@@ -177,6 +177,28 @@ impl NativeMcpConfigStore {
         Ok(())
     }
 
+    /// Keeps the cooperative configuration lock through a related credential
+    /// transaction. Only an existing selected profile can authorize this path.
+    /// Call on an owned worker and never hold it over a network await.
+    #[cfg(feature = "mcp-http")]
+    pub(crate) fn lock_unchanged<'a>(
+        &'a self,
+        snapshot: &'a NativeMcpConfigSnapshot,
+    ) -> Result<crate::bounded_profile_file::LockedProfileUpdate<'a>, NativeMcpConfigStoreError>
+    {
+        if snapshot.observed.bytes().is_none() {
+            return Err(NativeMcpConfigStoreError::Conflict);
+        }
+        self.file.validate_unchanged(&snapshot.observed)?;
+        let locked = self
+            .file
+            .begin(&snapshot.observed, UpdateMode::CompareAndSwap)?;
+        // begin acquires custody; comparison normally happens at publish. This
+        // caller writes another file, so revalidate while retaining that custody.
+        self.file.validate_unchanged(&snapshot.observed)?;
+        Ok(locked)
+    }
+
     /// Applies one exact-snapshot mutation. This borrowed future is inert until
     /// polled, then executes one input-bounded synchronous owned transaction. It
     /// starts no detached worker; no-op edits create no directories, locks or temps.

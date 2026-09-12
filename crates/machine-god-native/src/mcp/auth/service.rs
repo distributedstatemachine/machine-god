@@ -1,8 +1,8 @@
 use super::{
     Authority, McpAuthBrowser, McpAuthChallenge, McpAuthClock, McpAuthConfig, McpAuthEntropy,
     McpAuthError, McpAuthIdentity, McpAuthInvalidation, McpAuthLocalRemoval, McpAuthLogoutReceipt,
-    McpAuthNetwork, McpAuthRemoteRevocation, NativeMcpCredentialStore, Result, codec::Credentials,
-    redacted,
+    McpAuthNetwork, McpAuthRemoteRevocation, NativeMcpAuthProfile, NativeMcpCredentialStore,
+    Result, codec::Credentials, redacted,
 };
 use crate::NativeOwnedWorkerScope;
 use machine_god_core::{BoxFuture, CancellationToken};
@@ -35,6 +35,7 @@ pub struct NativeMcpAuthCleanup {
 pub struct McpAuthLease {
     credentials: Arc<Credentials>,
     generation: CancellationToken,
+    profile: Option<Arc<NativeMcpAuthProfile>>,
 }
 redacted!(NativeMcpAuthService, McpAuthLease);
 impl McpAuthLease {
@@ -45,6 +46,9 @@ impl McpAuthLease {
     /// # Errors
     /// Rejects a generation invalidated by refresh, logout or owner cutoff.
     pub fn access_token(&self) -> Result<&[u8]> {
+        if let Some(profile) = &self.profile {
+            profile.check()?;
+        }
         if self.generation.is_cancelled() {
             Err(McpAuthError::Conflict)
         } else {
@@ -58,7 +62,15 @@ impl McpAuthLease {
     #[must_use]
     pub fn cancelled_owned(&self) -> BoxFuture<'static, ()> {
         let generation = self.generation.clone();
-        Box::pin(async move { generation.cancelled().await })
+        let profile = self.profile.clone();
+        Box::pin(async move {
+            if let Some(profile) = profile {
+                futures_util::future::select(generation.cancelled(), Box::pin(profile.stopped()))
+                    .await;
+            } else {
+                generation.cancelled().await;
+            }
+        })
     }
 }
 impl NativeMcpAuthService {
@@ -154,6 +166,31 @@ impl NativeMcpAuthService {
         deadline: Instant,
     ) -> Result<McpAuthLease> {
         let operation = self.inner.begin(identity, cancellation, deadline)?;
+        self.access_token_selected(operation, cancellation, deadline)
+            .await
+    }
+
+    pub(crate) async fn access_token_for_profile(
+        &self,
+        identity: &McpAuthIdentity,
+        profile: Arc<NativeMcpAuthProfile>,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<McpAuthLease> {
+        profile.check()?;
+        let mut operation = self.inner.begin(identity, cancellation, deadline)?;
+        operation.profile = Some(profile);
+        self.access_token_selected(operation, cancellation, deadline)
+            .await
+    }
+
+    async fn access_token_selected(
+        &self,
+        operation: Operation,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<McpAuthLease> {
+        let identity = &operation.guard.identity;
         let snapshot = operation.load(cancellation, deadline).await?;
         let credentials = snapshot.get(identity).ok_or(McpAuthError::Missing)?;
         if credentials.expires_ms.saturating_sub(60_000) > self.inner.authority.clock.unix_millis()

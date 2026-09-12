@@ -8,6 +8,7 @@ mod browser;
 mod codec;
 mod discovery;
 mod network;
+mod profile;
 mod service;
 mod store;
 #[cfg(test)]
@@ -15,6 +16,7 @@ mod tests;
 mod token;
 
 pub use codec::{McpAuthChallenge, McpAuthConfig, McpAuthIdentity};
+pub use profile::NativeMcpAuthProfile;
 pub use service::{McpAuthLease, NativeMcpAuthCleanup, NativeMcpAuthService};
 pub use store::NativeMcpCredentialStore;
 

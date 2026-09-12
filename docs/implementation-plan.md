@@ -415,9 +415,9 @@ Proof and request ownership remain checked through core admission and writing.
 
 Exact conversation/turn routing is integrated into both CLI setup paths. Owned
 OAuth services share actual host workers and selected profile credentials;
-startup/reload resolves stored auth per snapshot. Auth commands remain below.
-Typed feature/result/input codecs compose with explicit DNS/TLS, archived calls
-and consented forms. CLI startup/reload/settlement retain exact profile and cleanup
+startup/reload guards stored auth with exact profile snapshots and retains challenges.
+Typed feature/input codecs compose with DNS/TLS, archived calls, consented forms
+and URL prompts. CLI startup/reload/settlement retain exact profile and cleanup
 custody; required startup precedes conversation work, with turn-authorized deferred
 discovery. Component checks are not full-feature gates; clean trees are removed.
 

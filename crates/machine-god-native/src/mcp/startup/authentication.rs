@@ -1,6 +1,6 @@
 use super::{NativeMcpStartup, NativeMcpStartupError as Error, Result};
 use crate::mcp::{
-    auth::{McpAuthConfig, McpAuthError, McpAuthLease, NativeMcpAuthService},
+    auth::{McpAuthConfig, McpAuthError, McpAuthLease, NativeMcpAuthProfile, NativeMcpAuthService},
     config::{MAX_SERVERS, McpConfig, McpRemoteConfig, McpTransportConfig},
     headers::McpResolvedHeaders,
 };
@@ -18,6 +18,11 @@ pub enum NativeMcpStartupAuthSource {
     Configured,
     Lease(Arc<McpAuthLease>),
     Stored(Arc<NativeMcpAuthService>),
+    /// Native controller selection sharing the exact loaded profile and lifetime.
+    ProfileStored {
+        service: Arc<NativeMcpAuthService>,
+        profile: Arc<NativeMcpAuthProfile>,
+    },
 }
 #[derive(Clone)]
 pub struct NativeMcpStartupAuthentication {
@@ -120,6 +125,22 @@ impl NativeMcpStartup {
                 let expected = self.auth_config(remote, selection)?;
                 match service
                     .access_token(expected.identity(), cancellation, deadline)
+                    .await
+                {
+                    Ok(lease) => Some(Arc::new(lease)),
+                    Err(McpAuthError::Missing) => None,
+                    Err(_) => return Err(Error::Authentication),
+                }
+            }
+            Some(NativeMcpStartupAuthSource::ProfileStored { service, profile }) => {
+                let expected = self.auth_config(remote, selection)?;
+                match service
+                    .access_token_for_profile(
+                        expected.identity(),
+                        profile.clone(),
+                        cancellation,
+                        deadline,
+                    )
                     .await
                 {
                     Ok(lease) => Some(Arc::new(lease)),

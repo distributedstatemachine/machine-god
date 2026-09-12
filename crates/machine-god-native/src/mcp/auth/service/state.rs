@@ -3,8 +3,8 @@ use super::super::McpAuthInvalidated;
 use super::tests;
 use super::{
     Arc, Authority, CancellationToken, Credentials, Instant, McpAuthError, McpAuthIdentity,
-    McpAuthInvalidation, McpAuthLease, McpAuthRemoteRevocation, NativeMcpCredentialStore,
-    NativeOwnedWorkerScope, Result,
+    McpAuthInvalidation, McpAuthLease, McpAuthRemoteRevocation, NativeMcpAuthProfile,
+    NativeMcpCredentialStore, NativeOwnedWorkerScope, Result,
 };
 use futures_util::future::{Either, select};
 use std::{
@@ -57,6 +57,7 @@ pub(super) struct Guard {
 }
 pub(super) struct Operation {
     pub guard: Arc<Guard>,
+    pub profile: Option<Arc<NativeMcpAuthProfile>>,
 }
 impl Drop for Operation {
     fn drop(&mut self) {
@@ -188,6 +189,7 @@ impl Inner {
         state.operations.push(observation.clone());
         drop(state);
         let operation = Operation {
+            profile: None,
             guard: Arc::new(Guard {
                 inner: self.clone(),
                 slot: slot.clone(),
@@ -282,16 +284,29 @@ impl Operation {
         caller: &CancellationToken,
         deadline: Instant,
     ) -> Result<T> {
+        let stopped = async {
+            if let Some(profile) = &self.profile {
+                profile.stopped().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
         self.guard
             .inner
             .authority
             .bounded(
                 async {
+                    if let Some(profile) = &self.profile {
+                        profile.check()?;
+                    }
                     if self.guard.slot.cutoff.load(Ordering::Acquire) {
                         return Err(McpAuthError::Conflict);
                     }
                     match select(
-                        Box::pin(self.guard.slot.retired.cancelled()),
+                        Box::pin(select(
+                            self.guard.slot.retired.cancelled(),
+                            Box::pin(stopped),
+                        )),
                         Box::pin(future),
                     )
                     .await
@@ -311,10 +326,14 @@ impl Operation {
         caller: &CancellationToken,
         deadline: Instant,
     ) -> Result<McpAuthLease> {
+        if let Some(profile) = &self.profile {
+            profile.check()?;
+        }
         self.guard.check(caller, deadline, false)?;
         Ok(McpAuthLease {
             credentials: Arc::new(credentials),
             generation: lock(&self.guard.slot.generation).clone(),
+            profile: self.profile.clone(),
         })
     }
     pub async fn wait_previous(

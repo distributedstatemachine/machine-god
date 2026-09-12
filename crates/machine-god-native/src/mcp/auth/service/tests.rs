@@ -13,6 +13,7 @@ use std::{
     time::Duration,
 };
 
+mod profile;
 mod workers;
 
 type Hook = Mutex<Option<Arc<dyn Fn() + Send + Sync>>>;

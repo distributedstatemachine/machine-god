@@ -1,7 +1,7 @@
 use super::super::{McpAuthInvalidated, store::Snapshot};
 use super::{
     Arc, BoxFuture, CancellationToken, Credentials, Instant, McpAuthError, McpAuthLease,
-    McpAuthLocalRemoval, Operation, Result, state,
+    McpAuthLocalRemoval, NativeMcpAuthProfile, Operation, Result, state,
 };
 use crate::bounded_profile_file::PublicationDurability;
 use state::{Guard, cancel, contain, lock};
@@ -19,14 +19,15 @@ impl Operation {
     /// if its caller drops the future while the actual scoped worker is running.
     fn worker<T: Send + 'static>(
         &self,
-        job: impl FnOnce(&Guard) -> Result<T> + Send + 'static,
+        job: impl FnOnce(&Guard, Option<&Arc<NativeMcpAuthProfile>>) -> Result<T> + Send + 'static,
     ) -> BoxFuture<'static, Result<T>> {
         let guard = self.guard.clone();
+        let profile = self.profile.clone();
         guard.observation.workers.fetch_add(1, Ordering::AcqRel);
         let worker = Worker(guard.clone());
         let workers = guard.inner.workers.clone();
         let task = workers.run(move || {
-            let result = job(&guard);
+            let result = job(&guard, profile.as_ref());
             drop(worker);
             (guard, result)
         });
@@ -38,11 +39,18 @@ impl Operation {
 
     pub async fn load(&self, caller: &CancellationToken, deadline: Instant) -> Result<Snapshot> {
         let cancellation = caller.clone();
-        let future = self.worker(move |guard| {
+        let future = self.worker(move |guard, profile| {
             #[cfg(test)]
             guard.inner.hooks.before_load();
             guard.check(&cancellation, deadline, false)?;
-            guard.inner.store.load()
+            if let Some(profile) = profile {
+                profile.validate()?;
+            }
+            let snapshot = guard.inner.store.load()?;
+            if let Some(profile) = profile {
+                profile.validate()?;
+            }
+            Ok(snapshot)
         });
         self.run(future, caller, deadline).await
     }
@@ -57,18 +65,26 @@ impl Operation {
         let cancellation = caller.clone();
         // Do not select an admitted publication away. The worker returns its
         // actual durability result even if cancellation arrives during fsync.
-        self.worker(move |guard| {
+        self.worker(move |guard, profile| {
             #[cfg(test)]
             guard.inner.hooks.before_commit();
+            let profile_lock = profile.map(|profile| profile.lock()).transpose()?;
             guard.check(&cancellation, deadline, false)?;
             #[cfg(test)]
             guard.inner.hooks.admitted_commit();
-            let durability =
+            let mut durability =
                 guard
                     .inner
                     .store
                     .publish(&snapshot, &guard.identity, Some(&credentials))?;
+            if profile.is_some_and(|profile| profile.unchanged().is_err()) {
+                // A noncooperative source replacement after credential rename
+                // cannot be reported as a clean prepublication failure.
+                durability = PublicationDurability::Ambiguous;
+            }
+            drop(profile_lock);
             let generation = CancellationToken::new();
+            let source_closed = profile.is_some_and(|profile| profile.check().is_err());
             let old = {
                 let state = lock(&guard.inner.state);
                 let retired = state.closed || guard.slot.cutoff.load(Ordering::Acquire);
@@ -93,6 +109,9 @@ impl Operation {
                 // Publication won its reservation, but retirement won authority.
                 cancel(&generation);
             }
+            if source_closed {
+                cancel(&generation);
+            }
             #[cfg(test)]
             guard.inner.hooks.after_commit();
             if durability == PublicationDurability::Ambiguous {
@@ -102,6 +121,7 @@ impl Operation {
             Ok(McpAuthLease {
                 credentials: Arc::new(credentials),
                 generation,
+                profile: profile.cloned(),
             })
         })
         .await
@@ -113,7 +133,8 @@ impl Operation {
         deadline: Instant,
     ) -> Result<(McpAuthLocalRemoval, Option<Credentials>)> {
         let cancellation = caller.clone();
-        self.worker(move |guard| {
+        self.worker(move |guard, profile| {
+            let profile_lock = profile.map(|profile| profile.lock()).transpose()?;
             guard.check(&cancellation, deadline, true)?;
             #[cfg(test)]
             guard.inner.hooks.before_remove();
@@ -121,7 +142,7 @@ impl Operation {
                 return Ok((McpAuthLocalRemoval::Failed, None));
             };
             let credentials = snapshot.get(&guard.identity).cloned();
-            let local = match guard.inner.store.publish(&snapshot, &guard.identity, None) {
+            let mut local = match guard.inner.store.publish(&snapshot, &guard.identity, None) {
                 Ok(PublicationDurability::Confirmed) if credentials.is_some() => {
                     McpAuthLocalRemoval::Removed
                 }
@@ -129,6 +150,14 @@ impl Operation {
                 Ok(PublicationDurability::Ambiguous) => McpAuthLocalRemoval::Ambiguous,
                 Err(_) => McpAuthLocalRemoval::Failed,
             };
+            if matches!(
+                local,
+                McpAuthLocalRemoval::Removed | McpAuthLocalRemoval::Unchanged
+            ) && profile.is_some_and(|profile| profile.unchanged().is_err())
+            {
+                local = McpAuthLocalRemoval::Ambiguous;
+            }
+            drop(profile_lock);
             #[cfg(test)]
             guard.inner.hooks.after_remove();
             Ok((local, credentials))

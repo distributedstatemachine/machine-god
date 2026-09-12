@@ -2,14 +2,19 @@
 
 use super::NativeMcpControllerOptions;
 use crate::mcp::{
-    config::{MAX_SERVERS, McpConfig, McpTransportConfig},
+    auth::NativeMcpAuthProfile,
+    config::{MAX_SERVERS, McpTransportConfig},
     headers::McpResolvedHeaders,
     startup::{NativeMcpStartupAuthSource, NativeMcpStartupAuthentication, NativeMcpStartupError},
+    store::NativeMcpConfigSnapshot,
 };
+use machine_god_core::CancellationToken;
+use std::sync::Arc;
 
 pub(super) fn selections(
     options: &NativeMcpControllerOptions,
-    configuration: &McpConfig,
+    snapshot: &Arc<NativeMcpConfigSnapshot>,
+    cancellation: CancellationToken,
 ) -> Result<Vec<NativeMcpStartupAuthentication>, NativeMcpStartupError> {
     if options.startup.authentication.len() > MAX_SERVERS {
         return Err(NativeMcpStartupError::Limit);
@@ -18,7 +23,13 @@ pub(super) fn selections(
     let Some(service) = &options.stored_authentication else {
         return Ok(selected);
     };
-    for server in configuration.servers() {
+    let profile = Arc::new(NativeMcpAuthProfile::new(
+        options.management.config_store(),
+        snapshot.clone(),
+        options.startup.owner_cancellation.clone(),
+        cancellation,
+    ));
+    for server in snapshot.config().servers() {
         if matches!(server.transport(), McpTransportConfig::Stdio(_))
             || selected
                 .iter()
@@ -33,7 +44,10 @@ pub(super) fn selections(
             server: server.name().into(),
             additional_headers: McpResolvedHeaders::from_resolved(&[])
                 .map_err(|_| NativeMcpStartupError::Authentication)?,
-            source: NativeMcpStartupAuthSource::Stored(service.clone()),
+            source: NativeMcpStartupAuthSource::ProfileStored {
+                service: service.clone(),
+                profile: profile.clone(),
+            },
         });
     }
     Ok(selected)

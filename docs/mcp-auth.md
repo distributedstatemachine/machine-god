@@ -87,6 +87,20 @@ The stored resource, issuer and registered client remain part of the admitted
 record. Equal-byte file replacement by another inode conflicts. A stale refresh
 cannot overwrite a changed cooperative store observation.
 
+Controller-selected stored authentication also retains the exact native
+configuration snapshot and its owner/configuration cancellation. Credential
+workers revalidate that source around loading, and acquire the nonblocking
+configuration lock before a refresh publication, holding it through the
+credential transaction. Lock order is configuration then credentials; no lock
+is held during OAuth network or human interaction. Changed or equal-byte
+replaced configuration rejects publication before the credential write. A
+detected noncooperative source change after credential publication remains
+ambiguous, not a claim that nothing was written. This is cooperative exclusion,
+not an atomic transaction against arbitrary writers ignoring both locks.
+Profile-selected leases and their cancellation waiters retain the original
+owner/configuration cutoff. Explicit injected `Stored` selections remain
+independent of native profile selection.
+
 One service serializes authorization/refresh for each identity and retains at
 most 64 identities and 128 pending operation reservations, including retired
 operations and worker results that have not been consumed. Async credential
