@@ -74,16 +74,16 @@ fn mcp_commands_cancel_and_session_switch_record_observations_without_replay() {
     terminal.wait_for(b"fixture: http; enabled; required\n> ");
     command(&mut terminal, "/mcp resource list fixture");
     terminal.wait_for(b"MCP confirmation resource");
-    terminal.wait_for(b"> ");
+    terminal.wait_for(b"[end of retained MCP observation]\n> ");
     command(&mut terminal, "/mcp resource read fixture test://fixed");
     terminal.wait_for(b"MCP process resource content");
-    terminal.wait_for(b"> ");
+    terminal.wait_for(b"[end of retained MCP observation]\n> ");
     assert_eq!(gateway.inference.load(Ordering::Acquire), 0);
 
     pending(&mut terminal);
     command(&mut terminal, "/cancel");
     terminal.wait_for(b"MCP cancellation acknowledged");
-    terminal.wait_for(b"> ");
+    terminal.wait_for(b"[end of retained MCP observation]\n> ");
     let requests = gateway.mcp_requests();
     let resumed = requests.last().unwrap();
     assert_eq!(
@@ -101,7 +101,7 @@ fn mcp_commands_cancel_and_session_switch_record_observations_without_replay() {
     let id = envelope["record"]["id"].as_str().unwrap();
     command(&mut terminal, "/new");
     terminal.wait_for(b": adopted]");
-    terminal.wait_for(b"> ");
+    terminal.wait_for(b"]\n> ");
     assert_eq!(gateway.mcp_requests(), requests);
     command(&mut terminal, "/resume");
     terminal.wait_for(b"MCP session marker");
@@ -109,10 +109,10 @@ fn mcp_commands_cancel_and_session_switch_record_observations_without_replay() {
     terminal.output.clear();
     terminal.send(b"\r");
     terminal.wait_for(b": adopted]");
-    terminal.wait_for(b"> ");
+    terminal.wait_for(b"]\n> ");
     command(&mut terminal, "/status");
     terminal.wait_for(format!("[session] {id}\n").as_bytes());
-    terminal.wait_for(b"> ");
+    terminal.wait_for(b" requested_fast=false\n> \n");
     assert_eq!(
         gateway.mcp_requests(),
         requests,
