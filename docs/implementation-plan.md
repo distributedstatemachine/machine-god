@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34581407764` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
 - Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `modern MCP continuation integration checks, authentication and catalog refresh; complete feature gate after the remaining MCP boundary is implemented`
+- Next gate: `authentication lifetime refresh and catalog refresh; complete feature gate after the remaining MCP boundary is implemented`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
@@ -434,12 +434,19 @@ Typed feature/input codecs compose with DNS/TLS, archived calls, consented forms
 and URL prompts. CLI startup/reload/settlement retain exact profile and cleanup
 custody; required readiness blocks prompts while interactive management stays open.
 Explicit auth/logout and modern URL recovery share native browser ownership.
+Human resource-read/prompt-get continuations now compose the same selected
+presenter and browser owner with exact command/session origins and consuming
+original-request custody. Human waits release the peer lane while retaining
+bounded operation ownership; neither consent nor a resumed round selects a new
+publication or descriptor.
 
 These components do not constitute a delivered runtime. Remaining composition includes
-modern feature-action continuation, TTL/notification refresh, authentication
+TTL/notification refresh, authentication
 end-to-end evidence/lifetime refresh and CLI ownership. Raw pages
 do not grant executable tool authority. Schema integration must preserve pinned
 exact-number, reference and server-authoritative validation semantics end to end.
+Complete continuation and CLI process acceptance still requires the fresh-release
+full feature gate, not just deterministic component tests.
 The coordinator owns exports, shared runtime interfaces, host/CLI composition
 and this ledger. Subsequent transport, permission and authentication lanes use
 the agreed typed interfaces with non-overlapping files. Keep runtime/resource
