@@ -44,7 +44,11 @@ authentication lease through every body read and envelope decode. A lease is
 never refreshed or replaced inside the stream. Ordinary application bodies keep
 their original deadlines unchanged.
 
-`poll_subscription` drives at most one admitted envelope. Its caller-supplied
+`poll_subscription` drives at most one admitted envelope. It first drains already
+queued notifications from ordinary exchanges, including after listener completion,
+without polling or resetting the retained listener stream. These frames retain
+their original 64-event/1 MiB queue admission bounds; dedicated listener frames
+retain their separate stream limits. Its caller-supplied
 deadline bounds that observation, not the listener lifetime. Timeout or an
 abandoned poll preserves the exact pending read; no POST is repeated and no
 partial parser state is discarded. `active_subscription` distinguishes a quiet
