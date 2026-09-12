@@ -95,6 +95,7 @@ pub struct McpStdioPeer {
     reserved: McpPendingToolReservation,
     notifications: VecDeque<RpcEnvelope>,
     notification_bytes: usize,
+    pending_replies: routing::Replies,
     closed: bool,
 }
 pub(crate) struct McpStdioPeerReadiness {
@@ -247,6 +248,7 @@ impl McpStdioPeer {
         self.closed = true;
         self.reserved = McpPendingToolReservation::default();
         self.connection.close();
+        self.pending_replies.clear();
     }
     /// Registers exact executable allocations without granting permission.
     ///
@@ -334,6 +336,25 @@ impl McpStdioPeer {
             self.notification_bytes = 0;
         }
         Some(envelope)
+    }
+    /// Observes one untrusted notification without acquiring continuation authority.
+    /// Dropping or timing out this idle observation preserves a healthy peer's
+    /// worker-owned input and pending fixed unsupported-request replies. Retained
+    /// replies keep their original finite write deadlines across observations.
+    /// # Errors
+    /// Rejects owner cancellation/expiry, malformed or foreign frames, EOF,
+    /// failed reply writes and exhausted bounds. An idle timeout alone is nonfatal.
+    pub async fn next_notification(&mut self, deadline: Instant) -> Result<RpcEnvelope> {
+        routing::next_notification(self, deadline).await
+    }
+    fn check_owner(&self) -> Result<()> {
+        if self.closed {
+            return Err(McpPeerError::Closed);
+        }
+        if self.cancellation.is_cancelled() {
+            return Err(McpPeerError::Cancelled);
+        }
+        self.check_lifetime()
     }
     fn check_available(&self) -> Result<()> {
         if self.closed || self.cancellation.is_cancelled() {

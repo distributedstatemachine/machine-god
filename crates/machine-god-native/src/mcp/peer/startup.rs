@@ -183,15 +183,10 @@ async fn connect_inner(
                 }
                 // Pinned legacy connection control starts before disconnecting
                 // the previous child; cleanup consumes this attempt's budget.
-                settle(
-                    &peer,
-                    &host,
-                    startup
-                        .cleanup_deadline(peer.timer.now())?
-                        .min(selected_deadline),
-                    true,
-                )
-                .await?;
+                let cleanup_deadline = startup
+                    .cleanup_deadline(peer.timer.now())?
+                    .min(selected_deadline);
+                settle(&mut peer, &host, cleanup_deadline, true).await?;
                 live(&peer.cancellation, &*peer.timer, selected_deadline)?;
                 peer.connection = startup
                     .launch(
@@ -209,7 +204,7 @@ async fn connect_inner(
             NegotiationAction::Ready(protocol) => {
                 peer.protocol = protocol;
                 if protocol.needs_initialized_notification() {
-                    initialized(&peer, selected_deadline).await?;
+                    initialized(&mut peer, selected_deadline).await?;
                 }
                 live(&peer.cancellation, &*peer.timer, selected_deadline)?;
                 return Ok((peer, selected_deadline));
@@ -229,7 +224,8 @@ async fn connect_inner(
                 connection: &peer.connection,
                 notifications: &mut peer.notifications,
                 notification_bytes: &mut peer.notification_bytes,
-                timer: &*peer.timer,
+                pending_replies: &mut peer.pending_replies,
+                timer: &peer.timer,
                 cancellation: &peer.cancellation,
             },
             peer.connection.control(control, attempt_deadline),
@@ -249,13 +245,14 @@ async fn connect_inner(
                 action = negotiation.response(frame.envelope(), &id, HttpDiscoveryStatus::Ordinary);
             }
             Err(error) => {
+                let cleanup_deadline = startup.cleanup_deadline(peer.timer.now())?;
                 action = unavailable(
-                    &peer,
+                    &mut peer,
                     &host,
                     &mut negotiation,
                     modern,
                     error,
-                    startup.cleanup_deadline(peer.timer.now())?,
+                    cleanup_deadline,
                 )
                 .await?;
             }
@@ -282,6 +279,7 @@ fn unnegotiated(
         reserved: super::McpPendingToolReservation::default(),
         notifications: VecDeque::new(),
         notification_bytes: 0,
+        pending_replies: super::routing::Replies::new(),
         closed: false,
     }
 }
@@ -298,7 +296,7 @@ fn startup_params(version: ProtocolVersion) -> (&'static str, serde_json::Value)
     }
 }
 
-async fn initialized(peer: &McpStdioPeer, deadline: Instant) -> Result<()> {
+async fn initialized(peer: &mut McpStdioPeer, deadline: Instant) -> Result<()> {
     let mut guard = CloseOnDrop(Some(&peer.connection));
     let notification = McpStdioControl::notification(
         br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
@@ -317,7 +315,7 @@ async fn initialized(peer: &McpStdioPeer, deadline: Instant) -> Result<()> {
 }
 
 async fn settle(
-    peer: &McpStdioPeer,
+    peer: &mut McpStdioPeer,
     host: &NativeOwnedWorkerScope,
     deadline: Instant,
     close: bool,
@@ -339,7 +337,7 @@ async fn settle(
 }
 
 async fn unavailable(
-    peer: &McpStdioPeer,
+    peer: &mut McpStdioPeer,
     host: &NativeOwnedWorkerScope,
     negotiation: &mut Negotiation,
     modern: bool,

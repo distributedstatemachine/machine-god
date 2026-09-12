@@ -5,13 +5,20 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde_json::{Value, json};
 
 use super::{
-    BoxFuture, CancellationToken, Instant, McpCatalogKind, McpCatalogLimits, McpPeerError,
+    Arc, BoxFuture, CancellationToken, Instant, McpCatalogKind, McpCatalogLimits, McpPeerError,
     McpPeerTimer, McpRawCatalog, McpStdioConnection, McpStdioError, McpStdioPeer, McpSubmission,
     Result, RpcEnvelope, RpcId, VecDeque,
 };
 use crate::mcp::pagination::McpCatalogBuilder;
 use crate::mcp::protocol::{ProtocolVersion, RpcKind};
 use crate::mcp::stdio::{McpStdioControl, McpStdioFrame, McpStdioWriteReceipt};
+
+mod idle;
+pub(super) use idle::next_notification;
+
+const MAX_UNSUPPORTED_REPLIES: usize = crate::mcp::stdio::MAX_MCP_STDIO_WRITES - 1;
+const MAX_OPERATION_FRAMES: usize = 256;
+pub(super) type Replies = FuturesUnordered<BoxFuture<'static, Result<()>>>;
 
 pub(super) struct CloseOnDrop<'a>(pub Option<&'a McpStdioConnection>);
 impl Drop for CloseOnDrop<'_> {
@@ -82,9 +89,35 @@ pub(super) fn request(
 }
 
 type Write = BoxFuture<'static, std::result::Result<McpStdioWriteReceipt, McpStdioError>>;
+pub(super) fn validate_receipt(
+    receipt: std::result::Result<McpStdioWriteReceipt, McpStdioError>,
+) -> Result<()> {
+    receipt?.outcome?;
+    Ok(())
+}
+
+pub(super) fn unsupported_reply(
+    connection: &McpStdioConnection,
+    id: &RpcId,
+    timer: Arc<dyn McpPeerTimer>,
+    cancellation: CancellationToken,
+    deadline: Instant,
+) -> Result<BoxFuture<'static, Result<()>>> {
+    let control = McpStdioControl::unsupported(id)?;
+    let writer = connection.control(control, deadline);
+    Ok(Box::pin(async move {
+        validate_receipt(bounded(writer, &*timer, &cancellation, deadline).await?)?;
+        check(&cancellation, deadline)?;
+        if timer.now() >= deadline {
+            return Err(McpPeerError::Deadline);
+        }
+        Ok(())
+    }))
+}
+
 enum Event {
     Written(std::result::Result<McpStdioWriteReceipt, McpStdioError>),
-    Replied(std::result::Result<McpStdioWriteReceipt, McpStdioError>),
+    Replied(Result<()>),
     Frame(std::result::Result<McpStdioFrame, McpStdioError>),
 }
 
@@ -94,26 +127,26 @@ pub(super) struct Exchange<'a> {
     pub connection: &'a McpStdioConnection,
     pub notifications: &'a mut VecDeque<RpcEnvelope>,
     pub notification_bytes: &'a mut usize,
-    pub timer: &'a dyn McpPeerTimer,
+    pub pending_replies: &'a mut Replies,
+    pub timer: &'a Arc<dyn McpPeerTimer>,
     pub cancellation: &'a CancellationToken,
 }
 pub(super) async fn exchange(
-    context: Exchange<'_>,
+    mut context: Exchange<'_>,
     writer: Write,
     expected: &RpcId,
     deadline: Instant,
     discovery_timeout: bool,
 ) -> Result<McpStdioFrame> {
-    let Exchange {
-        connection,
-        notifications,
-        notification_bytes,
-        timer,
-        cancellation,
-    } = context;
+    let connection = context.connection;
+    let timer = context.timer;
+    let cancellation = context.cancellation;
     let mut guard = CloseOnDrop(Some(connection));
     let mut writer = Some(writer);
-    let mut replies = FuturesUnordered::<Write>::new();
+    // Transfer only on first poll. Consequential abandonment still closes the
+    // connection and drops these exact writers, never restoring replay authority.
+    let mut replies = std::mem::take(context.pending_replies);
+    let mut draining = !replies.is_empty();
     let mut receive = connection.receive_frame();
     let mut response = None;
     let mut observations = 0_usize;
@@ -122,13 +155,15 @@ pub(super) async fn exchange(
         if timer.now() >= deadline {
             return Err(McpPeerError::Deadline);
         }
+        draining &= !replies.is_empty();
         if writer.is_none() && response.is_some() && replies.is_empty() {
             guard.0 = None;
             return response.ok_or(McpPeerError::Correlation);
         }
         let event = bounded(
             poll_fn(|cx| {
-                if let Some(write) = &mut writer
+                if !draining
+                    && let Some(write) = &mut writer
                     && let Poll::Ready(value) = write.as_mut().poll(cx)
                 {
                     return Poll::Ready(Event::Written(value));
@@ -138,7 +173,7 @@ pub(super) async fn exchange(
                 }
                 receive.as_mut().poll(cx).map(Event::Frame)
             }),
-            timer,
+            timer.as_ref(),
             cancellation,
             deadline,
         )
@@ -158,45 +193,72 @@ pub(super) async fn exchange(
         };
         match event {
             Event::Written(receipt) => {
-                receipt?.outcome?;
+                validate_receipt(receipt)?;
                 writer = None;
             }
             Event::Replied(receipt) => {
-                receipt?.outcome?;
+                receipt?;
             }
             Event::Frame(frame) => {
                 let frame = frame?;
                 observations += 1;
-                if observations > 256 {
+                if observations > MAX_OPERATION_FRAMES {
                     return Err(McpPeerError::Capacity);
                 }
-                match frame.envelope().kind() {
-                    RpcKind::Success | RpcKind::Error => {
-                        frame
-                            .envelope()
-                            .correlate(expected, false)
-                            .map_err(|_| McpPeerError::Correlation)?;
-                        if response.replace(frame).is_some() {
-                            return Err(McpPeerError::Correlation);
-                        }
-                    }
-                    RpcKind::Notification => {
-                        retain_notification(frame, notifications, notification_bytes)?;
-                    }
-                    RpcKind::Request => {
-                        if replies.len() >= 7 {
-                            return Err(McpPeerError::Capacity);
-                        }
-                        let control = McpStdioControl::unsupported(
-                            frame.envelope().id().ok_or(McpPeerError::Correlation)?,
-                        )?;
-                        replies.push(connection.control(control, deadline));
-                    }
-                }
+                route_exchange_frame(
+                    &mut context,
+                    frame,
+                    expected,
+                    &mut replies,
+                    &mut response,
+                    draining,
+                    deadline,
+                )?;
                 receive = connection.receive_frame();
             }
         }
     }
+}
+
+fn route_exchange_frame(
+    context: &mut Exchange<'_>,
+    frame: McpStdioFrame,
+    expected: &RpcId,
+    replies: &mut Replies,
+    response: &mut Option<McpStdioFrame>,
+    draining: bool,
+    deadline: Instant,
+) -> Result<()> {
+    match frame.envelope().kind() {
+        RpcKind::Success | RpcKind::Error => {
+            if draining {
+                return Err(McpPeerError::Correlation);
+            }
+            frame
+                .envelope()
+                .correlate(expected, false)
+                .map_err(|_| McpPeerError::Correlation)?;
+            if response.replace(frame).is_some() {
+                return Err(McpPeerError::Correlation);
+            }
+        }
+        RpcKind::Notification => {
+            retain_notification(frame, context.notifications, context.notification_bytes)?;
+        }
+        RpcKind::Request => {
+            if replies.len() >= MAX_UNSUPPORTED_REPLIES {
+                return Err(McpPeerError::Capacity);
+            }
+            replies.push(unsupported_reply(
+                context.connection,
+                frame.envelope().id().ok_or(McpPeerError::Correlation)?,
+                context.timer.clone(),
+                context.cancellation.clone(),
+                deadline,
+            )?);
+        }
+    }
+    Ok(())
 }
 
 fn retain_notification(
@@ -236,7 +298,8 @@ pub(super) async fn call(
             connection: &peer.connection,
             notifications: &mut peer.notifications,
             notification_bytes: &mut peer.notification_bytes,
-            timer: &*peer.timer,
+            pending_replies: &mut peer.pending_replies,
+            timer: &peer.timer,
             cancellation: &peer.cancellation,
         },
         peer.connection.submit(submission, deadline),
@@ -285,7 +348,8 @@ pub(super) async fn catalog(
                 connection: &peer.connection,
                 notifications: &mut peer.notifications,
                 notification_bytes: &mut peer.notification_bytes,
-                timer: &*peer.timer,
+                pending_replies: &mut peer.pending_replies,
+                timer: &peer.timer,
                 cancellation: &peer.cancellation,
             },
             peer.connection.control(control, deadline),

@@ -85,6 +85,21 @@ is conservatively released only when that queue fully drains. A request admits
 at most 256 incoming envelopes, preventing a notification/request flood from
 creating unbounded work. Existing per-frame JSON bounds remain in force.
 
+`next_notification` also drives the same worker-owned receiving lane while idle.
+Dropping this observation or reaching its observation deadline preserves a healthy
+peer, partially received NDJSON and complete queued notifications. Completed
+notifications are retained before the postread deadline check, so a boundary
+timeout never loses an admitted event or publishes it as a late success.
+Unsupported requests still receive only the fixed exact-ID method-not-found reply.
+Up to seven pending reply futures remain peer-owned across idle abandonment, with
+their original finite write deadlines and receipt outcomes; later observers cannot
+recreate them or renew those deadlines. A later consequential exchange first
+settles inherited replies while continuing to consume bounded stdout, before its
+primary write may begin. An unpolled exchange does not take that ownership.
+Idle observations share the existing 256-envelope operation budget and notification
+queue limits. Owner cancellation/expiry, malformed input, EOF, foreign responses
+and failed reply writes retire the connection; these failures are not idle timeouts.
+
 Null, stale, foreign and duplicate response IDs close the request lane; stdio
 never uses HTTP's null-ID discovery exception. Cancellation, deadline, failure
 or abandonment of a polled exchange closes the underlying connection rather

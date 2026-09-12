@@ -1,5 +1,7 @@
 use super::*;
 
+mod idle;
+
 #[test]
 fn required_readiness_observes_only_selected_stdio_lifetime_and_connection() {
     struct FixedTimer(Instant);
