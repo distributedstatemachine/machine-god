@@ -19,12 +19,50 @@ owned checkpoint and history finalization. Cancellation and close must keep
 polling the native owner until its outcome settles. Close retires live ownership
 without deleting durable history.
 
-Prompt decoding accepts text and embedded text resources, preserving their order
-and resource URI labels. It bounds the joined text to 1 MiB, content blocks to
-4096, and individual URI labels to 4096 bytes. A resource URI is descriptive;
-decoding never reads local files, fetches remote resources or delegates to editor
-filesystem/terminal APIs. URI-only, binary and image resources are explicitly
-unsupported instead of silently disappearing from a submitted prompt.
+## Prompt resource context
+
+Typed prompt decoding preserves the order of text and embedded text resources,
+including embedded resource URI labels. It bounds joined canonical text to
+1 MiB, content blocks to 4096 and each URI to 4096 bytes. URI-only resources can
+accompany nonempty canonical text: their targets are separate advisory inputs,
+not invented user messages. Binary and image blocks remain explicitly unsupported.
+Decoding itself performs no filesystem, network, environment or editor operation.
+
+Only absolute local `file:` URIs with empty authority are eligible instruction
+targets. Percent decoding is strict UTF-8; traversal, control/NUL bytes,
+backslashes, remote authorities, queries and fragments are ineligible. Normalized
+targets are deduplicated and capped at 64. Invalid/over-limit targets retain at
+most 32 bounded omission records plus a count for additional omitted records;
+embedded text remains intact even when its URI is ineligible.
+
+The native context reader receives an explicit retained workspace scope and
+owned worker scope. Its future is inert before polling and checks cancellation
+before routing, opens and reads. Materialization retains the exact FIFO admission
+lease on the owned worker when the lease-bearing API is used. A target outside
+the admitted active roots or inside excluded state is omitted. Descriptor-relative
+opens reject symlinks and nonregular targets; target-file bytes are not read into
+the prompt. The reader gathers only `AGENTS.md` in the primary root and the
+applicable admitted target ancestors, root first, with shared directories
+deduplicated. No global/home lookup or unrelated directory scan is implied.
+
+Target depth is capped at 32 components, distinct instruction directories at
+128, each instruction file at 16 KiB and combined instruction text/framing at
+60 KiB. Missing instruction files are ordinary absence; invalid, unreadable,
+binary or oversized instructions produce explicit omissions. Whole instructions
+are omitted rather than silently truncated. A bounded provider-visible omission
+summary accompanies the materialized context. Retained descriptors prevent path
+replacement from redirecting the snapshot; cancellation aborts materialization.
+
+Materialized instructions use a separate `NativeResourcePromptContext`, not
+skill identity or canonical user text. Its versioned
+`machine_god.resource_prompt_context` metadata contains inert bounded bytes tied
+to the exact turn sequence and first user-message index. Continuation decoding
+rejects foreign checkpoints, oversized text and malformed versions without
+reading resources again. Host integration composes this provider-only data with
+other native user context under the shared 65,536-byte core limit; it never
+grants tools or permission provenance from instruction text.
+
+## Session configuration
 
 Permission modes are the native `ask`, `auto` and `yolo` selections. Changes
 affect future taken jobs, not a running turn or persisted permission rules.
