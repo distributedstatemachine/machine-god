@@ -67,7 +67,15 @@ fn exercise_http(result_nodes: usize, notification_nodes: usize, calls: usize, s
                 transport: TransportKind::StreamableHttp,
                 lifetime: McpPeerLifetime::OwnerControlled,
             };
-            let result = json!({"resultType":"complete","content":[],"structuredContent":vec![Value::Null; result_nodes]});
+            // Compact scalar values isolate the HTTP node ceiling. Nulls would
+            // exceed the engine's independent 256 KiB complete-result budget
+            // before it can emit ToolFinished, despite valid HTTP admission.
+            let result = json!({"resultType":"complete","content":[],"structuredContent":vec![json!(0); result_nodes]});
+            if result_nodes > 65_536 {
+                let bytes = serde_json::to_vec(&ToolOutput::success(result.clone())).unwrap().len();
+                assert!(bytes > 64 * 1024, "large result must exercise archive publication");
+                assert!(bytes < EngineLimits::default().max_cumulative_complete_tool_result_bytes.get(), "node regression must fit the independent engine byte budget");
+            }
             let expected = result.clone();
             let server = async {
                 respond(&listener, "server/discover", br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}"#, false).await;
@@ -111,13 +119,15 @@ fn exercise_http(result_nodes: usize, notification_nodes: usize, calls: usize, s
                 }).collect::<Vec<_>>();
                 fixture.runtime.close();
                 fixture.runtime.drain_retired(deadline(), CancellationToken::new()).await.unwrap();
-                assert_eq!(outputs.len(), calls);
+                assert!(matches!(events.last().map(|event| &event.payload), Some(TurnEvent::Completed { .. })), "SSE={sse}; terminal event: {:?}", events.last());
+                assert_eq!(outputs.len(), calls, "SSE={sse}");
                 if notification_nodes > 0 {
                     assert!(outputs[0].is_error);
                 } else {
                     for output in outputs { assert_eq!(output, &ToolOutput::success(expected.clone())); }
                     if result_nodes > 65_536 {
                         let stored = persisted(&record(&fixture), "call-0");
+                        assert_eq!(stored.content["type"], "tool_result_archive");
                         assert_eq!(archive.read(&stored.content), ToolOutput::success(expected));
                     }
                 }
