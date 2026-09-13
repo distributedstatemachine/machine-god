@@ -87,14 +87,19 @@ fn configured_client(archive: &Archive) -> ClientFixture {
                 writes,
                 &json!({"name":"lookup","inputSchema":{"type":"object"}}),
                 |id| {
-                    envelope(
-                        id,
-                        if id == 1 {
-                            url::URL
-                        } else {
-                            r#""result":{"resultType":"complete","content":[]}"#
-                        },
-                    )
+                    if id == 1 {
+                        envelope(id, url::URL)
+                    } else {
+                        // Exercise actual archive publication, not the
+                        // small-result inline path, before completion.
+                        envelope(
+                            id,
+                            &format!(
+                                r#""result":{{"resultType":"complete","content":[{{"type":"text","text":"{}"}}]}}"#,
+                                "x".repeat(70_000),
+                            ),
+                        )
+                    }
                 },
             )
         },
