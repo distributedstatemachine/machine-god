@@ -145,3 +145,18 @@ timeout projection. Pre-admission timeouts do not establish recovery. A second
 case deliberately reaches the original deadline during the admitted recovery
 poll. This remains a fixture correction requiring runtime verification, not an
 assertion about the original unlogged output or a product deadline change.
+
+The terminal correction subsequently passed both focused deadline-waker cases
+and the full 99-test terminal integration suite with Linux default concurrency,
+strict Clippy and a fresh canonical release helper at `3d2a64fa`.
+Evidence: `linux-3d2a64fa-terminal-focused.log`. This focused success does not
+replace the complete feature gate.
+
+Source investigation of the separate macOS abort failure did not establish a
+root cause. Its cleanup path uses bounded process-group snapshots and direct-child
+reaping, not the MCP startup inventory helper. The original captured output had
+neither existing collector-failure nor scan-expiry diagnostics. Failure-only
+test instrumentation now distinguishes aggregation sites, snapshot failure stages,
+quiescence rejection and reap outcomes/custody. It adds no production logging,
+clock/process observations, changed deadlines or error outcomes; it gathers
+evidence rather than claiming a repair for the unclassified original failure.
