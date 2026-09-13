@@ -160,3 +160,51 @@ test instrumentation now distinguishes aggregation sites, snapshot failure stage
 quiescence rejection and reap outcomes/custody. It adds no production logging,
 clock/process observations, changed deadlines or error outcomes; it gathers
 evidence rather than claiming a repair for the unclassified original failure.
+
+## Second full-feature review
+
+Candidate `6bceb863376748247316fcb05dea692c6ba28166` passed the complete
+replacement local gate: focused checks, pinned builds and strict Clippy, macOS
+serial and Linux default-concurrency workspace/doc tests, fresh release smokes,
+portable checks, dependency audit/policy and pinned-source drift. Python reported
+269 tests with 14 skips; rendered documentation and bounded policy checks passed.
+Evidence remains in the `macos-6bceb863-*`, `linux-6bceb863-*`,
+`auxiliary-6bceb863-gate.log` and `python-6bceb863-gate.log` files in the retained
+evidence directory. The prior macOS abort failure did not reproduce; this does
+not establish its original cause.
+
+Three fresh independent local reviewers compared the entire feature against
+`6736070cc70ff6040cfa92275e80a0e9a5172852`. They performed source review, not
+runtime reproductions or exhaustive line-by-line inspection of every changed
+file. All three completed their assigned tracks and rejected the candidate:
+
+- `mcp_r2_lifecycle`, P1: conversation admission waits for authentication refresh
+  with a newly created token instead of the runtime's actual preparation token.
+  Cancelling an admitted prompt or beginning quiescence therefore cannot stop
+  that waiter while shared refresh is pending. Forward caller cancellation
+  without cancelling the controller-owned shared refresh job.
+- `mcp_r2_correctness`, P2: deferred tool-name allocation omits original builtin
+  reservations when a direct runtime caller supplies no new reservations. The
+  controller path resupplies them and is unaffected. Preserve the original set
+  during allocation, not only in the resulting publication.
+- `mcp_r2_resources`, P2: full replacement clears old-generation byte accounting
+  when peers drain even though old tool routes/bindings can remain owned by
+  registrations or native call continuations. Same-peer refresh tracks these
+  owners weakly; full replacement does not. Arbitrary external snapshots could
+  have a separate caller budget, but the finding also concerns retained native
+  operation ownership. Extend accounting without duplicating peer charges.
+
+These are source-supported findings, not measured performance claims. Repairs
+require deterministic regressions, the complete replacement local gate and
+three newly assigned reviewers before remote delivery.
+
+The three reviewers subsequently authored non-overlapping repairs in isolated
+worktrees: `2d060daa` forwards admission cancellation, `4867c07f` inherits builtin
+reservations during allocation, and `0cbd9059` retains full-reload generation
+accounting. These authors cannot count as fresh reviewers for the replacement.
+Regressions cover active cancellation and quiescence during blocked shared
+refresh, initial-only name reservations, retained native calls/bindings/server
+routes, mixed drained and pending generations, byte/count rejection without
+publication changes, and capacity recovery after final owner release. Their
+formatting checks passed; build and runtime acceptance require the replacement
+gate rather than the rejected candidate's evidence.

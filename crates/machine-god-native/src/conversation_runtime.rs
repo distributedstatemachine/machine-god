@@ -807,6 +807,7 @@ impl NativeConversationRuntime {
                     now_ms,
                     &lease.permit,
                     workspace,
+                    cancellation,
                 )
                 .await?;
             let handle = turn.handle();

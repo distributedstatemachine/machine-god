@@ -85,11 +85,35 @@ pub(super) struct RetiredCatalog {
     previous: Option<Weak<Publication>>,
     tools: Vec<Weak<ToolRoute>>,
     bindings: Vec<Weak<McpSubmissionRuntime>>,
+    // Full replacement also retires the peer. A native call or feature round
+    // can retain that server after releasing its lane and after peer cleanup.
+    // Same-peer refresh must not observe servers still owned by the active view.
+    servers: Vec<Weak<ServerRoute>>,
+    // The conservative peer-retirement total covers these allocations until
+    // the entire queue drains. Do not charge the same generation twice.
+    peer_charge_pending: bool,
     charge: usize,
 }
 impl RetiredCatalog {
+    pub(super) fn for_replacement(publication: &Arc<Publication>) -> Self {
+        Self {
+            publication: Arc::downgrade(publication),
+            previous: publication.previous.as_ref().map(Arc::downgrade),
+            tools: publication.tools.values().map(Arc::downgrade).collect(),
+            bindings: publication
+                .tools
+                .values()
+                .map(|tool| Arc::downgrade(&tool.binding))
+                .collect(),
+            servers: publication.servers.iter().map(Arc::downgrade).collect(),
+            peer_charge_pending: true,
+            charge: publication.retained_bytes,
+        }
+    }
+
     fn live(&self) -> bool {
-        self.publication.strong_count() != 0
+        self.peer_charge_pending
+            || self.publication.strong_count() != 0
             || self
                 .previous
                 .as_ref()
@@ -99,7 +123,15 @@ impl RetiredCatalog {
                 .bindings
                 .iter()
                 .any(|binding| binding.strong_count() != 0)
+            || self.servers.iter().any(|server| server.strong_count() != 0)
     }
+}
+pub(super) fn peer_retirement_drained(state: &mut State) {
+    state.retired_byte_charge = 0;
+    for record in &mut state.retired_catalogs {
+        record.peer_charge_pending = false;
+    }
+    state.retired_catalogs.retain(RetiredCatalog::live);
 }
 pub(super) fn retained_catalog_charge(state: &mut State) -> Result<usize> {
     state.retired_catalogs.retain(RetiredCatalog::live);
@@ -107,7 +139,13 @@ pub(super) fn retained_catalog_charge(state: &mut State) -> Result<usize> {
         .retired_catalogs
         .iter()
         .try_fold(0usize, |total, record| {
-            total.checked_add(record.charge).ok_or(Error::Limit)
+            total
+                .checked_add(if record.peer_charge_pending {
+                    0
+                } else {
+                    record.charge
+                })
+                .ok_or(Error::Limit)
         })
 }
 
@@ -169,6 +207,8 @@ impl NativeMcpRuntime {
                 previous: previous.previous.as_ref().map(Arc::downgrade),
                 tools: Vec::new(),
                 bindings: Vec::new(),
+                servers: Vec::new(),
+                peer_charge_pending: false,
                 charge: previous.retained_bytes,
             },
             previous,

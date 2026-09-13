@@ -165,6 +165,10 @@ fn reserved_names<'a>(previous: &'a Publication, reserved: &'a [&str]) -> Result
         return Err(Error::Limit);
     }
     let mut names: BTreeSet<_> = reserved.iter().copied().collect();
+    // Reservations belong to the publication lineage, even when a direct
+    // runtime caller does not resupply them with this deferred batch. Include
+    // them before allocation and the final union cardinality check.
+    names.extend(previous.reserved.iter().map(AsRef::as_ref));
     names.extend(
         previous
             .tools

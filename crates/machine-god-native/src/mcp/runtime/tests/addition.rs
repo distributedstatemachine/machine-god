@@ -187,6 +187,47 @@ fn addition_reserves_existing_names_and_builtins_without_renaming_old_tools() {
 }
 
 #[test]
+fn addition_inherits_initial_builtin_reservations_without_resupplying_them() {
+    let runtime = standalone();
+    let builtin = "mcp_optional_work";
+    runtime
+        .publish(
+            runtime
+                .prepare_candidate(vec![server("required", &["lookup"])], &[builtin])
+                .unwrap(),
+        )
+        .unwrap();
+    let expected = runtime.publication_checkpoint().unwrap();
+    let addition = runtime
+        .prepare_addition(vec![server("optional", &["work"])], &[], &expected)
+        .unwrap();
+    runtime.publish_addition(addition).unwrap();
+
+    let publication = active(&runtime);
+    assert_eq!(
+        names(&publication),
+        ["mcp_required_lookup", "mcp_optional_work_2"]
+    );
+    assert!(
+        publication
+            .reserved
+            .iter()
+            .any(|name| name.as_ref() == builtin)
+    );
+    // Both executable routing and model-visible registrations remain disjoint
+    // from the builtin name, not just the stored reservation metadata.
+    assert!(
+        !publication
+            .tools
+            .contains_key(&ToolName::new(builtin).unwrap())
+    );
+    let exposed = ToolName::new("mcp_optional_work_2").unwrap();
+    assert!(publication.tools.contains_key(&exposed));
+    let registration = publication.snapshot.tools()[1].executable().unwrap();
+    assert_eq!(registration.spec().name, exposed);
+}
+
+#[test]
 fn addition_revalidates_each_existing_and_new_guard_before_publication() {
     for existing in [false, true] {
         for index in 0..crate::mcp::submission::MAX_MCP_RUNTIME_CANCELLATION_GUARDS {

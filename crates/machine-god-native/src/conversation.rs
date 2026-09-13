@@ -10,9 +10,9 @@ use std::task::{Context, Poll};
 
 use futures_core::Stream;
 use machine_god_core::{
-    BoxFuture, ContentBlock, EngineError, EngineEvent, InferenceOptions, Prompt, Role, Session,
-    SessionId, SessionRecord, SessionRevision, SessionStoreErrorKind, SessionTurnPreparation,
-    StopReason, ToolContext, Turn, TurnEvent, TurnHandle,
+    BoxFuture, CancellationToken, ContentBlock, EngineError, EngineEvent, InferenceOptions, Prompt,
+    Role, Session, SessionId, SessionRecord, SessionRevision, SessionStoreErrorKind,
+    SessionTurnPreparation, StopReason, ToolContext, Turn, TurnEvent, TurnHandle,
 };
 use serde_json::{Value, json};
 
@@ -947,12 +947,17 @@ impl NativeConversation {
                 now_ms,
                 permit.as_ref(),
                 WorkspaceAdmission::Current,
+                CancellationToken::new(),
             )
             .await?;
         turn.lease.as_mut().expect("admitted turn retains lease").1 = permit;
         Ok(turn)
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Admission retains the exact runtime permit, workspace and cancellation together."
+    )]
     pub(crate) async fn start_with_policy_admitted(
         &self,
         input: PendingInput,
@@ -961,6 +966,7 @@ impl NativeConversation {
         now_ms: i64,
         permit: &LifecyclePermit,
         workspace: Option<crate::NativeWorkspaceScopeSnapshot>,
+        cancellation: CancellationToken,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         if self
             .lifecycle
@@ -976,11 +982,16 @@ impl NativeConversation {
             now_ms,
             Some(permit),
             WorkspaceAdmission::Taken(workspace),
+            cancellation,
         )
         .await
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        clippy::too_many_arguments,
+        reason = "Keep exact admission authority and rollback ownership in one linear scope."
+    )]
     async fn start_with_policy_inner(
         &self,
         mut input: PendingInput,
@@ -989,6 +1000,7 @@ impl NativeConversation {
         now_ms: i64,
         permit: Option<&LifecyclePermit>,
         workspace: WorkspaceAdmission,
+        cancellation: CancellationToken,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         let lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
@@ -998,8 +1010,10 @@ impl NativeConversation {
             let controller = controller
                 .upgrade()
                 .ok_or(NativeConversationError::McpRequiredUnavailable)?;
+            // Cancel only this admission's waiter. The controller retains the
+            // shared refresh for its other observers and finalization.
             controller
-                .refresh_authentication_configured(machine_god_core::CancellationToken::new())
+                .refresh_authentication_configured(cancellation)
                 .await
                 .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
             controller

@@ -6,6 +6,8 @@ use super::*;
 use crate::mcp::control::McpFeatureControlAuthority;
 use futures_executor::block_on;
 
+mod replacement;
+
 fn active(runtime: &NativeMcpRuntime) -> Arc<Publication> {
     runtime.state.lock().unwrap().active.clone().unwrap()
 }

@@ -238,12 +238,26 @@ impl NativeMcpRuntime {
             .checked_add(previous_charge)
             .ok_or(NativeMcpRuntimeError::Limit)?;
         let catalog_charge = refresh::retained_catalog_charge(&mut state)?;
-        if retired_charge
-            .checked_add(candidate.retained_bytes)
-            .and_then(|bytes| bytes.checked_add(catalog_charge))
-            .is_none_or(|total| total > self.limits.max_retained_bytes)
+        if state.active.is_some() && state.retired_catalogs.len() >= self.limits.max_retired_servers
+            || retired_charge
+                .checked_add(candidate.retained_bytes)
+                .and_then(|bytes| bytes.checked_add(catalog_charge))
+                .is_none_or(|total| total > self.limits.max_retained_bytes)
         {
             return Err(NativeMcpRuntimeError::Limit);
+        }
+        // Reserve and observe the complete original allocation graph before
+        // changing visibility. Peer closure is not proof that calls, captured
+        // registrations or unsent bindings have released their old generation.
+        let retirement = state
+            .active
+            .as_ref()
+            .map(refresh::RetiredCatalog::for_replacement);
+        if retirement.is_some() {
+            state
+                .retired_catalogs
+                .try_reserve(1)
+                .map_err(|_| NativeMcpRuntimeError::Limit)?;
         }
         state.retired_byte_charge = retired_charge;
         let previous = state.active.take();
@@ -258,6 +272,9 @@ impl NativeMcpRuntime {
                 .retired
                 .store(true, std::sync::atomic::Ordering::Release);
             state.retired.extend(previous.servers.iter().cloned());
+        }
+        if let Some(retirement) = retirement {
+            state.retired_catalogs.push(retirement);
         }
         state.active = Some(candidate);
         drop(state);
@@ -327,7 +344,7 @@ impl NativeMcpRuntime {
                     .lock()
                     .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
                 if state.retired.is_empty() {
-                    state.retired_byte_charge = 0;
+                    refresh::peer_retirement_drained(&mut state);
                     return Ok(std::mem::take(&mut state.completions));
                 }
                 state.retired.first().cloned()

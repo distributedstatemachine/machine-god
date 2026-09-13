@@ -199,6 +199,12 @@ native finalization and drops native/core work before releasing that lease.
 Dropping the runtime clears pending inputs but does not invalidate a separately
 owned active turn. `cancel_queued` and `clear_queued` affect pending input only.
 
+Authentication refresh before core turn creation observes the same preparation
+cancellation token as the taken runtime input. Cancelling admission or beginning
+quiescence stops that input's refresh wait and releases admission ownership;
+it does not cancel the controller-owned refresh job shared with other observers.
+Cancelled refresh admission creates no provider turn and is not requeued.
+
 `enqueue_with_skills` additionally pins a bounded effect-free invocation plan to
 that exact input and charges retained selections to the queue budget. After FIFO
 take, an owned worker revalidates and materializes selections outside runtime

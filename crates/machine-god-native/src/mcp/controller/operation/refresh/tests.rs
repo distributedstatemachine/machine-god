@@ -16,6 +16,8 @@ use std::{
     task::{Context, Waker},
 };
 
+mod admission;
+
 fn generation(phase: NativeMcpStartupPhase) -> Arc<Generation> {
     Arc::new(Generation {
         phase,

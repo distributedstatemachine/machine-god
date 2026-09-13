@@ -57,8 +57,13 @@ server configuration/authentication and schema allocations. Limits cap 64 server
 131,072 tools and a conservative 256 MiB retained candidate charge, including
 captured executable specifications and search metadata; callers may lower caps.
 Publication charges active and retired generations together against that byte
-budget. Conservative retired-generation charges remain until the retired queue
-fully drains, preventing repeated reloads from multiplying retained bindings.
+budget. Conservative peer-retirement charges remain until the retired queue
+fully drains. Weak generation records then preserve charges while original
+publications, tool routes, submission bindings or server routes remain owned,
+including native calls suspended after releasing their peer lane. Each record
+is charged once across this handoff; earlier drained generations remain charged
+when a later generation's peers enter retirement. The bounded retirement-record
+count is checked before replacing the active publication.
 Native peer transport buffers retain their separately bounded transport budgets;
 unpublished candidates remain explicitly caller-owned rather than a hidden queue.
 Every publication owns one captured registration per tool, reused on reselection.
@@ -154,7 +159,9 @@ configured retirement count and charged together with active publications and
 retired-peer generations. Weak observations cover both captured old tool routes
 and old submission bindings, not merely publication lifetime. Charges are
 pruned only when those owners disappear; draining peers cannot reset these
-catalog charges. Repeated refresh therefore remains finite even when a caller
+catalog charges. Full replacement additionally observes old server routes, while
+same-peer refresh does not charge a server still owned by the active view.
+Repeated refresh therefore remains finite even when a caller
 holds an old registration or unsent submission.
 
 Publications retain the original bounded builtin-name reservations, including
