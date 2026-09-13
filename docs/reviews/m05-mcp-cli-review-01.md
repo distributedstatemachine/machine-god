@@ -370,3 +370,69 @@ The corrected cases both passed in 1.85 seconds with the canonical release
 helper; pinned CLI Clippy, formatting and the bounded documentation check also
 passed. Logs use the `stdio-fixture-repair-` prefix. These focused results do not
 replace the complete gate or establish a corrected old-selector negative run.
+
+## R4 replacement gate and independent review
+
+Candidate `8dfe92553132bc4d9548348fd781281b977ec6ca` repairs the admitted
+stdio fixtures above. Its complete review base remains
+`6736070cc70ff6040cfa92275e80a0e9a5172852`; the feature spans 498 changed files.
+
+An early focused run failed two PTY fixtures during their preliminary child-reap
+admission check. Both passed unchanged in separate processes, and the complete
+focused replacement passed. Neither those retries nor later green gates
+establish the original cause or a product repair.
+
+During a later interruption, the original temporary evidence/cache directories
+and gate process disappeared. Earlier tool output observed 3,352 macOS native
+passes and 12 ignores, but not terminal completion of that full gate. Its final
+status was not recoverable. References above to logs under `/private/tmp` record
+their original locations; those local logs are no longer available. Historical
+candidate and regression commits remain in Git. Acceptance instead uses a
+complete replacement gate, with evidence retained under the ignored directory
+`target/agent-gates/mcp-8dfe9255-recovery.OStCnm`.
+
+The first recreated Linux container omitted a reaping init. Its PID 1 was
+`sleep`, and orphaned zombie descendants caused five terminal-cleanup failures.
+The failure log and process snapshot are retained separately. Recreating the
+same unprivileged environment with `--init`, without changing source, tests,
+deadlines or default test concurrency, passed all five exact cases, the complete
+99-test terminal integration suite and the full Linux gate. The container must
+reap adopted descendants; this is an environment correction, not a product fix
+or an erased failed result.
+
+The replacement Rust 1.94.1 gate passed both platform builds, strict Clippy,
+focused regressions, Linux default-concurrency and macOS serial workspace/doc
+tests, fresh release smokes, drift, audit/policy, portable compilation and
+documentation checks. macOS native units reported 3,352 passes and 12 ignores;
+CLI units reported 513 passes and six ignores. Python reported 269 tests with
+14 skips in 183.837 seconds. All accepted gate logs end in `gate_exit=0`;
+the original no-init failure is not an accepted gate log.
+
+Three newly spawned independent reviewers then inspected the same full-feature
+candidate in isolated worktrees. These were risk-directed source reviews, not
+Bugbot, exhaustive line-by-line inspection or independent runtime execution.
+
+| Track | Result |
+| --- | --- |
+| Correctness/API | Zero actionable introduced findings. |
+| Lifecycle/platform | Zero actionable introduced findings. |
+| Performance/resources | Zero actionable introduced findings; no heap measurement or performance claim. |
+
+The three final reports are retained beside the replacement gate logs.
+Every reviewer worktree was confirmed clean and removed. The idle test
+container was also removed after checking that only its init and sleep process
+remained; named work/cache volumes and evidence were preserved.
+
+Exact feature CI `34769124014` passed all four native platform jobs and its
+aggregate. Benchmark `34769124044` passed both producing jobs and its aggregate;
+the exact-candidate bootstrap and upstream artifacts were verified unexpired.
+`main` was advanced from the review base to the candidate by normal fast-forward,
+without force. These feature-run results do not substitute for exact-main gates.
+
+Exact-main CI `34770898541` subsequently passed all four native platforms and
+its aggregate. Main Benchmark `34770898622` passed both producing jobs and its
+aggregate. Both expected exact-candidate main artifacts were rechecked as
+present and unexpired. This closes the complete MCP feature's regression gates,
+not M07 performance thresholds. The documentation-only delivery seal adds no
+product behavior and requires its own lightweight aggregate gates, not another
+adversarial product-review cycle.

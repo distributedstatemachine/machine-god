@@ -30,16 +30,16 @@ functionality merely because it shares an implementation with an older mode.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `62`
-- Delivered main: `431030b930c0c6bcc51c899a66c1fcb97a92e701`
-- Main CI: `34581407701` (`GREEN`)
-- Main Benchmark evidence: `34581407764` (`GREEN`)
+- Delivered slices: `63`
+- Delivered main: `8dfe92553132bc4d9548348fd781281b977ec6ca`
+- Main CI: `34770898541` (`GREEN`)
+- Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m63-mcp-cli`
-- Active phase: `M05 complete MCP CLI implementation`
-- Next gate: `complete MCP local feature gate, fresh adversarial review and exact remote evidence`
+- Active phase: `M05 complete MCP delivery seal`
+- Next gate: `documentation-only lightweight gates, then complete ACP CLI implementation`
 <!-- canonical-live-status:end -->
 
-The complete terminal, combined CLI, background CLI and skills CLI are delivered features.
+The complete terminal, combined CLI, background, skills and MCP CLI are delivered features.
 The latest behavior commit passes the full Rust 1.94.1 local gate, three fresh
 independent reviews with zero actionable findings, and both feature and main
 CI/Benchmark gates. Native Linux
@@ -52,8 +52,9 @@ do not increment the count or replace the canonical behavior evidence.
 Detailed candidate, failure, remediation and review history is retained in the
 [terminal review](reviews/m03-terminal-full-review-01.md),
 [combined CLI review](reviews/m03-cli-full-review-01.md),
-[background CLI review](reviews/m05-background-cli-review-01.md), and
-[skills CLI review](reviews/m05-skills-cli-review-01.md).
+[background CLI review](reviews/m05-background-cli-review-01.md),
+[skills CLI review](reviews/m05-skills-cli-review-01.md), and
+[MCP CLI review](reviews/m05-mcp-cli-review-01.md).
 This compact plan does not repeat that history.
 
 ### Delivered terminal acceptance boundary
@@ -266,6 +267,7 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 60 | Complete combined CLI, interactive conversation, permissions, workspace authority, session lifecycle, history/undo and recording | [CLI](cli.md), [host](native-reference-host.md) | [review](reviews/m03-cli-full-review-01.md) | `1a142174` |
 | 61 | Complete interactive background list/stop/open/logs, owned terminal control and unified read-only histories | [background CLI](background-cli.md), [host](native-reference-host.md) | [review](reviews/m05-background-cli-review-01.md) | `fe7a793c` |
 | 62 | Complete skills commands, local/Git management, inline picking and prompt-bound invocation/context | [skills CLI](skills-cli.md) | [review](reviews/m05-skills-cli-review-01.md) | `431030b9` |
+| 63 | Complete production MCP, modern stdio/HTTP, tool and human continuations, OAuth, catalog activation and CLI composition | [MCP CLI](mcp-cli.md) | [review](reviews/m05-mcp-cli-review-01.md) | `8dfe9255` |
 
 The exact delivered-main record is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
@@ -355,12 +357,10 @@ The [skills CLI contract](skills-cli.md) owns durable behavior and the
 Import components are retained on `agent/m61-fx-session-import` at `5e77b1b4`
 for history only; foreign-session import is no longer required. Do not merge it.
 
-## Active complete feature: production MCP and CLI
+## Delivered production MCP and CLI boundary
 
-Build one complete production MCP feature, including `/mcp`, from accepted
-`main`. MCP component commits are not deliveries; do not push an accepted-feature
-claim before its own full local gate, three fresh review tracks and exact remote
-gates.
+Production MCP, including `/mcp`, is one complete delivered feature. Component
+commits are not separate deliveries. Its accepted boundary covers:
 
 - Complete `/mcp` summary/list/path/add/remove/reload, resource
   list/templates/read/complete, prompt list/get/complete, auth with explicit
@@ -397,81 +397,71 @@ gates.
   fixtures, two-session isolation, stale authority, cancellation, partial writes,
   failed reload/auth/logout, fresh-release CLI and supported platforms.
 
-Integrated components include configuration/command parsing, negotiation,
-contextual forwarding, endpoint/header admission, seven human feature-request
-projections, SSE framing, profile persistence, raw catalog assembly and one-shot
-submission. Native profile management and thin `/mcp` startup/dispatch/receipts
-are composed, but configuration saves explicitly do not activate a runtime.
-Owned stdio peers drive modern discovery, correlated requests, raw catalogs and
-owned notification/reply queues. Owned HTTP peers compose modern discovery,
-exact proof-bearing HTTP/TLS POSTs, JSON/SSE response streams and cleanup.
-Legacy protocol variants, downgrade/restart chains, HTTP+SSE sessions/listeners,
-completion registries and completion UI have been removed; modern streaming,
-URL recovery, exact request proofs and cancellation remain.
-Exact JSON values now survive provider, permission and history codecs without
-rounding or treating literal private-looking keys as scalar values. Complete
-tool/resource/template/prompt descriptors and deterministic named candidates are
-admitted separately from runtime publication and execution authority.
-Schema/index/pattern storage is now charged against independent retained-memory
-and catalog budgets; exhausted optional pattern caches still evaluate on demand.
+The integrated implementation preserves exact JSON across provider, permission
+and history codecs. Admitted schemas and complete descriptors back typed
+requests, search/select, progress and modern headers without granting authority
+from raw catalog pages. Independent schema, descriptor, catalog and model-spec
+budgets include retained generations and bounded optional caches.
 
-Admitted schemas now back typed tool requests, modern client metadata,
-progress-token selection and modern HTTP argument headers. These projections
-retain the existing one-shot permission/writer boundary; raw preparation remains
-strict. Catalog page and stdio runtime capacities match the pinned per-server
-tool/resource/prompt cardinalities without removing independent byte limits.
-Search/select retain complete admitted descriptions and schemas under separate
-catalog/model-spec budgets. Peer-minted request reservations now travel through
-permission and submission; abandoning unsent work releases only its own slot.
-Native permission preparation now composes exact builtin/MCP routing, required
-schema review, per-turn workspace evidence and credential-free reusable keys.
-Proof and request ownership remain checked through core admission and writing.
+Native startup, reload and demand activation retain exact profile, credential,
+publication and cleanup ownership. Saving configuration does not activate it.
+Credential refresh preserves original expiry and never replays old requests;
+subscriptions and catalog/result caches preserve descriptor identity and
+invalidation. One-shot permission proofs survive through final submission.
+Tool and human continuations retain their original session/request/round,
+consent and cancellation boundaries through finalization.
 
-Exact conversation/turn routing is integrated into both CLI setup paths. Owned
-OAuth services share actual host workers and selected profile credentials;
-startup/reload guards stored auth with exact profile snapshots and retains challenges.
-Typed feature/input codecs compose with DNS/TLS, archived calls, consented forms
-and URL prompts. CLI startup/reload/settlement retain exact profile and cleanup
-custody; required readiness blocks prompts while interactive management stays open.
-Explicit auth/logout and modern URL recovery share native browser ownership.
-Human resource-read/prompt-get continuations now compose the same selected
-presenter and browser owner with exact command/session origins and consuming
-original-request custody. Human waits release the peer lane while retaining
-bounded operation ownership; neither consent nor a resumed round selects a new
-publication or descriptor.
+The [CLI contract](mcp-cli.md) and linked MCP contracts own durable behavior;
+the [MCP review history](reviews/m05-mcp-cli-review-01.md) retains candidate,
+failure, repair and acceptance evidence. The full local gate, three fresh R4
+reviews and exact feature/main CI and artifact-producing Benchmark gates passed.
+Both exact-main artifacts are retained and unexpired. This is regression
+acceptance, not an M07 performance claim.
+Acceptance includes configured Ask/Resume and interactive composition, actual
+production stdio helpers, HTTP fixtures, OAuth/browser/logout, human form/URL
+recovery, archived results, blocked-output paging, pipe EOF and PTY transitions.
 
-Credential generations now retain their original selected-clock expiry across
-repeated acquisitions. Startup keeps bounded original lease observations, and
-HTTP checks those leases through I/O and response decoding. New prompt admission,
-unpinned MCP use and human feature commands coalesce due authentication refresh
-against the exact active configuration, without activating saved edits or replaying
-old requests. Modern subscription streams and exact startup acknowledgements now
-compose with per-server policy state. Demand-driven tools refresh conditionally
-rebinds on the same peer and preserves controller publication custody; unchanged
-descriptors avoid rebinding. Lazy feature catalogs use bounded TTL/backoff caches.
-Original caller cancellation is checked at the final publication boundary.
-Complete read/get result caches share the bounded catalog budget and retain
-original receipt expiry, descriptor identity and invalidation epochs. Demand-owned
-subscriptions activate direct candidates and expand admitted human resource URIs.
-Scoped credential identity owners compose missing credentials, overlapping reloads,
-failed candidates and retirement without historical receipts extending selection.
-Literal slash-command and human-modal acceptance fixtures are integrated.
+Runtime/resource state stays native and core stays provider-neutral and
+effect-free. ACP follows this complete feature; pinned `teams` means
+account/team selection, not subagents.
 
-Configured Ask/Resume startup now composes model search/select/call and archived
-results; optional activation is demand-owned. Composed OAuth/browser/logout,
-human form/URL recovery, blocked-output paging, physical pipe EOF and PTY
-recording/session-transition tests pass with the exact fresh release helper.
-The 24 focused CLI tests use explicit local producers; PTY test children exercise
-the production capture/interactive host, not top-level provider discovery.
-The [MCP review history](reviews/m05-mcp-cli-review-01.md) records rejected candidates. The complete fresh-release local
-gate, three fresh reviews and exact remote artifact gates remain required.
-Raw pages grant no execution authority; preserve exact-number, reference and
-server-authoritative schema semantics through the complete feature gate.
-The coordinator owns exports, shared runtime interfaces, host/CLI composition
-and this ledger. Subsequent transport, permission and authentication lanes use
-the agreed typed interfaces with non-overlapping files. Keep runtime/resource
-state native; core remains provider-neutral and effect-free. ACP follows this
-complete feature; pinned `teams` means account/team selection, not subagents.
+## Next complete feature: modern ACP CLI
+
+Implement one complete native `acp` feature on `agent/m64-acp-cli` after the
+MCP documentation seal. Reuse native orchestration; keep CLI limited to host I/O.
+Do not deliver codec, session or interaction fragments separately.
+
+- ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
+  new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.
+  Preserve the pinned 8 MiB frame and 32 pending-outbound bounds, one active
+  prompt, correlation, backpressure, malformed-input handling and EOF cleanup.
+- Native session creation/origin, bounded scoped listing, owned transitions,
+  model/permission configuration and current native persistence. Load projects
+  saved history without executing tools; resume does not replay history.
+  Stream text/resource prompts, supported command and tool updates, and emit
+  the prompt response only after native history/checkpoint finalization.
+- Correlated permission and modern form/URL elicitation requests retain exact
+  session/turn/operation/round custody. Session grants are not persistent rules.
+  Add an explicitly injected client-managed URL endpoint and modern
+  `elicitation/complete` tied to continuation completion, including failure,
+  cancellation and stale/drop invalidation; never restore legacy URL registries.
+- Session `mcpServers` is authoritative and ephemeral for new/load/resume:
+  absent or empty means none, not profile fallback. Admit modern stdio and HTTP,
+  literal environment selection and resolved Authorization without persisting
+  injected config/secrets or using stored credentials. Require readiness,
+  atomic replacement, old-selection preservation on failure and owned retirement.
+- Preserve native filesystem/terminal execution and cleanup. The pinned client
+  capability flags are inert; do not invent editor-side delegation. Exclude
+  deprecated SSE transport, historical negotiation, foreign-session import and
+  WASM-only session removal. Modern HTTP SSE response framing remains supported.
+- Test actual wire/CLI composition, permission round trips, history projection,
+  cancellation/EOF/blocked output, failed/stale replacement, cross-session MCP
+  isolation and sentinels proving no profile/credential fallback or writes.
+
+Parallel worktrees may own native session/driver, native interaction plus
+ephemeral MCP activation, and pure wire/thin CLI lanes. Freeze shared interfaces
+first and assign each shared file to one owner. The coordinator integrates and
+runs the full feature gate, then three fresh reviews and exact remote evidence.
 
 ## Required gates
 
@@ -485,6 +475,8 @@ use this canonical full-gate recipe in one shell. Both Linux and macOS runtime
 tests require `/bin/bash`, `/bin/zsh` and tmux; install them before starting.
 Containerized runs need an unprivileged test UID without DAC-bypass capabilities,
 a passwd entry, private home and valid login shell before their first test.
+They also need a reaping init (for example Docker `--init`) so adopted child
+processes are reaped; a bare `sleep` as PID 1 does not satisfy the cleanup gate.
 Start with clean fixtures; running permission tests as root or reusing root-owned
 fixture directories does not establish the supported Linux gate.
 Keep their normal profile behavior. Concurrent builds can contend with
