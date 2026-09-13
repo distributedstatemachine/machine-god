@@ -34,9 +34,9 @@ functionality merely because it shares an implementation with an older mode.
 - Delivered main: `8dfe92553132bc4d9548348fd781281b977ec6ca`
 - Main CI: `34770898541` (`GREEN`)
 - Main Benchmark evidence: `34770898622` (`GREEN`)
-- Active branch: `agent/m63-mcp-cli`
-- Active phase: `M05 complete MCP delivery seal`
-- Next gate: `documentation-only lightweight gates, then complete ACP CLI implementation`
+- Active branch: `agent/m64-acp-cli`
+- Active phase: `M05 complete modern ACP implementation`
+- Next gate: `integrate full ACP feature, focused checks, then complete local feature gate`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered features.
