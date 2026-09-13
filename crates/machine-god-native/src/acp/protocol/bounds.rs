@@ -96,7 +96,7 @@ pub(super) fn encode(message: &AcpMessage) -> Result<Vec<u8>, AcpProtocolError> 
         }
     };
     if let Some(root) = root {
-        validate_tree(root, initial_depth)?;
+        super::validate_value(root, initial_depth)?;
     }
     let mut writer = FrameWriter { bytes: Vec::new() };
     serde_json::to_writer(&mut writer, message).map_err(|_| AcpProtocolError::FrameTooLarge)?;
@@ -110,7 +110,7 @@ pub(super) fn encode(message: &AcpMessage) -> Result<Vec<u8>, AcpProtocolError> 
     Ok(writer.bytes)
 }
 
-fn validate_tree(root: &Value, initial_depth: usize) -> Result<(), AcpProtocolError> {
+pub(super) fn validate_tree(root: &Value, initial_depth: usize) -> Result<(), AcpProtocolError> {
     let mut frames = Vec::<Children<'_>>::new();
     let mut next = Some(root);
     let mut nodes = 0usize;

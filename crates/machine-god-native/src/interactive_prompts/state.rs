@@ -227,6 +227,26 @@ impl Shared {
         result
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn poll_pending(&self, token: &Token, cx: &mut Context<'_>) -> Poll<()> {
+        let wake = cx.waker().clone();
+        let (result, old) = {
+            let mut state = self.lock();
+            if !state.closed
+                && state
+                    .entries
+                    .iter()
+                    .any(|entry| entry.token == *token && !entry.answered)
+            {
+                (Poll::Pending, state.ui_wake.replace(wake))
+            } else {
+                (Poll::Ready(()), Some(wake))
+            }
+        };
+        drop(old);
+        result
+    }
+
     pub fn reply(&self, token: &Token, response: Response) -> Result<(), Error> {
         let payload = {
             let state = self.lock();
@@ -478,5 +498,51 @@ mod tests {
         let state = bridge.shared.state.lock().err().unwrap().into_inner();
         assert!(state.entries.is_empty());
         assert_eq!(state.bytes, 0);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn pending_observer_waker_callbacks_run_outside_inbox_lock() {
+        use machine_god_reentrant_waker_test::{Callback, new};
+        for callback in [Callback::Clone, Callback::Drop, Callback::Wake] {
+            let (bridge, mut inbox) =
+                NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default())
+                    .unwrap();
+            inbox.activate(principal()).unwrap();
+            let mut pending = bridge.prompt(request());
+            assert!(
+                pending
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+            let Poll::Ready(Some(view)) =
+                inbox.poll_prompt(&mut Context::from_waker(Waker::noop()))
+            else {
+                panic!("view");
+            };
+            let shared = Arc::clone(&bridge.shared);
+            let (waker, calls) = new(callback, move || {
+                assert!(shared.state.try_lock().is_ok());
+            });
+            assert!(
+                inbox
+                    .poll_pending(view.token(), &mut Context::from_waker(&waker))
+                    .is_pending()
+            );
+            assert!(
+                inbox
+                    .poll_pending(view.token(), &mut Context::from_waker(&waker))
+                    .is_pending()
+            );
+            drop(pending);
+            assert!(
+                inbox
+                    .poll_pending(view.token(), &mut Context::from_waker(&waker))
+                    .is_ready()
+            );
+            drop(waker);
+            assert!(calls.calls() > 0);
+        }
     }
 }

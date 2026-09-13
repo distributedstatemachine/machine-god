@@ -1138,8 +1138,9 @@ pub use read_tool_result::{
 ))]
 pub use reference_host::{
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
-    NativeReferenceHostConversationOptions, NativeReferenceHostMcpOptions,
-    NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,
+    NativeReferenceHostConversationOptions, NativeReferenceHostMcpEphemeralStartupOptions,
+    NativeReferenceHostMcpOptions, NativeReferenceHostPermissionOptions,
+    NativeReferenceHostTerminalOptions,
 };
 pub use rename_file::{
     MAX_RENAME_FILE_PATH_BYTES, MAX_RENAME_FILE_PATH_COMPONENTS,

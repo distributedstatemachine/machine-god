@@ -404,6 +404,17 @@ impl NativeInteractivePromptInbox {
     ) -> Poll<Option<NativeInteractivePromptView>> {
         self.shared.poll_prompt(cx)
     }
+
+    /// Observe removal of an already displayed request without polling or
+    /// retaining another payload. Used by connection-scoped correlation owners.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn poll_pending(
+        &self,
+        token: &NativeInteractivePromptToken,
+        cx: &mut Context<'_>,
+    ) -> Poll<()> {
+        self.shared.poll_pending(token, cx)
+    }
     /// Accepts one correctly typed, bounded answer for the displayed token.
     /// This is input acceptance, not execution or persistence confirmation.
     /// # Errors

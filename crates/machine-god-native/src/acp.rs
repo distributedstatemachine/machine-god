@@ -1,7 +1,11 @@
 //! Modern ACP boundaries. Wire data never supplies native execution authority.
 
 pub mod interaction;
+pub mod projection;
 pub mod protocol;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod client_requests;
 
 #[cfg(all(
     feature = "ai-gateway-http",

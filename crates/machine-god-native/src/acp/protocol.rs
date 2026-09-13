@@ -149,9 +149,7 @@ pub fn validate_protocol_version(params: &Value) -> Result<(), AcpProtocolError>
 /// Rejects over-budget data before tree allocation, malformed/duplicate JSON,
 /// invalid envelopes and unsupported identifier representations.
 pub fn decode_frame(frame: &[u8]) -> Result<AcpMessage, AcpProtocolError> {
-    bounds::preflight(frame)?;
-    let value =
-        machine_god_core::json::from_slice(frame).map_err(|_| AcpProtocolError::ParseError)?;
+    let value = decode_value(frame)?;
     let Value::Object(mut object) = value else {
         return Err(AcpProtocolError::InvalidRequest);
     };
@@ -210,6 +208,18 @@ pub fn decode_frame(frame: &[u8]) -> Result<AcpMessage, AcpProtocolError> {
         _ => return Err(AcpProtocolError::InvalidRequest),
     };
     Ok(AcpMessage::Response { id, outcome })
+}
+
+/// Shared admission for native projection of raw protocol payloads. This uses
+/// the same pre-allocation limits and exact JSON codec as complete frames.
+pub(crate) fn decode_value(bytes: &[u8]) -> Result<Value, AcpProtocolError> {
+    bounds::preflight(bytes)?;
+    machine_god_core::json::from_slice(bytes).map_err(|_| AcpProtocolError::ParseError)
+}
+
+/// Validate a borrowed tree before projection clones it into an envelope.
+pub(crate) fn validate_value(value: &Value, initial_depth: usize) -> Result<(), AcpProtocolError> {
+    bounds::validate_tree(value, initial_depth)
 }
 
 fn parse_integer(text: &str) -> Result<i64, AcpProtocolError> {

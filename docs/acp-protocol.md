@@ -57,3 +57,21 @@ These primitives do not advertise client capabilities, grant filesystem or
 terminal authority, persist injected MCP configuration, or implement legacy
 session import. The complete native ACP feature composes those ownership
 boundaries under the [implementation plan](implementation-plan.md).
+
+`acp::client_requests::NativeAcpClientRequests` keeps the connection-lifetime
+correlation table together with the actual native inbox and client URL endpoint.
+Its explicitly injected permission-context registry supplies the exact live
+authorizing call; a tool name, request-ID conversion or observed event order is
+not a substitute. The native inbox displays one request at a time, and this
+owner retains only that view. It returns at most one bounded encoded frame per
+poll, which the I/O driver must retain in its empty bounded output slot until
+written. Repeated polls do not retransmit unanswered requests.
+
+Unknown and duplicate reply IDs cannot settle a native waiter. Invalid or remote
+error responses cancel the exact pending prompt. Native waiter abandonment wakes
+the connection and releases its stale correlation without blocking the next
+prompt. Session reactivation invalidates even accepted-but-unconsumed replies
+and never reuses outbound RPC identifiers. EOF and output failure close prompt
+admission; they do not replace the session driver's owned native settlement.
+Modern `elicitation/complete` is encoded only from the registered operation's
+actual completion notice, not from answer acceptance.
