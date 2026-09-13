@@ -353,7 +353,7 @@ fn malformed_schema_and_action_results_are_rejected_before_inbox_reply() {
     assert!(poll(&mut pending).is_pending());
     let prompt = view(&mut inbox);
     for invalid in [
-        json!({"action":"accept","content":{"n":9007199254740992_u64}}),
+        json!({"action":"accept","content":{"n":9_007_199_254_740_992_u64}}),
         json!({"action":"accept","content":{}}),
         json!({"action":"accept","content":{"n":"9007199254740993"}}),
         json!({"action":"cancel","content":{}}),
