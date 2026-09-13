@@ -179,7 +179,11 @@ fn configured_long_stdio_deadlines_reach_immediate_modern_producer_and_reap() {
         fixture.host.completion().wait_on_worker().unwrap();
         let observed = observed.lock().unwrap();
         assert_eq!(observed.len(), 1);
-        assert!(observed.iter().all(|value| value.is_complete()));
+        assert!(
+            observed
+                .iter()
+                .all(crate::owned_worker::NativeOwnedWorkerCompletion::is_complete)
+        );
         outcomes.push((timeout, outcome));
     }
     assert!(

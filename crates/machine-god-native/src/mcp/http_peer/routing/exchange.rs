@@ -88,7 +88,10 @@ async fn response_stream(
             RpcKind::Notification => {
                 let McpHttpPeerFrame { bytes, envelope } = frame;
                 drop(envelope);
-                peer.retain(McpHttpPeerFrame::parse(bytes)?)?;
+                peer.retain(McpHttpPeerFrame::parse_with_limits(
+                    bytes,
+                    super::super::WireLimits::default(),
+                )?)?;
             }
             RpcKind::Request => return Err(McpHttpPeerError::Protocol),
         }

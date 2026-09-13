@@ -1156,7 +1156,7 @@ mod tests {
             let stamp = encode_helper_deadline(deadline, maximum).unwrap();
             let decoded = decode_helper_deadline(&stamp, maximum).unwrap();
             assert!(decoded <= deadline, "translation cannot reset the deadline");
-            assert!(decoded > deadline - Duration::from_secs(1));
+            assert!(decoded > deadline.checked_sub(Duration::from_secs(1)).unwrap());
             assert!(matches!(
                 encode_helper_deadline(Instant::now() + maximum + Duration::from_secs(1), maximum),
                 Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest

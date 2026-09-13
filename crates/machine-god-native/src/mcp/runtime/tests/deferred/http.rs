@@ -38,6 +38,34 @@ fn configured(listener: &TcpListener) -> Fixture {
     fixture
 }
 
+async fn resource_discovery(listener: &TcpListener) {
+    for (id, method, result) in [
+        (
+            1,
+            "server/discover",
+            json!({"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"resources":{}}}),
+        ),
+        (
+            2,
+            "resources/list",
+            json!({"resultType":"complete","resources":[{"uri":"test://fixed","name":"fixed"}]}),
+        ),
+        (
+            3,
+            "resources/list",
+            json!({"resultType":"complete","resources":[{"uri":"test://fixed","name":"fixed"}]}),
+        ),
+    ] {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let received = request(&mut socket).await;
+        assert!(String::from_utf8_lossy(&received).contains(&format!("mcp-method: {method}")));
+        let body = serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"result":result})).unwrap();
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+        socket.write_all(&body).await.unwrap();
+        socket.flush().await.unwrap();
+    }
+}
+
 #[test]
 fn human_feature_activates_optional_ask_server_without_switching_existing_pin() {
     run(async {
@@ -73,36 +101,7 @@ fn human_feature_activates_optional_ask_server_without_switching_existing_pin() 
         cancelled.cancel();
         assert!(human.feature(&query, cancelled).await.is_err());
         assert!(listener.accept().now_or_never().is_none());
-        let server = async {
-            for (id, method, result) in [
-                (
-                    1,
-                    "server/discover",
-                    json!({"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"resources":{}}}),
-                ),
-                (
-                    2,
-                    "resources/list",
-                    json!({"resultType":"complete","resources":[{"uri":"test://fixed","name":"fixed"}]}),
-                ),
-                (
-                    3,
-                    "resources/list",
-                    json!({"resultType":"complete","resources":[{"uri":"test://fixed","name":"fixed"}]}),
-                ),
-            ] {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let received = request(&mut socket).await;
-                assert!(
-                    String::from_utf8_lossy(&received).contains(&format!("mcp-method: {method}"))
-                );
-                let body =
-                    serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"result":result})).unwrap();
-                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
-                socket.write_all(&body).await.unwrap();
-                socket.flush().await.unwrap();
-            }
-        };
+        let server = resource_discovery(&listener);
         let client = async {
             assert!(matches!(
                 human
@@ -175,7 +174,11 @@ fn human_deferred_demand_rejects_saved_edit_before_any_connection() {
         assert!(
             fixture
                 .runtime
-                .feature_publication()
+                .state
+                .lock()
+                .unwrap()
+                .active
+                .as_ref()
                 .unwrap()
                 .servers
                 .is_empty()

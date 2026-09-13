@@ -10,6 +10,7 @@ use crate::mcp::{
     protocol::TransportKind,
 };
 use futures_util::future::join;
+use std::fmt::Write as _;
 use std::net::Ipv4Addr;
 use tokio::{io::AsyncWriteExt, net::TcpListener};
 
@@ -77,10 +78,10 @@ fn exercise_http(result_nodes: usize, notification_nodes: usize, calls: usize, s
                         let mut body = String::new();
                         for progress in 0..33 {
                             let notice = json!({"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":id,"progress":progress,"extra":vec![Value::Null; notification_nodes]}});
-                            body.push_str(&format!("data: {notice}\n\n"));
+                            write!(body, "data: {notice}\n\n").unwrap();
                             if notification_nodes > 0 { break; }
                         }
-                        body.push_str(&format!("data: {response}\n\n"));
+                        write!(body, "data: {response}\n\n").unwrap();
                         body.into_bytes()
                     } else { serde_json::to_vec(&response).unwrap() };
                     respond(&listener, "tools/call", &body, sse).await;

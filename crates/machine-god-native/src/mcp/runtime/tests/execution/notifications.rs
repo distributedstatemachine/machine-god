@@ -14,14 +14,11 @@ impl McpPeerTimer for Timer {
     }
 }
 
-#[test]
-fn two_calls_each_with_33_progress_notifications_complete() {
-    let archive = Archive::new();
-    let workers = NativeOwnedWorkerScope::new();
-    let io = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+fn connect_producer(
+    archive: &Archive,
+    workers: &NativeOwnedWorkerScope,
+    io: &tokio::runtime::Runtime,
+) -> (McpStdioPeer, McpDescriptorCatalog, Instant) {
     let helper = PathBuf::from(
         std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY").expect("fresh helper required"),
     );
@@ -88,6 +85,18 @@ done
         ))
         .unwrap();
     let catalog = McpDescriptorCatalog::admit(raw, McpDescriptorLimits::default()).unwrap();
+    (peer, catalog, epoch)
+}
+
+#[test]
+fn two_calls_each_with_33_progress_notifications_complete() {
+    let archive = Archive::new();
+    let workers = NativeOwnedWorkerScope::new();
+    let io = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (peer, catalog, epoch) = connect_producer(&archive, &workers, &io);
     let fixture = Fixture::with_executor(
         &[json!({}), json!({})],
         PermissionMode::Auto,
@@ -137,7 +146,14 @@ done
             _ => None,
         })
         .collect();
-    let publication = fixture.runtime.feature_publication().unwrap();
+    let publication = fixture
+        .runtime
+        .state
+        .lock()
+        .unwrap()
+        .active
+        .clone()
+        .unwrap();
     io.block_on(async {
         assert!(
             publication.servers[0]
