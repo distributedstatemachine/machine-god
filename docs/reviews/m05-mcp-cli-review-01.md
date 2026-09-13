@@ -317,6 +317,11 @@ Test-only baseline `904ab405` retains the original product code and includes the
 fixture follow-up. Both cases failed at their post-cleanup success assertion in
 0.54 seconds; the host-completion assertion passed first. The failure payload
 was `()`, so the runtime log alone does not identify a narrower startup stage.
+Subsequent fixture diagnosis established that its multiline script argument is
+rejected by configuration admission before launch. Those failures therefore do
+not establish runtime evidence for the helper-selector regression; the source
+finding remains independently confirmed. The original log is preserved, not
+reclassified as a successful negative control.
 Evidence: `r3-captured-stdio-baseline.log`, using the original candidate's release
 helper with SHA-256
 `b9e7c4ac4af783da0c514ec757b230457f248374f0390fefee4b275168cc8337`.
@@ -337,3 +342,31 @@ under a payload-only lazy-cache budget. Evidence remains in
 `r3-descriptor-charges-baseline.log`. These negative diagnostics establish the
 tested regressions, not replacement acceptance; the integrated repair still
 requires its complete local gate and three fresh reviewers.
+
+### Admitted production-stdio fixture correction
+
+Integrated candidate `361fbf0e9e0b91bd2419fef4d6f8a5eb7dda7aac` passed both
+platform builds, strict Clippy and auxiliary checks. Its first focused batch
+failed both new production-stdio cases in 0.52 seconds; later focused stages and
+the full runtime gates did not run. Independently selected in-memory Linux
+catalog/cache suites passed all 17 cases, including the four accounting
+regressions. This does not constitute full candidate acceptance.
+
+The coordinator added failure-stage diagnostics while preserving settlement
+before assertions. Both stdio cases then failed at startup with no producer
+transcript and zero provider requests (`stdio-followup-diagnostic.log`). Source
+analysis by the lifecycle author and coordinator identified the multiline
+`bash -c` script as invalid configuration: the documented argument admission
+rejects control characters, including LF, before effects.
+
+The fixture now writes that same producer to a private file and invokes Bash
+with its absolute path, without `-c` or its dummy `$0` argument. It explicitly
+checks profile admission before host construction. Actual production capture,
+fresh release-helper selection, protocol assertions, timeouts and owned EOF/join
+requirements remain unchanged. No product admission rule, compatibility path
+or deadline was changed to accommodate the fixture.
+
+The corrected cases both passed in 1.85 seconds with the canonical release
+helper; pinned CLI Clippy, formatting and the bounded documentation check also
+passed. Logs use the `stdio-fixture-repair-` prefix. These focused results do not
+replace the complete gate or establish a corrected old-selector negative run.

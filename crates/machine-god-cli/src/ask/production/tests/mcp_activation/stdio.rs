@@ -22,13 +22,15 @@ fn configured_host(
     required: bool,
     transcript: &std::path::Path,
 ) -> (NativeReferenceHost, Arc<OneShotTransport>) {
+    let producer = directory.path().join("producer.bash");
+    fs::write(&producer, include_str!("stdio/producer.bash")).unwrap();
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o600)).unwrap();
     private_file(
         directory,
         "profile/mcp.json",
         &json!({"mcp":{"remote":{
             "command":"/bin/bash",
-            "args":["--noprofile","--norc","-c",include_str!("stdio/producer.bash"),
-                "mcp-stdio-fixture",transcript,
+            "args":["--noprofile","--norc",producer,transcript,
                 json!({"resultType":"complete","supportedVersions":["2026-07-28"],
                     "capabilities":{"tools":{}}}).to_string(),
                 json!({"resultType":"complete","tools":[{
@@ -42,6 +44,10 @@ fn configured_host(
             "required":required,"startup_timeout_ms":5000,"operation_timeout_ms":5000
         }}}),
     );
+    machine_god_native::mcp::config::McpConfig::decode(
+        &fs::read(directory.path().join("profile/mcp.json")).unwrap(),
+    )
+    .expect("the stdio fixture must pass profile admission before host construction");
     private_file(
         directory,
         "config/machine-god/config.json",
@@ -74,6 +80,7 @@ fn exercise(required: bool) {
     let completion = host.terminal_shutdown_completion().unwrap();
     let (runtime, _) = TokioWebSearchDeadline::build_runtime_pair().unwrap();
     let construction_was_inert = !transcript.exists() && provider.request_bodies().is_empty();
+    let mut stage = "startup";
     let result = with_settled_terminal_host(host, &runtime, |host| {
         let (_sender, receiver) = tokio::sync::mpsc::channel(1);
         let mut signals = AskSignals::new(receiver);
@@ -88,13 +95,21 @@ fn exercise(required: bool) {
             .map_err(|_| ())??;
         let after_startup = fs::read_to_string(&transcript);
         let startup_used_no_provider = provider.request_bodies().is_empty();
+        stage = "turn";
         let evidence = turn(host, &runtime, &provider)?;
+        stage = "settlement";
         Ok((after_startup, startup_used_no_provider, evidence))
     });
 
     // Even the negative baseline's expected startup failure must settle MCP,
     // drop the host and join its workers before any success assertion fails.
     assert!(completion.is_complete());
+    assert!(
+        result.is_ok(),
+        "captured stdio failed during {stage}; fixture transcript: {:?}; provider requests: {}",
+        fs::read_to_string(&transcript),
+        provider.request_bodies().len(),
+    );
     let (after_startup, startup_used_no_provider, evidence) =
         result.expect("production-captured stdio must activate and complete the Ask turn");
     assert!(construction_was_inert);
