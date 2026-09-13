@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     dead_code,
     reason = "Shared fixture also supports external composed scenarios."
 )]
-mod support;
+pub(crate) mod support;
 use support::Fixture;
 
 #[path = "controls/tests.rs"]

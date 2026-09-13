@@ -6,10 +6,7 @@ use super::{
     NativeTerminalResetReceipt, NativeTerminalTransitionError,
 };
 use crate::file_undo::FileUndoClearReservation;
-use crate::{
-    NativePermissionPolicySnapshot, NativeSessionMetadata, NativeSessionOrigin,
-    prepare_native_session_resume,
-};
+use crate::{NativePermissionPolicySnapshot, NativeSessionMetadata, prepare_native_session_resume};
 use machine_god_core::CancellationToken;
 
 pub(super) struct Request {
@@ -116,9 +113,8 @@ pub(super) async fn prepare(
         NativeInteractiveTransition::Clear
         | NativeInteractiveTransition::New
         | NativeInteractiveTransition::Reset => {
-            let metadata =
-                NativeSessionMetadata::new(&options.workspace, now_ms, NativeSessionOrigin::Cli)
-                    .map_err(|_| NativeInteractiveError::Configuration)?;
+            let metadata = NativeSessionMetadata::new(&options.workspace, now_ms, options.origin)
+                .map_err(|_| NativeInteractiveError::Configuration)?;
             let session = host
                 .session_lifecycle()
                 .create_generated_with_metadata(metadata)

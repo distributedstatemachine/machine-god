@@ -27,7 +27,7 @@ pub use controls::{
 };
 mod driver;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod transition;
 use transition::{Request, Transition};
 
@@ -36,6 +36,7 @@ use transition::{Request, Transition};
 #[derive(Clone)]
 pub struct NativeInteractiveSessionOptions {
     workspace: PathBuf,
+    origin: crate::NativeSessionOrigin,
     defaults: NativeModelPreferences,
     process_model: Option<String>,
     catalog: Option<Arc<NativeModelCatalog>>,
@@ -65,6 +66,7 @@ impl NativeInteractiveSessionOptions {
             .map_err(|_| NativeInteractiveError::Configuration)?;
         Ok(Self {
             workspace,
+            origin: crate::NativeSessionOrigin::Cli,
             defaults: workspace_defaults,
             process_model: None,
             catalog: None,
@@ -72,6 +74,13 @@ impl NativeInteractiveSessionOptions {
             background_url: None,
         })
     }
+    /// Selects provenance for newly created sessions. Resume retains saved origin.
+    #[must_use]
+    pub fn with_origin(mut self, origin: crate::NativeSessionOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
     /// Applies only to initial startup; fresh transitions use workspace defaults.
     /// # Errors
     /// Rejects an invalid model identifier.

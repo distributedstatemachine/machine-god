@@ -41,6 +41,7 @@ const V2_FIELDS: &[&str] = &[
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeSessionOrigin {
     Cli,
+    Acp,
     Recovered,
     Imported,
 }
@@ -50,6 +51,7 @@ impl NativeSessionOrigin {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Cli => "cli",
+            Self::Acp => "acp",
             Self::Recovered => "recovered",
             Self::Imported => "imported",
         }
@@ -196,6 +198,7 @@ impl NativeSessionMetadata {
         let origin = match optional_string(object, "origin")? {
             None => None,
             Some("cli") => Some(NativeSessionOrigin::Cli),
+            Some("acp") => Some(NativeSessionOrigin::Acp),
             Some("recovered") => Some(NativeSessionOrigin::Recovered),
             Some("imported") => Some(NativeSessionOrigin::Imported),
             Some(_) => return Err(NativeSessionMetadataError::Malformed),
