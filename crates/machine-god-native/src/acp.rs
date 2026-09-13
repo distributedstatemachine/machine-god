@@ -12,3 +12,9 @@ pub mod client_requests;
     any(target_os = "linux", target_os = "macos")
 ))]
 pub mod session;
+
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+pub mod resources;

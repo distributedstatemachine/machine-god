@@ -19,7 +19,10 @@ use std::{
 mod history;
 mod prompt;
 pub use history::NativeAcpHistory;
-pub use prompt::{MAX_ACP_PROMPT_BLOCKS, MAX_ACP_PROMPT_BYTES, decode_prompt};
+pub use prompt::{
+    MAX_ACP_PROMPT_BLOCKS, MAX_ACP_PROMPT_BYTES, MAX_ACP_RESOURCE_URI_BYTES, NativeAcpPrompt,
+    NativeAcpResourceOmission, NativeAcpResourceOmissionReason, decode_prompt, decode_prompt_input,
+};
 
 /// ACP selects native records only. A load replays presentation; a resume does not.
 #[derive(Clone, Debug)]

@@ -1,6 +1,11 @@
 #![doc = "Explicit native capabilities for machine-god hosts."]
 
 pub mod acp;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+pub mod conversation_resource_context;
 pub mod mcp;
 
 #[cfg(all(
