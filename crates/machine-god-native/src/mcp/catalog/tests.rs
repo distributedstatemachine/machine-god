@@ -395,3 +395,123 @@ fn catalog_and_candidate_charge_schema_indexes_before_retention() {
     );
     assert_eq!(old.tools()[0].name(), "mcp_x_indexed");
 }
+
+#[test]
+fn retained_charges_cover_minimal_descriptor_records_and_catalog_backing() {
+    use std::mem::size_of;
+    use std::sync::atomic::AtomicUsize;
+
+    // Independent lower bounds from the retained fields, not the admission
+    // accounting implementation. Alignment can require additional bytes.
+    let owner = size_of::<[AtomicUsize; 2]>();
+    let catalog_record = size_of::<AdmittedCatalog>() + owner;
+    let common = size_of::<Box<serde_json::value::RawValue>>()
+        + size_of::<Box<str>>()
+        + 3 * size_of::<Option<Box<str>>>()
+        + 3 * size_of::<Option<Box<serde_json::value::RawValue>>>();
+    for (kind, source, variant_fields) in [
+        (
+            McpCatalogKind::Tools,
+            r#"[{"name":"t","inputSchema":{"type":"object"},"outputSchema":false}]"#,
+            size_of::<crate::mcp::schema::McpSchema>()
+                + size_of::<Option<crate::mcp::schema::McpSchema>>(),
+        ),
+        (
+            McpCatalogKind::Resources,
+            r#"[{"name":"r","uri":"x"}]"#,
+            size_of::<Box<str>>() + size_of::<Option<u64>>(),
+        ),
+        (
+            McpCatalogKind::ResourceTemplates,
+            r#"[{"name":"r","uriTemplate":"x"}]"#,
+            size_of::<Box<str>>(),
+        ),
+        (
+            McpCatalogKind::Prompts,
+            r#"[{"name":"p"}]"#,
+            size_of::<Box<[McpPromptArgument]>>(),
+        ),
+    ] {
+        let catalog = admit(kind, source).unwrap();
+        let schema_charge = match &catalog.descriptors()[0] {
+            McpDescriptor::Tool(tool) => {
+                tool.input_schema().retained_byte_charge()
+                    + tool.output_schema().unwrap().retained_byte_charge()
+            }
+            _ => 0,
+        };
+        let minimum = (source.len() - 2) * 4
+            + schema_charge
+            + catalog_record
+            + size_of::<McpDescriptor>()
+            + owner
+            + common
+            + variant_fields;
+        assert!(catalog.retained_byte_charge() >= minimum, "{kind:?}");
+        let empty = admit(kind, "[]").unwrap();
+        assert!(empty.retained_byte_charge() >= catalog_record, "{kind:?}");
+    }
+}
+
+#[test]
+fn retained_prompt_arguments_charge_typed_slots_in_addition_to_payloads() {
+    let empty_source = r#"[{"name":"p","arguments":[]}]"#;
+    let arguments = (0..128)
+        .map(|index| format!(r#"{{"name":"a{index}"}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let full_source = format!(r#"[{{"name":"p","arguments":[{arguments}]}}]"#);
+    let empty = admit(McpCatalogKind::Prompts, empty_source).unwrap();
+    let full = admit(McpCatalogKind::Prompts, &full_source).unwrap();
+    let payload_growth = (full_source.len() - empty_source.len()) * 4;
+    assert_eq!(
+        full.retained_byte_charge() - empty.retained_byte_charge(),
+        payload_growth + 128 * std::mem::size_of::<McpPromptArgument>()
+    );
+}
+
+#[test]
+fn retained_catalog_limits_accept_exact_charge_and_reject_one_under_atomically() {
+    for (kind, source) in [
+        (McpCatalogKind::Tools, "[]"),
+        (
+            McpCatalogKind::Tools,
+            r#"[{"name":"t","inputSchema":{"type":"object"}}]"#,
+        ),
+        (McpCatalogKind::Resources, r#"[{"name":"r","uri":"x"}]"#),
+        (
+            McpCatalogKind::ResourceTemplates,
+            r#"[{"name":"r","uriTemplate":"x"}]"#,
+        ),
+        (
+            McpCatalogKind::Prompts,
+            r#"[{"name":"p","arguments":[{"name":"a"}]},{"name":"q"}]"#,
+        ),
+    ] {
+        let original = admit(kind, source).unwrap();
+        let charge = original.retained_byte_charge();
+        assert!(
+            charge > 1,
+            "even an empty catalog retains its shared record"
+        );
+        let limits = McpDescriptorLimits {
+            max_catalog_bytes: charge,
+            ..McpDescriptorLimits::default()
+        };
+        let exact = McpDescriptorCatalog::admit(raw(kind, source), limits).unwrap();
+        assert_eq!(exact.retained_byte_charge(), charge);
+        assert!(matches!(
+            McpDescriptorCatalog::admit(
+                raw(kind, source),
+                McpDescriptorLimits {
+                    max_catalog_bytes: charge - 1,
+                    ..limits
+                }
+            )
+            .unwrap_err(),
+            McpCatalogError::Limit | McpCatalogError::Schema(McpSchemaError::SchemaLimitExceeded)
+        ));
+        assert_eq!(original.retained_byte_charge(), charge);
+        assert_eq!(original.descriptors().len(), exact.descriptors().len());
+    }
+}

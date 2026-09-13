@@ -1,6 +1,6 @@
 use super::*;
 use crate::mcp::{
-    catalog::McpDescriptorLimits,
+    catalog::{McpDescriptor, McpDescriptorLimits},
     pagination::{McpCatalogBuilder, McpCatalogLimits},
     protocol::ProtocolVersion,
 };
@@ -96,6 +96,50 @@ fn shared_feature_pressure_preserves_old_data_backoff_and_releases_on_drop() {
     let fresh = catalog(McpCatalogKind::Resources, 100, 10);
     let pending = ticket(&mut second, McpCatalogKind::Resources, 100);
     assert!(second.finish(pending, &fresh, 100).unwrap());
+    drop(second);
+    assert_eq!(budget.bytes.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn shared_lazy_cache_rejects_payload_only_budget_and_releases_complete_charges() {
+    let fresh = catalog(McpCatalogKind::Resources, 0, 0);
+    let McpDescriptor::Resource(resource) = &fresh.descriptors()[0] else {
+        panic!("expected resource");
+    };
+    let payload_charge = resource.raw_json().get().len() * 4;
+    let budget = Arc::new(FeatureCacheBudget::new(payload_charge));
+    let mut state = NativeMcpCatalogState::new(&[]).unwrap();
+    state.bind_budget(budget.clone());
+    let pending = ticket(&mut state, McpCatalogKind::Resources, 0);
+    assert!(!state.finish(pending, &fresh, 0).unwrap());
+    assert!(state.cached(McpCatalogKind::Resources).is_none());
+    assert_eq!(budget.bytes.load(Ordering::Acquire), 0);
+    // Cache pressure does not consume the independently admitted fresh response.
+    assert_eq!(resource.uri(), "test://fixed");
+    assert!(matches!(
+        state.begin(McpCatalogKind::Resources, 99).unwrap(),
+        McpRefreshDecision::RetryLater {
+            may_serve_snapshot: false
+        }
+    ));
+
+    let charge = fresh.retained_byte_charge();
+    let budget = Arc::new(FeatureCacheBudget::new(charge));
+    let mut first = NativeMcpCatalogState::new(&[]).unwrap();
+    let mut second = NativeMcpCatalogState::new(&[]).unwrap();
+    first.bind_budget(budget.clone());
+    second.bind_budget(budget.clone());
+    let pending = ticket(&mut first, McpCatalogKind::Resources, 0);
+    assert!(first.finish(pending, &fresh, 0).unwrap());
+    let pending = ticket(&mut second, McpCatalogKind::Resources, 0);
+    assert!(!second.finish(pending, &fresh, 0).unwrap());
+    assert_eq!(budget.bytes.load(Ordering::Acquire), charge);
+    drop(first);
+    assert_eq!(budget.bytes.load(Ordering::Acquire), 0);
+    let fresh = catalog(McpCatalogKind::Resources, 100, 10);
+    let pending = ticket(&mut second, McpCatalogKind::Resources, 100);
+    assert!(second.finish(pending, &fresh, 100).unwrap());
+    assert_eq!(budget.bytes.load(Ordering::Acquire), charge);
     drop(second);
     assert_eq!(budget.bytes.load(Ordering::Acquire), 0);
 }

@@ -100,9 +100,13 @@ lower, never enlarge, those limits. Raw pagination independently enforces its
 page, item, response-byte and node budgets; descriptor admission cannot bypass
 the raw stage.
 
-Before copying descriptor data, admission charges four times its raw JSON byte
-length for retained raw payloads and extracted text/JSON. Each input/output
-schema additionally contributes its full `retained_byte_charge`, including
+Before copying descriptor data, admission charges the shared catalog record,
+descriptor backing slots and each variant's shared record, including the aligned
+strong/weak owner-counter layout. It also charges four times the raw JSON byte
+length for retained raw payloads and extracted text/JSON. Typed prompt-argument
+slots are charged before their backing storage is allocated. Descriptor and
+argument vectors reserve their admitted counts before retaining entries.
+Each input/output schema additionally contributes its full `retained_byte_charge`, including
 arena storage, aggregate reference indexes and compiled-pattern cache; raw
 schema bytes are conservatively counted in both charges. Schema admission uses
 the remaining catalog budget before retaining each descriptor. Parsing is
@@ -110,9 +114,9 @@ sequential, so transient storage is limited to one bounded descriptor and one
 schema parse rather than a collection of uncharged admitted schemas.
 Candidate construction charges shared catalog storage conservatively plus
 server/reservation/eligibility text, full search text, tags and exposed names.
-These are conservative retained allocation charges, not allocator heap telemetry;
-fixed descriptor containers also have finite counts and schema internals have
-independent aggregate byte/state/depth limits. Server and reserved-name counts/lengths are checked
+These are conservative retained allocation charges, not allocator heap telemetry.
+Fixed descriptor and argument counts apply independently, and schema internals
+have independent aggregate byte/state/depth limits. Server and reserved-name counts/lengths are checked
 before their copies. Name allocation has a shared work budget and remembers
 already consumed suffixes without changing deterministic results.
 

@@ -17,6 +17,7 @@ mod auth_controls;
 mod configured;
 mod configured_support;
 mod configured_wire;
+mod stdio;
 
 fn host(directory: &ScopedTestDirectory) -> (NativeReferenceHost, Arc<OneShotTransport>) {
     host_with_capture(directory, false)
@@ -104,7 +105,7 @@ fn mcp_options(
     let contexts = Arc::new(NativeMcpContexts::new());
     if capture {
         // Actual production auth/store/worker composition, with no process or
-        // socket started by capture. These fixtures never activate stdio.
+        // socket started by capture; activation owns any later stdio launch.
         return NativeReferenceHostMcpOptions::capture_startup(roots, terminal, contexts).unwrap();
     }
     let clock = Arc::new(TokioMcpClock);

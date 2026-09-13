@@ -2,7 +2,7 @@
 
 use super::{NativeReferenceHostBuildError, NativeReferenceHostMcpOptions, error};
 use crate::{
-    NativeReferenceHostTerminalOptions, PreparedNativeRoots, TERMINAL_PTY_HELPER_ARGUMENT,
+    NativeReferenceHostTerminalOptions, PreparedNativeRoots, TERMINAL_CAPTURED_HELPER_ARGUMENT,
     mcp::{
         clock::TokioMcpClock,
         context::NativeMcpContexts,
@@ -51,7 +51,7 @@ impl NativeReferenceHostMcpOptions {
         let environment = terminal.environment.entries().to_vec();
         let stdio = NativeMcpStdioStartup::new(
             terminal.helper_program.clone(),
-            vec![TERMINAL_PTY_HELPER_ARGUMENT.into()],
+            vec![TERMINAL_CAPTURED_HELPER_ARGUMENT.into()],
             environment.clone(),
             Arc::new(roots.try_clone_workspace().map_err(|_| error())?.into()),
             WireLimits {

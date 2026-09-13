@@ -1,7 +1,10 @@
 //! Immutable descriptor admission and deterministic, non-executable candidates.
 
-use std::fmt;
-use std::sync::Arc;
+use std::{
+    alloc::Layout,
+    fmt,
+    sync::{Arc, atomic::AtomicUsize},
+};
 
 use super::pagination::{McpCatalogCacheScope, McpCatalogKind, McpRawCatalog};
 use super::protocol::ProtocolVersion;
@@ -129,9 +132,27 @@ impl McpDescriptorCatalog {
             return Err(McpCatalogError::Limit);
         }
         let mut retained_bytes = 0;
-        // Preflight raw payloads and extracted text before allocating copies.
-        // Schema arena/index/pattern charges are added during sequential parsing.
+        // Include the catalog's shared record and exact descriptor backing
+        // slots, even when there are no descriptors. Clones share this charge.
+        charge(
+            &mut retained_bytes,
+            shared_record_charge::<AdmittedCatalog>()?,
+            limits.max_catalog_bytes,
+        )?;
+        charge(
+            &mut retained_bytes,
+            array_charge::<McpDescriptor>(raw.items().len())?,
+            limits.max_catalog_bytes,
+        )?;
+        // Preflight each variant's shared record plus raw payloads and extracted
+        // text before allocating copies. Schema arena/index/pattern and typed
+        // prompt-argument slots are added during sequential parsing.
         for (_, value) in raw.items() {
+            charge(
+                &mut retained_bytes,
+                descriptors::record_charge(raw.kind())?,
+                limits.max_catalog_bytes,
+            )?;
             charge(
                 &mut retained_bytes,
                 value
@@ -142,18 +163,16 @@ impl McpDescriptorCatalog {
                 limits.max_catalog_bytes,
             )?;
         }
-        let descriptors = raw
-            .items()
-            .map(|(identity, value)| {
-                descriptors::parse(
-                    raw.kind(),
-                    identity,
-                    value,
-                    &mut retained_bytes,
-                    limits.max_catalog_bytes,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut descriptors = Vec::with_capacity(raw.items().len());
+        for (identity, value) in raw.items() {
+            descriptors.push(descriptors::parse(
+                raw.kind(),
+                identity,
+                value,
+                &mut retained_bytes,
+                limits.max_catalog_bytes,
+            )?);
+        }
         let admitted = AdmittedCatalog {
             kind: raw.kind(),
             version: raw.version(),
@@ -203,4 +222,20 @@ fn charge(total: &mut usize, bytes: usize, limit: usize) -> Result<()> {
         return Err(McpCatalogError::Limit);
     }
     Ok(())
+}
+
+fn array_charge<T>(count: usize) -> Result<usize> {
+    count
+        .checked_mul(size_of::<T>())
+        .ok_or(McpCatalogError::Limit)
+}
+
+// Arc owns a strong and a weak atomic counter in addition to its value. Charge
+// their combined layout, including alignment padding; this is retained storage
+// accounting, not allocator telemetry or a dependency on Arc's private fields.
+fn shared_record_charge<T>() -> Result<usize> {
+    let (layout, _) = Layout::new::<[AtomicUsize; 2]>()
+        .extend(Layout::new::<T>())
+        .map_err(|_| McpCatalogError::Limit)?;
+    Ok(layout.pad_to_align().size())
 }

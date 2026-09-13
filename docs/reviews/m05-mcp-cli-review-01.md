@@ -277,3 +277,63 @@ in a separate serial diagnostic (`macos-7aa6be70-remaining-diagnostic-replacemen
 The initial diagnostic invocation failed while parsing its compile-log inventory,
 before running any tests; its log is retained separately. This additional
 coverage does not erase the four failures or satisfy the complete macOS gate.
+
+## R3 candidate, review and repairs
+
+Candidate `aae6b49dcc8f8e8d770e287e73d04e73066afcba` passed the complete
+Rust 1.94.1 local gate, including both platform builds, focused regressions,
+Linux default-concurrency and macOS serial workspace/doc/release-smoke checks,
+drift, audit/policy and portable compilation. The macOS native suite reported
+3,348 passes and 12 ignored tests; all four previously failing platform cases
+passed without establishing their earlier cause. Python reported 269 tests with
+14 skips in 545.770 seconds; rendered documentation and bounded policy checks
+passed with zero errors. Evidence is retained in the `aae6b49d`-named logs under
+`/private/tmp/mg-mcp-full-gate.hE0Sfz`.
+
+Three fresh ordinary local reviewers inspected the same 496-file feature diff
+against `6736070cc70ff6040cfa92275e80a0e9a5172852` after that gate. Host thread
+capacity delayed the resources launch until correctness completed; no author
+was substituted. These were risk-directed, source-only full-feature tracks,
+not Bugbot, exhaustive line-by-line coverage or additional runtime execution.
+
+| Track | Result |
+| --- | --- |
+| Correctness/API | Zero actionable introduced findings established. |
+| Lifecycle/platform | P1: production stdio capture selects the PTY helper argument, although its launcher sends the captured-execution descriptor handshake and uses persistent pipe input. |
+| Performance/resources | P2: descriptor charges omit fixed shared records, descriptor slots and typed prompt-argument storage; the shared lazy cache consumes those understated charges. |
+
+The coordinator confirmed both source paths. The accounting issue is finite,
+bounded undercharging, not unbounded growth, measured heap usage or demonstrated
+OOM. Separate cardinality limits do not make the shared cache's retained-byte
+charge conservative. These findings reject the candidate despite its green local
+gate; no remote acceptance follows.
+
+The lifecycle reviewer subsequently authored regression `ddd07b44`, helper
+selection fix `e520f1e2` and test-organization follow-up `3314733e`. Required
+startup and optional first-demand cases use the actual production capture and
+selected release helper, a modern stdio producer, model search/select/call,
+persisted/provider-visible results, producer EOF and owned host completion.
+Test-only baseline `904ab405` retains the original product code and includes the
+fixture follow-up. Both cases failed at their post-cleanup success assertion in
+0.54 seconds; the host-completion assertion passed first. The failure payload
+was `()`, so the runtime log alone does not identify a narrower startup stage.
+Evidence: `r3-captured-stdio-baseline.log`, using the original candidate's release
+helper with SHA-256
+`b9e7c4ac4af783da0c514ec757b230457f248374f0390fefee4b275168cc8337`.
+
+The resources reviewer authored regression `84687782` and repair `eed82598`.
+The repair adds size/layout-derived catalog, descriptor-owner/backing and prompt
+argument charges before retention, preserving payload/schema charges and all
+configured caps. Tests cover each variant, empty catalogs, argument arrays,
+exact/one-under admission, shared cache pressure and charge release. Both authors
+performed pinned formatting and diff checks, not runtime acceptance. They cannot
+serve as fresh reviewers for the replacement candidate.
+
+Test-only baseline `87df2017` adds the resource regressions without either
+production repair. All four focused cases failed: the fixed-record lower bound,
+prompt-argument charge growth (7,748 versus 12,868 bytes, omitting 5,120 bytes of
+typed slots), the empty catalog's missing shared-record charge, and retention
+under a payload-only lazy-cache budget. Evidence remains in
+`r3-descriptor-charges-baseline.log`. These negative diagnostics establish the
+tested regressions, not replacement acceptance; the integrated repair still
+requires its complete local gate and three fresh reviewers.

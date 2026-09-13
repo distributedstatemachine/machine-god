@@ -44,6 +44,15 @@ struct Prompt {
     arguments: Box<[McpPromptArgument]>,
 }
 
+pub(super) fn record_charge(kind: McpCatalogKind) -> Result<usize> {
+    match kind {
+        McpCatalogKind::Tools => super::shared_record_charge::<Tool>(),
+        McpCatalogKind::Resources => super::shared_record_charge::<Resource>(),
+        McpCatalogKind::ResourceTemplates => super::shared_record_charge::<Template>(),
+        McpCatalogKind::Prompts => super::shared_record_charge::<Prompt>(),
+    }
+}
+
 macro_rules! descriptor {
     ($name:ident, $inner:ident) => {
         #[derive(Clone)]
@@ -235,6 +244,14 @@ pub(super) fn parse(
                 if values.len() > 128 {
                     return Err(Error::Limit);
                 }
+                super::charge(
+                    retained_bytes,
+                    super::array_charge::<McpPromptArgument>(values.len())?,
+                    byte_limit,
+                )?;
+                // Reserve the checked slot count once; no geometric spare
+                // capacity survives into the retained boxed argument slice.
+                arguments = Vec::with_capacity(values.len());
                 for value in values {
                     let object = fields::object(value)?;
                     let name = fields::required(&object, "name", 256)?;

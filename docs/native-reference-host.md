@@ -232,9 +232,12 @@ they create no separate runtime, detached task or worker owner.
 production capture boundary, separate from inert options construction. On the
 caller's owned startup worker it captures system DNS configuration and secure
 query entropy, and duplicates the already retained workspace descriptor without
-reopening its pathname. It reuses the terminal's exact selected helper and
-validated environment, registers one shared inert macOS inventory helper, and
-selects bundled TLS roots without ambient certificate files or proxy settings.
+reopening its pathname. It reuses the terminal's exact selected helper executable
+and validated environment. Stdio selects the captured-execution entrypoint for
+its exec-descriptor handshake and persistent pipe input, not the PTY entrypoint
+or its terminal-device handshake. Capture registers one shared inert macOS
+inventory helper and selects bundled TLS roots without ambient certificate files
+or proxy settings.
 The runtime, controller and network share one monotonic clock; actual host and
 configuration cancellation own peer lifetime, while each request remains bounded.
 Capture starts no peer, process, browser, worker or separate executor. Missing
