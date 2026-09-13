@@ -5795,12 +5795,51 @@ fn deadline_and_injected_waker_families_share_one_callback_and_capacity_slot() {
 
 #[test]
 fn blocked_deadline_waker_tail_retains_capacity_until_callback_returns() {
+    exercise_blocked_deadline_waker_tail(false);
+}
+
+#[test]
+fn blocked_deadline_waker_capacity_recovery_can_complete_at_its_original_deadline() {
+    assert!(exercise_blocked_deadline_waker_tail(true));
+}
+
+struct DeadlineRecoveryExecutor {
+    pending: FakeExecutor,
+    expire_recovery_poll: bool,
+}
+
+impl TerminalExecutor for DeadlineRecoveryExecutor {
+    fn execute(
+        &self,
+        request: TerminalExecutionRequest,
+        cancellation: CancellationToken,
+    ) -> TerminalExecution {
+        let expire = self.expire_recovery_poll && request.command() == "recovered";
+        let deadline = request.deadline();
+        let execution = self.pending.execute(request, cancellation);
+        Box::pin(async move {
+            if expire {
+                // Exercise timeout arbitration after actual executor admission,
+                // without extending or restarting the original request budget.
+                while Instant::now() < deadline {
+                    std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                }
+            }
+            execution.await
+        })
+    }
+}
+
+fn exercise_blocked_deadline_waker_tail(expire_recovery_poll: bool) -> bool {
     let temporary = TemporaryDirectory::new("deadline-waker-capacity");
     let executor = FakeExecutor::new(Mode::Pending);
     let tool = TerminalTool::with_executor(
         temporary.path(),
         environment(),
-        Arc::new(executor.clone()),
+        Arc::new(DeadlineRecoveryExecutor {
+            pending: executor.clone(),
+            expire_recovery_poll,
+        }),
         TerminalLimits::new(Duration::from_millis(20), 1).unwrap(),
     )
     .unwrap();
@@ -5837,10 +5876,21 @@ fn blocked_deadline_waker_tail_retains_capacity_until_callback_returns() {
         Poll::Pending => panic!("blocked Waker tail released terminal capacity early"),
     }
     drop(blocked);
+    assert_eq!(executor.calls(), 1);
+    assert_eq!(executor.drops(), 1);
 
     blocking.release();
+    assert_pending_executor_capacity_recovers(&tool, &executor)
+}
+
+fn assert_pending_executor_capacity_recovers(tool: &TerminalTool, executor: &FakeExecutor) -> bool {
     let recovery_deadline = Instant::now() + Duration::from_secs(2);
+    let initial_polls = executor.polls();
     loop {
+        assert!(
+            Instant::now() < recovery_deadline,
+            "capacity did not recover"
+        );
         let mut recovered = Box::pin(tool.execute(
             context(),
             exact_arguments("recovered", "."),
@@ -5848,21 +5898,62 @@ fn blocked_deadline_waker_tail_retains_capacity_until_callback_returns() {
         ));
         match poll_once(recovered.as_mut()) {
             Poll::Pending => {
+                assert_eq!(executor.calls(), 2);
+                assert!(executor.polls() > initial_polls);
                 drop(recovered);
-                break;
+                assert_eq!(executor.drops(), 2);
+                return false;
             }
             Poll::Ready(Err(error)) if error.code == "terminal_busy" => {
-                assert!(
-                    Instant::now() < recovery_deadline,
-                    "capacity did not recover"
-                );
+                assert_eq!(error.kind, ToolErrorKind::Unavailable);
+                assert_eq!(executor.calls(), 1);
                 drop(recovered);
                 std::thread::sleep(Duration::from_millis(1));
             }
             Poll::Ready(Err(error)) => panic!("capacity recovery failed: {error}"),
-            Poll::Ready(Ok(_)) => panic!("pending executor unexpectedly completed"),
+            Poll::Ready(Ok(output)) => {
+                // The budget includes admission and the first executor poll.
+                // A Pending executor can therefore yield a tool-level timeout.
+                // A timeout before executor admission is not recovery evidence.
+                assert_empty_pending_timeout(&output);
+                drop(recovered);
+                match executor.calls() {
+                    1 => {
+                        assert_eq!(executor.polls(), initial_polls);
+                        assert_eq!(executor.drops(), 1);
+                        std::thread::yield_now();
+                    }
+                    2 => {
+                        assert!(executor.polls() > initial_polls);
+                        assert_eq!(executor.drops(), 2);
+                        return true;
+                    }
+                    calls => panic!("unexpected recovery executor admission count: {calls}"),
+                }
+            }
         }
     }
+}
+
+fn assert_empty_pending_timeout(output: &ToolOutput) {
+    assert!(output.is_error);
+    let mut content = output.content.clone();
+    let duration = content
+        .as_object_mut()
+        .unwrap()
+        .remove("duration_ms")
+        .unwrap();
+    assert!(duration.as_u64().unwrap() >= 20);
+    assert_eq!(
+        content,
+        json!({
+            "action": "exec", "cwd": ".", "status": "timed_out",
+            "exit_code": null, "signal": null, "stdout": "", "stderr": "",
+            "stdout_bytes": 0, "stderr_bytes": 0,
+            "stdout_truncated": false, "stderr_truncated": false,
+            "stdout_lossy": false, "stderr_lossy": false
+        })
+    );
 }
 
 #[test]
