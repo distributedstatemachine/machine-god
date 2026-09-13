@@ -5547,17 +5547,91 @@ fn signal_group_or_confirm_exited_leader(
     };
     #[cfg(not(test))]
     let signal_result = rustix::process::kill_process_group(group, signal);
+    #[cfg(test)]
+    let mut diagnostic = GroupSignalDiagnostic {
+        signal,
+        errno: signal_result.err().map(rustix::io::Errno::raw_os_error),
+        phase_proved_only_leader,
+        confirmation: "not-run",
+        accepted: false,
+    };
     match signal_result {
         Err(rustix::io::Errno::PERM)
-            if phase_proved_only_leader && observe_leader(group)?.is_some() =>
+            if phase_proved_only_leader && {
+                let observed = observe_leader(group);
+                #[cfg(test)]
+                {
+                    diagnostic.confirmation = leader_confirmation_label(&observed);
+                }
+                observed?.is_some()
+            } =>
         {
             // EPERM is not evidence of success or disappearance. The separate
             // NOWAIT observation and process-group snapshot from this exact
             // signal phase already prove that the only remaining member is the
             // exited retained leader; do not add another global table scan.
+            #[cfg(test)]
+            {
+                diagnostic.accepted = true;
+            }
             Ok(())
         }
-        result => classify_group_signal(result).map_err(LeaderObservationFailure::Operation),
+        result => {
+            let classified = classify_group_signal(result);
+            #[cfg(test)]
+            {
+                diagnostic.accepted = classified.is_ok();
+            }
+            classified.map_err(LeaderObservationFailure::Operation)
+        }
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn leader_confirmation_label(
+    observed: &Result<Option<BackgroundProcessExit>, LeaderObservationFailure>,
+) -> &'static str {
+    match observed {
+        Ok(Some(_)) => "exited",
+        Ok(None) => "running",
+        Err(LeaderObservationFailure::LostAuthority) => "lost-authority",
+        Err(LeaderObservationFailure::Operation(_)) => "observation-error",
+    }
+}
+
+/// Reports rejected signalling, including an early-returning confirmation
+/// error, without another process observation or any production logging.
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+struct GroupSignalDiagnostic {
+    signal: rustix::process::Signal,
+    errno: Option<i32>,
+    phase_proved_only_leader: bool,
+    confirmation: &'static str,
+    accepted: bool,
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+impl fmt::Display for GroupSignalDiagnostic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let signal = match self.signal {
+            rustix::process::Signal::TERM => "TERM",
+            rustix::process::Signal::KILL => "KILL",
+            _ => "other",
+        };
+        write!(
+            formatter,
+            "background group signal rejected: signal={signal} errno={:?} phase_only_leader={} confirmation={}",
+            self.errno, self.phase_proved_only_leader, self.confirmation
+        )
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+impl Drop for GroupSignalDiagnostic {
+    fn drop(&mut self) {
+        if !self.accepted {
+            eprintln!("{self}");
+        }
     }
 }
 
@@ -12398,6 +12472,44 @@ mod process_regression_tests {
             "cancelled helper survived cleanup"
         );
         assert!(!user_marker.exists(), "the gated user command ran");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn group_signal_diagnostic_labels_use_only_existing_observation_categories() {
+        for (observed, label) in [
+            (Ok(None), "running"),
+            (Ok(Some(BackgroundProcessExit::Exited(7))), "exited"),
+            (
+                Err(LeaderObservationFailure::LostAuthority),
+                "lost-authority",
+            ),
+            (
+                Err(LeaderObservationFailure::Operation(wait_error())),
+                "observation-error",
+            ),
+        ] {
+            assert_eq!(leader_confirmation_label(&observed), label);
+        }
+        for (signal, label) in [
+            (rustix::process::Signal::TERM, "TERM"),
+            (rustix::process::Signal::KILL, "KILL"),
+        ] {
+            let diagnostic = GroupSignalDiagnostic {
+                signal,
+                errno: Some(libc::EPERM),
+                phase_proved_only_leader: true,
+                confirmation: "not-run",
+                accepted: true, // Formatting this fixture must not emit a Drop diagnostic.
+            };
+            assert_eq!(
+                diagnostic.to_string(),
+                format!(
+                    "background group signal rejected: signal={label} errno=Some({}) phase_only_leader=true confirmation=not-run",
+                    libc::EPERM
+                )
+            );
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

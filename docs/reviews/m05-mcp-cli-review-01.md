@@ -234,3 +234,46 @@ premature turn completion and checks the actual `tools/call` request for `lookup
 Peer-lane release, retained charge and final-owner cleanup assertions are unchanged.
 Worker repair `504bec35` changes only the fixture; its runtime verification remains
 required and is not inferred from this scheduling explanation.
+
+Candidate `7aa6be7059a6567c2df52aca37a51bd20a63b46f` passed both platform
+builds, strict Clippy and auxiliary checks. All eight R2 regressions and the
+complete focused macOS batch passed, including 795 MCP cases. The full Linux
+default-concurrency workspace/doc/release-smoke gate passed. The full macOS
+native suite then reported 3,343 passes, four failures and 12 ignored tests in
+678.60 seconds; its remaining integration/doc/smoke steps did not run:
+
+- `abort_and_drop_revoke_pipe_authority`: failure-only instrumentation located
+  `Cleanup` at the signal-phase operation error (`background_process.rs:5445`).
+  Direct-child reaping succeeded on its first probe and discharged child/permit
+  custody. The signal and errno were not captured, so the original cause remains
+  unproven; this is distinct from a reap timeout.
+- Three PTY cases failed during exclusive-child-reaping admission, before their
+  history/EOF/signal behavior or actual PTY helper startup. `/bin/sh -c 'exit 0'`
+  spawned successfully but returned no exit status during the initial 500 ms.
+  Exact-child kill succeeded, but a further 500 ms cleanup did not obtain terminal
+  status; the child and permit transferred to observation-only quarantine.
+  The outer two-second startup deadline had not expired. These observations do
+  not establish a source bug or host-load cause.
+
+The three PTY cases were
+`durable_history_resize_matches_the_real_pty_and_survives_recovery`,
+`expired_eof_observation_cannot_hide_a_retained_running_child` and
+`explicit_owned_signal_kills_shell_and_final_drain_preserves_bytes`.
+Each of the four failed cases subsequently passed once in a separate unchanged
+process. This diagnostic does not establish a repair or replace the failed gate.
+Evidence remains in `macos-7aa6be70-complete-gate.log` and
+`macos-7aa6be70-platform-diagnostic.log`; successful focused/Linux/auxiliary logs
+use the same candidate prefix. Python and fresh product reviews were not started
+from the failed macOS run.
+
+Worker `9d7a57b7` adds failure-only test diagnostics for the rejected signal's
+name/errno, the existing phase's sole-leader evidence and the already-performed
+exit confirmation. It adds no process observation, retry, changed deadline or
+production logging. The existing signal acceptance and early-error propagation
+remain unchanged. This instrumentation is not claimed as a product repair.
+
+All 130 compiled test binaries after the native unit suite subsequently passed
+in a separate serial diagnostic (`macos-7aa6be70-remaining-diagnostic-replacement.log`).
+The initial diagnostic invocation failed while parsing its compile-log inventory,
+before running any tests; its log is retained separately. This additional
+coverage does not erase the four failures or satisfy the complete macOS gate.
