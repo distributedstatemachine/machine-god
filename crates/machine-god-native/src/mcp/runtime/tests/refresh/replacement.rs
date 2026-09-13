@@ -1,6 +1,6 @@
 use super::*;
 use futures_util::StreamExt;
-use std::{future::Future, sync::atomic::AtomicBool, task::Context};
+use std::{future::Future, sync::atomic::AtomicBool, task::Poll};
 
 fn retained(runtime: &NativeMcpRuntime) -> usize {
     crate::mcp::runtime::refresh::retained_catalog_charge(&mut runtime.state.lock().unwrap())
@@ -208,9 +208,24 @@ fn native_call_suspended_after_exchange_stays_charged_across_reload_and_drain() 
         .unwrap()
         .unwrap();
     let mut running = Box::pin(turn.collect::<Vec<_>>());
-    let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
-    assert!(running.as_mut().poll(&mut cx).is_pending());
+    block_on(std::future::poll_fn(|cx| {
+        // The real proof-bearing writer yields after writing and wakes its
+        // caller before the later flush poll. Drive those actual wakeups until
+        // first_exchange has returned, not merely until the turn first yields.
+        assert!(
+            running.as_mut().poll(cx).is_pending(),
+            "turn completed before the executor's post-exchange pause"
+        );
+        if executor.exchanged.load(Ordering::Acquire) {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }));
     assert!(executor.exchanged.load(Ordering::Acquire));
+    let request = machine_god_core::json::from_slice(&fixture.writes.lock().unwrap()).unwrap();
+    assert_eq!(request["method"], "tools/call");
+    assert_eq!(request["params"]["name"], "lookup");
     assert!(server.upgrade().unwrap().peer.try_lock().is_some());
 
     runtime

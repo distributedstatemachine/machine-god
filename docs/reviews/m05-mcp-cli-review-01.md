@@ -208,3 +208,29 @@ routes, mixed drained and pending generations, byte/count rejection without
 publication changes, and capacity recovery after final owner release. Their
 formatting checks passed; build and runtime acceptance require the replacement
 gate rather than the rejected candidate's evidence.
+
+Integrated repair candidate `c86eff571ade84874016e37b5770758ad77d3b0e` passed
+pinned formatting, strict workspace Clippy, all test-target compilation and fresh
+release builds on both platforms. Drift, audit/policy and the three portable
+Clippy selections passed. The focused macOS batch passed both admission-cancel
+cases, the naming regression and four retirement-accounting cases. Its fifth
+retirement case failed before the intended suspended-call boundary: the executor's
+exchange flag was still false after one poll of the collected turn. This is the
+observed failure, not proof of an accounting defect or of its cause.
+
+A subsequent complete MCP diagnostic reported 794 passes and the same one
+failure in 24.63 seconds. The candidate therefore did not pass its focused gate.
+Evidence remains in `macos-c86eff57-build.log`, `linux-c86eff57-build.log`,
+`auxiliary-c86eff57-gate.log`, `macos-c86eff57-focused.log` and
+`macos-c86eff57-mcp-diagnostic.log`. No fresh product-review acceptance or remote
+delivery follows from these partial results.
+
+The remaining contextual/CLI/background/terminal focused diagnostic also passed
+(`macos-c86eff57-remaining-diagnostic.log`). Source inspection explains why the
+fixture's one-poll assumption is invalid: the actual submission writer wakes its
+caller and returns `Pending` after writing, before a later flush poll. The test
+now drives those real wakeups until the explicit post-exchange marker, rejects
+premature turn completion and checks the actual `tools/call` request for `lookup`.
+Peer-lane release, retained charge and final-owner cleanup assertions are unchanged.
+Worker repair `504bec35` changes only the fixture; its runtime verification remains
+required and is not inferred from this scheduling explanation.
