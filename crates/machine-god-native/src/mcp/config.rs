@@ -26,8 +26,12 @@ use std::fmt;
 
 use serde::ser::{Serialize, SerializeMap, Serializer};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod acp;
 mod json;
 mod parse;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use acp::decode as decode_acp;
 #[cfg(test)]
 mod tests;
 

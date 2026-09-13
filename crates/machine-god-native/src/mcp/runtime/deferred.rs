@@ -21,11 +21,28 @@ impl NativeMcpRuntime {
             .state
             .lock()
             .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
-        if state.closed {
+        if state.closed || self.ephemeral.get().is_some() {
             return Err(NativeMcpRuntimeError::Unavailable);
         }
         self.controller
             .set(Arc::downgrade(controller))
+            .map_err(|_| NativeMcpRuntimeError::Invalid)
+    }
+
+    /// Single session-incarnation owner, mutually exclusive with profile lookup.
+    pub(crate) fn bind_ephemeral(
+        &self,
+        owner: &Arc<crate::mcp::ephemeral::NativeMcpEphemeralCatalog>,
+    ) -> Result<()> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| NativeMcpRuntimeError::Unavailable)?;
+        if state.closed || state.active.is_some() || self.controller.get().is_some() {
+            return Err(NativeMcpRuntimeError::Invalid);
+        }
+        self.ephemeral
+            .set(Arc::downgrade(owner))
             .map_err(|_| NativeMcpRuntimeError::Invalid)
     }
 
@@ -36,6 +53,12 @@ impl NativeMcpRuntime {
         cancellation: &CancellationToken,
     ) -> Result<()> {
         revalidate(context, registry, cancellation)?;
+        if let Some(ephemeral) = self.ephemeral.get() {
+            ephemeral
+                .upgrade()
+                .ok_or(NativeMcpRuntimeError::Unavailable)?
+                .required_readiness(self)?;
+        }
         let pinned = {
             let state = self
                 .state

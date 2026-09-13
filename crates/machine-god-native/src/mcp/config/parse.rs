@@ -217,7 +217,7 @@ fn stdio_config(object: &Map<String, Value>) -> Result<McpStdioConfig> {
     })
 }
 
-fn remote_config(object: &Map<String, Value>) -> Result<McpRemoteConfig> {
+pub(super) fn remote_config(object: &Map<String, Value>) -> Result<McpRemoteConfig> {
     let url = string(
         object.get("url").ok_or(McpConfigError::Invalid)?,
         4096,

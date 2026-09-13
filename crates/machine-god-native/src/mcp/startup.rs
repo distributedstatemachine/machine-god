@@ -84,6 +84,7 @@ type Result<T> = std::result::Result<T, NativeMcpStartupError>;
 /// acquisition occurs in construction or in creation of an unpolled build.
 pub struct NativeMcpStartup {
     configuration: Arc<McpConfig>,
+    ephemeral_identities: Option<Vec<Arc<[u8]>>>,
     #[cfg(feature = "mcp-http")]
     environment: ValidatedBackgroundEnvironment,
     stdio: Option<Arc<NativeMcpStdioStartup>>,
@@ -123,6 +124,7 @@ impl NativeMcpStartup {
         authentication::validate(&options.configuration, &options.authentication)?;
         Ok(Self {
             configuration: options.configuration,
+            ephemeral_identities: None,
             #[cfg(feature = "mcp-http")]
             environment,
             stdio: options.stdio,
@@ -146,6 +148,54 @@ impl NativeMcpStartup {
             pending: Arc::new(AtomicBool::new(false)),
             cleanup: Mutex::new(Vec::new()),
         })
+    }
+
+    /// ACP-only private identity selection; it has no store or profile codec path.
+    pub(crate) fn new_ephemeral(
+        options: NativeMcpStartupOptions,
+        identities: Vec<Arc<[u8]>>,
+    ) -> Result<Self> {
+        if identities.len() != options.configuration.servers().len()
+            || identities
+                .iter()
+                .any(|identity| !identity.starts_with(b"MG-ACP-MCP-1\0"))
+            || identities
+                .iter()
+                .map(|identity| identity.len())
+                .sum::<usize>()
+                > 2 * super::config::MAX_CONFIG_BYTES
+        {
+            return Err(NativeMcpStartupError::Invalid);
+        }
+        let mut startup = Self::new(options)?;
+        startup.ephemeral_identities = Some(identities);
+        Ok(startup)
+    }
+
+    fn configuration_identity(
+        &self,
+        configuration: &super::config::McpServerConfig,
+    ) -> Result<Arc<[u8]>> {
+        if let Some(identities) = &self.ephemeral_identities {
+            let index = self
+                .configuration
+                .servers()
+                .iter()
+                .position(|server| server.name() == configuration.name())
+                .ok_or(NativeMcpStartupError::Invalid)?;
+            return identities
+                .get(index)
+                .cloned()
+                .ok_or(NativeMcpStartupError::Invalid);
+        }
+        let mut encoded = McpConfig::new();
+        encoded
+            .insert(configuration.clone())
+            .map_err(|_| NativeMcpStartupError::Invalid)?;
+        Ok(encoded
+            .encode()
+            .map_err(|_| NativeMcpStartupError::Limit)?
+            .into())
     }
 
     /// Builds the selected phase sequentially in configuration order. Outcomes

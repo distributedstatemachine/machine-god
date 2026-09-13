@@ -189,6 +189,13 @@ impl NativeMcpRuntime {
                 .sync_catalog_publication(expected, prospective, || {
                     self.commit_tool_refresh_guarded(candidate, lane, caller)
                 })
+        } else if let Some(ephemeral) = self.ephemeral.get() {
+            ephemeral
+                .upgrade()
+                .ok_or(Error::Unavailable)?
+                .sync_catalog_publication(expected, prospective, || {
+                    self.commit_tool_refresh_guarded(candidate, lane, caller)
+                })
         } else {
             self.commit_tool_refresh_guarded(candidate, lane, caller)
         }

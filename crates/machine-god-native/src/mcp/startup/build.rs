@@ -8,7 +8,7 @@ use super::{
 };
 use crate::mcp::{
     catalog::{McpDescriptorCatalog, McpDescriptorLimits},
-    config::{McpConfig, McpServerConfig, McpTransportConfig},
+    config::{McpServerConfig, McpTransportConfig},
     pagination::{McpCatalogKind, McpCatalogLimits},
     peer::{McpPeerError, McpStdioPeer},
     runtime::{
@@ -154,11 +154,7 @@ async fn server(
     deadline: Option<Instant>,
     maximum: usize,
 ) -> Result<(NativeMcpServerCandidate, usize)> {
-    let mut encoded = McpConfig::new();
-    encoded
-        .insert((*configuration).clone())
-        .map_err(|_| Error::Invalid)?;
-    let identity: Arc<[u8]> = encoded.encode().map_err(|_| Error::Limit)?.into();
+    let identity = startup.configuration_identity(&configuration)?;
     let minimum = identity
         .len()
         .checked_add(configuration.name().len() + 4096)

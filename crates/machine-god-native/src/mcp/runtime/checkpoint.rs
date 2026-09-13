@@ -19,6 +19,9 @@ impl fmt::Debug for NativeMcpPublicationCheckpoint {
     }
 }
 impl NativeMcpPublicationCheckpoint {
+    pub(crate) fn is_unpublished(&self) -> bool {
+        self.publication.is_none()
+    }
     pub(crate) fn same_selection(&self, other: &Self) -> bool {
         self.same_runtime(other)
             && match (&self.publication, &other.publication) {
