@@ -3,7 +3,7 @@
 use super::{
     browser_launcher::NativeMcpBrowserLauncher,
     continuation::{AdmittedResponse, InputOutcome, collect_input},
-    interaction::McpElicitationPresenter,
+    interaction::{McpClientUrlCompletions, McpClientUrlOutcome, McpElicitationPresenter},
     runtime::{
         NativeMcpRuntimeToolCall, NativeMcpToolCompletionPolicy, NativeMcpToolExecutionPolicy,
         NativeMcpToolExecutor,
@@ -75,17 +75,21 @@ impl NativeMcpArchivedToolExecutor {
 
     /// Matching runtime policy; never infer responder support from remote hints.
     #[must_use]
-    pub const fn execution_policy(&self) -> NativeMcpToolExecutionPolicy {
+    pub fn execution_policy(&self) -> NativeMcpToolExecutionPolicy {
         NativeMcpToolExecutionPolicy {
             form: self.form_responder.is_some(),
-            url: self.form_responder.is_some() && self.url_launcher.is_some(),
+            url: self.form_responder.as_ref().is_some_and(|presenter| {
+                self.url_launcher.is_some() || presenter.client_urls().is_some()
+            }),
             ..POLICY
         }
     }
 
     /// Supplies the actual human presentation endpoint. Construction is inert;
     /// only this explicitly configured owner advertises modern form support.
-    /// URL support additionally requires the native host's actual shared launcher.
+    /// URL support additionally requires an explicit client URL endpoint or the
+    /// native host's actual shared launcher. Client-managed URLs never launch
+    /// through the local browser, even if both selections are present.
     /// Sampling, roots and legacy retries remain unsupported.
     #[must_use]
     pub fn with_form_responder(mut self, presenter: Arc<dyn McpElicitationPresenter>) -> Self {
@@ -107,19 +111,24 @@ impl NativeMcpToolExecutor for NativeMcpArchivedToolExecutor {
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
         Box::pin(async move {
             call.revalidate()?;
+            let mut completions = McpClientUrlCompletions::default();
+            let mut completion_outcome = McpClientUrlOutcome::Completed;
             let mut response = call.first_exchange().await?;
             let (output, finish) = loop {
                 let admitted = call.admit_response(response, &self.admission)?;
                 match admitted {
                     AdmittedResponse::Complete(output) => break (output, false),
                     AdmittedResponse::ProtocolFailure(failure) => {
+                        completion_outcome = McpClientUrlOutcome::Unresolved;
                         break (projection::protocol_failure(&failure)?, false);
                     }
                     AdmittedResponse::InputRequired(input) => {
                         let Some(presenter) = &self.form_responder else {
+                            completion_outcome = McpClientUrlOutcome::Unresolved;
                             break (projection::input_required(&input.required)?, true);
                         };
                         if call.continuation_limit_reached() {
+                            completion_outcome = McpClientUrlOutcome::Unresolved;
                             break (projection::continuation_exhausted(), false);
                         }
                         call.begin_interaction()?;
@@ -128,6 +137,7 @@ impl NativeMcpToolExecutor for NativeMcpArchivedToolExecutor {
                             input,
                             presenter.as_ref(),
                             self.url_launcher.as_ref(),
+                            &mut completions,
                         )
                         .await?
                         {
@@ -135,6 +145,7 @@ impl NativeMcpToolExecutor for NativeMcpArchivedToolExecutor {
                                 response = call.continue_exchange(consent).await?;
                             }
                             InputOutcome::Unresolved(input) => {
+                                completion_outcome = McpClientUrlOutcome::Unresolved;
                                 break (projection::input_required(&input.required)?, true);
                             }
                         }
@@ -155,6 +166,7 @@ impl NativeMcpToolExecutor for NativeMcpArchivedToolExecutor {
                     },
                 )
                 .await?;
+            completions.finish(completion_outcome);
             Ok(if finish {
                 execution.finish_turn()
             } else {

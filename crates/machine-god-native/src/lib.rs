@@ -1,5 +1,6 @@
 #![doc = "Explicit native capabilities for machine-god hosts."]
 
+pub mod acp;
 pub mod mcp;
 
 #[cfg(all(

@@ -7,7 +7,7 @@ use std::fs::File;
 
 mod process;
 
-const URL: &str = r#""result":{"resultType":"input_required","inputRequests":{"url":{"method":"elicitation/create","params":{"mode":"url","message":"Authorize","url":"https://example.test/auth"}}},"requestState":{"exact":1e-99999}}"#;
+pub(super) const URL: &str = r#""result":{"resultType":"input_required","inputRequests":{"url":{"method":"elicitation/create","params":{"mode":"url","message":"Authorize","url":"https://example.test/auth"}}},"requestState":{"exact":1e-99999}}"#;
 
 /// A retained directory is rejected before `Command::spawn`. These tests exercise
 /// real worker admission and the real inbox without creating any process.

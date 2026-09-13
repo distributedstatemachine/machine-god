@@ -3,6 +3,7 @@ use crate::mcp::interaction::McpElicitationAnswerInput;
 use futures_util::future::{Either, select};
 use std::task::{Context, Poll, Waker};
 
+mod client_url;
 mod url;
 
 const INPUT: &str = r#""result":{"resultType":"input_required","inputRequests":{"confirm":{"method":"elicitation/create","params":{"message":"Confirm","requestedSchema":{"type":"object","properties":{"number":{"type":"number"}}}}}},"requestState":{"exact":1e-99999,"zero":-0,"$serde_json::private::Number":{"$serde_json::private::RawValue":"literal"}}}"#;

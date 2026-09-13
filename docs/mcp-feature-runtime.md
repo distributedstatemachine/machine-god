@@ -211,7 +211,8 @@ before that aggregate check, plus bounded wire/parser storage. No hidden result
 queue or detached observer retains additional generations. Catalog replies retain
 original descriptors, not discarded page-envelope metadata.
 
-Read/get input rounds compose with the same native presenter and URL launcher as
+Read/get input rounds compose with the same native presenter and explicit local
+launcher or [client URL endpoint](acp-interactions.md) as
 tools. The human owner is the retained conversation principal, not model text or
 an invented turn. The runtime releases the serialized peer lane while collecting
 input but retains the operation slot and exact round. It permits at most eight

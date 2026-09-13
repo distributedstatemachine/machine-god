@@ -156,7 +156,8 @@ model context, tool name or authority callback substitutes for that owner.
 
 Before any prompt, collection validates the original operation and interaction
 deadline and preflights the entire nonempty request set. Unsupported sampling or
-roots, and URL requests without an explicitly selected launcher, leave input
+roots, and URL requests without an explicitly selected launcher or
+[client URL endpoint](acp-interactions.md), leave input
 unresolved without partial prompting. Form answers retain their inherited schema
 bounds. A cancel disposition supplies cancel responses for remaining requests;
 actual operation cancellation aborts collection instead of granting continuation.
@@ -164,7 +165,7 @@ actual operation cancellation aborts collection instead of granting continuation
 Both paths bound the escaped aggregate response map to 128 KiB, validate its exact
 request keys, and revalidate operation ownership/deadline after asynchronous
 presentation or browser work. Prompt abandonment cancels the exact inbox wait.
-URL recovery shares the same three-question budget and typed native launcher
+Local-browser URL recovery shares the same three-question budget and typed native launcher
 checks; a recovery choice cannot mint browser or continuation authority. The
 collector returns validated response data only. The original runtime operation
 still owns one-shot consumption, round limits and any subsequent wire submission.

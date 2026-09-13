@@ -11,7 +11,10 @@ use crate::{
         },
         continuation::collect_feature_input,
         control::{McpFeatureControlAuthority, McpFeatureReply, McpFeatureRound},
-        interaction::{McpElicitationAnswer, McpElicitationPresenter, McpElicitationPromptRequest},
+        interaction::{
+            McpClientUrlCompletions, McpClientUrlOutcome, McpElicitationAnswer,
+            McpElicitationPresenter, McpElicitationPromptRequest,
+        },
         mrtr::{
             McpElicitationAction, McpElicitationRequest, McpInputRequestPayload, McpInputRequired,
         },
@@ -46,6 +49,7 @@ pub(super) async fn complete(
     source: &BackgroundOutputOwner,
     endpoint: &FeatureInputEndpoint,
 ) -> Result<McpFeatureReply> {
+    let mut completions = McpClientUrlCompletions::default();
     for _ in 0..8 {
         let Some(input) = round.input() else { break };
         let call = NativeMcpRuntimeFeatureCall::new(
@@ -59,6 +63,7 @@ pub(super) async fn complete(
             &call,
             endpoint.presenter.as_ref(),
             endpoint.launcher.as_ref(),
+            &mut completions,
         )
         .await
         .map_err(|_| NativeMcpRuntimeError::Cancelled)?;
@@ -76,7 +81,17 @@ pub(super) async fn complete(
         round = exchange::timed(server, authority, deadline, response).await?;
     }
     // Unhandled input and exhausted rounds remain a failed/unresolved receipt.
-    Ok(round.into_reply())
+    let reply = round.into_reply();
+    let completed = matches!(&reply, McpFeatureReply::Response(response)
+        if matches!(response.outcome(),
+            crate::mcp::feature::McpFeatureOutcome::Resource { .. }
+            | crate::mcp::feature::McpFeatureOutcome::Prompt { .. }));
+    completions.finish(if completed {
+        McpClientUrlOutcome::Completed
+    } else {
+        McpClientUrlOutcome::Unresolved
+    });
+    Ok(reply)
 }
 
 pub(crate) struct NativeMcpRuntimeFeatureCall {

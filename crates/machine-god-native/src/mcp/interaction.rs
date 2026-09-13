@@ -9,9 +9,17 @@ use machine_god_core::{
 use serde_json::value::RawValue;
 use std::{fmt, sync::Arc};
 
+mod completion;
+pub(crate) use completion::McpClientUrlCompletions;
+pub use completion::{
+    McpClientUrlCompletion, McpClientUrlCompletionObserver, McpClientUrlEndpoint,
+    McpClientUrlOutcome,
+};
+
 pub const MAX_MCP_ELICITATION_ANSWER_BYTES: usize = 128 * 1024;
 
 /// Captured prompt provenance, not permission or continuation authority.
+#[derive(Clone)]
 pub enum McpElicitationPromptSource {
     ModelTool {
         context: ToolContext,
@@ -57,6 +65,7 @@ impl fmt::Debug for McpElicitationPromptSource {
     }
 }
 
+#[derive(Clone)]
 pub struct McpElicitationPromptRequest {
     source: McpElicitationPromptSource,
     server: Arc<str>,
@@ -263,6 +272,14 @@ impl std::error::Error for McpElicitationPromptError {}
 
 /// Explicitly injected human endpoint. No ambient context or model-text fallback.
 pub trait McpElicitationPresenter: Send + Sync {
+    /// An explicitly selected client-managed URL endpoint. Querying this
+    /// selection must be inert. When present, URL consent is handed to the
+    /// client through `present`; native browser launching and recovery are not
+    /// performed. It is not inferred from client-supplied capability flags.
+    fn client_urls(&self) -> Option<&dyn McpClientUrlEndpoint> {
+        None
+    }
+
     fn present(
         &self,
         request: McpElicitationPromptRequest,

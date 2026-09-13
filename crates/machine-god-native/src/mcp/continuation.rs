@@ -3,7 +3,7 @@
 
 use super::{
     browser_launcher::NativeMcpBrowserLauncher,
-    interaction::{McpElicitationPresenter, McpElicitationPromptError},
+    interaction::{McpClientUrlCompletions, McpElicitationPresenter, McpElicitationPromptError},
     mrtr::{
         McpElicitationAction, McpElicitationMode, McpInputRequestPayload, McpValidatedResponses,
     },
@@ -54,6 +54,7 @@ pub(crate) async fn collect_input(
     input: ContinuationInput,
     presenter: &dyn McpElicitationPresenter,
     launcher: Option<&NativeMcpBrowserLauncher>,
+    completions: &mut McpClientUrlCompletions,
 ) -> Result<InputOutcome, ToolError> {
     let responses = collect(
         &InputSource::Tool {
@@ -62,6 +63,7 @@ pub(crate) async fn collect_input(
         },
         presenter,
         launcher,
+        completions,
     )
     .await?;
     Ok(match responses {
@@ -74,14 +76,22 @@ pub(crate) async fn collect_feature_input(
     call: &NativeMcpRuntimeFeatureCall,
     presenter: &dyn McpElicitationPresenter,
     launcher: Option<&NativeMcpBrowserLauncher>,
+    completions: &mut McpClientUrlCompletions,
 ) -> Result<Option<McpValidatedResponses>, ToolError> {
-    collect(&InputSource::Feature(call), presenter, launcher).await
+    collect(
+        &InputSource::Feature(call),
+        presenter,
+        launcher,
+        completions,
+    )
+    .await
 }
 
 async fn collect(
     call: &InputSource<'_>,
     presenter: &dyn McpElicitationPresenter,
     launcher: Option<&NativeMcpBrowserLauncher>,
+    completions: &mut McpClientUrlCompletions,
 ) -> Result<Option<McpValidatedResponses>, ToolError> {
     call.revalidate()?;
     call.check_interaction_deadline()?;
@@ -89,7 +99,8 @@ async fn collect(
     let requests = required.requests();
     // The pinned responder rejects empty maps, including state-only responses.
     // Preflight all methods/modes before displaying any partial interaction.
-    if !supported(required, launcher.is_some()) {
+    let client_urls = presenter.client_urls();
+    if !supported(required, launcher.is_some() || client_urls.is_some()) {
         return Ok(None);
     }
     let mut responses = BTreeMap::<&str, Box<RawValue>>::new();
@@ -107,6 +118,17 @@ async fn collect(
             RawValue::from_string("{\"action\":\"cancel\"}".into()).expect("fixed JSON")
         } else {
             let prompt = call.prompt(form.clone())?;
+            let client_completion = if form.mode() == McpElicitationMode::Url
+                && let Some(endpoint) = client_urls
+            {
+                Some(
+                    completions
+                        .register(endpoint, &prompt)
+                        .map_err(|_| rejected())?,
+                )
+            } else {
+                None
+            };
             let cancellation = PromptCancellation(CancellationToken::new());
             let answer = match select(
                 presenter.present(prompt, cancellation.0.clone()),
@@ -121,8 +143,14 @@ async fn collect(
             call.check_interaction_deadline()?;
             match answer {
                 Ok(answer) => {
+                    if answer.action() == McpElicitationAction::Accept
+                        && let Some(completion) = client_completion
+                    {
+                        completions.retain(completion).map_err(|_| rejected())?;
+                    }
                     let answer = if form.mode() == McpElicitationMode::Url
                         && answer.action() == McpElicitationAction::Accept
+                        && client_urls.is_none()
                     {
                         let Some(answer) = url::complete(
                             call,

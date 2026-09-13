@@ -8,7 +8,9 @@ The default `execution_policy()` advertises no form or URL responder.
 `with_form_responder` explicitly retains an actual `McpElicitationPresenter`
 (normally the native interactive prompt bridge) and enables form advertisement.
 URL support additionally requires the native host's explicitly composed shared
-browser launcher. Progress metadata uses the actual peer-reserved ID.
+browser launcher or an explicit [client-managed URL endpoint](acp-interactions.md).
+The client endpoint takes precedence without launching a local browser.
+Progress metadata uses the actual peer-reserved ID.
 
 ## Admission and distinct results
 
@@ -57,7 +59,7 @@ acquisition, response admission and every synchronous writer boundary.
 With an explicitly supplied presenter, a correlated modern input-required
 result presents its exact typed requests through the native inbox. Every request
 must be a supported form or URL before presentation begins; URL requests also
-require the actual native launcher. Answers must match the
+require an explicit native launcher or client URL endpoint. Answers must match the
 entire original request-key set and schema; accept, decline and cancel remain
 distinct wire actions. A cancel supplies explicit cancel actions for the
 remaining requests without further prompts, matching the pinned responder.
