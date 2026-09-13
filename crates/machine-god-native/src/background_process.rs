@@ -5175,7 +5175,12 @@ fn reap_child_bounded(
         failures.record(invariant_error());
         return;
     }
-    match poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT) {
+    let first = poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT);
+    #[cfg(test)]
+    let first_outcome = reap_outcome_label(&first);
+    #[cfg(test)]
+    let mut second_outcome = "not-attempted";
+    match first {
         Ok(BoundedReap::Reaped(status)) => {
             if expected.is_some_and(|expected| exit_status(status) != expected) {
                 failures.record(invariant_error());
@@ -5196,7 +5201,12 @@ fn reap_child_bounded(
             if child.as_mut().is_none_or(|child| child.kill().is_err()) {
                 failures.record(cleanup_error());
             }
-            match poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT) {
+            let second = poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT);
+            #[cfg(test)]
+            {
+                second_outcome = reap_outcome_label(&second);
+            }
+            match second {
                 Ok(BoundedReap::Reaped(status)) => {
                     if expected.is_some_and(|expected| exit_status(status) != expected) {
                         failures.record(invariant_error());
@@ -5223,6 +5233,25 @@ fn reap_child_bounded(
             }
         }
         Err(error) => failures.record(error),
+    }
+    #[cfg(test)]
+    if failures.invariant || failures.wait || failures.cleanup {
+        eprintln!(
+            "background cleanup reap: first={first_outcome} second={second_outcome} child_retained={} permit_retained={}",
+            child.is_some(),
+            reap_permit.is_some()
+        );
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn reap_outcome_label(outcome: &Result<BoundedReap, BackgroundProcessError>) -> &'static str {
+    match outcome {
+        Ok(BoundedReap::Reaped(_)) => "reaped",
+        Ok(BoundedReap::LostAuthority) => "lost-authority",
+        Ok(BoundedReap::ObservationFailed) => "observation-failed",
+        Ok(BoundedReap::TimedOut) => "timed-out",
+        Err(_) => "invalid-custody",
     }
 }
 
@@ -5442,7 +5471,14 @@ struct CleanupFailures {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl CleanupFailures {
+    #[cfg_attr(test, track_caller)]
     fn record(&mut self, error: BackgroundProcessError) {
+        #[cfg(test)]
+        eprintln!(
+            "background cleanup failure: kind={:?} line={}",
+            error.kind(),
+            std::panic::Location::caller().line()
+        );
         match error.kind() {
             BackgroundProcessErrorKind::Wait => self.wait = true,
             BackgroundProcessErrorKind::Cleanup => self.cleanup = true,
@@ -5638,6 +5674,12 @@ fn require_group_quiescence_evidence(
     group: rustix::process::Pid,
 ) -> Result<(), BackgroundProcessError> {
     if observed_failure || !captured_resolved || !only_group_leader_remains(members, group) {
+        #[cfg(test)]
+        eprintln!(
+            "background cleanup quiescence rejected: observed_failure={observed_failure} captured_resolved={captured_resolved} members={} leader_present={}",
+            members.len(),
+            members.iter().any(|member| member.pid == group)
+        );
         Err(cleanup_error())
     } else {
         Ok(())
@@ -6262,6 +6304,8 @@ fn macos_authenticated_scope_members_with(
     ) -> Result<(), BackgroundProcessError>,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     #[cfg(test)]
+    let mut diagnostic = SnapshotFailureStage("entry");
+    #[cfg(test)]
     let started = Instant::now();
     #[cfg(test)]
     record_group_snapshot_for_test(group);
@@ -6276,6 +6320,10 @@ fn macos_authenticated_scope_members_with(
     }
     let inventory = inventory.filter(|_| authenticate);
     let helper_deadline = inventory.map(|_| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
+    #[cfg(test)]
+    {
+        diagnostic.0 = "inventory-query-or-command";
+    }
     let (bytes, deadline) =
         if let Some(crate::process_inventory_helper::PreparedProcessInventory::Service(lease)) =
             inventory
@@ -6311,21 +6359,41 @@ fn macos_authenticated_scope_members_with(
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null());
+            #[cfg(test)]
+            {
+                diagnostic.0 = "reserve-reap-authority";
+            }
             let mut reap_permit =
                 Some(reserve_child_reap_authority_for(true).map_err(|_| cleanup_error())?);
             #[cfg(test)]
             let reserved_at = started.elapsed();
+            #[cfg(test)]
+            {
+                diagnostic.0 = "spawn";
+            }
             let mut child = Some(command.spawn().map_err(|_| cleanup_error())?);
             #[cfg(test)]
             let spawned_at = started.elapsed();
+            #[cfg(test)]
+            {
+                diagnostic.0 = "take-stdout";
+            }
             let mut output = child
                 .as_mut()
                 .and_then(|child| child.stdout.take())
                 .ok_or_else(cleanup_error)?;
+            #[cfg(test)]
+            {
+                diagnostic.0 = "get-output-flags";
+            }
             let Ok(flags) = rustix::fs::fcntl_getfl(&output) else {
                 terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
                 return Err(cleanup_error());
             };
+            #[cfg(test)]
+            {
+                diagnostic.0 = "set-output-flags";
+            }
             if rustix::fs::fcntl_setfl(&output, flags | OFlags::NONBLOCK).is_err() {
                 terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
                 return Err(cleanup_error());
@@ -6334,6 +6402,10 @@ fn macos_authenticated_scope_members_with(
                 helper_deadline.unwrap_or_else(|| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
             #[cfg(test)]
             let collector_at = started.elapsed();
+            #[cfg(test)]
+            {
+                diagnostic.0 = "collect-output";
+            }
             let snapshot = collect_group_snapshot_output(&mut output, deadline, || {
                 let observed = try_wait_child(child.as_mut().ok_or(())?);
                 settle_group_snapshot_child_observation(observed, || {
@@ -6355,6 +6427,10 @@ fn macos_authenticated_scope_members_with(
             discharge_reaped_child(&mut child, &mut reap_permit);
             (bytes, deadline)
         };
+    #[cfg(test)]
+    {
+        diagnostic.0 = "output-size-or-injected-failure";
+    }
     if bytes.len() > MAX_GROUP_SNAPSHOT_BYTES {
         return Err(cleanup_error());
     }
@@ -6369,11 +6445,19 @@ fn macos_authenticated_scope_members_with(
     let mut members = Vec::new();
     #[cfg(test)]
     let scan_started = Instant::now();
+    #[cfg(test)]
+    {
+        diagnostic.0 = "decode-members";
+    }
     let pids = if inventory.is_some() {
         crate::process_inventory_helper::decode_inventory(&bytes).map_err(|_| cleanup_error())?
     } else {
         parse_group_members(&bytes)?
     };
+    #[cfg(test)]
+    {
+        diagnostic.0 = "scan-members";
+    }
     for (inspected, pid) in pids.into_iter().enumerate() {
         let _ = inspected;
         if Instant::now() >= deadline {
@@ -6415,7 +6499,25 @@ fn macos_authenticated_scope_members_with(
         fail_after_terminal_capture_for_test(pid)?;
         members.push(member);
     }
+    #[cfg(test)]
+    {
+        diagnostic.0 = "complete";
+    }
     Ok(members)
+}
+
+/// One fixed failure-stage line per test inventory call; no additional clock
+/// reads, process observations or production diagnostics.
+#[cfg(all(test, target_os = "macos"))]
+struct SnapshotFailureStage(&'static str);
+
+#[cfg(all(test, target_os = "macos"))]
+impl Drop for SnapshotFailureStage {
+    fn drop(&mut self) {
+        if self.0 != "complete" {
+            eprintln!("macOS inventory failed: stage={}", self.0);
+        }
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
