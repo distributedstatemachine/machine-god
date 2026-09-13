@@ -114,3 +114,34 @@ of the identical immutable pin supplied the successful replacement drift check.
   that unrelated byte boundary. Product limits remain unchanged.
 
 These are fixture corrections, not proof of replacement runtime acceptance.
+
+Candidate `b7f1bfc5a1762411ab63ae5af793eacd69a39b33` passed the replacement
+focused batch, including all 787 native MCP tests, contextual integrations,
+composed CLI cases and the captured-helper deadline regression. Both platform
+builds, strict Clippy and auxiliary checks passed. Full runtime gates then
+reported separate terminal/background lifecycle failures:
+
+- Linux default concurrency: 3,337 native unit tests and 116 CLI integrations
+  passed, but `blocked_deadline_waker_tail_retains_capacity_until_callback_returns`
+  failed during its recovery poll; the other 97 tests in that integration suite
+  passed. Its earlier blocked-callback capacity assertions had passed. The panic
+  did not retain the returned output, so its exact status was not observed.
+- macOS serial execution: 3,338 native unit tests passed, one failed and 12 were
+  ignored. `abort_and_drop_revoke_pipe_authority` received `Cleanup` from
+  `abort_and_reap`. An unchanged isolated retry subsequently passed in 0.33 seconds;
+  that retry does not establish a cause or repair.
+
+Evidence remains in `macos-b7f1bfc5-focused.log`,
+`linux-b7f1bfc5-complete-gate.log`, `macos-b7f1bfc5-complete-gate.log` and
+`macos-b7f1bfc5-abort-diagnostic.log` in the retained directory. Neither failed
+full run reached its remaining integration, doc-test or release-smoke commands.
+
+The terminal fixture source assumed an admitted pending executor could not
+return a tool-level timeout during its first poll. The admission-inclusive
+deadline permits that outcome. Its correction retains the 20 ms execution and
+two-second recovery bounds and all blocked-tail assertions, requires exact
+executor admission/poll/drop evidence for recovery, and validates only the empty
+timeout projection. Pre-admission timeouts do not establish recovery. A second
+case deliberately reaches the original deadline during the admitted recovery
+poll. This remains a fixture correction requiring runtime verification, not an
+assertion about the original unlogged output or a product deadline change.
