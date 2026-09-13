@@ -221,12 +221,9 @@ impl NativeAcpClientRequests {
             method: request.method.into(),
             params: Some(request.params),
         };
-        let bytes = match protocol::encode_frame(&message) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                let _ = self.ids.complete(&id, scope);
-                return Err(NativeAcpClientRequestError::Limit);
-            }
+        let Ok(bytes) = protocol::encode_frame(&message) else {
+            let _ = self.ids.complete(&id, scope);
+            return Err(NativeAcpClientRequestError::Limit);
         };
         if request.reply_kind == NativeAcpReplyKind::Url {
             let submitted = url_id.is_some_and(|id| self.presenter.mark_submitted(id).is_ok());
@@ -264,18 +261,16 @@ impl NativeAcpClientRequests {
         let response = outcome
             .map_err(|_| ())
             .and_then(|value| projection::decode_reply(&pending.view, &value).map_err(|_| ()));
-        match response {
-            Ok(response) => self
-                .inbox
+        if let Ok(response) = response {
+            self.inbox
                 .reply(pending.view.token(), response)
                 .map_err(|_| {
                     let _ = self.inbox.cancel(pending.view.token());
                     NativeAcpClientRequestError::Stale
-                }),
-            Err(()) => {
-                let _ = self.inbox.cancel(pending.view.token());
-                Err(NativeAcpClientRequestError::InvalidResponse)
-            }
+                })
+        } else {
+            let _ = self.inbox.cancel(pending.view.token());
+            Err(NativeAcpClientRequestError::InvalidResponse)
         }
     }
 
