@@ -438,40 +438,56 @@ impl NativeMcpRuntimeClock for AdvancingClock {
 
 #[test]
 fn input_without_a_responder_does_not_start_an_interaction_clock() {
-    let archive = Archive::new();
-    let clock = Arc::new(AdvancingClock::new());
-    let observed = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let response_clock = clock.clone();
-    let response_observed = observed.clone();
-    let fixture = Fixture::with_executor_and_clock(
-        &[json!({})],
-        PermissionMode::Auto,
-        archive.executor.clone(),
-        archive.executor.execution_policy(),
-        false,
-        clock.clone(),
-        move |runtime, writes| {
-            scripted_candidate(
-                runtime,
-                writes,
-                &json!({"name":"lookup","inputSchema":{"type":"object"}}),
-                move |id| {
-                    response_observed.store(
-                        response_clock.reads.load(Ordering::SeqCst),
-                        Ordering::SeqCst,
-                    );
-                    envelope(id, INPUT)
-                },
-            )
-        },
-    );
-    let events = fixture.run();
-    assert_eq!(result(&events).content["resultType"], "input_required");
-    assert!(observed.load(Ordering::SeqCst) > 0);
-    assert_eq!(
-        clock.reads.load(Ordering::SeqCst),
-        observed.load(Ordering::SeqCst)
-    );
+    let post_response_reads = [
+        (
+            r#""result":{"resultType":"complete","content":[]}"#,
+            "complete",
+        ),
+        (INPUT, "input_required"),
+    ]
+    .map(|(body, result_type)| {
+        let archive = Archive::new();
+        let clock = Arc::new(AdvancingClock::new());
+        let observed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let response_clock = clock.clone();
+        let response_observed = observed.clone();
+        let fixture = Fixture::with_executor_and_clock(
+            &[json!({})],
+            PermissionMode::Auto,
+            archive.executor.clone(),
+            archive.executor.execution_policy(),
+            false,
+            clock.clone(),
+            move |runtime, writes| {
+                scripted_candidate(
+                    runtime,
+                    writes,
+                    &json!({"name":"lookup","inputSchema":{"type":"object"}}),
+                    move |id| {
+                        response_observed.store(
+                            response_clock.reads.load(Ordering::SeqCst),
+                            Ordering::SeqCst,
+                        );
+                        envelope(id, body)
+                    },
+                )
+            },
+        );
+        let events = fixture.run();
+        assert_eq!(result(&events).content["resultType"], result_type);
+        assert_eq!(wires(&fixture).len(), 1);
+        let before = observed.load(Ordering::SeqCst);
+        assert!(before > 0);
+        clock
+            .reads
+            .load(Ordering::SeqCst)
+            .checked_sub(before)
+            .unwrap()
+    });
+    // Both exchanges must settle queued notifications under their operation
+    // deadline after receiving a response. Unresolved input without a presenter
+    // must add no interaction-clock work beyond that ordinary completion path.
+    assert_eq!(post_response_reads[1], post_response_reads[0]);
 }
 
 #[test]

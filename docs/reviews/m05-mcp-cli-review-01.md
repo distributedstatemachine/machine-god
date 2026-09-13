@@ -85,3 +85,32 @@ cover these changes; no timing or measured speedup claim is made.
 
 Replacement code requires its own focused checks, complete local gate, three
 fresh completed independent reviews and exact remote evidence before delivery.
+
+## Replacement candidate local findings
+
+Candidate `7cd486a6ff38cd9ec4ad932dd1de89d73c35a7a0` passed pinned formatting,
+strict workspace Clippy, compilation of all test targets and fresh release builds
+on macOS and Linux. Pinned-source/Unicode drift, dependency audit/policy and the
+selected FreeBSD/WASI Clippy checks passed. Repository Python reported 269 tests
+with 14 skips; rendered documentation and the bounded policy check passed.
+
+The focused macOS MCP batch then reported 785 passes and two failures, so this
+candidate did not reach the complete runtime or fresh-review gates. Evidence is
+retained in `macos-7cd-build.log`, `linux-7cd-build.log`,
+`auxiliary-7cd-replacement.log`, `python-7cd-gate.log` and
+`macos-7cd-focused.log` under the same evidence directory. The initial auxiliary
+attempt failed because its old upstream checkout was unreadable; a fresh checkout
+of the identical immutable pin supplied the successful replacement drift check.
+
+- The no-responder continuation fixture assumed no clock reads after receiving
+  the wire response. Notification settlement now legitimately checks the original
+  operation deadline there. Compare against an ordinary complete-response control
+  and require unresolved input to add no interaction-clock work; keep the exact
+  result and single-request assertions.
+- The new HTTP node-budget fixture used 70,000 null values, whose approximately
+  350 KiB encoding exceeded the engine's independent default 256 KiB cumulative
+  result-byte limit before a completion event could be emitted. Use compact
+  values to exercise the same node count and actual archive path without crossing
+  that unrelated byte boundary. Product limits remain unchanged.
+
+These are fixture corrections, not proof of replacement runtime acceptance.
