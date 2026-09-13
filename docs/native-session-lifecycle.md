@@ -126,7 +126,7 @@ Those effects remain behind a later explicit call to the core session.
 `NativeSessionMetadata` is the Linux/macOS host's bounded codec for the reserved
 `machine_god.native_session` metadata entry. Its schema version `2` records
 optional title, current and original workspace associations, creation/update
-milliseconds, language tag and explicit `cli`/`recovered`/`imported` provenance.
+milliseconds, language tag and explicit `cli`/`acp`/`recovered`/`imported` provenance.
 The provenance enum and original workspace path are separate facts. It does not change
 the enclosing file-store schema or ordinary lifecycle creation below. These
 helpers stage values only: serialization is not a successful persistence result.

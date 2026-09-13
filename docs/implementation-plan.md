@@ -431,6 +431,13 @@ Implement one complete native `acp` feature on `agent/m64-acp-cli` after the
 MCP documentation seal. Reuse native orchestration; keep CLI limited to host I/O.
 Do not deliver codec, session or interaction fragments separately.
 
+Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
+[client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
+components are integrated, not delivered. Remaining integration includes native
+host/readiness composition, atomic session/MCP replacement, resource-target
+context, complete wire dispatch/updates and thin CLI I/O. The actual CLI,
+transport/sentinel scenarios and full feature gates remain required below.
+
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.
   Preserve the pinned 8 MiB frame and 32 pending-outbound bounds, one active

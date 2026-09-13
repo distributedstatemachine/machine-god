@@ -25,6 +25,8 @@ pub mod controller;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod endpoint;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod ephemeral;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod execution;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod feature;

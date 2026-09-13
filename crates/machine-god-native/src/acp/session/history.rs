@@ -47,7 +47,7 @@ impl NativeAcpHistory {
             }
             // Bound before making cloned JSON/string fields. Leave headroom for
             // the session/update envelope and JSON escaping of status fields.
-            let mut budget = ByteBudget(8 * 1024 * 1024 - 4096);
+            let mut budget = ByteBudget(crate::acp::protocol::ACP_MAX_FRAME_BYTES - 4096);
             if serde_json::to_writer(&mut budget, block).is_err() {
                 self.failed = true;
                 return Err(AcpSessionError::Limit);
