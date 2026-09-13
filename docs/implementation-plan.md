@@ -433,7 +433,8 @@ Do not deliver codec, session or interaction fragments separately.
 
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
-components are integrated, not delivered. Remaining integration includes native
+components are integrated, not delivered. The locked release build, workspace
+Clippy and 92 focused macOS tests pass. Remaining integration includes native
 host/readiness composition, atomic session/MCP replacement, resource-target
 context, complete wire dispatch/updates and thin CLI I/O. The actual CLI,
 transport/sentinel scenarios and full feature gates remain required below.
