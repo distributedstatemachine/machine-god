@@ -21,6 +21,7 @@ use std::{
 mod authentication;
 mod browser_composition;
 mod controller;
+mod ephemeral;
 mod fixture;
 #[cfg(feature = "mcp-http")]
 mod http;

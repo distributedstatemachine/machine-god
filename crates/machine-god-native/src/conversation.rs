@@ -74,7 +74,7 @@ impl fmt::Display for NativeConversationError {
             Self::Observation(error) => error.fmt(f),
             Self::PermissionContext(error) => error.fmt(f),
             Self::McpContext(error) => error.fmt(f),
-            Self::McpRequiredUnavailable => f.write_str("required MCP server unavailable; use /mcp to manage servers, then submit a new prompt"),
+            Self::McpRequiredUnavailable => f.write_str("required MCP server unavailable; update the selected servers, then submit a new prompt"),
             Self::WorkspaceContext(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidSkillContext(error) => error.fmt(f),
@@ -174,8 +174,13 @@ pub struct NativeConversation {
     permissions: Option<Arc<crate::NativePermissionSession>>,
     permission_contexts: Option<Arc<ContextSession>>,
     mcp_contexts: Option<Arc<McpContextSession>>,
-    mcp_readiness: Option<std::sync::Weak<crate::mcp::controller::NativeMcpController>>,
+    mcp_readiness: Option<McpReadiness>,
     workspace: Option<ConversationWorkspaceBinding>,
+}
+
+enum McpReadiness {
+    Profile(std::sync::Weak<crate::mcp::controller::NativeMcpController>),
+    Ephemeral(std::sync::Weak<crate::mcp::ephemeral::NativeMcpEphemeralOwner>),
 }
 
 impl Drop for NativeConversation {
@@ -383,7 +388,22 @@ impl NativeConversation {
         if self.is_busy() || self.mcp_readiness.is_some() {
             return Err(NativeConversationError::Busy);
         }
-        self.mcp_readiness = Some(Arc::downgrade(controller));
+        self.mcp_readiness = Some(McpReadiness::Profile(Arc::downgrade(controller)));
+        Ok(self)
+    }
+
+    /// Attaches the exact session-owned ACP selection without a profile or
+    /// authentication fallback, including authoritative empty selections.
+    /// # Errors
+    /// Rejects busy conversations or duplicate readiness selection.
+    pub fn with_mcp_ephemeral_readiness(
+        mut self,
+        owner: &Arc<crate::mcp::ephemeral::NativeMcpEphemeralOwner>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.mcp_readiness.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.mcp_readiness = Some(McpReadiness::Ephemeral(Arc::downgrade(owner)));
         Ok(self)
     }
 
@@ -1006,19 +1026,27 @@ impl NativeConversation {
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
         }
-        if let Some(controller) = &self.mcp_readiness {
-            let controller = controller
+        match &self.mcp_readiness {
+            Some(McpReadiness::Profile(controller)) => {
+                let controller = controller
+                    .upgrade()
+                    .ok_or(NativeConversationError::McpRequiredUnavailable)?;
+                // Cancel only this admission's waiter. The controller retains
+                // the shared refresh for other observers and finalization.
+                controller
+                    .refresh_authentication_configured(cancellation)
+                    .await
+                    .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
+                controller
+                    .required_readiness()
+                    .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
+            }
+            Some(McpReadiness::Ephemeral(owner)) => owner
                 .upgrade()
-                .ok_or(NativeConversationError::McpRequiredUnavailable)?;
-            // Cancel only this admission's waiter. The controller retains the
-            // shared refresh for its other observers and finalization.
-            controller
-                .refresh_authentication_configured(cancellation)
-                .await
-                .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
-            controller
-                .required_readiness()
-                .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
+                .ok_or(NativeConversationError::McpRequiredUnavailable)?
+                .ready()
+                .map_err(|_| NativeConversationError::McpRequiredUnavailable)?,
+            None => {}
         }
         let workspace = match workspace {
             WorkspaceAdmission::Current => self.capture_workspace_scope()?,

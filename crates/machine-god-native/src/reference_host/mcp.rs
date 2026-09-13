@@ -2,6 +2,8 @@
 
 #[cfg(feature = "mcp-http")]
 mod authentication;
+mod ephemeral;
+pub use ephemeral::NativeReferenceHostMcpEphemeralStartupOptions;
 #[cfg(feature = "mcp-http")]
 mod startup;
 
@@ -15,6 +17,7 @@ use crate::{
         controller::{
             NativeMcpController, NativeMcpControllerOptions, NativeMcpControllerStartupOptions,
         },
+        ephemeral::{NativeMcpEphemeralError, NativeMcpEphemeralOwner},
         execution::NativeMcpArchivedToolExecutor,
         management::NativeMcpManagementService,
         runtime::{
@@ -37,6 +40,7 @@ pub struct NativeReferenceHostMcpOptions {
     limits: NativeMcpRuntimeLimits,
     form_responder: Option<Arc<dyn crate::mcp::interaction::McpElicitationPresenter>>,
     startup: Option<NativeMcpControllerStartupOptions>,
+    ephemeral: Option<NativeReferenceHostMcpEphemeralStartupOptions>,
     #[cfg(feature = "mcp-http")]
     authentication: Option<authentication::Options>,
 }
@@ -49,6 +53,7 @@ impl NativeReferenceHostMcpOptions {
             limits: NativeMcpRuntimeLimits::default(),
             form_responder: None,
             startup: None,
+            ephemeral: None,
             #[cfg(feature = "mcp-http")]
             authentication: None,
         }
@@ -74,6 +79,18 @@ impl NativeReferenceHostMcpOptions {
         &self,
         has_management: bool,
     ) -> Result<(), NativeReferenceHostBuildError> {
+        if let Some(ephemeral) = &self.ephemeral {
+            if has_management
+                || self.startup.is_some()
+                || !Arc::ptr_eq(&ephemeral.clock, &self.clock)
+            {
+                return Err(error());
+            }
+            #[cfg(feature = "mcp-http")]
+            if self.authentication.is_some() {
+                return Err(error());
+            }
+        }
         if self
             .startup
             .as_ref()
@@ -111,7 +128,7 @@ impl NativeReferenceHostMcpOptions {
         let policy = executor.execution_policy();
         let runtime = NativeMcpRuntime::new(
             self.contexts.clone(),
-            self.clock,
+            self.clock.clone(),
             executor,
             policy,
             self.limits,
@@ -123,10 +140,12 @@ impl NativeReferenceHostMcpOptions {
             archive,
         ));
         Ok(Composition {
+            clock: self.clock,
             runtime,
             features,
             contexts: self.contexts,
             startup: self.startup,
+            ephemeral: self.ephemeral,
             #[cfg(feature = "mcp-http")]
             authentication: self.authentication,
             management: None,
@@ -135,10 +154,12 @@ impl NativeReferenceHostMcpOptions {
 }
 
 pub(super) struct Composition {
+    pub clock: Arc<dyn NativeMcpRuntimeClock>,
     pub runtime: Arc<NativeMcpRuntime>,
     pub features: Arc<crate::NativeMcpFeaturesTool>,
     pub contexts: Arc<NativeMcpContexts>,
     startup: Option<NativeMcpControllerStartupOptions>,
+    ephemeral: Option<NativeReferenceHostMcpEphemeralStartupOptions>,
     #[cfg(feature = "mcp-http")]
     authentication: Option<authentication::Options>,
     management: Option<Arc<NativeMcpManagementService>>,
@@ -153,6 +174,7 @@ pub(super) struct Selection {
 pub(super) type OwnedRuntime = (
     Option<Arc<NativeMcpRuntime>>,
     Option<Arc<NativeMcpController>>,
+    Option<Arc<NativeMcpEphemeralOwner>>,
 );
 
 pub(super) fn controller(
@@ -161,7 +183,7 @@ pub(super) fn controller(
     reserved_tool_names: &[ToolName],
 ) -> Result<OwnedRuntime, NativeReferenceHostBuildError> {
     let Some(composition) = composition else {
-        return Ok((None, None));
+        return Ok((None, None, None));
     };
     let controller = composition
         .startup
@@ -193,7 +215,17 @@ pub(super) fn controller(
             .bind_controller(controller)
             .map_err(|_| error())?;
     }
-    Ok((Some(composition.runtime), controller))
+    let ephemeral = composition
+        .ephemeral
+        .map(|startup| {
+            startup.compose(
+                composition.runtime.clone(),
+                workers.ok_or_else(error)?,
+                reserved_tool_names,
+            )
+        })
+        .transpose()?;
+    Ok((Some(composition.runtime), controller, ephemeral))
 }
 
 pub(super) fn features(
@@ -241,6 +273,7 @@ pub(super) fn error() -> NativeReferenceHostBuildError {
 pub(super) struct HostResource {
     pub mcp: Arc<NativeMcpRuntime>,
     pub controller: Option<Arc<NativeMcpController>>,
+    pub ephemeral: Option<Arc<NativeMcpEphemeralOwner>>,
     pub _terminal: NativeTerminalHostResource,
 }
 impl Drop for HostResource {
@@ -248,11 +281,30 @@ impl Drop for HostResource {
         if let Some(controller) = &self.controller {
             controller.close();
         }
+        if let Some(owner) = &self.ephemeral {
+            owner.close();
+        }
         self.mcp.close();
     }
 }
 
 impl NativeReferenceHost {
+    /// Observes this host's explicitly selected MCP clock. This accessor is
+    /// effectful (unlike host construction), and never substitutes ambient time.
+    /// # Errors
+    /// Missing MCP selection or an unrepresentable deadline.
+    pub fn mcp_deadline_after(
+        &self,
+        duration: std::time::Duration,
+    ) -> Result<Instant, NativeMcpEphemeralError> {
+        self.mcp_clock
+            .as_ref()
+            .ok_or(NativeMcpEphemeralError::Unavailable)?
+            .now()
+            .checked_add(duration)
+            .ok_or(NativeMcpEphemeralError::Limit)
+    }
+
     /// Returns the host's exact optional profile credential service. This is an
     /// inert accessor, not authentication, credential read or browser consent.
     #[cfg(feature = "mcp-http")]
@@ -265,6 +317,12 @@ impl NativeReferenceHost {
     #[must_use]
     pub fn mcp_controller(&self) -> Option<Arc<NativeMcpController>> {
         self.mcp_controller.clone()
+    }
+    /// Returns the exact session-owned ephemeral selection, never a profile
+    /// controller. Retaining it cannot prevent engine-drop invalidation.
+    #[must_use]
+    pub fn mcp_ephemeral_owner(&self) -> Option<Arc<NativeMcpEphemeralOwner>> {
+        self.mcp_ephemeral.clone()
     }
     /// Returns the exact native runtime, without connecting or publishing peers.
     #[must_use]
@@ -285,6 +343,9 @@ impl NativeReferenceHost {
         if let Some(controller) = &self.mcp_controller {
             controller.close();
         }
+        if let Some(owner) = &self.mcp_ephemeral {
+            owner.close();
+        }
         if let Some(runtime) = &self.mcp_runtime {
             runtime.close();
         }
@@ -304,6 +365,22 @@ impl NativeReferenceHost {
         match &self.mcp_runtime {
             Some(runtime) => runtime.drain_retired(deadline, cancellation).await,
             None => Ok(Vec::new()),
+        }
+    }
+
+    /// Settles all ephemeral startup and publication custody before the caller
+    /// shuts down this host's worker scope. The independent cleanup token must
+    /// not be the cancelled session-owner token. An unpolled future is inert.
+    /// # Errors
+    /// Retains custody on cancellation, timeout or overlapping settlement.
+    pub async fn settle_mcp_ephemeral(
+        &self,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<(), NativeMcpEphemeralError> {
+        match &self.mcp_ephemeral {
+            Some(owner) => owner.settle(cancellation, deadline).await,
+            None => Ok(()),
         }
     }
 }

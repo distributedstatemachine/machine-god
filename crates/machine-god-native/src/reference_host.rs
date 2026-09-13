@@ -10,7 +10,7 @@ mod construction;
 mod mcp;
 mod permissions;
 pub(crate) mod workspace_binding;
-pub use mcp::NativeReferenceHostMcpOptions;
+pub use mcp::{NativeReferenceHostMcpEphemeralStartupOptions, NativeReferenceHostMcpOptions};
 pub use permissions::NativeReferenceHostPermissionOptions;
 use permissions::{PermissionComposition, ReferenceHostToolCatalog};
 use workspace_binding::WorkspaceBinding;
@@ -510,6 +510,8 @@ pub struct NativeReferenceHost {
         Option<Result<crate::NativeBackgroundUrlOpener, crate::NativeBackgroundOpenError>>,
     mcp_runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
     mcp_controller: Option<Arc<crate::mcp::controller::NativeMcpController>>,
+    mcp_ephemeral: Option<Arc<crate::mcp::ephemeral::NativeMcpEphemeralOwner>>,
+    mcp_clock: Option<Arc<dyn crate::mcp::runtime::NativeMcpRuntimeClock>>,
     reserved_tool_names: Box<[ToolName]>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
@@ -1301,6 +1303,10 @@ impl NativeReferenceHost {
             Some(controller) => conversation.with_mcp_readiness(controller)?,
             None => conversation,
         };
+        let conversation = match &self.mcp_ephemeral {
+            Some(owner) => conversation.with_mcp_ephemeral_readiness(owner)?,
+            None => conversation,
+        };
         match &self.mcp_contexts {
             Some(contexts) => conversation.with_mcp_contexts(contexts),
             None => Ok(conversation),
@@ -1656,12 +1662,14 @@ impl NativeReferenceHost {
             .map(NativeTerminalHostResource::background_requester);
         let reserved_tool_names: Box<[ToolName]> =
             builder.registered_tool_names().cloned().collect();
-        let (mcp_runtime, mcp_controller) =
+        let mcp_clock = mcp.as_ref().map(|composition| composition.clock.clone());
+        let (mcp_runtime, mcp_controller, mcp_ephemeral) =
             mcp::controller(mcp, control_workers.as_ref(), &reserved_tool_names)?;
         let builder = match (host_resource, &mcp_runtime) {
             (Some(resource), Some(runtime)) => builder.host_resource(mcp::HostResource {
                 mcp: runtime.clone(),
                 controller: mcp_controller.clone(),
+                ephemeral: mcp_ephemeral.clone(),
                 _terminal: resource,
             }),
             (Some(resource), None) => builder.host_resource(resource),
@@ -1682,6 +1690,8 @@ impl NativeReferenceHost {
             engine,
             mcp_runtime,
             mcp_controller,
+            mcp_ephemeral,
+            mcp_clock,
             mcp_management: None,
             mcp_contexts: None,
             skills: None,

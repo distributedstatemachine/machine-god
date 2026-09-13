@@ -253,6 +253,20 @@ existing host worker scope. Missing DNS still permits local status/removal, but
 OAuth network attempts fail without a resolver fallback. Human presentation and
 browser-launch endpoints remain separate explicit selections.
 
+ACP session hosts instead use `capture_ephemeral_startup` or the inert
+`with_ephemeral_startup(NativeReferenceHostMcpEphemeralStartupOptions)` selection.
+That path reuses retained transport capture but never selects profile management,
+stored authentication or an OAuth service; conflicting profile selections fail
+before terminal acquisition in either builder order. The actual host composes a
+dedicated ephemeral owner over its runtime, contexts, fixed names and workers.
+Client omission or an empty array requires an explicit empty publication, not
+profile fallback. `configure_conversation_mcp` attaches the exact weak ephemeral
+readiness check at every prompt admission without profile-auth refresh.
+`mcp_ephemeral_owner` returns the same allocation, and `mcp_deadline_after`
+explicitly observes the selected clock. `close_mcp` and engine-resource drop
+invalidate it before terminal shutdown, while `settle_mcp_ephemeral` drives
+startup and peer cleanup before worker joining. See [ACP MCP](acp-mcp.md).
+
 The concrete executor receives the same archive adapter allocation as terminal
 input/result publishers and `read_tool_result`, including its existing quota
 owner and native worker scope. It does not create another archive directory,

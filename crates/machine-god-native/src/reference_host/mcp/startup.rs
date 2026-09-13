@@ -1,6 +1,9 @@
 //! Explicit startup capture, separate from inert host/options construction.
 
-use super::{NativeReferenceHostBuildError, NativeReferenceHostMcpOptions, error};
+use super::{
+    NativeReferenceHostBuildError, NativeReferenceHostMcpEphemeralStartupOptions,
+    NativeReferenceHostMcpOptions, error,
+};
 use crate::{
     NativeReferenceHostTerminalOptions, PreparedNativeRoots, TERMINAL_CAPTURED_HELPER_ARGUMENT,
     mcp::{
@@ -17,6 +20,12 @@ use crate::{
 };
 use machine_god_core::CancellationToken;
 use std::sync::Arc;
+
+#[derive(Clone, Copy)]
+enum CaptureOwner {
+    Profile,
+    Ephemeral,
+}
 
 impl NativeReferenceHostMcpOptions {
     /// Explicitly captures production startup authority on the caller's owned
@@ -40,11 +49,56 @@ impl NativeReferenceHostMcpOptions {
         Self::from_captured_startup(roots, terminal, contexts, network_inputs())
     }
 
+    /// Captures a dedicated ACP session's production transport authority with
+    /// no profile management, stored credential or OAuth-service selection.
+    /// Omitted/empty client configuration is still an authoritative selection
+    /// published later through the exact composed ephemeral owner.
+    /// # Errors
+    /// Same retained-root/process/trust validation as `capture_startup`.
+    pub fn capture_ephemeral_startup(
+        roots: &PreparedNativeRoots,
+        terminal: &NativeReferenceHostTerminalOptions,
+        contexts: Arc<NativeMcpContexts>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::from_captured_ephemeral_startup(roots, terminal, contexts, network_inputs())
+    }
+
     pub(super) fn from_captured_startup(
         roots: &PreparedNativeRoots,
         terminal: &NativeReferenceHostTerminalOptions,
         contexts: Arc<NativeMcpContexts>,
         network_inputs: Option<(McpResolverConfig, [u8; 32])>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::capture(
+            roots,
+            terminal,
+            contexts,
+            network_inputs,
+            CaptureOwner::Profile,
+        )
+    }
+
+    pub(super) fn from_captured_ephemeral_startup(
+        roots: &PreparedNativeRoots,
+        terminal: &NativeReferenceHostTerminalOptions,
+        contexts: Arc<NativeMcpContexts>,
+        network_inputs: Option<(McpResolverConfig, [u8; 32])>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::capture(
+            roots,
+            terminal,
+            contexts,
+            network_inputs,
+            CaptureOwner::Ephemeral,
+        )
+    }
+
+    fn capture(
+        roots: &PreparedNativeRoots,
+        terminal: &NativeReferenceHostTerminalOptions,
+        contexts: Arc<NativeMcpContexts>,
+        network_inputs: Option<(McpResolverConfig, [u8; 32])>,
+        owner_kind: CaptureOwner,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let clock = Arc::new(TokioMcpClock);
         let owner = CancellationToken::new();
@@ -82,6 +136,20 @@ impl NativeReferenceHostMcpOptions {
                 .map_err(|_| error())
             })
             .transpose()?;
+        if matches!(owner_kind, CaptureOwner::Ephemeral) {
+            let startup = NativeReferenceHostMcpEphemeralStartupOptions {
+                captured_environment: environment,
+                stdio: Some(Arc::new(stdio)),
+                clock: clock.clone(),
+                catalog_epoch: clock.now(),
+                owner_cancellation: owner,
+                network,
+                peer_lifetime: McpPeerLifetime::OwnerControlled,
+                max_retained_bytes: 256 * 1024 * 1024,
+                max_retained_generations: 4,
+            };
+            return Self::new(contexts, clock).with_ephemeral_startup(startup);
+        }
         let startup = NativeMcpControllerStartupOptions {
             captured_environment: environment,
             stdio: Some(Arc::new(stdio)),

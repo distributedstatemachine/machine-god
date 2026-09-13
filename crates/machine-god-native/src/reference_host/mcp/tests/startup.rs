@@ -9,6 +9,56 @@ use std::{
 };
 
 #[test]
+fn captured_ephemeral_startup_never_selects_profile_authentication() {
+    let directory = Directory::new();
+    let workspace = directory.0.join("workspace");
+    let state = directory.0.join("state");
+    fs::create_dir(&workspace).unwrap();
+    fs::DirBuilder::new().mode(0o700).create(&state).unwrap();
+    let environment = NativeEnvironment::new(None, Some(state.into_os_string()), None);
+    let roots = PreparedNativeRoots::prepare(
+        NativeRootSelection::from_environment(&environment, &workspace).unwrap(),
+    )
+    .unwrap();
+    // A retained descriptor remains authoritative after its old name disappears.
+    fs::rename(&workspace, directory.0.join("retained-workspace")).unwrap();
+    let entries = vec![(
+        "ACP_LITERAL_SENTINEL".into(),
+        "literal selected bytes".into(),
+    )];
+    let terminal = NativeReferenceHostTerminalOptions::new(
+        "/nonexistent-selected-helper".into(),
+        None,
+        entries.clone(),
+    )
+    .unwrap();
+    for network in [None, Some((McpResolverConfig::literal_only(), [7; 32]))] {
+        let expected_network = network.is_some();
+        let options = NativeReferenceHostMcpOptions::from_captured_ephemeral_startup(
+            &roots,
+            &terminal,
+            Arc::new(NativeMcpContexts::new()),
+            network,
+        )
+        .unwrap();
+        assert!(options.authentication.is_none());
+        assert!(options.startup.is_none());
+        options.validate_controller(false).unwrap();
+        assert!(options.validate_controller(true).is_err());
+        let startup = options.ephemeral.as_ref().unwrap();
+        assert!(Arc::ptr_eq(&options.clock, &startup.clock));
+        assert_eq!(startup.captured_environment, entries);
+        assert!(startup.stdio.is_some());
+        assert_eq!(startup.network.is_some(), expected_network);
+        assert_eq!(startup.peer_lifetime, McpPeerLifetime::OwnerControlled);
+        assert_eq!(startup.max_retained_generations, 4);
+        assert!(!format!("{startup:?}").contains("literal selected bytes"));
+    }
+    assert!(!roots.state_root().join("mcp.json").exists());
+    assert!(!roots.state_root().join("mcp-credentials.json").exists());
+}
+
+#[test]
 fn captured_startup_reuses_retained_roots_environment_and_exact_clock() {
     let directory = Directory::new();
     let workspace = directory.0.join("workspace");

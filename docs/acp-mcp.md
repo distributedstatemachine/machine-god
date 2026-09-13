@@ -43,6 +43,22 @@ The runtime admits exactly one weak ephemeral-owner binding, mutually exclusive
 with its profile controller. Session hosts must use distinct runtime/context and
 owner allocations; matching server names never grant cross-session authority.
 
+`NativeReferenceHostMcpOptions::with_ephemeral_startup` selects these captured
+inputs separately from profile activation. Host composition rejects profile
+management, controller startup or authentication selection in either builder
+order, before terminal acquisition. It composes the ephemeral owner from the
+actual host runtime, registered tool names and existing worker scope, not a
+parallel owner or temporary profile. `capture_ephemeral_startup` explicitly
+captures the retained workspace descriptor, selected helper/environment and
+optional DNS/TLS authority without selecting a credential or OAuth service.
+Absent remote authority still permits an empty or stdio selection.
+
+`mcp_ephemeral_owner()` returns that exact host-owned allocation. The host binds
+its weak readiness check to each conversation: every prompt requires the exact
+live publication, even when the authoritative server list is empty. This path
+does not call profile authentication refresh. `mcp_deadline_after` explicitly
+observes the selected MCP clock; callers do not substitute ambient clock values.
+
 `replace` reserves one mutation and one retained generation before startup's first
 effect. Every selected server must become ready and pass private runtime admission.
 The full candidate is conditionally published against the exact previous
@@ -71,6 +87,11 @@ The host must poll or drop its pending replacement future, then drive settlement
 and finally shut down/join its worker scope. Cancellation or timeout preserves
 custody for a subsequent cleanup attempt. No detached driver, browser launch,
 remote revocation, HTTP DELETE or reversal of application effects is implied.
+The reference host exposes `settle_mcp_ephemeral` for that owned cleanup phase.
+Both `close_mcp` and the actual engine host-resource lease invalidate the
+ephemeral owner before terminal worker teardown, including after `into_engine`.
+Retained owner accessors, tools and requesters cannot extend the engine lease.
+Drop is a final cutoff, not evidence that explicit settlement succeeded.
 
 The [native startup](mcp-startup.md) and [runtime publication](mcp-runtime-publication.md)
 contracts continue to own transport negotiation, all-ready admission, descriptor
