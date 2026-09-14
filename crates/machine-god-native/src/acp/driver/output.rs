@@ -263,11 +263,13 @@ impl NativeAcpConnection {
         }
         if matches!(
             self.control,
-            Some(Control::History { .. })
-                | Some(Control::List {
-                    result: Some(_),
-                    ..
-                })
+            Some(
+                Control::History { .. }
+                    | Control::List {
+                        result: Some(_),
+                        ..
+                    }
+            )
         ) {
             self.control = None;
         }
