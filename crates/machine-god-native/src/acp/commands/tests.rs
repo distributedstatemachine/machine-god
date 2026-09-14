@@ -72,7 +72,7 @@ fn supported_native_grammar_rejects_unsupported_and_malformed_locals() {
 
 #[test]
 fn resource_prompt_routing_does_not_read_or_change_canonical_text() {
-    let prompt = crate::acp::session::decode_prompt_input(&json!({"prompt":[
+    let prompt = crate::acp::prompt::decode_prompt_input(&json!({"prompt":[
         {"type":"text","text":"/status"}, {"type":"resource","resource":{"uri":"file:///missing/a"}}
     ]}))
     .unwrap();

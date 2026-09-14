@@ -356,7 +356,7 @@ fn successful_same_id_rebind_retires_old_without_overwriting_the_new_checkpoint(
                 .workspace(),
             Some(other.as_path())
         );
-        let prompt = super::super::session::decode_prompt_input(
+        let prompt = super::super::prompt::decode_prompt_input(
             &serde_json::json!({"prompt":[{"type":"text","text":"checkpoint after rebind"}]}),
         )
         .unwrap();
@@ -498,7 +498,7 @@ fn same_id_load_waits_for_cancelled_prompt_checkpoint_and_retains_its_exact_outc
         let _ = outcome(&mut owner).await;
         let original = owner.current().unwrap().principal();
         let id = owner.current().unwrap().id();
-        let prompt = super::super::session::decode_prompt_input(
+        let prompt = super::super::prompt::decode_prompt_input(
             &serde_json::json!({"prompt":[{"type":"text","text":"persisted before reload"}]}),
         )
         .unwrap();

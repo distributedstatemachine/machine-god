@@ -4,7 +4,10 @@ use crate::NativeSessionCatalogCursor;
 use crate::acp::protocol::{
     ACP_MAX_FRAME_BYTES, AcpRpcError, validate_protocol_version, validate_value,
 };
-use crate::acp::session::{NativeAcpPrompt, NativeAcpSessionSelection, decode_prompt_input};
+use crate::acp::{
+    prompt::{NativeAcpPrompt, decode_prompt_input},
+    session::NativeAcpSessionSelection,
+};
 use crate::mcp::{config::MAX_CONFIG_BYTES, ephemeral::NativeMcpEphemeralConfiguration};
 use machine_god_core::{SessionId, validate_model_id};
 use serde_json::{Map, Value};

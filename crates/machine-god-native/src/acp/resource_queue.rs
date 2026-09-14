@@ -1,8 +1,8 @@
 //! ACP resource data held until the native FIFO selects exact turn authority.
 
 use crate::acp::{
+    prompt::NativeAcpPrompt,
     resources::{NativeAcpOwnedResourceContextResult, NativeAcpResourceContextReader},
-    session::NativeAcpPrompt,
 };
 use crate::{NativeOwnedWorkerScope, NativeWorkspaceScopeSnapshot};
 use machine_god_core::{BoxFuture, CancellationToken, Prompt};

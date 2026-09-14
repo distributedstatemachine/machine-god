@@ -633,12 +633,12 @@ impl NativeConversationRuntime {
     /// Rejects ACP input/aggregate queue bounds and unavailable lifecycle ownership.
     pub fn enqueue_acp(
         &self,
-        prompt: crate::acp::session::NativeAcpPrompt,
+        prompt: crate::acp::prompt::NativeAcpPrompt,
         workers: crate::NativeOwnedWorkerScope,
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
         let (prompt, resources) = resource_queue::QueuedAcpResources::split(prompt, workers);
         let input = PendingInput::new(ConversationInput::Prompt(prompt));
-        let bytes = input_bytes_with_limit(&input, crate::acp::session::MAX_ACP_PROMPT_BYTES)?
+        let bytes = input_bytes_with_limit(&input, crate::acp::prompt::MAX_ACP_PROMPT_BYTES)?
             .checked_add(resources.retained_bytes())
             .ok_or(NativeConversationRuntimeError::InputLimit)?;
         self.insert(input, bytes, None, None, Some(resources))

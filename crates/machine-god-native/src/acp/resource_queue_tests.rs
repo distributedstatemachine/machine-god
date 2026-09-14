@@ -1,7 +1,7 @@
 //! Actual native FIFO/provider custody with deterministic stores and file authority.
 
 use super::*;
-use crate::acp::{resources::NativeAcpResourceContextError, session::decode_prompt_input};
+use crate::acp::{prompt::decode_prompt_input, resources::NativeAcpResourceContextError};
 use crate::conversation_resource_context::{
     NATIVE_RESOURCE_PROMPT_CONTEXT_KEY, NativeResourcePromptContext,
     NativeResourcePromptContextError,
@@ -297,7 +297,7 @@ fn continuation_uses_exact_inert_snapshot_and_new_prompt_clears_it() {
 fn queued_resource_bytes_and_acp_text_limit_are_charged_without_io() {
     let fixture = Fixture::new();
     let (runtime, store, _) = fixture.setup([]);
-    let input = decode_prompt_input(&json!({"prompt":[{"type":"text","text":"x".repeat(crate::acp::session::MAX_ACP_PROMPT_BYTES)},{"type":"resource","resource":{"uri":"file:///outside/target"}},{"type":"resource","resource":{"uri":"https://example.test/omitted"}}]})).unwrap();
+    let input = decode_prompt_input(&json!({"prompt":[{"type":"text","text":"x".repeat(crate::acp::prompt::MAX_ACP_PROMPT_BYTES)},{"type":"resource","resource":{"uri":"file:///outside/target"}},{"type":"resource","resource":{"uri":"https://example.test/omitted"}}]})).unwrap();
     let retained = input.retained_bytes();
     let id = runtime.enqueue_acp(input, fixture.workers.clone()).unwrap();
     assert!(runtime.status().queued_input_bytes >= retained);
@@ -309,7 +309,7 @@ fn queued_resource_bytes_and_acp_text_limit_are_charged_without_io() {
             .enqueue("x".repeat(MAX_NATIVE_QUEUED_PROMPT_BYTES + 1).into())
             .is_err()
     );
-    let text = "x".repeat(crate::acp::session::MAX_ACP_PROMPT_BYTES);
+    let text = "x".repeat(crate::acp::prompt::MAX_ACP_PROMPT_BYTES);
     for _ in 0..3 {
         fixture.enqueue(&runtime, &text);
     }

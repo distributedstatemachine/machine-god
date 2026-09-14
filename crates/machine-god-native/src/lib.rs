@@ -9,10 +9,7 @@ pub use acp::{
     driver::{NativeAcpConnection, NativeAcpConnectionError},
     selection::{NativeAcpHostFactory, NativeAcpPreparedHost},
 };
-#[cfg(all(
-    feature = "ai-gateway-http",
-    any(target_os = "linux", target_os = "macos")
-))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod conversation_resource_context;
 pub mod mcp;
 

@@ -1,5 +1,5 @@
 use super::{Action, NativeAcpCommand, NativeAcpCommandError as Error};
-use crate::acp::session::NativeAcpPrompt;
+use crate::acp::prompt::NativeAcpPrompt;
 use crate::{NativeSlashCommand as Command, NativeSlashRoute, route_native_slash};
 
 /// Ordinary prompts remain unchanged. Invalid or unavailable local commands are

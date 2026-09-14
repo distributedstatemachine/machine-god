@@ -1,7 +1,7 @@
 //! Descriptor-confined, bounded instruction snapshots for accepted ACP resources.
 //! Resource target files are validated, not injected as user text or executed.
 
-use super::session::{NativeAcpPrompt, NativeAcpResourceOmission, NativeAcpResourceOmissionReason};
+use super::prompt::{NativeAcpPrompt, NativeAcpResourceOmission, NativeAcpResourceOmissionReason};
 use crate::conversation_resource_context::NativeResourcePromptContext;
 use crate::{NativeOwnedWorkerScope, NativeWorkspaceScopeSnapshot};
 use machine_god_core::{BoxFuture, CancellationToken, Prompt};
@@ -410,7 +410,7 @@ fn read_instruction(
 }
 fn omit_path(input: &mut NativeAcpPrompt, path: &Path, reason: NativeAcpResourceOmissionReason) {
     let source = path.to_string_lossy();
-    let mut end = source.len().min(super::session::MAX_ACP_RESOURCE_URI_BYTES);
+    let mut end = source.len().min(super::prompt::MAX_ACP_RESOURCE_URI_BYTES);
     while !source.is_char_boundary(end) {
         end -= 1;
     }

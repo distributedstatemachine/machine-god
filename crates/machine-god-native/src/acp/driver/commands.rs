@@ -1,8 +1,9 @@
 use super::{CommandRequest, NativeAcpConnection, NativeAcpConnectionError};
 use crate::acp::{
     commands::{self, NativeAcpCommandError, NativeAcpCommandOwner},
+    prompt::NativeAcpPrompt,
     protocol::{AcpId, AcpMessage},
-    session::{AcpSessionError, NativeAcpPrompt},
+    session::AcpSessionError,
 };
 use machine_god_core::SessionId;
 use serde_json::json;

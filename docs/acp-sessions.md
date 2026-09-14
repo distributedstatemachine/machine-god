@@ -5,6 +5,15 @@ create an alternative conversation engine or give product ownership to CLI I/O.
 The caller injects the verified host, workspace options and authoritative
 ephemeral MCP selection. Opening is inert before its first poll.
 
+`acp::prompt` owns provider-independent typed prompt data, bounded decoding and
+data-free `AcpPromptError` diagnostics without an HTTP feature dependency. On
+Linux and macOS, resource readers, provider-only context and the generic native
+conversation FIFO are also available with default features. They still require
+explicit workspace and worker authority. The concrete ACP session, selection,
+command and connection facade retains the `ai-gateway-http` feature boundary of
+its existing `NativeInteractiveSession` and `NativeReferenceHost` composition;
+decoding or queuing a resource prompt does not enable that host or HTTP transport.
+
 New sessions persist `acp` provenance. Load and resume select exact native IDs
 and reuse native checked adoption. Load exposes an incremental immutable
 checkpoint cursor; resume does not replay history. Neither operation executes

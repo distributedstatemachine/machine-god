@@ -417,7 +417,7 @@ impl NativeInteractiveSession {
     /// Rejects transitions/shutdown, missing workers or native queue bounds.
     pub fn enqueue_acp(
         &mut self,
-        prompt: crate::acp::session::NativeAcpPrompt,
+        prompt: crate::acp::prompt::NativeAcpPrompt,
     ) -> Result<NativeQueuedJobId, NativeInteractiveError> {
         if self.closed || self.shutting_down {
             return Err(NativeInteractiveError::Closed);

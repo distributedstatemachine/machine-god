@@ -2,6 +2,7 @@
 
 pub mod interaction;
 pub mod projection;
+pub mod prompt;
 pub mod protocol;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -19,10 +20,7 @@ pub mod session;
 ))]
 pub mod commands;
 
-#[cfg(all(
-    feature = "ai-gateway-http",
-    any(target_os = "linux", target_os = "macos")
-))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod resources;
 
 #[cfg(all(

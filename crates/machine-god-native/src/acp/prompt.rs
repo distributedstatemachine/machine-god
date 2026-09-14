@@ -1,7 +1,26 @@
-use super::AcpSessionError;
+//! Provider-independent ACP prompt data. Decoding never performs native effects.
+
 use machine_god_core::Prompt;
 use serde_json::Value;
 use std::path::{Component, PathBuf};
+
+/// Data-free decoding failures, independent of any native session or provider.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AcpPromptError {
+    InvalidPrompt,
+    UnsupportedContent,
+    Limit,
+}
+impl std::fmt::Display for AcpPromptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::InvalidPrompt => "ACP prompt is invalid",
+            Self::UnsupportedContent => "ACP prompt content is unsupported",
+            Self::Limit => "ACP prompt limit exceeded",
+        })
+    }
+}
+impl std::error::Error for AcpPromptError {}
 
 /// Independent retained path and diagnostic bounds, below the wire frame bound.
 pub const MAX_ACP_RESOURCE_TARGETS: usize = 64;
@@ -107,13 +126,13 @@ impl std::fmt::Debug for NativeAcpPrompt {
 /// Unsupported URI targets are explicit bounded omissions, not remote fetches.
 /// # Errors
 /// Rejects malformed, binary/image, empty or oversized prompts.
-pub fn decode_prompt_input(params: &Value) -> Result<NativeAcpPrompt, AcpSessionError> {
+pub fn decode_prompt_input(params: &Value) -> Result<NativeAcpPrompt, AcpPromptError> {
     let blocks = params
         .get("prompt")
         .and_then(Value::as_array)
-        .ok_or(AcpSessionError::InvalidPrompt)?;
+        .ok_or(AcpPromptError::InvalidPrompt)?;
     if blocks.len() > MAX_ACP_PROMPT_BLOCKS {
-        return Err(AcpSessionError::Limit);
+        return Err(AcpPromptError::Limit);
     }
     let mut result = NativeAcpPrompt {
         prompt: Prompt::from(""),
@@ -130,25 +149,25 @@ pub fn decode_prompt_input(params: &Value) -> Result<NativeAcpPrompt, AcpSession
                 block
                     .get("text")
                     .and_then(Value::as_str)
-                    .ok_or(AcpSessionError::InvalidPrompt)?,
+                    .ok_or(AcpPromptError::InvalidPrompt)?,
             )?,
             Some("resource") => {
                 let resource = block
                     .get("resource")
                     .and_then(Value::as_object)
-                    .ok_or(AcpSessionError::InvalidPrompt)?;
+                    .ok_or(AcpPromptError::InvalidPrompt)?;
                 let uri = resource
                     .get("uri")
                     .and_then(Value::as_str)
-                    .ok_or(AcpSessionError::InvalidPrompt)?;
+                    .ok_or(AcpPromptError::InvalidPrompt)?;
                 if uri.is_empty()
                     || uri.len() > MAX_ACP_RESOURCE_URI_BYTES
                     || uri.chars().any(char::is_control)
                 {
-                    return Err(AcpSessionError::InvalidPrompt);
+                    return Err(AcpPromptError::InvalidPrompt);
                 }
                 if resource.contains_key("blob") {
-                    return Err(AcpSessionError::UnsupportedContent);
+                    return Err(AcpPromptError::UnsupportedContent);
                 }
                 match local_file_target(uri) {
                     Some(path) if result.resource_targets.contains(&path) => {}
@@ -159,16 +178,16 @@ pub fn decode_prompt_input(params: &Value) -> Result<NativeAcpPrompt, AcpSession
                     None => result.omit(uri, NativeAcpResourceOmissionReason::UnsafeTarget),
                 }
                 if let Some(value) = resource.get("text") {
-                    let value = value.as_str().ok_or(AcpSessionError::InvalidPrompt)?;
+                    let value = value.as_str().ok_or(AcpPromptError::InvalidPrompt)?;
                     append(&mut text, &format!("File: {uri}\n"), value)?;
                 }
             }
-            Some(_) => return Err(AcpSessionError::UnsupportedContent),
-            None => return Err(AcpSessionError::InvalidPrompt),
+            Some(_) => return Err(AcpPromptError::UnsupportedContent),
+            None => return Err(AcpPromptError::InvalidPrompt),
         }
     }
     if text.is_empty() {
-        return Err(AcpSessionError::InvalidPrompt);
+        return Err(AcpPromptError::InvalidPrompt);
     }
     result.prompt = Prompt::from(text);
     Ok(result)
@@ -229,7 +248,7 @@ fn local_file_target(uri: &str) -> Option<PathBuf> {
 pub const MAX_ACP_PROMPT_BYTES: usize = 1024 * 1024;
 pub const MAX_ACP_PROMPT_BLOCKS: usize = 4096;
 
-fn append(text: &mut String, prefix: &str, value: &str) -> Result<(), AcpSessionError> {
+fn append(text: &mut String, prefix: &str, value: &str) -> Result<(), AcpPromptError> {
     let separator = usize::from(!text.is_empty());
     if text
         .len()
@@ -238,7 +257,7 @@ fn append(text: &mut String, prefix: &str, value: &str) -> Result<(), AcpSession
         .saturating_add(value.len())
         > MAX_ACP_PROMPT_BYTES
     {
-        return Err(AcpSessionError::Limit);
+        return Err(AcpPromptError::Limit);
     }
     if separator != 0 {
         text.push('\n');
@@ -250,3 +269,5 @@ fn append(text: &mut String, prefix: &str, value: &str) -> Result<(), AcpSession
 
 #[cfg(test)]
 mod resource_tests;
+#[cfg(test)]
+mod tests;

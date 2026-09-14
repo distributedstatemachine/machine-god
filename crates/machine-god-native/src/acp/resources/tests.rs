@@ -1,5 +1,5 @@
 use super::*;
-use crate::{NativeWorkspaceAuthority, acp::session::decode_prompt_input};
+use crate::{NativeWorkspaceAuthority, acp::prompt::decode_prompt_input};
 use futures_executor::block_on;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
