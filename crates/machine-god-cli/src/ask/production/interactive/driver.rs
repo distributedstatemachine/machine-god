@@ -344,11 +344,15 @@ impl Driver {
         let tape = &mut self.output.tape;
         let skills = &mut self.skills;
         let mut edit_failed = false;
+        let mut received_nonselection = false;
         let polled = self.input.poll_event_observed(
             cx,
             binding,
             context,
             |bytes| {
+                received_nonselection = bytes
+                    .iter()
+                    .any(|byte| !matches!(byte, b'\t' | b'\r' | b'\n'));
                 if let Some(tape) = tape {
                     tape.stdin(bytes);
                 }
@@ -361,6 +365,11 @@ impl Driver {
                 }
             },
         );
+        if received_nonselection {
+            // Revoke even while an edit/escape is incomplete. The input lane
+            // continues under blocked stdout; a later ACK cannot erase it.
+            self.discard_pending_skills_selection();
+        }
         if edit_failed {
             self.reset_skills();
         }

@@ -20,6 +20,8 @@ pub(super) struct SkillsUi {
     snapshot: Option<Arc<NativeSkillSnapshot>>,
     drawn: Option<NativeSkillFrameIdentity>,
     acknowledged: Option<NativeSkillFrameIdentity>,
+    pending_frame: Option<NativeSkillFrameIdentity>,
+    pending_selection: Option<InputBinding>,
     request: Option<Request>,
     refresh: Option<BackgroundOutputOwner>,
     input_owner: Option<InputBinding>,
@@ -46,6 +48,12 @@ impl SkillsUi {
         InputBinding::Skills {
             epoch: self.epoch.clone(),
             frame,
+            pending_frame: view.as_ref().and_then(|view| {
+                self.pending_frame
+                    .as_ref()
+                    .filter(|identity| **identity == view.identity)
+                    .cloned()
+            }),
             query: view.is_some_and(|view| view.mode == NativeSkillPickerMode::Menu),
         }
     }
@@ -60,12 +68,17 @@ impl SkillsUi {
             && self.picker.acknowledge(frame).is_ok()
         {
             self.acknowledged = Some(frame.clone());
+            if self.pending_frame.as_ref() == Some(frame) {
+                self.pending_frame = None;
+            }
         }
     }
 
     fn invalidate_frame(&mut self) {
         self.drawn = None;
         self.acknowledged = None;
+        self.pending_frame = None;
+        self.pending_selection = None;
         if self.picker.invalidate_frame().is_err() {
             self.picker.close();
         }
@@ -78,6 +91,8 @@ impl SkillsUi {
             snapshot,
             drawn: None,
             acknowledged: None,
+            pending_frame: None,
+            pending_selection: None,
             request: None,
             refresh: None,
             input_owner: None,
@@ -98,6 +113,7 @@ impl SkillsUi {
         if !self.matches(binding) {
             return Err(());
         }
+        self.pending_selection = None;
         if matches!(binding, InputBinding::Skills { query: true, .. }) {
             return Ok(()); // query decoder is forwarded after the atomic edit.
         }
@@ -118,6 +134,8 @@ impl SkillsUi {
         self.epoch = self.picker.draft_identity().clone();
         self.drawn = None;
         self.acknowledged = None;
+        self.pending_frame = None;
+        self.pending_selection = None;
     }
 
     fn observe_cursor(
@@ -129,6 +147,7 @@ impl SkillsUi {
         if cursor == self.picker.cursor() {
             Ok(())
         } else {
+            self.pending_selection = None;
             self.picker
                 .move_cursor(&self.picker.draft_identity().clone(), cursor)
         }
@@ -136,6 +155,19 @@ impl SkillsUi {
 }
 
 impl Driver {
+    #[cfg(test)]
+    pub(super) fn has_pending_skills_selection(&self) -> bool {
+        self.skills
+            .as_ref()
+            .is_some_and(|skills| skills.pending_selection.is_some())
+    }
+
+    pub(super) fn discard_pending_skills_selection(&mut self) {
+        if let Some(skills) = &mut self.skills {
+            skills.pending_selection = None;
+        }
+    }
+
     pub(super) fn sync_skills_input_owner(&mut self, binding: &InputBinding) {
         let Some(skills) = &mut self.skills else {
             return;
@@ -218,6 +250,8 @@ impl Driver {
             skills.picker.close();
             skills.drawn = None;
             skills.acknowledged = None;
+            skills.pending_frame = None;
+            skills.pending_selection = None;
         }
         if let Some(frontend) = &mut self.frontend {
             frontend.dirty = true;
@@ -237,6 +271,7 @@ impl Driver {
         }
         match event {
             ComposerEvent::Changed => {
+                skills.pending_selection = None;
                 let Some((text, cursor)) = self.input.raw_draft() else {
                     return true;
                 };
@@ -263,6 +298,7 @@ impl Driver {
             ComposerEvent::PickerNext | ComposerEvent::PickerPrevious
                 if skills.picker.view().is_some() =>
             {
+                skills.pending_selection = None;
                 let _ = skills
                     .picker
                     .move_selection(matches!(event, ComposerEvent::PickerNext));
@@ -270,31 +306,36 @@ impl Driver {
             }
             ComposerEvent::SkillSelected => {
                 let InputBinding::Skills {
-                    frame: Some(frame), ..
+                    frame,
+                    pending_frame,
+                    ..
                 } = binding
                 else {
-                    self.note(b"\n[skill selection waits for the displayed frame]\n");
-                    return true;
+                    unreachable!("matched skills binding");
                 };
-                if self.input.original_draft()
-                    != Some((skills.picker.draft(), skills.picker.cursor()))
-                {
-                    self.reset_skills();
-                    self.note(b"\n[skill draft changed; selection ignored]\n");
-                    return true;
-                }
-                match skills.picker.choose(frame) {
-                    Ok(insertion) => {
-                        if self.input.apply_skill_insertion(&insertion).is_err() {
-                            self.reset_skills();
-                            self.note(b"\n[skill draft changed; selection ignored]\n");
-                        } else {
-                            // Already received selection-frame bytes cannot
-                            // become a submission of the newly inserted draft.
-                            skills.epoch = skills.picker.draft_identity().clone();
-                        }
+                if let Some(frame) = frame {
+                    self.choose_skill(frame);
+                } else if let Some(frame) = pending_frame {
+                    if skills.acknowledged.as_ref() == Some(frame) {
+                        // The real flush may finish between receiving these
+                        // bytes and decoding their selection event.
+                        self.choose_skill(frame);
+                    } else if skills.pending_frame.as_ref() == Some(frame)
+                        && skills
+                            .picker
+                            .view()
+                            .is_some_and(|view| view.identity == *frame)
+                    {
+                        // One exact intent, never a queue of subsequent Enter
+                        // submissions. No draft mutation before real flush ACK.
+                        skills
+                            .pending_selection
+                            .get_or_insert_with(|| binding.clone());
+                    } else {
+                        self.note(b"\n[stale skill frame; selection ignored]\n");
                     }
-                    Err(_) => self.note(b"\n[stale skill frame; selection ignored]\n"),
+                } else {
+                    self.note(b"\n[skill selection waits for the displayed frame]\n");
                 }
                 true
             }
@@ -312,6 +353,37 @@ impl Driver {
                 false
             }
             _ => false,
+        }
+    }
+
+    fn choose_skill(&mut self, frame: &NativeSkillFrameIdentity) {
+        let Some(skills) = &mut self.skills else {
+            return;
+        };
+        skills.pending_selection = None;
+        if self.input.original_draft() != Some((skills.picker.draft(), skills.picker.cursor())) {
+            self.reset_skills();
+            self.note(b"\n[skill draft changed; selection ignored]\n");
+            return;
+        }
+        match skills.picker.choose(frame) {
+            Ok(insertion) => {
+                if self.input.apply_skill_insertion(&insertion).is_err() {
+                    self.reset_skills();
+                    self.note(b"\n[skill draft changed; selection ignored]\n");
+                } else {
+                    // Both immediate and deferred selection fence all bytes
+                    // received under the old editor, including Tab + Enter.
+                    skills.epoch = skills.picker.draft_identity().clone();
+                    skills.drawn = None;
+                    skills.acknowledged = None;
+                    skills.pending_frame = None;
+                    if let Some(frontend) = &mut self.frontend {
+                        frontend.dirty = true;
+                    }
+                }
+            }
+            Err(_) => self.note(b"\n[stale skill frame; selection ignored]\n"),
         }
     }
 
@@ -430,6 +502,8 @@ impl Driver {
                     return;
                 }
                 self.input.close_skills_query();
+                skills.pending_selection = None;
+                skills.pending_frame = None;
                 skills.picker.close();
                 if self.input.original_draft()
                     != Some((skills.picker.draft(), skills.picker.cursor()))
@@ -449,6 +523,8 @@ impl Driver {
                 }
                 skills.drawn = None;
                 skills.acknowledged = None;
+                skills.pending_frame = None;
+                skills.pending_selection = None;
             }
             NativeSkillsServiceResult::Path(_) => {}
         }
@@ -492,9 +568,24 @@ impl Driver {
             return;
         };
         if self.shutting_down || !self.scope_active {
+            skills.pending_selection = None;
             return;
         }
         skills.acknowledge(binding);
+        if let Some(intent) = skills.pending_selection.take()
+            && skills.matches(&intent)
+            && let InputBinding::Skills {
+                pending_frame: Some(frame),
+                query,
+                ..
+            } = intent
+            && skills.acknowledged.as_ref() == Some(&frame)
+            && skills.picker.view().is_some_and(|view| {
+                view.identity == frame && (view.mode == NativeSkillPickerMode::Menu) == query
+            })
+        {
+            self.choose_skill(&frame);
+        }
     }
 
     pub(super) fn prepare_skills_render(&mut self) -> bool {
@@ -516,6 +607,8 @@ impl Driver {
         };
         if let Ok(frame) = super::skills_view::render(&view, frontend.columns, frontend.rows) {
             skills.drawn = Some(frame.identity.clone());
+            skills.pending_frame = frame.selection_visible.then(|| frame.identity.clone());
+            skills.pending_selection = None;
             frontend.menu_height = Some(frame.height);
             self.render = Some(Render {
                 bytes: frame.bytes,
@@ -525,6 +618,7 @@ impl Driver {
                 confirm: Some(InputBinding::Skills {
                     epoch: skills.epoch.clone(),
                     frame: frame.selection_visible.then_some(frame.identity),
+                    pending_frame: None,
                     query: view.mode == NativeSkillPickerMode::Menu,
                 }),
                 receipt: None,

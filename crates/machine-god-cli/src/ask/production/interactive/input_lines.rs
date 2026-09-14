@@ -22,6 +22,7 @@ pub(super) enum InputBinding {
     Skills {
         epoch: NativeSkillDraftIdentity,
         frame: Option<NativeSkillFrameIdentity>,
+        pending_frame: Option<NativeSkillFrameIdentity>,
         query: bool,
     },
     SavedRule(u64),

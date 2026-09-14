@@ -5,6 +5,7 @@ fn binding(picker: &NativeSkillPicker, query: bool) -> InputBinding {
     InputBinding::Skills {
         epoch: picker.draft_identity().clone(),
         frame: None,
+        pending_frame: None,
         query,
     }
 }

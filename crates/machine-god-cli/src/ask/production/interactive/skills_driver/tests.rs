@@ -47,6 +47,7 @@ fn shown(skills: &SkillsUi, selectable: bool) -> InputBinding {
     InputBinding::Skills {
         epoch: skills.epoch.clone(),
         frame: selectable.then(|| skills.picker.view().unwrap().identity),
+        pending_frame: None,
         query: skills.picker.view().unwrap().mode == NativeSkillPickerMode::Menu,
     }
 }
@@ -67,6 +68,73 @@ fn hidden_or_unflushed_skill_frames_never_acknowledge_selection() {
     assert!(!selectable(&skills.binding()));
     skills.acknowledge(&shown(&skills, true));
     assert!(selectable(&skills.binding()));
+}
+
+#[test]
+fn pending_frame_binding_is_exact_and_does_not_acknowledge_native_selection() {
+    let mut skills = SkillsUi::new(Some(snapshot()));
+    skills
+        .picker
+        .open_menu(skills.snapshot.clone().unwrap(), "")
+        .unwrap();
+    let frame = skills.picker.view().unwrap().identity;
+    assert!(matches!(
+        skills.binding(),
+        InputBinding::Skills {
+            pending_frame: None,
+            ..
+        }
+    ));
+    skills.pending_frame = Some(frame.clone());
+    let received = skills.binding();
+    assert!(
+        matches!(&received, InputBinding::Skills { frame: None, pending_frame: Some(pending), .. } if pending == &frame)
+    );
+    assert!(skills.picker.choose(&frame).is_err());
+    skills.picker.move_selection(true).unwrap();
+    assert!(matches!(
+        skills.binding(),
+        InputBinding::Skills {
+            pending_frame: None,
+            ..
+        }
+    ));
+    skills.acknowledge(&shown_for_frame(&skills, frame));
+    assert!(!selectable(&skills.binding()));
+    // The bytes retain their old pending identity, never the new selected row.
+    assert!(
+        matches!(&received, InputBinding::Skills { pending_frame: Some(pending), .. } if *pending != skills.picker.view().unwrap().identity)
+    );
+}
+
+fn shown_for_frame(skills: &SkillsUi, frame: NativeSkillFrameIdentity) -> InputBinding {
+    InputBinding::Skills {
+        epoch: skills.epoch.clone(),
+        frame: Some(frame),
+        pending_frame: None,
+        query: true,
+    }
+}
+
+#[test]
+fn edits_resets_and_resize_drop_retained_selection_intent() {
+    for transition in 0..3 {
+        let mut skills = SkillsUi::new(Some(snapshot()));
+        skills
+            .picker
+            .open_menu(skills.snapshot.clone().unwrap(), "")
+            .unwrap();
+        skills.pending_frame = Some(skills.picker.view().unwrap().identity);
+        let binding = skills.binding();
+        skills.pending_selection = Some(binding.clone());
+        match transition {
+            0 => skills.edit(&binding, 0..0, "d", 1).unwrap(),
+            1 => skills.reset("", 0),
+            _ => skills.invalidate_frame(),
+        }
+        assert!(skills.pending_selection.is_none());
+        assert!(skills.picker.bindings().is_empty());
+    }
 }
 
 #[test]

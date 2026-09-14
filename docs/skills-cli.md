@@ -405,14 +405,22 @@ do not open a menu. A separate query editor is limited to 1,024 UTF-8 bytes and
 preserves the original draft/cursor. Inline `$` editing instead uses the ordinary
 draft and replaces only the exact native token span. Arrow keys move selection;
 Enter or Tab selects only after the corresponding visible frame has been fully
-written and flushed. A separate newly received Enter submits the resulting draft.
+written and flushed. A selection received while that exact selectable frame is
+being written retains at most one intent bound to its original draft epoch,
+query/draft editor and frame. Only the matching successful flush acknowledgement
+can apply it, using the same native frame and original-draft checks as an already
+acknowledged selection. Repeated selection keys cannot queue prompt submissions.
+A separate newly received Enter submits the resulting draft.
 
 Input retains its first-received draft epoch and query/draft editor identity
 through partial UTF-8, escape sequences, paste and buffered remainders. An old
 editor's bytes cannot be reassigned to its replacement. Choosing advances the
 input epoch without discarding the newly created native binding; a coalesced
 Tab/Enter chunk cannot select and silently submit the changed draft. Resize and
-navigation invalidate prior frame acknowledgements. Tiny or hidden frames cannot
+navigation invalidate prior frame acknowledgements and pending selection intents.
+Edits (including newly received partial text/escape input), resets, modal/session
+transfers, cancellation, EOF and output failure discard pending intents.
+Tiny or hidden frames cannot
 authorize selection. Escape closes the menu and preserves the original draft
 and valid bindings; idle Ctrl-C clears the draft, including a suspended slash-menu
 draft. Submission, modal ownership changes and session transitions reset binding
