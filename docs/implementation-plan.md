@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `validate pipe-observation fixture correction; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
+- Next gate: `finish host-owned deferred web-fetch DNS discovery; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -420,23 +420,21 @@ MCP documentation seal. Reuse native orchestration; keep CLI limited to host I/O
 Do not deliver codec, session or interaction fragments separately.
 
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
-[client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
-now compose provider-neutral resource FIFO/context, selection/retirement, command
-and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: candidate `c8e122950bc080d7a26eaeeff04a28b40afdc33f` passed the
-complete replacement Linux/macOS local gate. Fresh reviewer capacity was restored;
-R3 correctness/API and resources reported zero findings, but lifecycle rejected
-the candidate for preparation cancellation returning an internal error and
-coalesced input restoring a revoked pending selection. The replacement maps only
-settled typed cancellation, preserves actual worker ownership through EOF, and
-keeps mixed input's deferred selection revoked without dropping its editor tail.
-Protocol-boundary and actual interactive-driver regressions accompany the fixes.
-The following gate exposed a one-shot pipe-closure observation assumption in a
-fixture; its correction preserves production behavior and the existing wait bound.
-Run focused tests and the complete replacement gate before three fresh reviewers;
-prior zero-finding tracks do not accept this changed candidate. No ACP commit has
-been pushed and no remote acceptance is established.
-[review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
+[client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) compose
+native session ownership, request dispatch, bounded projections and CLI stdio.
+Integrated, not delivered: R3 rejected preparation-cancellation classification
+and mixed-chunk pending-selection revocation. Both fixes and their regressions
+are integrated. Subsequent fixture corrections preserve production deadlines.
+The replacement Linux gate passed after an unexplained tmux timeout; macOS twice
+timed out awaiting initial session creation. Passing startup samples identified
+eager, unused web-fetch DNS discovery as substantial acquisition work, not the
+proven cause of the uncaptured failures. Complete hosts now need deferred,
+single-flight discovery on their existing owned scope, retaining actual cleanup.
+Run focused checks and the full replacement gate before three fresh reviewers;
+prior zero-finding tracks do not accept a changed candidate. No ACP commit has
+been pushed and no remote acceptance is established. Exact failures, samples,
+remediation and review provenance belong in the
+[review history](reviews/m05-acp-cli-review-01.md).
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel and set_config_option.

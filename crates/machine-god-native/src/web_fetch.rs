@@ -36,6 +36,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Instant, Sleep};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod deferred;
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod deferred_tests;
+
 /// Model-visible tool name.
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 /// Maximum accepted canonical URL size.
@@ -593,6 +598,28 @@ impl WebFetchTool {
         Ok(Self::with_bounded_transport(transport, limits))
     }
 
+    /// Binds resolver discovery to the actual host's existing cleanup scope.
+    /// Only the first admitted, polled hostname fetch starts discovery; every
+    /// later hostname fetch shares its retained result, including failure.
+    /// The invocation deadline covers waiting, while a started capture remains
+    /// owned by the host through actual completion even if all waiters leave.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn with_owned_workers(
+        workers: crate::NativeOwnedWorkerScope,
+    ) -> Result<Self, WebFetchConfigError> {
+        let limits = WebFetchLimits::default();
+        let query_id_key = query_id_key();
+        let tls_config = root_tls_config()?;
+        let transport = NativeWebFetchTransport::with_owned_workers_and_capture(
+            limits.connect_timeout,
+            tls_config,
+            query_id_key,
+            workers,
+            system_nameserver,
+        );
+        Ok(Self::with_bounded_transport(Arc::new(transport), limits))
+    }
+
     /// Constructs a tool around an explicitly injected transport.
     #[must_use]
     pub fn with_transport(transport: Arc<dyn WebFetchTransport>) -> Self {
@@ -608,9 +635,10 @@ impl WebFetchTool {
     /// The permit remains owned through response rendering, serialized-result
     /// validation, and the final cancellation/deadline boundary.
     /// The absolute deadline begins at first poll before capacity waiting and
-    /// covers transport execution plus those final stages. Native resolver
-    /// configuration and native DNS query-ID key are snapshotted during
-    /// construction, outside that deadline.
+    /// covers transport execution plus those final stages. The standalone
+    /// native constructors snapshot resolver configuration and the DNS query-ID
+    /// key during construction, outside that deadline. A host-scoped deferred
+    /// transport includes waiting for its resolver capture in this deadline.
     ///
     /// # Panics
     ///
@@ -1147,8 +1175,24 @@ impl QueryIdSequence {
 struct NativeWebFetchTransport {
     connect_timeout: Duration,
     tls_config: RustlsClientConfig,
-    nameserver: Result<SocketAddr, WebFetchTransportError>,
+    nameserver: NativeNameserver,
     query_ids: Result<QueryIdSequence, WebFetchTransportError>,
+}
+
+enum NativeNameserver {
+    Captured(Result<SocketAddr, WebFetchTransportError>),
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Deferred(deferred::DeferredNameserver),
+}
+
+impl NativeNameserver {
+    async fn snapshot(&self) -> Result<SocketAddr, WebFetchTransportError> {
+        match self {
+            Self::Captured(result) => *result,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            Self::Deferred(resolver) => resolver.snapshot().await,
+        }
+    }
 }
 
 impl NativeWebFetchTransport {
@@ -1173,7 +1217,25 @@ impl NativeWebFetchTransport {
         Self {
             connect_timeout,
             tls_config,
-            nameserver,
+            nameserver: NativeNameserver::Captured(nameserver),
+            query_ids: query_id_key.map(QueryIdSequence::new),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn with_owned_workers_and_capture(
+        connect_timeout: Duration,
+        tls_config: RustlsClientConfig,
+        query_id_key: Result<[u8; 32], WebFetchTransportError>,
+        workers: crate::NativeOwnedWorkerScope,
+        capture: impl FnOnce() -> Result<SocketAddr, WebFetchTransportError> + Send + 'static,
+    ) -> Self {
+        Self {
+            connect_timeout,
+            tls_config,
+            nameserver: NativeNameserver::Deferred(deferred::DeferredNameserver::new(
+                workers, capture,
+            )),
             query_ids: query_id_key.map(QueryIdSequence::new),
         }
     }
@@ -1183,10 +1245,18 @@ impl NativeWebFetchTransport {
         request: &WebFetchRequest,
         cancellation: &CancellationToken,
     ) -> Result<Vec<SocketAddr>, WebFetchTransportError> {
+        request.execution_boundary(cancellation)?;
+        // Literals never need resolver authority, even when the snapshot has
+        // failed or another hostname request is still waiting for discovery.
+        let nameserver = if request.host.parse::<IpAddr>().is_ok() {
+            Err(transport_error(WebFetchTransportErrorKind::Unavailable))
+        } else {
+            self.nameserver.snapshot().await
+        };
         resolve_public_addresses(
             request,
             cancellation,
-            self.nameserver,
+            nameserver,
             &self.query_ids,
             self.connect_timeout,
         )
@@ -1200,7 +1270,7 @@ impl fmt::Debug for NativeWebFetchTransport {
             .debug_struct("NativeWebFetchTransport")
             .field("connect_timeout", &self.connect_timeout)
             .field("tls_config", &"<redacted>")
-            .field("nameserver", &"<snapshotted>")
+            .field("nameserver", &"<redacted>")
             .field("query_ids", &"<snapshotted>")
             .finish()
     }

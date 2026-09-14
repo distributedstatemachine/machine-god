@@ -104,7 +104,7 @@ no network effect.
 
 ## DNS and destination confinement
 
-Native production-transport construction synchronously snapshots the host's
+Standalone native production-transport construction synchronously snapshots the host's
 system resolver configuration and one random query-ID seed outside invocation
 timing. It stores the first UDP-configured nameserver and a seed-backed atomic
 per-query sequence. Hostname execution does not reread resolver configuration
@@ -113,6 +113,24 @@ nameserver is retained so later hostname execution returns the same fixed,
 retryable unavailable result without retrying either prerequisite until a new
 transport is constructed. A literal IP destination requires no nameserver,
 query ID, or DNS query and remains eligible when either snapshot failed.
+
+Complete reference hosts instead inject their existing owned worker scope and
+defer the resolver-configuration snapshot until the first admitted, polled
+hostname fetch. Construction still captures the query-ID seed and TLS setup.
+Preparation, unpolled or pre-cancelled requests, expired invocations, and public
+IP literals do not start resolver discovery. Concurrent hostname fetches share
+one initialization and retain its result, including failure, for that transport;
+cancelled waiters cannot restart discovery. This deliberately captures resolver
+configuration at first hostname use, not host construction. No other DNS or
+destination-confinement policy changes.
+
+Discovery runs on the explicitly injected native scope, never synchronously on
+the invocation's runtime thread. Its wait consumes the existing invocation
+deadline and permit. Cancellation or timeout stops that wait, not an OS call
+already in progress: the host retains that worker through actual completion and
+joins it during finalization. Resolver configuration has no hard OS wall-clock
+bound. Completion is followed by the usual cancellation/deadline boundary before
+any DNS query or HTTP effect; no request deadline is reset.
 
 For a hostname, the invocation sends one rooted Internet-class A query and then
 one rooted Internet-class AAAA query directly to that nameserver on owned Tokio
@@ -262,8 +280,10 @@ boundary after serialized-result validation discards an otherwise successful
 output if cancellation or timeout became authoritative during rendering. The
 permit remains owned through that decision.
 
-`WebFetchTool` owns no machine-god worker thread, producer task, retry task, or
-background cleanup task. Dropping or cancelling its future drops the owned
+Standalone `WebFetchTool` owns no machine-god worker thread, producer task, retry
+task, or background cleanup task. The complete-host deferred path may start one
+resolver-configuration worker on the host's existing scope as described above;
+it creates no separate scope or detached task. Dropping or cancelling a fetch drops the owned
 Reqwest request/response and permit. Reqwest/Hyper connection-dispatch cleanup
 may continue only on the host-owned Tokio runtime; this is not authority to
 keep a machine-god request worker alive or to retry the request. The one outer

@@ -1621,7 +1621,6 @@ impl NativeReferenceHost {
             web_search_deadline,
             model_routes,
         )?;
-        let web_fetch = compose_web_fetch()?;
         // Declare before the resource: failed/unwound assembly drops every
         // actual owner before this observer joins the newly created scope.
         let mut construction = construction::Construction::default();
@@ -1635,6 +1634,12 @@ impl NativeReferenceHost {
             TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
         construction.observe(selected_terminal.resource.as_ref());
+        let web_fetch = compose_web_fetch(
+            selected_terminal
+                .resource
+                .as_ref()
+                .map(NativeTerminalHostResource::worker_scope),
+        )?;
         let background_opener = background_url.map(|selected| selected.bind(&selected_terminal));
         let (mcp, mcp_catalog) = mcp::select(
             mcp_options,
@@ -2099,8 +2104,16 @@ fn compose_terminal(
         })
 }
 
-fn compose_web_fetch() -> Result<WebFetchTool, NativeReferenceHostBuildError> {
-    WebFetchTool::new().map_err(|_| {
+fn compose_web_fetch(
+    workers: Option<crate::NativeOwnedWorkerScope>,
+) -> Result<WebFetchTool, NativeReferenceHostBuildError> {
+    // Complete hosts already own the scope through finalization. Defer unused
+    // system DNS discovery without creating another lifetime/cleanup owner.
+    let tool = match workers {
+        Some(workers) => WebFetchTool::with_owned_workers(workers),
+        None => WebFetchTool::new(),
+    };
+    tool.map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebFetchTransport)
     })
 }

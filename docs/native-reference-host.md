@@ -134,6 +134,15 @@ constructors continue selecting the pinned HTTP endpoint and default limits.
 This programmatic injection adds no CLI flag, configuration or environment
 endpoint override and does not bypass credential discovery in CLI acquisition.
 
+Complete-terminal compositions also bind `web_fetch` resolver discovery to that
+host's existing worker scope. Construction does not read system DNS configuration
+for this unused tool: the first admitted hostname fetch starts one shared,
+failure-retaining snapshot. Public IP literals need no resolver discovery.
+Cancellation stops a fetch's wait, while actual discovery remains owned through
+host finalization. Standalone compositions without a worker-owning terminal
+resource retain synchronous construction-time capture. See
+[web-fetch DNS ownership](web-fetch.md#dns-and-destination-confinement).
+
 `NativeReferenceHostConversationOptions::new(Arc<FileUndoTracker>)` is an
 explicit trusted-host authority choice, not a passive display preference. It
 grants the five file mutation tools bounded preimage **read** authority and

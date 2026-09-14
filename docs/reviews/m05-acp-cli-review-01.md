@@ -389,3 +389,52 @@ descriptor-flag and wake assertions remain, with no production or deadline chang
 Component formatting and diff checks passed. The replacement requires focused
 tests, the complete exact gate and three fresh reviews; no push accepted this
 candidate. Its logs remain retained, not overwritten by the replacement.
+
+## Candidate 7229b042: runtime failures and acquisition sampling
+
+Candidate `7229b042fd233b402144254e01bc0f8683c04f14` integrated the pipe fixture
+correction. Both platform build gates, fresh release helpers, portable lint and
+policy checks passed. Linux focused suites passed, but the first workspace run
+failed the tmux shared-bootstrap matrix at its commandless write deadline:
+3,560 native tests passed, one failed and 11 existing helper fixtures were ignored.
+The recorded pending stage was `write-paste`, with empty command input/output.
+An isolated matrix passed in 2.86 seconds; a narrower package-only concurrent
+native diagnostic passed 3,012 tests in 45.18 seconds. Read-only driver inspection
+found no actionable defect: repeated writes drive the pending operation, and
+the shared command deadline is checked before output/exit observation. Neither
+the logs nor passing diagnostics establish the initial timeout's cause.
+
+One unchanged full Linux replacement passed all focused suites, 3,561 native
+unit tests with 11 existing ignores, workspace integrations, doctests and 269
+Python tests. The native unit suite took 48.79 seconds. The original failed log
+is retained separately; this retry is not a source-fix claim.
+
+The serial macOS gate then failed
+`aliased_workspace_new_load_resume_list_preserve_canonical_checkpoint` while
+awaiting a response: 548 CLI unit tests passed, one failed and six existing helper
+fixtures were ignored in 116.96 seconds. An isolated case passed in 7.11 seconds
+and the paired composition tests in 3.11 seconds. Read-only native/CLI diagnosis
+found no established lost wake or retained-owner shutdown cycle. One unchanged
+full macOS replacement reproduced the failure (548/one/six in 98.01 seconds);
+its backtrace identifies response 2, initial `session/new`, before alias
+reselection. Neither run reached the native workspace, doctest or release-smoke
+stages. These failures reject local acceptance despite the Linux pass.
+
+Bounded OS sampling of the existing CLI test executable followed, without code,
+deadline or scheduling changes. A full CLI diagnostic passed 549 tests with six
+existing ignores in 118.57 seconds. Three isolated captured-output samples passed
+in 7.19, 2.95 and 3.28 seconds. Sample 1 attributes 1,671 of 1,683 acquisition-worker
+samples to `WebFetchTool::new` → system nameserver discovery → macOS system
+configuration/CoreFoundation bundle-directory enumeration while the client waits
+for initial session creation. Samples 2 and 3 show the same acquisition path.
+These are passing traces, not samples of either failed event; they establish
+unnecessary eager startup work, not its exclusive responsibility for the failures.
+
+The scoped remediation defers only web-fetch resolver configuration for complete
+hosts onto their existing owned worker scope. The first admitted hostname fetch
+shares one result, including failure; literal IPs bypass discovery. TLS and
+query-ID seed setup, DNS destination policy and invocation deadlines remain.
+Cancelled waiters do not restart discovery or abandon an already-started worker.
+Standalone transports without a supplied scope retain synchronous capture.
+Deterministic lifecycle tests and durable contracts accompany this change; the
+complete replacement gate and three fresh reviews remain required before push.
