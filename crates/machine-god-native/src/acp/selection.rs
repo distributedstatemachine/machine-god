@@ -1,7 +1,7 @@
 //! One selected native ACP session, with owned preparation and retirement.
 
 use super::session::{AcpSessionError, NativeAcpSession, NativeAcpSessionSelection};
-use crate::mcp::ephemeral::NativeMcpEphemeralConfiguration;
+use crate::mcp::ephemeral::{NativeMcpEphemeralConfiguration, NativeMcpNetworkRequirement};
 use crate::{
     NativeInteractiveSessionOptions, NativePermissionContexts, NativeReferenceHost,
     NativeRuntimeQuiescence, NativeSessionCatalogCursor, NativeSessionCatalogPage,
@@ -28,10 +28,14 @@ type AfterOpenHook = Box<dyn FnOnce(&NativeReferenceHost, &CancellationToken) + 
 
 /// Trusted, explicitly captured host effects. Implementations must keep any
 /// admitted worker and unsuccessful preparation cleanup owned until completion.
+/// Preparation receives only the network requirement derived from the admitted
+/// MCP selection, not another copy of its secret-bearing configuration. This
+/// requirement grants no authority and never replaces peer readiness checks.
 pub trait NativeAcpHostFactory: Send + Sync {
     fn prepare(
         &self,
         workspace: PathBuf,
+        network: NativeMcpNetworkRequirement,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>>;
     fn list(

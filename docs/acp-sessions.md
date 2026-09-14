@@ -32,7 +32,9 @@ without deleting durable history.
 
 `NativeAcpSelectionOwner` owns one current session and one bounded pending
 selection. Requests store inert intent; polling invokes an explicitly captured
-host factory. Each prepared host has its own permission registry, ephemeral MCP
+host factory with the admitted selection's pure network requirement. Empty or
+stdio selections do not capture system DNS; hostname HTTP selections still do.
+Each prepared host has its own permission registry, ephemeral MCP
 runtime and workers. The connection bridge is shared, but only the committed
 host's registry is activated for client permission requests.
 

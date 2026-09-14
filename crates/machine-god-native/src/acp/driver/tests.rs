@@ -3,6 +3,7 @@ use crate::NativeSessionCatalogCursor;
 use crate::acp::{
     protocol::decode_frame, selection::NativeAcpPreparedHost, session::AcpSessionError,
 };
+use crate::mcp::ephemeral::NativeMcpNetworkRequirement;
 use futures_util::task::noop_waker;
 use serde_json::json;
 use std::{
@@ -19,6 +20,7 @@ impl NativeAcpHostFactory for Factory {
     fn prepare(
         &self,
         _: PathBuf,
+        _: NativeMcpNetworkRequirement,
         _: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>> {
         let calls = self.preparations.clone();

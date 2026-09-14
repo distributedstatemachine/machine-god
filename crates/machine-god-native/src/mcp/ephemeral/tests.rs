@@ -17,6 +17,85 @@ use std::{
 };
 
 const STDIO: &[u8] = br#"[{"name":"stdio","command":"/missing/server","args":[],"env":[]}]"#;
+
+fn http_selection(urls: &[&str], include_stdio: bool) -> Vec<u8> {
+    let mut servers = urls
+        .iter()
+        .enumerate()
+        .map(|(index, url)| {
+            serde_json::json!({"name":format!("h{index}"), "type":"http", "url":url, "headers":[]})
+        })
+        .collect::<Vec<_>>();
+    if include_stdio {
+        servers
+            .push(serde_json::json!({"name":"stdio", "command":"/bin/echo", "args":[], "env":[]}));
+    }
+    serde_json::to_vec(&servers).unwrap()
+}
+
+#[test]
+fn network_requirement_is_pure_and_covers_all_selected_transports() {
+    use NativeMcpNetworkRequirement::{LiteralOnly, None, SystemDns};
+    assert_eq!(empty().network_requirement(), None);
+    assert_eq!(
+        NativeMcpEphemeralConfiguration::decode(Some(b"[]"))
+            .unwrap()
+            .network_requirement(),
+        None
+    );
+    for (urls, expected) in [
+        (vec![], None),
+        (vec!["https://127.0.0.1/mcp"], LiteralOnly),
+        (vec!["https://[::1]/mcp"], LiteralOnly),
+        (vec!["https://LOCALHOST/mcp"], LiteralOnly),
+        (vec!["HTTP://LoCaLhOsT:8123/mcp"], LiteralOnly),
+        (vec!["https://%6cocalhost/mcp"], LiteralOnly),
+        (vec!["https://localhost./mcp"], SystemDns),
+        (vec!["https://localhost.example/mcp"], SystemDns),
+        (vec!["https://EXAMPLE.test/mcp"], SystemDns),
+        (
+            vec!["https://[2001:db8::1]/mcp", "https://192.0.2.1/mcp"],
+            LiteralOnly,
+        ),
+        (
+            vec!["https://localhost/mcp", "https://example.test/mcp"],
+            SystemDns,
+        ),
+        (
+            vec!["https://example.test/mcp", "https://localhost/mcp"],
+            SystemDns,
+        ),
+    ] {
+        for include_stdio in [false, true] {
+            let bytes = http_selection(&urls, include_stdio);
+            let selected = NativeMcpEphemeralConfiguration::decode(Some(&bytes)).unwrap();
+            assert_eq!(selected.network_requirement(), expected);
+            assert_eq!(selected.clone().network_requirement(), expected);
+        }
+    }
+}
+
+#[test]
+fn invalid_http_endpoint_is_rejected_even_after_system_dns_is_required() {
+    // These satisfy the initial structural HTTPS shape but must not survive
+    // the established endpoint parser used to classify captured authority.
+    for invalid in [
+        "https://[not-ip]/mcp",
+        "https://example.test:invalid/mcp",
+        "https://example.test:65536/mcp",
+        "https://example.test/%zz",
+        "https://%ff/mcp",
+    ] {
+        for urls in [vec![invalid], vec!["https://example.test/mcp", invalid]] {
+            let bytes = http_selection(&urls, true);
+            assert_eq!(
+                NativeMcpEphemeralConfiguration::decode(Some(&bytes)).unwrap_err(),
+                McpConfigError::Invalid
+            );
+        }
+    }
+}
+
 fn empty() -> NativeMcpEphemeralConfiguration {
     NativeMcpEphemeralConfiguration::decode(None).unwrap()
 }

@@ -12,11 +12,19 @@ fn prepared_host_rejects_foreign_primary_even_with_identical_canonical_spelling(
     run(async {
         let factory = Factory::new();
         let mut first = factory
-            .prepare(factory.workspace.clone(), CancellationToken::new())
+            .prepare(
+                factory.workspace.clone(),
+                NativeMcpNetworkRequirement::None,
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
         let mut second = factory
-            .prepare(factory.workspace.clone(), CancellationToken::new())
+            .prepare(
+                factory.workspace.clone(),
+                NativeMcpNetworkRequirement::None,
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
         assert!(first.validate().is_ok());
@@ -74,9 +82,10 @@ impl NativeAcpHostFactory for SubstituteFactory {
     fn prepare(
         &self,
         _: PathBuf,
+        network: NativeMcpNetworkRequirement,
         cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>> {
-        self.0.prepare(self.0.workspace.clone(), cancel)
+        self.0.prepare(self.0.workspace.clone(), network, cancel)
     }
     fn list(
         &self,
@@ -125,7 +134,11 @@ fn prepared_alias_binding_survives_source_retarget_without_changing_authority() 
         let alias = parent.join("alias");
         symlink(parent, &alias).unwrap();
         let prepared = factory
-            .prepare(alias.join("workspace"), CancellationToken::new())
+            .prepare(
+                alias.join("workspace"),
+                NativeMcpNetworkRequirement::None,
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
         assert_eq!(prepared.workspace.requested, alias.join("workspace"));

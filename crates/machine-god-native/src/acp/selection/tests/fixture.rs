@@ -64,6 +64,7 @@ impl NativeAcpHostFactory for Factory {
     fn prepare(
         &self,
         workspace: PathBuf,
+        _: NativeMcpNetworkRequirement,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>> {
         self.preparations.fetch_add(1, Ordering::Relaxed);

@@ -10,6 +10,7 @@ use crate::{
         clock::TokioMcpClock,
         context::NativeMcpContexts,
         controller::NativeMcpControllerStartupOptions,
+        ephemeral::NativeMcpNetworkRequirement,
         http::McpHttpTrust,
         lifetime::McpPeerLifetime,
         network::{McpResolverConfig, NativeMcpNetwork},
@@ -46,21 +47,34 @@ impl NativeReferenceHostMcpOptions {
         terminal: &NativeReferenceHostTerminalOptions,
         contexts: Arc<NativeMcpContexts>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        Self::from_captured_startup(roots, terminal, contexts, network_inputs())
+        Self::from_captured_startup(
+            roots,
+            terminal,
+            contexts,
+            network_inputs(NativeMcpNetworkRequirement::SystemDns),
+        )
     }
 
     /// Captures a dedicated ACP session's production transport authority with
     /// no profile management, stored credential or OAuth-service selection.
     /// Omitted/empty client configuration is still an authoritative selection
     /// published later through the exact composed ephemeral owner.
+    /// The admitted selection's requirement skips unused network capture; literal
+    /// HTTP peers retain fresh secure entropy and bundled TLS trust without DNS.
     /// # Errors
     /// Same retained-root/process/trust validation as `capture_startup`.
     pub fn capture_ephemeral_startup(
         roots: &PreparedNativeRoots,
         terminal: &NativeReferenceHostTerminalOptions,
         contexts: Arc<NativeMcpContexts>,
+        requirement: NativeMcpNetworkRequirement,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        Self::from_captured_ephemeral_startup(roots, terminal, contexts, network_inputs())
+        Self::from_captured_ephemeral_startup(
+            roots,
+            terminal,
+            contexts,
+            network_inputs(requirement),
+        )
     }
 
     pub(super) fn from_captured_startup(
@@ -122,20 +136,8 @@ impl NativeReferenceHostMcpOptions {
                 vec![crate::PROCESS_INVENTORY_SERVICE_ARGUMENT.into()],
             )
             .map_err(|_| error())?;
-        let network = network_inputs
-            .map(|(resolver, key)| {
-                NativeMcpNetwork::new(
-                    resolver,
-                    key,
-                    Some(bundled_trust()?),
-                    clock.clone(),
-                    owner.clone(),
-                    32,
-                )
-                .map(Arc::new)
-                .map_err(|_| error())
-            })
-            .transpose()?;
+        let network =
+            captured_network(network_inputs, clock.clone(), owner.clone(), bundled_trust)?;
         if matches!(owner_kind, CaptureOwner::Ephemeral) {
             let startup = NativeReferenceHostMcpEphemeralStartupOptions {
                 captured_environment: environment,
@@ -168,11 +170,46 @@ impl NativeReferenceHostMcpOptions {
     }
 }
 
-fn network_inputs() -> Option<(McpResolverConfig, [u8; 32])> {
-    let resolver = McpResolverConfig::capture_system().ok()?;
-    let mut key = [0; 32];
-    getrandom::fill(&mut key).ok()?;
-    Some((resolver, key))
+fn network_inputs(
+    requirement: NativeMcpNetworkRequirement,
+) -> Option<(McpResolverConfig, [u8; 32])> {
+    network_inputs_with(
+        requirement,
+        || McpResolverConfig::capture_system().ok(),
+        || {
+            let mut key = [0; 32];
+            getrandom::fill(&mut key).ok()?;
+            Some(key)
+        },
+    )
+}
+
+fn network_inputs_with(
+    requirement: NativeMcpNetworkRequirement,
+    capture_resolver: impl FnOnce() -> Option<McpResolverConfig>,
+    capture_entropy: impl FnOnce() -> Option<[u8; 32]>,
+) -> Option<(McpResolverConfig, [u8; 32])> {
+    let resolver = match requirement {
+        NativeMcpNetworkRequirement::None => return None,
+        NativeMcpNetworkRequirement::LiteralOnly => McpResolverConfig::literal_only(),
+        NativeMcpNetworkRequirement::SystemDns => capture_resolver()?,
+    };
+    Some((resolver, capture_entropy()?))
+}
+
+fn captured_network(
+    inputs: Option<(McpResolverConfig, [u8; 32])>,
+    clock: Arc<TokioMcpClock>,
+    owner: CancellationToken,
+    capture_trust: impl FnOnce() -> Result<McpHttpTrust, NativeReferenceHostBuildError>,
+) -> Result<Option<Arc<NativeMcpNetwork>>, NativeReferenceHostBuildError> {
+    inputs
+        .map(|(resolver, key)| {
+            NativeMcpNetwork::new(resolver, key, Some(capture_trust()?), clock, owner, 32)
+                .map(Arc::new)
+                .map_err(|_| error())
+        })
+        .transpose()
 }
 
 pub(super) fn bundled_trust() -> Result<McpHttpTrust, NativeReferenceHostBuildError> {
@@ -184,3 +221,6 @@ pub(super) fn bundled_trust() -> Result<McpHttpTrust, NativeReferenceHostBuildEr
     }
     McpHttpTrust::new(roots).map_err(|_| error())
 }
+
+#[cfg(test)]
+mod tests;

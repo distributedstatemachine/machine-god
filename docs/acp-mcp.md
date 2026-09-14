@@ -51,6 +51,14 @@ actual host runtime, registered tool names and existing worker scope, not a
 parallel owner or temporary profile. `capture_ephemeral_startup` explicitly
 captures the retained workspace descriptor, selected helper/environment and
 optional DNS/TLS authority without selecting a credential or OAuth service.
+Capture is selected from the admitted configuration before host preparation:
+empty and stdio-only selections read no DNS configuration, entropy or TLS roots.
+HTTP endpoints with literal IPs or exact normalized `localhost` select the native
+literal-only resolver with fresh entropy and bundled TLS trust. A hostname
+endpoint requires the existing owned system-resolver capture; mixed selections
+retain that requirement. Classification is pure and retains no extra secret
+configuration. No endpoint acquires ambient DNS later, and insufficient network
+authority still fails through required-peer startup. Profile capture is unchanged.
 Absent remote authority still permits an empty or stdio selection.
 
 `mcp_ephemeral_owner()` returns that exact host-owned allocation. The host binds

@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `validate ACP output-wake fix, then complete replacement gate and three fresh reviews`
+- Next gate: `validate transport-aware ACP startup, then complete replacement gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -426,8 +426,8 @@ and request dispatch, bounded session projections and owned CLI stdio. Integrate
 not delivered: the complete Linux/macOS gate passed, including picker fixes and
 Linux's cold release probe. Three fresh local R1 reviews rejected the candidate:
 backpressured complete input can hide pipe closure, and valid workspace aliases
-are rejected. Those fixes and an independently reproduced output-wake fix are
-integrated for replacement validation and reviews;
+are rejected. Those fixes, an independently reproduced output-wake fix and
+transport-aware network capture require replacement validation and reviews;
 [review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,

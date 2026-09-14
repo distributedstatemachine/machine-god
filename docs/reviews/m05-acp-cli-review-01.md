@@ -194,3 +194,31 @@ This proves that handoff fix, not the cause of the original timed-out run.
 No deadline, retry policy or protocol compatibility path changed. Both diagnosis
 worktrees were clean and removed; replacement gates and fresh formal product
 reviews remain separate from this diagnostic evidence.
+
+## Candidate a1e907fb: initial preparation and network capture
+
+Candidate `a1e907fb245ea9247608ab10e0e8e647962663e4` passed both fresh release
+builds, portability/policy checks and the complete Linux gate, including 269
+Python tests. macOS passed focused web-fetch, input and native ACP checks but
+again hit the composed alias fixture's unchanged ten-second deadline. This time
+the backtrace identified response 2, initial `session/new`, before load/resume.
+The new output-wake regression and the other nine CLI ACP tests passed. This
+rejects the macOS gate; the output-wake fix alone does not resolve the timeout.
+
+An unchanged diagnostic with owned-process sampling passed in 7.30 seconds.
+During its initial two-second sample, 158 of 160 preparation-worker samples were
+inside unconditional MCP system-DNS capture, through macOS SystemConfiguration
+and CoreFoundation bundle-directory enumeration. The selection was empty. This
+establishes unnecessary startup work, not the cause of the unsampled timeout.
+Independent read-only inspection confirmed that the admitted MCP transport
+requirements were not passed to the host factory. The diagnosis checkout was
+clean and removed; raw sample and gate logs are retained with local evidence.
+
+Remediation derives a bounded, non-secret transport requirement while decoding
+the selection and passes it through new/load/resume preparation. Empty/stdio
+selections capture no network inputs; literal HTTP endpoints retain normal TLS
+and fresh entropy without system DNS; hostname HTTP retains system capture.
+Profile capture, required-peer readiness and fail-closed network admission remain
+unchanged. No legacy fallback, fixture-only network suppression or deadline
+change is part of this correction. Replacement validation and fresh full-feature
+reviews remain required before delivery.

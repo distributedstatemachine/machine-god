@@ -5,7 +5,7 @@ use machine_god_native::{AiGatewayCredentialSource, discover_ai_gateway_credenti
 fn acp_profile_branch_is_never_entered_even_for_invalid_profile_selection() {
     for directory in ["relative", "/", "/invalid/../profile", "/invalid\0profile"] {
         assert!(
-            McpSelection::Ephemeral
+            McpSelection::Ephemeral(NativeMcpNetworkRequirement::None)
                 .prepare_management(Some(Path::new(directory)))
                 .unwrap()
                 .is_none()
@@ -17,7 +17,7 @@ fn acp_profile_branch_is_never_entered_even_for_invalid_profile_selection() {
         );
     }
     assert!(
-        McpSelection::Ephemeral
+        McpSelection::Ephemeral(NativeMcpNetworkRequirement::None)
             .prepare_management(None)
             .unwrap()
             .is_none()

@@ -128,10 +128,18 @@ impl NativeAcpSelectionOwner {
                         future: None,
                     };
                 } else {
-                    pending.phase = Phase::Preparing(self.factory.prepare(
-                        pending.request.workspace.clone(),
-                        pending.request.cancellation.clone(),
-                    ));
+                    pending.phase = Phase::Preparing(
+                        self.factory.prepare(
+                            pending.request.workspace.clone(),
+                            pending
+                                .request
+                                .configuration
+                                .as_ref()
+                                .expect("selection configuration")
+                                .network_requirement(),
+                            pending.request.cancellation.clone(),
+                        ),
+                    );
                 }
             }
             Phase::Preparing(mut future) => match future.as_mut().poll(cx) {

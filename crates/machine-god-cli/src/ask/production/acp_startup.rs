@@ -14,8 +14,8 @@ use machine_god_native::{
     NativeReferenceHostTerminalOptions, NativeRootSelection, PreparedNativeRoots, TerminalShell,
     TokioWebSearchRuntime,
     mcp::{
-        context::NativeMcpContexts, interaction::McpElicitationPresenter,
-        management::NativeMcpManagementService,
+        context::NativeMcpContexts, ephemeral::NativeMcpNetworkRequirement,
+        interaction::McpElicitationPresenter, management::NativeMcpManagementService,
     },
 };
 use std::{
@@ -69,7 +69,7 @@ impl TerminalCapture {
 #[derive(Clone, Copy)]
 pub(super) enum McpSelection {
     Profile,
-    Ephemeral,
+    Ephemeral(NativeMcpNetworkRequirement),
 }
 impl McpSelection {
     pub(super) fn capture_workspace_identity(
@@ -78,7 +78,7 @@ impl McpSelection {
         authority: &machine_god_native::NativeWorkspaceAuthority,
     ) -> Result<Option<machine_god_native::acp::selection::NativeAcpWorkspaceIdentity>, ()> {
         match self {
-            Self::Ephemeral => {
+            Self::Ephemeral(_) => {
                 machine_god_native::acp::selection::NativeAcpWorkspaceIdentity::capture(
                     roots, authority,
                 )
@@ -95,7 +95,7 @@ impl McpSelection {
     ) -> Result<Option<Arc<NativeMcpManagementService>>, ()> {
         match self {
             Self::Profile => super::mcp_startup::prepare(directory),
-            Self::Ephemeral => Ok(None),
+            Self::Ephemeral(_) => Ok(None),
         }
     }
     pub(super) fn prepare_runtime(
@@ -109,7 +109,7 @@ impl McpSelection {
             Self::Profile => {
                 super::mcp_startup::prepare_runtime(roots, terminal, management, presenter)
             }
-            Self::Ephemeral => {
+            Self::Ephemeral(network) => {
                 if management.is_some() {
                     return Err(());
                 }
@@ -117,6 +117,7 @@ impl McpSelection {
                     roots,
                     terminal,
                     Arc::new(NativeMcpContexts::new()),
+                    network,
                 )
                 .map_err(|_| ())?;
                 Ok(Some(match presenter {

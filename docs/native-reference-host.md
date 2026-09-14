@@ -267,6 +267,9 @@ browser-launch endpoints remain separate explicit selections.
 
 ACP session hosts instead use `capture_ephemeral_startup` or the inert
 `with_ephemeral_startup(NativeReferenceHostMcpEphemeralStartupOptions)` selection.
+Capture takes the admitted transport requirement: empty/stdio selections skip
+network inputs, literal endpoints use literal-only resolution, and hostname
+endpoints retain system-DNS capture.
 That path reuses retained transport capture but never selects profile management,
 stored authentication or an OAuth service; conflicting profile selections fail
 before terminal acquisition in either builder order. The actual host composes a

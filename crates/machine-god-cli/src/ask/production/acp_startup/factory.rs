@@ -13,6 +13,7 @@ use machine_god_native::{
         selection::{NativeAcpHostFactory, NativeAcpPreparedHost},
         session::AcpSessionError,
     },
+    mcp::ephemeral::NativeMcpNetworkRequirement,
 };
 use std::{ffi::OsString, fmt, path::PathBuf, sync::Arc};
 
@@ -58,6 +59,7 @@ impl NativeAcpHostFactory for AcpHostFactory {
     fn prepare(
         &self,
         workspace: PathBuf,
+        mcp_network: NativeMcpNetworkRequirement,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>> {
         let environment = self.environment.clone();
@@ -95,7 +97,7 @@ impl NativeAcpHostFactory for AcpHostFactory {
                             environment: environment.to_vec(),
                             roots,
                             terminal,
-                            mcp: McpSelection::Ephemeral,
+                            mcp: McpSelection::Ephemeral(mcp_network),
                             permission_contexts: permission_contexts.clone(),
                             cancellation,
                             network,

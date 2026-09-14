@@ -7,6 +7,7 @@ use machine_god_native::{
         selection::{NativeAcpHostFactory, NativeAcpPreparedHost},
         session::AcpSessionError,
     },
+    mcp::ephemeral::NativeMcpNetworkRequirement,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +18,7 @@ impl NativeAcpHostFactory for NoHosts {
     fn prepare(
         &self,
         _: PathBuf,
+        _: NativeMcpNetworkRequirement,
         _: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>> {
         panic!("initialize and EOF do not acquire a host");
@@ -36,9 +38,10 @@ impl NativeAcpHostFactory for PendingList {
     fn prepare(
         &self,
         workspace: PathBuf,
+        network: NativeMcpNetworkRequirement,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>> {
-        NoHosts.prepare(workspace, cancellation)
+        NoHosts.prepare(workspace, network, cancellation)
     }
     fn list(
         &self,
