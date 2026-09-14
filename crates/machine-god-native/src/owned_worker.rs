@@ -408,7 +408,7 @@ impl std::task::Wake for CompletionWake {
             self.0
                 .as_ref()
                 .expect("retained completion waker")
-                .wake_by_ref()
+                .wake_by_ref();
         });
     }
 }

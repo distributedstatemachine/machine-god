@@ -50,11 +50,11 @@ fn open_empty_scope_waits_and_close_completes_without_worker_admission() {
     let scope = NativeOwnedWorkerScope::new();
     let completion = scope.completion();
     let mut wait = Box::pin(completion.wait());
-    let (waker, wakes) = counter();
+    let (waker, notifications) = counter();
     assert!(with_rejected_unscoped_workers(|| poll(wait.as_mut(), &waker)).is_pending());
     assert_eq!(scope.state.status.lock().unwrap().tickets, 0);
     scope.close();
-    assert!(wakes.0.load(Ordering::Acquire) > 0);
+    assert!(notifications.0.load(Ordering::Acquire) > 0);
     assert_eq!(
         with_rejected_unscoped_workers(|| poll(wait.as_mut(), &waker)),
         Poll::Ready(())
@@ -76,8 +76,8 @@ fn separate_waiters_all_wake_and_abandonment_cannot_steal_completion() {
         let mut abandoned = Box::pin(completion.wait());
         let mut first = Box::pin(completion.wait());
         let mut second = Box::pin(completion.wait());
-        let (first_waker, first_wakes) = counter();
-        let (second_waker, second_wakes) = counter();
+        let (first_waker, first_notifications) = counter();
+        let (second_waker, second_notifications) = counter();
         if abandoned_first {
             assert!(poll(abandoned.as_mut(), Waker::noop()).is_pending());
         }
@@ -91,11 +91,11 @@ fn separate_waiters_all_wake_and_abandonment_cannot_steal_completion() {
         assert!(!completion.is_complete());
         assert!(poll(first.as_mut(), &first_waker).is_pending());
         assert!(poll(second.as_mut(), &second_waker).is_pending());
-        first_wakes.0.store(0, Ordering::Release);
-        second_wakes.0.store(0, Ordering::Release);
+        first_notifications.0.store(0, Ordering::Release);
+        second_notifications.0.store(0, Ordering::Release);
         drop(ticket);
-        assert!(first_wakes.0.load(Ordering::Acquire) > 0);
-        assert!(second_wakes.0.load(Ordering::Acquire) > 0);
+        assert!(first_notifications.0.load(Ordering::Acquire) > 0);
+        assert!(second_notifications.0.load(Ordering::Acquire) > 0);
         assert_eq!(poll(first.as_mut(), &first_waker), Poll::Ready(()));
         assert_eq!(poll(second.as_mut(), &second_waker), Poll::Ready(()));
     }
@@ -109,7 +109,7 @@ fn closure_and_ticket_release_in_either_order_cannot_lose_completion() {
             let ticket = scope.admit().unwrap();
             let completion = scope.completion();
             let mut wait = Box::pin(completion.wait());
-            let (waker, wakes) = counter();
+            let (waker, notifications) = counter();
             if register_first {
                 assert!(poll(wait.as_mut(), &waker).is_pending());
             }
@@ -117,16 +117,16 @@ fn closure_and_ticket_release_in_either_order_cannot_lose_completion() {
                 drop(ticket);
                 assert!(!completion.is_complete());
                 assert!(poll(wait.as_mut(), &waker).is_pending());
-                wakes.0.store(0, Ordering::Release);
+                notifications.0.store(0, Ordering::Release);
                 scope.close();
             } else {
                 scope.close();
                 assert!(!completion.is_complete());
                 assert!(poll(wait.as_mut(), &waker).is_pending());
-                wakes.0.store(0, Ordering::Release);
+                notifications.0.store(0, Ordering::Release);
                 drop(ticket);
             }
-            assert!(wakes.0.load(Ordering::Acquire) > 0);
+            assert!(notifications.0.load(Ordering::Acquire) > 0);
             assert_eq!(poll(wait.as_mut(), &waker), Poll::Ready(()));
         }
     }
@@ -210,7 +210,7 @@ fn panicking_clone_and_drop_do_not_poison_scope_or_other_waiters() {
         let ticket = scope.admit().unwrap();
         let completion = scope.completion();
         let mut survivor = Box::pin(completion.wait());
-        let (survivor_waker, wakes) = counter();
+        let (survivor_waker, notifications) = counter();
         assert!(poll(survivor.as_mut(), &survivor_waker).is_pending());
         let mut hostile = Box::pin(completion.wait());
         let (waker, _) = reentrant_waker(callback, || panic!("completion waker callback"));
@@ -222,9 +222,9 @@ fn panicking_clone_and_drop_do_not_poison_scope_or_other_waiters() {
         let _ = contain(|| drop(waker));
         scope.close();
         assert!(poll(survivor.as_mut(), &survivor_waker).is_pending());
-        wakes.0.store(0, Ordering::Release);
+        notifications.0.store(0, Ordering::Release);
         drop(ticket);
-        assert!(wakes.0.load(Ordering::Acquire) > 0);
+        assert!(notifications.0.load(Ordering::Acquire) > 0);
         assert_eq!(poll(survivor.as_mut(), &survivor_waker), Poll::Ready(()));
         assert!(!scope.state.status.is_poisoned());
     }
@@ -239,7 +239,7 @@ fn panicking_completion_wake_does_not_escape_close_or_ticket_destruction() {
         let mut hostile = Box::pin(completion.wait());
         let mut survivor = Box::pin(completion.wait());
         let (waker, _) = reentrant_waker(Callback::Wake, || panic!("completion wake"));
-        let (survivor_waker, wakes) = counter();
+        let (survivor_waker, notifications) = counter();
         assert!(poll(hostile.as_mut(), &waker).is_pending());
         assert!(poll(survivor.as_mut(), &survivor_waker).is_pending());
         if release_first {
@@ -250,10 +250,10 @@ fn panicking_completion_wake_does_not_escape_close_or_ticket_destruction() {
             // A close wake may have consumed a registration; re-arm both.
             assert!(poll(hostile.as_mut(), &waker).is_pending());
             assert!(poll(survivor.as_mut(), &survivor_waker).is_pending());
-            wakes.0.store(0, Ordering::Release);
+            notifications.0.store(0, Ordering::Release);
             assert!(contain(|| drop(ticket)).is_ok());
         }
-        assert!(wakes.0.load(Ordering::Acquire) > 0);
+        assert!(notifications.0.load(Ordering::Acquire) > 0);
         assert_eq!(poll(survivor.as_mut(), &survivor_waker), Poll::Ready(()));
         assert_eq!(poll(hostile.as_mut(), Waker::noop()), Poll::Ready(()));
         assert!(!scope.state.status.is_poisoned());
