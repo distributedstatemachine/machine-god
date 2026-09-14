@@ -3,13 +3,9 @@ use super::{
     dispatch::session_error,
     protocol::{self, AcpMessage},
     rpc_error,
+    session_projection::{catalog_response, config_response, selection_response},
 };
-use crate::NativeSessionCatalogPage;
-use crate::acp::{
-    projection,
-    selection::NativeAcpSelectionOutcome,
-    session::{AcpSessionError, NativeAcpSession},
-};
+use crate::acp::{projection, selection::NativeAcpSelectionOutcome, session::AcpSessionError};
 use machine_god_core::{SessionId, StopReason, TurnEvent};
 use serde_json::{Value, json};
 use std::task::{Context, Poll};
@@ -220,8 +216,10 @@ impl NativeAcpConnection {
                 self.respond(
                     Some(id),
                     result
-                        .map(|page| catalog_response(&page))
-                        .map_err(|_| rpc_error(-32603, "ACP session listing unavailable")),
+                        .map_err(|_| rpc_error(-32603, "ACP session listing unavailable"))
+                        .and_then(|page| {
+                            catalog_response(&page).map_err(|error| session_error(&error))
+                        }),
                 );
             }
             Some(Control::Model { .. }) => {
@@ -317,64 +315,4 @@ fn stop_result(event: &TurnEvent) -> Result<Value, super::protocol::AcpRpcError>
         }})),
         _ => Err(rpc_error(-32603, "ACP native turn failed")),
     }
-}
-
-pub(super) fn config_response(session: &NativeAcpSession) -> Result<Value, AcpSessionError> {
-    let mode = session.mode()?.as_str();
-    let preferences = session.runtime().model_preferences();
-    let catalog = session.runtime().model_catalog();
-    let mut models: Vec<Value> = catalog.as_ref().map_or_else(Vec::new, |catalog| {
-        catalog
-            .entries()
-            .iter()
-            .map(|entry| json!({"value":entry.model().id(),"name":entry.model().id()}))
-            .collect()
-    });
-    if !models
-        .iter()
-        .any(|model| model["value"] == preferences.model())
-    {
-        models.push(json!({"value":preferences.model(),"name":preferences.model()}));
-    }
-    Ok(json!({"configOptions":[
-        {"id":"mode","name":"Permission mode","category":"mode","type":"select","currentValue":mode,
-            "options":[{"value":"ask","name":"Ask"},{"value":"auto","name":"Auto"},{"value":"yolo","name":"Yolo"}]},
-        {"id":"model","name":"Model","category":"model","type":"select","currentValue":preferences.model(),"options":models}
-    ]}))
-}
-fn selection_response(session: &NativeAcpSession) -> Result<Value, AcpSessionError> {
-    let mut result = config_response(session)?;
-    result["sessionId"] = Value::String(session.id().as_str().to_owned());
-    result["modes"] = json!({"currentModeId":session.mode()?.as_str(),"availableModes":[
-        {"id":"ask","name":"Ask"},{"id":"auto","name":"Auto"},{"id":"yolo","name":"Yolo"}
-    ]});
-    Ok(result)
-}
-fn catalog_response(page: &NativeSessionCatalogPage) -> Value {
-    let sessions: Vec<Value> = page
-        .entries()
-        .iter()
-        .map(|entry| {
-            let mut value = json!({"sessionId":entry.id().as_str()});
-            if let Some(cwd) = entry
-                .native_metadata()
-                .workspace()
-                .and_then(|path| path.to_str())
-            {
-                value["cwd"] = Value::String(cwd.to_owned());
-            }
-            if let Some(title) = entry.native_metadata().title() {
-                value["title"] = Value::String(title.to_owned());
-            }
-            value
-        })
-        .collect();
-    let mut result = json!({"sessions":sessions,"_meta":{"machineGod":{
-        "scanComplete":page.scan_complete(),"resultsTruncated":page.results_truncated(),
-        "skippedInvalid":page.skipped_invalid()
-    }}});
-    if let Some(cursor) = page.next_cursor() {
-        result["nextCursor"] = Value::String(cursor.to_string());
-    }
-    result
 }

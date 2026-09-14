@@ -116,7 +116,7 @@ impl NativeAcpConnection {
                         Ok(None)
                     }
                     NativeAcpConfigChange::Mode(_) => {
-                        Ok(Some(super::output::config_response(current)?))
+                        Ok(Some(super::session_projection::config_response(current)?))
                     }
                 }
             }

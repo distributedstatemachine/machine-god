@@ -25,6 +25,7 @@ mod dispatch;
 mod interaction_tests;
 mod output;
 mod request;
+mod session_projection;
 #[cfg(test)]
 mod tests;
 
