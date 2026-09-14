@@ -43,7 +43,7 @@ fn shared_acquisition_owned_stdio_and_native_prompt_checkpoint_roundtrip() {
             outcome
         });
         let scenario = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            client.send(1, "initialize", json!({"protocolVersion":1}));
+            client.send(1, "initialize", &json!({"protocolVersion":1}));
             assert_eq!(client.response(1).0["protocolVersion"], 1);
             assert!(gateway.requests().is_empty());
             assert!(!fixture.session_root().exists());
@@ -51,7 +51,7 @@ fn shared_acquisition_owned_stdio_and_native_prompt_checkpoint_roundtrip() {
             client.send(
                 2,
                 "session/new",
-                json!({"cwd":fixture.workspace,"mcpServers":[]}),
+                &json!({"cwd":fixture.workspace,"mcpServers":[]}),
             );
             let selected = client.response(2).0;
             let id = selected["sessionId"]
@@ -70,7 +70,7 @@ fn shared_acquisition_owned_stdio_and_native_prompt_checkpoint_roundtrip() {
             client.send(
                 3,
                 "session/prompt",
-                json!({"sessionId":id,
+                &json!({"sessionId":id,
                 "prompt":[{"type":"text","text":PROMPT}]}),
             );
             let (completed, updates) = client.response(3);

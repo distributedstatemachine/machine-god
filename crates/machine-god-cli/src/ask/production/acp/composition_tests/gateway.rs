@@ -47,7 +47,7 @@ impl Gateway {
                         serve(&mut stream, &captured, deadline)?;
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(2))
+                        std::thread::sleep(Duration::from_millis(2));
                     }
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                     Err(e) => return Err(e),

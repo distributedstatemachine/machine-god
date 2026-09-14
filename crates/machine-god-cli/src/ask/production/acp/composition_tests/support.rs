@@ -152,7 +152,7 @@ impl Client {
             frames: 0,
         }
     }
-    pub fn send(&mut self, id: u64, method: &str, params: Value) {
+    pub fn send(&mut self, id: u64, method: &str, params: &Value) {
         let mut bytes =
             serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
                 .unwrap();
