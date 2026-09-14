@@ -359,17 +359,16 @@ mod production {
     use machine_god_core::{CancellationToken, ModelEvent, TurnEvent};
     use machine_god_native::mcp::startup::NativeMcpStartupPhase;
     use machine_god_native::{
-        AiGatewayModelCatalogAccessMode, AiGatewayModelCatalogHttpTransport,
-        AiGatewayModelCatalogProvider, FileUndoTracker, NativeConversation,
-        NativeConversationModelRoutes, NativeConversationObservations, NativeConversationRuntime,
-        NativeConversationRuntimeTurn, NativeModelCatalog, NativeModelCatalogCache,
-        NativeModelCatalogCacheState, NativePermissionContexts, NativeReferenceHost,
-        NativeReferenceHostConversationOptions, NativeReferenceHostPermissionOptions,
-        NativeReferenceHostTerminalOptions, NativeRootSelection, NativeSessionMetadata,
-        NativeSessionOrigin, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
-        PreparedNativeRoots, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
-        QuestionPrompter, TokioPermissionReviewClock, TokioWebSearchDeadline,
-        discover_ai_gateway_credential, load_native_config,
+        AiGatewayModelCatalogAccessMode, AiGatewayModelCatalogProvider, FileUndoTracker,
+        NativeConversation, NativeConversationModelRoutes, NativeConversationObservations,
+        NativeConversationRuntime, NativeConversationRuntimeTurn, NativeModelCatalog,
+        NativeModelCatalogCache, NativeModelCatalogCacheState, NativePermissionContexts,
+        NativeReferenceHost, NativeReferenceHostConversationOptions,
+        NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,
+        NativeRootSelection, NativeSessionMetadata, NativeSessionOrigin, PermissionPromptDecision,
+        PermissionPromptError, PermissionPrompter, PreparedNativeRoots, QuestionPromptError,
+        QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, TokioPermissionReviewClock,
+        TokioWebSearchDeadline, discover_ai_gateway_credential, load_native_config,
     };
 
     use super::{
@@ -1265,6 +1264,7 @@ mod production {
                 mcp: acp_startup::McpSelection::Profile,
                 permission_contexts: Arc::new(NativePermissionContexts::new()),
                 cancellation: CancellationToken::new(),
+                network: acp_startup::GatewayNetwork::default(),
             },
             runtime,
             Arc::new(deadline),
@@ -1294,6 +1294,7 @@ mod production {
             mcp,
             permission_contexts,
             cancellation,
+            network,
         } = captured;
         acp_startup::check_cancelled(&cancellation)?;
         let environment = skills_startup::environment(&captured_environment);
@@ -1324,7 +1325,7 @@ mod production {
         // setup signals can exit without abandoning native workers.
         let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| ())?;
         let (cache, catalog) =
-            prepare_conversation_catalog(&runtime, &credential, cancellation.clone())?;
+            prepare_conversation_catalog(&runtime, &credential, cancellation.clone(), &network)?;
         acp_startup::check_cancelled(&cancellation)?;
         let model_routes = Arc::new(NativeConversationModelRoutes::new());
         let observations = Arc::new(NativeConversationObservations::new());
@@ -1367,17 +1368,15 @@ mod production {
             options = options.with_mcp_runtime(mcp_options);
         }
         acp_startup::check_cancelled(&cancellation)?;
-        let host =
-            NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
-                loaded_config,
-                credential,
-                prepared_roots,
-                adapters.permission,
-                adapters.question,
-                deadline,
-                options,
-            )
-            .map_err(|_| ())?;
+        let host = network.compose(
+            loaded_config,
+            credential,
+            prepared_roots,
+            adapters.permission,
+            adapters.question,
+            deadline,
+            options,
+        )?;
         Ok(PreparedConversationHost {
             host,
             runtime,
@@ -1396,6 +1395,7 @@ mod production {
         runtime: &impl acp_startup::HostRuntime,
         credential: &machine_god_native::DiscoveredAiGatewayCredential,
         cancellation: CancellationToken,
+        network: &acp_startup::GatewayNetwork,
     ) -> Result<
         (
             Arc<NativeModelCatalogCache>,
@@ -1403,12 +1403,11 @@ mod production {
         ),
         (),
     > {
-        let transport = AiGatewayModelCatalogHttpTransport::with_discovered_credential(credential)
-            .map_err(|_| ())?;
+        let transport = network.catalog(credential)?;
         let cache = Arc::new(NativeModelCatalogCache::new(Arc::new(
             AiGatewayModelCatalogProvider::new(
                 AiGatewayModelCatalogAccessMode::Authenticated,
-                Arc::new(transport),
+                transport,
             ),
         )));
         let catalog =

@@ -1,7 +1,9 @@
 //! Explicit launch capture shared by ordinary CLI and ephemeral ACP composition.
 
 mod factory;
+mod network;
 pub(super) use factory::AcpHostFactory;
+pub(super) use network::GatewayNetwork;
 
 #[cfg(test)]
 mod tests;
@@ -116,6 +118,57 @@ pub(super) struct CapturedHostInputs {
     pub(super) mcp: McpSelection,
     pub(super) permission_contexts: Arc<NativePermissionContexts>,
     pub(super) cancellation: CancellationToken,
+    pub(super) network: GatewayNetwork,
+}
+
+/// Bounded launch capture shared by the production entry and owned-I/O tests.
+/// This contains authority inputs, never a prepared host or selected session.
+pub(super) struct CapturedAcpLaunch {
+    environment: Arc<[(OsString, OsString)]>,
+    terminal: TerminalCapture,
+    network: GatewayNetwork,
+}
+impl CapturedAcpLaunch {
+    pub(super) fn capture() -> Result<Self, ()> {
+        let environment = Self::environment(std::env::vars_os())?;
+        Ok(Self {
+            environment,
+            terminal: TerminalCapture::capture()?,
+            network: GatewayNetwork::default(),
+        })
+    }
+
+    fn environment(
+        values: impl IntoIterator<Item = (OsString, OsString)>,
+    ) -> Result<Arc<[(OsString, OsString)]>, ()> {
+        let mut environment = Vec::new();
+        let mut bytes = 0usize;
+        for (name, value) in values {
+            bytes = bytes
+                .checked_add(name.len())
+                .and_then(|n| n.checked_add(value.len()))
+                .ok_or(())?;
+            if bytes > 1024 * 1024 || environment.len() == 4096 {
+                return Err(());
+            }
+            environment.push((name, value));
+        }
+        Ok(environment.into())
+    }
+
+    #[cfg(test)]
+    pub(super) fn loopback(
+        environment: Vec<(OsString, OsString)>,
+        helper: PathBuf,
+        shell: PathBuf,
+        gateway: std::net::SocketAddr,
+    ) -> Result<Self, ()> {
+        Ok(Self {
+            environment: Self::environment(environment)?,
+            terminal: TerminalCapture { helper, shell },
+            network: GatewayNetwork::loopback(gateway)?,
+        })
+    }
 }
 pub(super) fn check_cancelled(cancel: &CancellationToken) -> Result<(), ()> {
     if cancel.is_cancelled() {

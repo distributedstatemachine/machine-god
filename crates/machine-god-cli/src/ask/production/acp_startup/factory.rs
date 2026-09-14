@@ -1,4 +1,7 @@
-use super::{CapturedHostInputs, McpSelection, TerminalCapture, check_cancelled};
+use super::{
+    CapturedAcpLaunch, CapturedHostInputs, GatewayNetwork, McpSelection, TerminalCapture,
+    check_cancelled,
+};
 use machine_god_core::{BoxFuture, CancellationToken};
 use machine_god_native::{
     NativeInteractivePromptBridge, NativeInteractiveSessionOptions, NativeOwnedWorkerScope,
@@ -17,6 +20,7 @@ use std::{ffi::OsString, fmt, path::PathBuf, sync::Arc};
 pub(in crate::ask::production) struct AcpHostFactory {
     environment: Arc<[(OsString, OsString)]>,
     terminal: TerminalCapture,
+    network: GatewayNetwork,
     handle: tokio::runtime::Handle,
     deadline: Arc<dyn WebSearchDeadline>,
     bridge: Arc<NativeInteractivePromptBridge>,
@@ -29,36 +33,25 @@ impl fmt::Debug for AcpHostFactory {
     }
 }
 impl AcpHostFactory {
-    /// Explicitly effectful, once per connection. No profile MCP selection and
-    /// no inference credential discovery occurs before session acquisition.
-    pub(in crate::ask::production) fn capture(
+    /// Retains bounded explicit launch authority without preparing a host.
+    pub(in crate::ask::production) fn new(
+        captured: CapturedAcpLaunch,
         handle: tokio::runtime::Handle,
         deadline: Arc<dyn WebSearchDeadline>,
         bridge: Arc<NativeInteractivePromptBridge>,
         presenter: Arc<NativeAcpElicitationPresenter>,
         workers: NativeOwnedWorkerScope,
-    ) -> Result<Self, ()> {
-        let mut environment = Vec::new();
-        let mut bytes = 0usize;
-        for (name, value) in std::env::vars_os() {
-            bytes = bytes
-                .checked_add(name.len())
-                .and_then(|n| n.checked_add(value.len()))
-                .ok_or(())?;
-            if bytes > 1024 * 1024 || environment.len() == 4096 {
-                return Err(());
-            }
-            environment.push((name, value));
-        }
-        Ok(Self {
-            environment: environment.into(),
-            terminal: TerminalCapture::capture()?,
+    ) -> Self {
+        Self {
+            environment: captured.environment,
+            terminal: captured.terminal,
+            network: captured.network,
             handle,
             deadline,
             bridge,
             presenter,
             workers,
-        })
+        }
     }
 }
 impl NativeAcpHostFactory for AcpHostFactory {
@@ -69,6 +62,7 @@ impl NativeAcpHostFactory for AcpHostFactory {
     ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>> {
         let environment = self.environment.clone();
         let terminal = self.terminal.clone();
+        let network = self.network.clone();
         let handle = self.handle.clone();
         let deadline = self.deadline.clone();
         let bridge = self.bridge.clone();
@@ -104,6 +98,7 @@ impl NativeAcpHostFactory for AcpHostFactory {
                             mcp: McpSelection::Ephemeral,
                             permission_contexts: permission_contexts.clone(),
                             cancellation,
+                            network,
                         },
                         handle,
                         deadline,

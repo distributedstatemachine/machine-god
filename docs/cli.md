@@ -193,6 +193,16 @@ protocol bounds, supported methods, exact reply custody and persistence.
 There is no legacy negotiation, deprecated SSE transport, foreign-session
 import, or editor-side filesystem/terminal delegation.
 
+The CLI composition fixture retains this shared acquisition pipeline, the real
+native HTTP transports, owned pipe input/output, connection and selected session.
+It supplies explicit captured launch authorities, a fresh release input helper,
+and native-validated loopback catalog/inference endpoints through private test
+composition. It checks assistant updates, finalized prompt replies and the
+already-durable native checkpoint before EOF settlement. This is composed
+network-injection coverage, not a production-executable or live-Gateway test.
+Production endpoint defaults and credential acquisition/source observations stay
+unchanged; there are no test endpoint flags or environment switches.
+
 ## Interactive ownership
 
 Bare startup creates a fresh native session; `resume` and `resume last` select

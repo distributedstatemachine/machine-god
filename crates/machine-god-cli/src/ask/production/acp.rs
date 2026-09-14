@@ -2,12 +2,13 @@
 
 use super::{
     AskCommandOutcome, AskSignalControlSender, AskSignalController, AskSignals,
-    acp_startup::AcpHostFactory,
+    acp_startup::{AcpHostFactory, CapturedAcpLaunch},
     output::{OutputAcknowledgement, OutputBridge, OutputWork, serve_output},
 };
 use machine_god_core::CancellationToken;
 use machine_god_native::{
-    NativeAcpConnection, NativeInteractiveInput, NativeOwnedWorkerScope, TokioWebSearchDeadline,
+    NativeAcpConnection, NativeInteractiveInput, NativeInteractiveInputSource,
+    NativeOwnedWorkerScope, TokioWebSearchDeadline,
     acp::{
         client_requests::NativeAcpClientRequests,
         protocol::{AcpFrameDecoder, AcpMessage, AcpProtocolError},
@@ -23,11 +24,30 @@ use std::{
 const FINAL_OUTPUT_GRACE: Duration = Duration::from_secs(3);
 
 #[cfg(test)]
+mod composition_tests;
+#[cfg(test)]
 mod tests;
 
 pub(super) fn execute(
     output: &mut dyn std::io::Write,
+    controller: AskSignalController,
+) -> (AskCommandOutcome, AskSignalController) {
+    execute_with_capture(
+        output,
+        controller,
+        super::piped_prompt::capture,
+        CapturedAcpLaunch::capture,
+    )
+}
+
+// The production entry and composed I/O fixture use identical acquisition,
+// stdio acknowledgement, native session and cleanup code. Only explicit launch
+// and input authorities differ; neither callback may supply a prepared host.
+fn execute_with_capture(
+    output: &mut dyn std::io::Write,
     mut controller: AskSignalController,
+    capture_input: impl FnOnce() -> Result<NativeInteractiveInputSource, ()> + Send,
+    capture_launch: impl FnOnce() -> Result<CapturedAcpLaunch, ()> + Send,
 ) -> (AskCommandOutcome, AskSignalController) {
     let control = controller.control();
     let Ok(signals) = controller.take_signals() else {
@@ -47,6 +67,8 @@ pub(super) fn execute(
                     },
                     signals,
                     &control,
+                    capture_input,
+                    capture_launch,
                 )
             })
             .map_err(|_| ())?;
@@ -62,19 +84,22 @@ fn run(
     mut output: OutputBridge,
     mut signals: AskSignals,
     control: &AskSignalControlSender,
+    capture_input: impl FnOnce() -> Result<NativeInteractiveInputSource, ()>,
+    capture_launch: impl FnOnce() -> Result<CapturedAcpLaunch, ()>,
 ) -> Result<AskCommandOutcome, ()> {
-    let source = super::piped_prompt::capture()?;
+    let source = capture_input()?;
     let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
     let clients = NativeAcpClientRequests::new().map_err(|_| ())?;
     let workers = NativeOwnedWorkerScope::new();
     let completion = workers.completion();
-    let factory = AcpHostFactory::capture(
+    let factory = AcpHostFactory::new(
+        capture_launch()?,
         runtime.handle().clone(),
         Arc::new(deadline),
         clients.bridge(),
         clients.presenter(),
         workers.clone(),
-    )?;
+    );
     control.activate_turn()?;
     let mut input = NativeInteractiveInput::new(source, CancellationToken::new());
     let input_completion = input.completion();
