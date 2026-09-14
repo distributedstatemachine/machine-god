@@ -1195,6 +1195,10 @@ enum NativeNameserver {
 }
 
 impl NativeNameserver {
+    #[allow(
+        clippy::unused_async,
+        reason = "The shared interface awaits discovery only in host-scoped builds."
+    )]
     async fn snapshot(&self) -> Result<SocketAddr, WebFetchTransportError> {
         match self {
             Self::Captured(result) => *result,
