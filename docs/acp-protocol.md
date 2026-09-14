@@ -2,8 +2,9 @@
 
 `machine_god_native::acp::protocol` provides effect-free modern ACP v1
 JSON-RPC framing, exact JSON envelopes and outbound correlation. The native ACP
-driver owns session state, permission and continuation custody, transport I/O,
-output backpressure and shutdown. Correlation labels grant no authority.
+driver owns session state, permission and continuation custody, output admission
+and shutdown. The thin CLI owns framed transport I/O and writer backpressure.
+Correlation labels grant no authority.
 
 The only supported initialization version is integer `1`. There is no older
 version negotiation or deprecated SSE transport. Modern MCP Streamable HTTP
@@ -130,6 +131,30 @@ exact session-save receipt; mode changes affect future jobs without writing
 profile rules. Load history is emitted incrementally before its selection
 response. Engine observations and completed URL notices drain before the old
 prompt response and activation of the next permission registry.
+
+Session/configuration replies project one native permission-mode observation,
+the current native model and the already supplied catalog, without fetching or
+inferring model capabilities. Catalog model order is preserved; the current
+model is appended only when absent. Projection preflights all escaped string
+bytes and framing before cloning model or session rows, leaving response-envelope
+headroom under the 8 MiB wire limit. At most 512 catalog models plus one absent
+current model are projected. A session-list page exceeding the factory's
+100-entry contract fails instead of truncating rows under an incorrect cursor.
+
+Each listed row requires a valid absolute, control-free UTF-8 native `cwd`.
+Records with absent or unrepresentable workspace metadata are omitted, with a
+bounded `omittedWorkspace` count in `_meta.machineGod`; no current directory is
+invented for them. Optional `title` is only the native title, never a preview.
+Known representable activity timestamps become second-precision UTC
+`YYYY-MM-DDTHH:MM:SSZ`, matching the pinned
+[`sessions.zig` formatter](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/acp/sessions.zig#L1014).
+The pure Gregorian formatter supports years `0000` through `9999`, including pre-epoch
+times using floor division; unknown times are absent and out-of-range known
+times increment `omittedUpdatedAt`. There are no clock or timezone observations.
+`scanComplete`, `resultsTruncated` and `skippedInvalid` retain the native scan's
+meaning. The native continuation cursor is preserved over the underlying page,
+including omitted unrenderable rows; projection never invents a snapshot,
+silently skips renderable rows or substitutes its filtered tail as a cursor.
 
 Transport output acquisition is separate from `poll_progress`: a blocked writer
 cannot abandon admitted preparation, cancellation, catalog reads or shutdown.
