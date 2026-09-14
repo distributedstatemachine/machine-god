@@ -433,11 +433,11 @@ Do not deliver codec, session or interaction fragments separately.
 
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
-now compose native resource FIFO/provider context, selection/retirement, command
+now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: 27 command/driver tests and component lint checks pass on their
-component sources. Remaining: latest combined human/transport scenario checks,
-fresh release helpers and the complete exact-feature gates below.
+not delivered: native/CLI focused tests and all-feature lint pass before the
+default-feature boundary correction. That correction is integrated; remaining
+work is fresh release helpers, replacement focused checks and the full gates below.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.
