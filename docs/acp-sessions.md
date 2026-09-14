@@ -19,6 +19,39 @@ owned checkpoint and history finalization. Cancellation and close must keep
 polling the native owner until its outcome settles. Close retires live ownership
 without deleting durable history.
 
+## Selected session lifecycle
+
+`NativeAcpSelectionOwner` owns one current session and one bounded pending
+selection. Requests store inert intent; polling invokes an explicitly captured
+host factory. Each prepared host has its own permission registry, ephemeral MCP
+runtime and workers. The connection bridge is shared, but only the committed
+host's registry is activated for client permission requests.
+
+New, load and resume first validate the candidate host and ready its complete
+authoritative MCP selection. The old prompt is then cancelled and driven through
+its exact checkpoint and finalization. Only afterward does reversible native
+quiescence admit candidate creation or adoption. In particular, same-ID load and
+resume cannot read a stale pre-cancellation checkpoint. Loaded tool JSON preserves
+its exact arbitrary-precision numeric representation; history remains inert.
+
+Candidate opening and a final readiness check precede irreversible retirement of
+the old runtime. A rejected candidate before retirement restores old admission;
+its receipt separately reports whether candidate persistence may already have
+occurred. Retirement or cleanup uncertainty fences further mutation and yields an
+explicit indeterminate receipt, never a claim that a destructively retired old
+selection remains usable. Successful selection follows old native, MCP and actual
+worker settlement. The old principal's finalized turn outcome is retained
+separately so the connection can settle its outstanding prompt response and drain
+old completion notices before publishing the new selection.
+
+Cancellation of a selected prompt remains available during candidate preparation
+and does not cancel that candidate. Connection shutdown cancels pending selection
+intent while continuing to poll already accepted factory, startup, adoption and
+cleanup futures. Exact model-save receipts remain drainable during shutdown.
+Close validates the selected session ID and reports completed live-resource
+retirement, not merely acceptance of a close request. Dropping the owner is only a
+last-resort cutoff; it manufactures no successful cleanup receipt.
+
 ## Prompt resource context
 
 Typed prompt decoding preserves the order of text and embedded text resources,

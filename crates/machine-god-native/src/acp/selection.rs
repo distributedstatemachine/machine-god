@@ -1,0 +1,401 @@
+//! One selected native ACP session, with owned preparation and retirement.
+
+use super::session::{AcpSessionError, NativeAcpSession, NativeAcpSessionSelection};
+use crate::mcp::ephemeral::NativeMcpEphemeralConfiguration;
+use crate::{
+    NativeInteractiveSessionOptions, NativePermissionContexts, NativeReferenceHost,
+    NativeRuntimeQuiescence, NativeSessionCatalogCursor, NativeSessionCatalogPage,
+    NativeSessionCatalogReadError,
+};
+use machine_god_core::{
+    BackgroundOutputOwner, BoxFuture, CancellationToken, EngineEvent, SessionId,
+};
+use std::{
+    fmt,
+    path::PathBuf,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
+
+mod cleanup;
+mod driver;
+#[cfg(test)]
+mod tests;
+
+/// Trusted, explicitly captured host effects. Implementations must keep any
+/// admitted worker and unsuccessful preparation cleanup owned until completion.
+pub trait NativeAcpHostFactory: Send + Sync {
+    fn prepare(
+        &self,
+        workspace: PathBuf,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>>;
+    fn list(
+        &self,
+        workspace: Option<PathBuf>,
+        cursor: Option<NativeSessionCatalogCursor>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeSessionCatalogPage, NativeSessionCatalogReadError>>;
+}
+
+/// A fresh dedicated host; no peer publication or native session yet.
+pub struct NativeAcpPreparedHost {
+    host: Arc<NativeReferenceHost>,
+    options: NativeInteractiveSessionOptions,
+    permission_contexts: Arc<NativePermissionContexts>,
+}
+impl NativeAcpPreparedHost {
+    /// Pure validation; no configuration, credential or environment discovery.
+    /// # Errors
+    /// Rejects mismatched options/contexts or a missing/already published owner.
+    pub fn new(
+        host: Arc<NativeReferenceHost>,
+        options: NativeInteractiveSessionOptions,
+        permission_contexts: Arc<NativePermissionContexts>,
+    ) -> Result<Self, AcpSessionError> {
+        let value = Self {
+            host,
+            options,
+            permission_contexts,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+    fn validate(&self) -> Result<(), AcpSessionError> {
+        self.options.validate_for_host(&self.host)?;
+        let contexts = self
+            .host
+            .permission_contexts()
+            .ok_or(AcpSessionError::InvalidConfiguration)?;
+        if !Arc::ptr_eq(&contexts, &self.permission_contexts)
+            || self.host.mcp_ephemeral_owner().is_none()
+            || self.host.mcp_management().is_some()
+            || self.host.mcp_controller().is_some()
+            || !self
+                .host
+                .mcp_runtime()
+                .ok_or(AcpSessionError::InvalidConfiguration)?
+                .publication_checkpoint()
+                .map_err(|_| AcpSessionError::Unavailable)?
+                .is_unpublished()
+        {
+            return Err(AcpSessionError::InvalidConfiguration);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeAcpSelectionId(pub u64);
+
+pub struct NativeAcpSelectionTurnOutcome {
+    pub owner: BackgroundOutputOwner,
+    pub outcome: Result<EngineEvent, crate::NativeInteractiveError>,
+}
+
+/// Publication and cleanup receipts, never mere request acknowledgements.
+pub enum NativeAcpSelectionOutcome {
+    Selected {
+        id: NativeAcpSelectionId,
+        previous: Option<BackgroundOutputOwner>,
+        current: BackgroundOutputOwner,
+    },
+    Closed {
+        id: NativeAcpSelectionId,
+        previous: Option<BackgroundOutputOwner>,
+    },
+    Rejected {
+        id: NativeAcpSelectionId,
+        error: AcpSessionError,
+        old_preserved: bool,
+        candidate_may_have_persisted: bool,
+    },
+    Indeterminate {
+        id: NativeAcpSelectionId,
+        error: AcpSessionError,
+        previous: Option<BackgroundOutputOwner>,
+        candidate: Option<BackgroundOutputOwner>,
+    },
+}
+
+struct Current {
+    session: NativeAcpSession,
+    host: Arc<NativeReferenceHost>,
+    permission_contexts: Arc<NativePermissionContexts>,
+}
+struct Request {
+    id: NativeAcpSelectionId,
+    selection: Option<NativeAcpSessionSelection>,
+    workspace: PathBuf,
+    configuration: Option<NativeMcpEphemeralConfiguration>,
+    now_ms: i64,
+    cancellation: CancellationToken,
+    previous: Option<BackgroundOutputOwner>,
+    candidate_may_have_persisted: bool,
+}
+struct Pending {
+    request: Request,
+    phase: Phase,
+}
+enum Phase {
+    Requested,
+    Preparing(BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>>),
+    Starting {
+        host: NativeAcpPreparedHost,
+        future: BoxFuture<'static, Result<(), AcpSessionError>>,
+    },
+    Draining(Option<NativeAcpPreparedHost>),
+    Quiescing {
+        host: Option<NativeAcpPreparedHost>,
+        future: BoxFuture<'static, Result<NativeRuntimeQuiescence, AcpSessionError>>,
+    },
+    Opening {
+        host: NativeAcpPreparedHost,
+        guard: Option<NativeRuntimeQuiescence>,
+        future: BoxFuture<'static, Result<NativeAcpSession, AcpSessionError>>,
+    },
+    Retiring {
+        candidate: Option<Box<Current>>,
+        future: BoxFuture<'static, cleanup::Receipt>,
+    },
+    Rejecting {
+        error: AcpSessionError,
+        future: Option<BoxFuture<'static, cleanup::Receipt>>,
+    },
+}
+
+/// A bounded native owner: one current, one candidate and one retained outcome.
+/// Dropping response futures cannot abandon accepted selection work. Poll this
+/// owner through cancellation/EOF to obtain actual retirement observations.
+pub struct NativeAcpSelectionOwner {
+    factory: Arc<dyn NativeAcpHostFactory>,
+    current: Option<Current>,
+    pending: Option<Pending>,
+    outcome: Option<NativeAcpSelectionOutcome>,
+    turn_outcome: Option<NativeAcpSelectionTurnOutcome>,
+    retained_cleanup: Vec<cleanup::Receipt>,
+    fenced_candidate: Option<Current>,
+    fenced_guard: Option<NativeRuntimeQuiescence>,
+    next_id: u64,
+    shutdown: bool,
+    fenced: bool,
+    wake: Option<Waker>,
+}
+impl NativeAcpSelectionOwner {
+    #[must_use]
+    pub fn new(factory: Arc<dyn NativeAcpHostFactory>) -> Self {
+        Self {
+            factory,
+            current: None,
+            pending: None,
+            outcome: None,
+            turn_outcome: None,
+            retained_cleanup: Vec::new(),
+            fenced_candidate: None,
+            fenced_guard: None,
+            next_id: 1,
+            shutdown: false,
+            fenced: false,
+            wake: None,
+        }
+    }
+    /// Stores bounded inert intent. Factory effects begin only during polling.
+    /// # Errors
+    /// Rejects another retained operation/outcome, closure or invalid workspace.
+    pub fn request(
+        &mut self,
+        selection: NativeAcpSessionSelection,
+        workspace: PathBuf,
+        configuration: NativeMcpEphemeralConfiguration,
+        now_ms: i64,
+    ) -> Result<NativeAcpSelectionId, AcpSessionError> {
+        crate::NativeSessionMetadata::new(&workspace, now_ms, crate::NativeSessionOrigin::Acp)
+            .map_err(|_| AcpSessionError::InvalidConfiguration)?;
+        self.enqueue_request(Some(selection), workspace, Some(configuration), now_ms)
+    }
+    /// Closes the exact selected session, not its durable history or connection.
+    /// # Errors
+    /// Rejects a foreign identity or another retained operation/outcome.
+    pub fn request_close(
+        &mut self,
+        expected: &SessionId,
+    ) -> Result<NativeAcpSelectionId, AcpSessionError> {
+        let current = self.current.as_ref().ok_or(AcpSessionError::WrongSession)?;
+        if current.session.id() != *expected {
+            return Err(AcpSessionError::WrongSession);
+        }
+        let workspace = current.host.workspace_root().to_path_buf();
+        self.enqueue_request(None, workspace, None, 0)
+    }
+    fn enqueue_request(
+        &mut self,
+        selection: Option<NativeAcpSessionSelection>,
+        workspace: PathBuf,
+        configuration: Option<NativeMcpEphemeralConfiguration>,
+        now_ms: i64,
+    ) -> Result<NativeAcpSelectionId, AcpSessionError> {
+        if self.shutdown {
+            return Err(AcpSessionError::Closed);
+        }
+        if self.pending.is_some()
+            || self.outcome.is_some()
+            || self.fenced
+            || self
+                .current
+                .as_ref()
+                .is_some_and(|current| current.session.has_pending_model_save())
+        {
+            return Err(AcpSessionError::Busy);
+        }
+        let id = NativeAcpSelectionId(self.next_id);
+        self.next_id = self.next_id.checked_add(1).ok_or(AcpSessionError::Limit)?;
+        self.pending = Some(Pending {
+            request: Request {
+                id,
+                selection,
+                workspace,
+                configuration,
+                now_ms,
+                cancellation: CancellationToken::new(),
+                previous: self
+                    .current
+                    .as_ref()
+                    .map(|current| current.session.principal()),
+                candidate_may_have_persisted: false,
+            },
+            phase: Phase::Requested,
+        });
+        self.notify();
+        Ok(id)
+    }
+    pub fn cancel_pending(&mut self) -> bool {
+        let Some(pending) = &self.pending else {
+            return false;
+        };
+        pending.request.cancellation.cancel();
+        self.notify();
+        true
+    }
+    /// Cancels only the exact selected prompt, including during replacement.
+    /// # Errors
+    /// Rejects an identity other than the current native session.
+    pub fn request_cancel(&mut self, expected: &SessionId) -> Result<bool, AcpSessionError> {
+        let cancelled = self
+            .current
+            .as_mut()
+            .ok_or(AcpSessionError::WrongSession)?
+            .session
+            .request_cancel(expected)?;
+        self.notify();
+        Ok(cancelled)
+    }
+    /// Terminal connection cutoff. Already accepted effects remain polled;
+    /// this does not discard a turn result, selection receipt or cleanup job.
+    pub fn request_shutdown(&mut self) {
+        self.shutdown = true;
+        self.cancel_pending();
+        if let Some(current) = &mut self.current {
+            let _ = current.session.request_cancel(&current.session.id());
+        }
+        self.notify();
+    }
+    #[must_use]
+    pub fn current(&self) -> Option<&NativeAcpSession> {
+        self.current.as_ref().map(|current| &current.session)
+    }
+    #[must_use]
+    pub fn current_mut(&mut self) -> Option<&mut NativeAcpSession> {
+        if self.is_busy() || self.fenced || self.shutdown {
+            None
+        } else {
+            self.current.as_mut().map(|current| &mut current.session)
+        }
+    }
+    #[must_use]
+    pub fn current_host(&self) -> Option<&Arc<NativeReferenceHost>> {
+        self.current.as_ref().map(|current| &current.host)
+    }
+    #[must_use]
+    pub fn current_permission_contexts(&self) -> Option<Arc<NativePermissionContexts>> {
+        self.current
+            .as_ref()
+            .map(|current| current.permission_contexts.clone())
+    }
+    #[must_use]
+    pub fn is_busy(&self) -> bool {
+        self.pending.is_some() || self.outcome.is_some()
+    }
+    #[must_use]
+    pub const fn is_fenced(&self) -> bool {
+        self.fenced
+    }
+    /// No selected actor or pending operation remains. Check retained outcomes
+    /// separately: this observation alone is not a successful cleanup receipt.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.shutdown && self.current.is_none() && self.pending.is_none()
+    }
+    #[must_use]
+    pub fn take_outcome(&mut self) -> Option<NativeAcpSelectionOutcome> {
+        let value = self.outcome.take();
+        if value.is_some() {
+            self.notify();
+        }
+        value
+    }
+    #[must_use]
+    pub fn take_turn_outcome(&mut self) -> Option<NativeAcpSelectionTurnOutcome> {
+        let value = self.turn_outcome.take();
+        if value.is_some() {
+            self.notify();
+        }
+        value
+    }
+    /// Drains an exact accepted save even after connection shutdown fences mutation.
+    #[must_use]
+    pub fn take_model_save_outcome(
+        &mut self,
+    ) -> Option<Result<crate::NativeModelPreferencePersistence, AcpSessionError>> {
+        let result = self.current.as_mut()?.session.take_model_save_outcome();
+        if result.is_some() {
+            self.notify();
+        }
+        result
+    }
+    #[must_use]
+    pub fn take_presentation(&mut self) -> Option<(BackgroundOutputOwner, EngineEvent)> {
+        let current = self.current.as_mut()?;
+        current
+            .session
+            .take_presentation()
+            .map(|event| (current.session.principal(), event))
+    }
+    pub fn poll_progress(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
+        self.drive(cx, now_ms)
+    }
+    fn notify(&mut self) {
+        if let Some(wake) = self.wake.take() {
+            wake.wake();
+        }
+    }
+}
+impl Drop for NativeAcpSelectionOwner {
+    fn drop(&mut self) {
+        if let Some(pending) = &self.pending {
+            pending.request.cancellation.cancel();
+        }
+        if let Some(current) = &mut self.current {
+            let _ = current.session.request_cancel(&current.session.id());
+            current.host.close_mcp();
+        }
+        // Drop is only a cutoff. No successful selection or cleanup receipt is
+        // manufactured for work whose owner was abandoned.
+    }
+}
+macro_rules! redacted {($($ty:ty),+)=>{$(impl fmt::Debug for $ty {fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result{f.write_str(concat!(stringify!($ty)," { .. }"))}})+};}
+redacted!(
+    NativeAcpPreparedHost,
+    NativeAcpSelectionTurnOutcome,
+    NativeAcpSelectionOutcome,
+    NativeAcpSelectionOwner
+);

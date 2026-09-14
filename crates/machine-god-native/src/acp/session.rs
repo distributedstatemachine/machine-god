@@ -8,7 +8,7 @@ use crate::{
     NativeSessionCatalogScope, NativeSessionOrigin, PermissionMode,
 };
 use machine_god_core::{
-    BackgroundOutputOwner, BoxFuture, CancellationToken, EngineEvent, Prompt, SessionId,
+    BackgroundOutputOwner, BoxFuture, CancellationToken, EngineEvent, SessionId,
 };
 use std::{
     fmt,
@@ -21,7 +21,7 @@ mod prompt;
 pub use history::NativeAcpHistory;
 pub use prompt::{
     MAX_ACP_PROMPT_BLOCKS, MAX_ACP_PROMPT_BYTES, MAX_ACP_RESOURCE_URI_BYTES, NativeAcpPrompt,
-    NativeAcpResourceOmission, NativeAcpResourceOmissionReason, decode_prompt, decode_prompt_input,
+    NativeAcpResourceOmission, NativeAcpResourceOmissionReason, decode_prompt_input,
 };
 
 /// ACP selects native records only. A load replays presentation; a resume does not.
@@ -48,6 +48,7 @@ pub enum AcpSessionError {
     WrongSession,
     Busy,
     Closed,
+    Cancelled,
     InvalidConfiguration,
     Unavailable,
     Native(NativeInteractiveError),
@@ -61,6 +62,7 @@ impl fmt::Display for AcpSessionError {
             Self::WrongSession => "ACP session identity does not match",
             Self::Busy => "ACP session is busy",
             Self::Closed => "ACP session is closed",
+            Self::Cancelled => "ACP operation was cancelled",
             Self::InvalidConfiguration => "ACP configuration is invalid",
             Self::Unavailable | Self::Native(_) => "ACP native operation is unavailable",
         })
@@ -150,6 +152,16 @@ impl NativeAcpSession {
         self.inner.is_closed()
     }
 
+    #[must_use]
+    pub fn has_pending_prompt(&self) -> bool {
+        self.prompt.is_some()
+    }
+
+    #[must_use]
+    pub fn has_pending_model_save(&self) -> bool {
+        self.model_save.is_some()
+    }
+
     /// A failed shutdown remains owned and fenced, not a successful close.
     #[must_use]
     pub fn shutdown_error(&self) -> Option<&NativeInteractiveError> {
@@ -183,16 +195,13 @@ impl NativeAcpSession {
     pub fn enqueue(
         &mut self,
         expected: &SessionId,
-        prompt: Prompt,
+        prompt: NativeAcpPrompt,
     ) -> Result<NativeQueuedJobId, AcpSessionError> {
         self.check_session(expected)?;
         if self.prompt.is_some() {
             return Err(AcpSessionError::Busy);
         }
-        if prompt.text.is_empty() || prompt.text.len() > MAX_ACP_PROMPT_BYTES {
-            return Err(AcpSessionError::InvalidPrompt);
-        }
-        let job = self.inner.enqueue(prompt)?;
+        let job = self.inner.enqueue_acp(prompt)?;
         self.prompt = Some(job);
         Ok(job)
     }

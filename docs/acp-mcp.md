@@ -59,6 +59,18 @@ live publication, even when the authoritative server list is empty. This path
 does not call profile authentication refresh. `mcp_deadline_after` explicitly
 observes the selected MCP clock; callers do not substitute ambient clock values.
 
+Outer ACP session selection uses `NativeAcpSelectionOwner`, not a replacement
+inside the active host. Its injected factory prepares a distinct host and
+permission registry for every new/load/resume request. Candidate MCP readiness
+precedes cancellation of the old prompt; after that prompt's checkpoint settles,
+native candidate adoption and another readiness check precede old retirement.
+Only a successful owned retirement receipt permits the connection to activate the
+candidate registry. Candidate failure before retirement preserves old admission;
+uncertain retirement fences the connection instead of claiming rollback. The
+owner keeps accepted startup and cleanup futures through cancellation and EOF,
+closes and settles MCP before joining the exact host worker scope, and retains
+the old prompt completion under its original principal.
+
 `replace` reserves one mutation and one retained generation before startup's first
 effect. Every selected server must become ready and pass private runtime admission.
 The full candidate is conditionally published against the exact previous

@@ -10,16 +10,16 @@ mod pure {
 
     #[test]
     fn text_and_embedded_resources_preserve_order_without_uri_authority() {
-        let prompt = decode_prompt(&json!({"prompt":[
+        let prompt = decode_prompt_input(&json!({"prompt":[
             {"type":"text","text":"Read this"},
             {"type":"resource","resource":{"uri":"https://example.test/secret","text":"supplied body"}},
             {"type":"text","text":"Then explain"}
         ]})).unwrap();
         assert_eq!(
-            prompt.text,
+            prompt.prompt().text,
             "Read this\nFile: https://example.test/secret\nsupplied body\nThen explain"
         );
-        assert!(prompt.options.metadata.is_empty());
+        assert!(prompt.prompt().options.metadata.is_empty());
     }
 
     #[test]
@@ -33,28 +33,28 @@ mod pure {
             json!({"prompt":[{"type":"text","text":"valid"},{"type":"image","data":"secret"}]}),
             json!({"prompt":[{"type":"resource","resource":{"uri":"file:///x\nspoof","text":"x"}}]}),
         ] {
-            assert!(decode_prompt(&input).is_err());
+            assert!(decode_prompt_input(&input).is_err());
         }
     }
 
     #[test]
     fn prompt_bounds_include_joined_resource_labels_and_separators() {
         let full = "x".repeat(MAX_ACP_PROMPT_BYTES);
-        assert!(decode_prompt(&json!({"prompt":[{"type":"text","text":full}]})).is_ok());
+        assert!(decode_prompt_input(&json!({"prompt":[{"type":"text","text":full}]})).is_ok());
         assert!(matches!(
-            decode_prompt(
+            decode_prompt_input(
                 &json!({"prompt":[{"type":"text","text":full},{"type":"text","text":""}]})
             ),
             Err(AcpSessionError::Limit)
         ));
         assert!(matches!(
-            decode_prompt(
+            decode_prompt_input(
                 &json!({"prompt":[{"type":"resource","resource":{"uri":"file:///x","text":full}}]})
             ),
             Err(AcpSessionError::Limit)
         ));
         assert!(matches!(
-            decode_prompt(
+            decode_prompt_input(
                 &json!({"prompt":vec![json!({"type":"text","text":"x"});MAX_ACP_PROMPT_BLOCKS+1]})
             ),
             Err(AcpSessionError::Limit)
@@ -168,6 +168,41 @@ mod pure {
     }
 
     #[test]
+    fn saved_tool_json_preserves_arbitrary_numeric_spellings() {
+        let exact: serde_json::Value =
+            serde_json::from_str(r#"{"negative":-0,"huge":1e400,"fraction":1.2300}"#).unwrap();
+        let mut saved = record();
+        saved.messages = vec![Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::ToolCall {
+                    call: ToolCall {
+                        id: ToolCallId::new("call").unwrap(),
+                        name: ToolName::new("tool").unwrap(),
+                        arguments: exact.clone(),
+                    },
+                },
+                ContentBlock::ToolResult {
+                    call_id: ToolCallId::new("call").unwrap(),
+                    output: ToolOutput {
+                        content: exact.clone(),
+                        is_error: false,
+                    },
+                },
+            ],
+        }];
+        let mut history = NativeAcpHistory::new(Arc::new(saved));
+        assert_eq!(
+            history.next_update().unwrap().unwrap()["rawInput"].to_string(),
+            exact.to_string()
+        );
+        assert_eq!(
+            history.next_update().unwrap().unwrap()["rawOutput"].to_string(),
+            exact.to_string()
+        );
+    }
+
+    #[test]
     fn oversized_history_projection_fails_before_copy_and_cannot_skip_a_block() {
         let mut saved = record();
         saved.messages = vec![
@@ -202,6 +237,10 @@ fn options(fixture: &support::Fixture) -> NativeInteractiveSessionOptions {
     )
     .unwrap()
 }
+
+fn input(text: &str) -> NativeAcpPrompt {
+    decode_prompt_input(&json!({"prompt":[{"type":"text","text":text}]})).unwrap()
+}
 async fn outcome(session: &mut NativeAcpSession) -> NativeInteractiveOutcome {
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
@@ -225,7 +264,7 @@ async fn close(mut session: NativeAcpSession) {
 #[test]
 fn native_owner_is_inert_before_poll_and_binds_exact_session() {
     executor().block_on(async {
-        let fixture = support::Fixture::new();
+        let fixture = support::Fixture::new_with_workspace();
         let future = NativeAcpSession::open(
             fixture.host.clone(),
             options(&fixture),
@@ -250,7 +289,7 @@ fn native_owner_is_inert_before_poll_and_binds_exact_session() {
         assert!(session.take_loaded_history().is_none());
         let other = SessionId::new("other-session").unwrap();
         assert!(matches!(
-            session.enqueue(&other, "never".into()),
+            session.enqueue(&other, input("never")),
             Err(AcpSessionError::WrongSession)
         ));
         assert!(matches!(
@@ -277,7 +316,7 @@ fn native_owner_is_inert_before_poll_and_binds_exact_session() {
 #[test]
 fn native_turn_completion_load_and_resume_use_saved_state_without_reexecution() {
     executor().block_on(async {
-        let fixture = support::Fixture::new();
+        let fixture = support::Fixture::new_with_workspace();
         fixture.transport.push(support::answer());
         let mut session = NativeAcpSession::open(
             fixture.host.clone(),
@@ -299,9 +338,9 @@ fn native_turn_completion_load_and_resume_use_saved_state_without_reexecution() 
             .set_config_option(&id, "model", "test/selected")
             .unwrap();
         session.flush_model(&id, 110).await.unwrap();
-        session.enqueue(&id, "hello".into()).unwrap();
+        session.enqueue(&id, input("hello")).unwrap();
         assert!(matches!(
-            session.enqueue(&id, "second".into()),
+            session.enqueue(&id, input("second")),
             Err(AcpSessionError::Busy)
         ));
         assert!(matches!(
@@ -348,7 +387,7 @@ fn native_turn_completion_load_and_resume_use_saved_state_without_reexecution() 
 #[test]
 fn native_cancellation_before_first_poll_keeps_completion_owned() {
     executor().block_on(async {
-        let fixture = support::Fixture::new();
+        let fixture = support::Fixture::new_with_workspace();
         let mut session = NativeAcpSession::open(
             fixture.host.clone(),
             options(&fixture),
@@ -359,7 +398,7 @@ fn native_cancellation_before_first_poll_keeps_completion_owned() {
         .unwrap();
         let id = session.id();
         session
-            .enqueue(&id, "cancel before provider".into())
+            .enqueue(&id, input("cancel before provider"))
             .unwrap();
         assert!(session.request_cancel(&id).unwrap());
         assert!(matches!(

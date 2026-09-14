@@ -31,6 +31,8 @@ impl NativeAcpHistory {
     /// is not editor history. Saved tool calls/results remain inert evidence.
     /// # Errors
     /// Rejects a block whose encoded projection cannot fit a bounded wire frame.
+    /// # Panics
+    /// Panics only if a statically constructed JSON object is not an object.
     pub fn next_update(&mut self) -> Result<Option<Value>, AcpSessionError> {
         if self.failed {
             return Err(AcpSessionError::Limit);
@@ -61,16 +63,28 @@ impl NativeAcpHistory {
                     };
                     json!({"sessionUpdate":kind,"content":{"type":"text","text":text}})
                 }
-                ContentBlock::ToolCall { call } => json!({
+                ContentBlock::ToolCall { call } => {
+                    let mut value = json!({
                     "sessionUpdate":"tool_call", "toolCallId":call.id,
                     "title":call.name, "kind":"other", "status":"pending",
-                    "rawInput":call.arguments,
-                }),
-                ContentBlock::ToolResult { call_id, output } => json!({
+                    });
+                    value
+                        .as_object_mut()
+                        .expect("object")
+                        .insert("rawInput".into(), call.arguments.clone());
+                    value
+                }
+                ContentBlock::ToolResult { call_id, output } => {
+                    let mut value = json!({
                     "sessionUpdate":"tool_call_update", "toolCallId":call_id,
                     "status":if output.is_error {"failed"} else {"completed"},
-                    "rawOutput":output.content,
-                }),
+                    });
+                    value
+                        .as_object_mut()
+                        .expect("object")
+                        .insert("rawOutput".into(), output.content.clone());
+                    value
+                }
                 _ => continue,
             };
             return Ok(Some(update));

@@ -55,6 +55,21 @@ impl fmt::Debug for NativeInteractiveSessionOptions {
     }
 }
 impl NativeInteractiveSessionOptions {
+    pub(crate) fn validate_for_host(
+        &self,
+        host: &NativeReferenceHost,
+    ) -> Result<(), NativeInteractiveError> {
+        if self.workspace != host.workspace_root()
+            || host.undo_tracker().is_none()
+            || host.terminal_lifecycle_requester().is_none()
+            || host.model_routes().is_none()
+            || host.observations().is_none()
+            || (host.has_background_url_selection() && self.background_url.is_some())
+        {
+            return Err(NativeInteractiveError::Configuration);
+        }
+        Ok(())
+    }
     /// The workspace must be the host's verified canonical tool root.
     /// # Errors
     /// Rejects noncanonical lexical workspace paths.
@@ -285,15 +300,7 @@ impl NativeInteractiveSession {
         now_ms: i64,
     ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
         Box::pin(async move {
-            if options.workspace != host.workspace_root()
-                || host.undo_tracker().is_none()
-                || host.terminal_lifecycle_requester().is_none()
-                || host.model_routes().is_none()
-                || host.observations().is_none()
-                || (host.has_background_url_selection() && options.background_url.is_some())
-            {
-                return Err(NativeInteractiveError::Configuration);
-            }
+            options.validate_for_host(&host)?;
             let conversation = transition::prepare(
                 &host,
                 &options,
@@ -401,6 +408,28 @@ impl NativeInteractiveSession {
             return Err(NativeInteractiveError::Busy);
         }
         let id = self.current.enqueue(prompt)?;
+        self.notify();
+        Ok(id)
+    }
+
+    /// Queues typed ACP resources through this host's exact worker authority.
+    /// # Errors
+    /// Rejects transitions/shutdown, missing workers or native queue bounds.
+    pub fn enqueue_acp(
+        &mut self,
+        prompt: crate::acp::session::NativeAcpPrompt,
+    ) -> Result<NativeQueuedJobId, NativeInteractiveError> {
+        if self.closed || self.shutting_down {
+            return Err(NativeInteractiveError::Closed);
+        }
+        if self.transition.is_some() || self.pending.is_some() {
+            return Err(NativeInteractiveError::Busy);
+        }
+        let workers = self
+            .host
+            .control_workers()
+            .ok_or(NativeInteractiveError::Configuration)?;
+        let id = self.current.enqueue_acp(prompt, workers)?;
         self.notify();
         Ok(id)
     }
