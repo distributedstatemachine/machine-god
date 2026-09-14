@@ -295,3 +295,25 @@ assertions and deadlines remain unchanged. No full runtime gate, formal R3 revie
 or push accepted this candidate; the corrected exact commit requires the full
 replacement gate. An in-flight build of unchanged release code can populate
 the compilation cache but cannot substitute for that new exact-commit gate.
+
+## Candidate c8e12295: local acceptance and unavailable R3 reviewers
+
+Candidate `c8e122950bc080d7a26eaeeff04a28b40afdc33f` passed the complete exact
+Rust 1.94.1 replacement gate with freshly selected locked release helpers.
+Linux ran its normal test concurrency: 3,555 native unit tests passed, with 11
+existing ignored fixtures, and all workspace integrations, doctests and 269
+repository Python tests passed. macOS ran serially after Linux settled: 3,557
+native unit tests passed, with 12 existing ignored fixtures, followed by all
+workspace integrations, separate doctests and the exact CI release smoke.
+Both platforms passed focused ACP, alias-listing, input, picker and skills
+regressions. Formatting, full warnings-denied Clippy, dependency policy/audit,
+pinned drift/Unicode, portable compilation and documentation checks passed.
+The exact-commit clean guards passed; logs and helper hashes are retained locally.
+
+After that gate, two direct attempts to create a fresh correctness/API reviewer
+failed with `agent thread limit reached`. A nonauthor preparation agent attempted
+one fresh child reviewer through the supported nested-spawn API and received the
+same error. No new reviewer was created and no formal R3 review took place;
+the coordinator's bounded source inspection is not a substitute. The unused
+isolated review checkout was verified at the exact candidate, clean, and removed.
+No source fix, relaxed gate, remote push or delivery followed this capacity error.

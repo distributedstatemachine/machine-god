@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `validate ACP fixes with patched rustls, then complete replacement gate and three fresh reviews`
+- Next gate: `restore fresh reviewer capacity; three new ACP reviews on locally green c8e12295, then exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -423,15 +423,16 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: the replacement Linux/macOS gate passed after the R1 lifecycle,
-alias preparation, output-wake and transport-aware network capture fixes.
-A fresh R2 correctness review found missing model configuration notifications
-and alias filtering in session/list. Both fixes and modern-only removal of the
-superseded Session Modes wire duplication are integrated. Patched rustls passed
-the dependency gate without an exception. Focused alias validation then exposed
-a fixture that incorrectly expected ID search; provide canonical preview data,
-then rerun the complete gate and three fresh reviews. Unstarted R2 tracks are
-not accepted results.
+not delivered: candidate `c8e122950bc080d7a26eaeeff04a28b40afdc33f` passed the
+complete replacement Linux/macOS local gate, including patched rustls policy,
+fresh release helpers, workspace tests, doctests and smoke checks. Both R2 fixes,
+modern-only wire cleanup and the canonical-preview fixture correction are included.
+All three new review tracks remain unstarted: two direct fresh-agent attempts and
+one nested attempt were refused by the host's agent-thread limit. The unused
+review worktree was verified clean and removed. Restore fresh reviewer capacity;
+do not substitute prior authors, unstarted tracks or local tests for independent
+review. No ACP commit has been pushed. Documentation-only checkpoint updates do
+not change this frozen behavior candidate or establish remote acceptance.
 [review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
