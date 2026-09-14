@@ -1634,12 +1634,7 @@ impl NativeReferenceHost {
             TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
         construction.observe(selected_terminal.resource.as_ref());
-        let web_fetch = compose_web_fetch(
-            selected_terminal
-                .resource
-                .as_ref()
-                .map(NativeTerminalHostResource::worker_scope),
-        )?;
+        let web_fetch = compose_web_fetch(selected_terminal.resource.as_ref())?;
         let background_opener = background_url.map(|selected| selected.bind(&selected_terminal));
         let (mcp, mcp_catalog) = mcp::select(
             mcp_options,
@@ -2105,12 +2100,12 @@ fn compose_terminal(
 }
 
 fn compose_web_fetch(
-    workers: Option<crate::NativeOwnedWorkerScope>,
+    resource: Option<&NativeTerminalHostResource>,
 ) -> Result<WebFetchTool, NativeReferenceHostBuildError> {
     // Complete hosts already own the scope through finalization. Defer unused
     // system DNS discovery without creating another lifetime/cleanup owner.
-    let tool = match workers {
-        Some(workers) => WebFetchTool::with_owned_workers(workers),
+    let tool = match resource {
+        Some(resource) => WebFetchTool::with_owned_workers(&resource.worker_scope()),
         None => WebFetchTool::new(),
     };
     tool.map_err(|_| {

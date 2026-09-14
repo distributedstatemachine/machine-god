@@ -13,7 +13,7 @@ pub(super) struct DeferredNameserver {
 
 impl DeferredNameserver {
     pub(super) fn new(
-        workers: NativeOwnedWorkerScope,
+        workers: &NativeOwnedWorkerScope,
         capture: impl FnOnce() -> Result<SocketAddr, WebFetchTransportError> + Send + 'static,
     ) -> Self {
         let capture = workers.run(capture);

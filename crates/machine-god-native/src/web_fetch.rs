@@ -611,7 +611,7 @@ impl WebFetchTool {
         any(target_os = "linux", target_os = "macos")
     ))]
     pub(crate) fn with_owned_workers(
-        workers: crate::NativeOwnedWorkerScope,
+        workers: &crate::NativeOwnedWorkerScope,
     ) -> Result<Self, WebFetchConfigError> {
         let limits = WebFetchLimits::default();
         let query_id_key = query_id_key();
@@ -1242,7 +1242,7 @@ impl NativeWebFetchTransport {
         connect_timeout: Duration,
         tls_config: RustlsClientConfig,
         query_id_key: Result<[u8; 32], WebFetchTransportError>,
-        workers: crate::NativeOwnedWorkerScope,
+        workers: &crate::NativeOwnedWorkerScope,
         capture: impl FnOnce() -> Result<SocketAddr, WebFetchTransportError> + Send + 'static,
     ) -> Self {
         Self {

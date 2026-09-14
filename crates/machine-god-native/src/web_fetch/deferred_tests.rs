@@ -33,7 +33,7 @@ fn transport(
         Duration::from_secs(1),
         root_tls_config().unwrap(),
         Ok([7; 32]),
-        workers.clone(),
+        workers,
         capture,
     )
 }
