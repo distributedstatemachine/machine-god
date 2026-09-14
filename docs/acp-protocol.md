@@ -169,8 +169,10 @@ When a complete input frame is retained under backpressure, the CLI also request
 an independent observation of the original input pipe's writer disconnect. The
 existing owned input worker retains an exact FIFO alias (including helper-backed
 blocking pipes) and checks hangup without read credit, read-ahead or changes to
-shared descriptor flags. A disconnect takes the same terminal cutoff and native
-settlement path, even with unread pipe bytes; it is not a claim that buffered
+shared descriptor flags. Read readiness is subscribed on both platforms so
+macOS installs its pipe event filter, but readiness alone never grants read
+credit or completes the disconnect observation. A disconnect takes the same
+terminal cutoff and native settlement path, even with unread pipe bytes; it is not a claim that buffered
 requests or output were delivered. This observation is consulted only for a
 backpressured complete frame. Ordinary buffered input keeps its demand-gated
 processing. Regular files, terminals and null streams do not manufacture pipe

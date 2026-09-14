@@ -137,3 +137,18 @@ to millisecond ticks; pausing its already-running clock retained a fractional
 offset. The regression now transfers settled state to a fresh paused runtime,
 retaining channel ownership and the unchanged exact three-second assertion.
 No production timeout was changed. This interrupted gate is not acceptance.
+
+Candidate `c290db42` passed the complete Linux gate, including 269 Python tests,
+both release builds, Clippy, portability and policy checks. The macOS focused
+input gate failed both direct/helper pipe-disconnect regressions: with unread
+bytes and a closed writer, neither observer woke within its existing deadline.
+A host `select.poll` probe reproduced the cause: an empty requested event mask
+reported nothing, while `POLLIN` reported `POLLIN | POLLHUP` without consuming
+bytes. Apple's [XNU poll implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/sys_generic.c)
+only installs a read filter when a read event is requested. The observer now
+subscribes to read readiness but still interprets only hangup and errors. A
+synchronous regression checks that ordinary readiness neither wakes nor settles
+the observation, grants credit, consumes bytes or changes descriptor flags.
+Existing direct/helper regressions retain their original deadlines and actual
+worker cleanup assertions. This is a platform correctness fix, not a legacy
+protocol path; this rejected candidate was not pushed.

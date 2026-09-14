@@ -62,6 +62,53 @@ impl std::task::Wake for PeerWake {
 }
 
 #[test]
+fn pipe_peer_readiness_is_not_disconnect_or_read_credit() {
+    let (read, mut write) = pipe();
+    let alias = read.try_clone().unwrap();
+    let original = flags(&alias);
+    let reader = input(read);
+    // Exercise observation synchronously, without admitting a competing reader.
+    let peer =
+        pipe_peer::PipePeer::capture(reader.source.as_ref().unwrap(), &reader.shared).unwrap();
+    let notified = Arc::new(PeerWake(AtomicBool::new(false)));
+    let waker = Waker::from(notified.clone());
+    write.write_all(b"unread").unwrap();
+    assert!(
+        reader
+            .poll_pipe_peer_closed(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    for _ in 0..3 {
+        peer.observe(&reader.shared);
+        assert!(
+            reader
+                .shared
+                .state
+                .lock()
+                .unwrap()
+                .pipe_peer
+                .result
+                .is_none()
+        );
+        assert!(!notified.0.load(Ordering::Acquire));
+        assert!(!reader.shared.state.lock().unwrap().demand);
+    }
+    drop(write);
+    peer.observe(&reader.shared);
+    assert!(notified.0.load(Ordering::Acquire));
+    assert_eq!(
+        reader.poll_pipe_peer_closed(&mut Context::from_waker(&waker)),
+        Poll::Ready(Ok(true))
+    );
+    assert!(!reader.shared.state.lock().unwrap().demand);
+    assert!(reader.source.is_some());
+    let mut bytes = [0; 6];
+    assert_eq!(rustix::io::read(&alias, &mut bytes).unwrap(), bytes.len());
+    assert_eq!(&bytes, b"unread");
+    assert_eq!(flags(&alias), original);
+}
+
+#[test]
 fn pipe_peer_disconnect_wakes_without_credit_or_losing_published_and_unread_bytes() {
     let (read, mut write) = pipe();
     let alias = read.try_clone().unwrap();

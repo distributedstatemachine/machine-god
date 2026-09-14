@@ -64,9 +64,10 @@ impl PipePeer {
         if !requested {
             return;
         }
-        // HUP is reported even with unread bytes and no requested read events.
-        // This is not a read credit and never changes shared descriptor flags.
-        let mut descriptors = [PollFd::new(pipe, PollFlags::empty())];
+        // macOS only installs its read filter when read events are requested.
+        // Ignore ordinary readiness: only HUP settles this observation, even
+        // with unread bytes. This grants no credit and changes no shared flags.
+        let mut descriptors = [PollFd::new(pipe, PollFlags::IN)];
         match poll(
             &mut descriptors,
             Some(&Timespec {
