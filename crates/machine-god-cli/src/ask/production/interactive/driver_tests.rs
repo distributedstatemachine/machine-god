@@ -17,6 +17,9 @@ mod mcp_paging;
 #[path = "driver_tests/mcp_eof.rs"]
 mod mcp_eof;
 
+#[path = "driver_tests/skills_ack.rs"]
+mod skills_ack;
+
 struct Harness {
     driver: Driver,
     input_writer: std::io::PipeWriter,

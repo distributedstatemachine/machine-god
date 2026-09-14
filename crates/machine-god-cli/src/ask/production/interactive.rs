@@ -710,6 +710,7 @@ impl Driver {
         }
         self.discard_history();
         self.input.reset_raw_draft();
+        self.reset_skills();
         self.inbox.close();
         self.scope_active = false;
         self.modal.take();
