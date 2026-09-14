@@ -4,12 +4,12 @@ use super::{
     protocol::{self, AcpMessage},
     rpc_error,
 };
+use crate::NativeSessionCatalogPage;
 use crate::acp::{
     projection,
     selection::NativeAcpSelectionOutcome,
     session::{AcpSessionError, NativeAcpSession},
 };
-use crate::{NativeSessionCatalogPage, PermissionMode};
 use machine_god_core::{SessionId, StopReason, TurnEvent};
 use serde_json::{Value, json};
 use std::task::{Context, Poll};
@@ -301,7 +301,7 @@ fn stop_result(event: &TurnEvent) -> Result<Value, super::protocol::AcpRpcError>
 }
 
 pub(super) fn config_response(session: &NativeAcpSession) -> Result<Value, AcpSessionError> {
-    let mode = mode_name(session.mode()?);
+    let mode = session.mode()?.as_str();
     let preferences = session.runtime().model_preferences();
     let catalog = session.runtime().model_catalog();
     let mut models: Vec<Value> = catalog.as_ref().map_or_else(Vec::new, |catalog| {
@@ -326,17 +326,10 @@ pub(super) fn config_response(session: &NativeAcpSession) -> Result<Value, AcpSe
 fn selection_response(session: &NativeAcpSession) -> Result<Value, AcpSessionError> {
     let mut result = config_response(session)?;
     result["sessionId"] = Value::String(session.id().as_str().to_owned());
-    result["modes"] = json!({"currentModeId":mode_name(session.mode()?),"availableModes":[
+    result["modes"] = json!({"currentModeId":session.mode()?.as_str(),"availableModes":[
         {"id":"ask","name":"Ask"},{"id":"auto","name":"Auto"},{"id":"yolo","name":"Yolo"}
     ]});
     Ok(result)
-}
-fn mode_name(mode: PermissionMode) -> &'static str {
-    match mode {
-        PermissionMode::Ask => "ask",
-        PermissionMode::Auto => "auto",
-        PermissionMode::Yolo => "yolo",
-    }
 }
 fn catalog_response(page: &NativeSessionCatalogPage) -> Value {
     let sessions: Vec<Value> = page
