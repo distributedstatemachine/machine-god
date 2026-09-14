@@ -126,3 +126,14 @@ normal demand-gated EOF. Regressions cover direct/helper pipes, unread-byte cust
 regular files, native settlement before output grace, and a production CLI with
 deterministically saturated output. Component formatting and diff checks passed;
 compilation, runtime validation and fresh product reviews remain separate gates.
+
+Candidate `ded809bb` passed both fresh release builds, formatting, Clippy,
+portability and policy checks. Focused Linux input tests passed (45 plus three
+existing helper fixtures ignored), as did 143 native ACP tests. Eight CLI ACP
+tests passed, including aliased new/load/resume; the new disconnect test reached
+actual native/input settlement but failed its exact output-grace assertion at
+3.001 seconds versus 3 seconds. Tokio's pinned timer source rounds deadlines up
+to millisecond ticks; pausing its already-running clock retained a fractional
+offset. The regression now transfers settled state to a fresh paused runtime,
+retaining channel ownership and the unchanged exact three-second assertion.
+No production timeout was changed. This interrupted gate is not acceptance.

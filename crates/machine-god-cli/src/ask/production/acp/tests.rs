@@ -56,7 +56,8 @@ impl NativeAcpHostFactory for PendingList {
 fn complete_backpressured_frame_observes_real_pipe_disconnect_before_output_grace() {
     use std::io::Write as _;
     use std::os::fd::OwnedFd;
-    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    let (mut state, mut connection, mut output, mut signals, _received, _acknowledged, _signal_sender) =
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         let mut connection = NativeAcpConnection::new(Arc::new(PendingList), NativeAcpClientRequests::new().unwrap());
         connection.receive(machine_god_native::acp::protocol::decode_frame(
             br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}"#).unwrap(), 0).unwrap();
@@ -69,10 +70,10 @@ fn complete_backpressured_frame_observes_real_pipe_disconnect_before_output_grac
         let alias = read.try_clone().unwrap();
         let mut input = NativeInteractiveInput::new(NativeInteractiveInputSource::PreserveNonblocking(OwnedFd::from(read).into()), CancellationToken::new());
         let completion = input.completion();
-        let (work, _received) = tokio::sync::mpsc::channel(1);
-        let (_acknowledged, acknowledgements) = tokio::sync::mpsc::channel(1);
+        let (work, received) = tokio::sync::mpsc::channel(1);
+        let (acknowledged, acknowledgements) = tokio::sync::mpsc::channel(1);
         let mut output = OutputBridge { work, acknowledgements, tape: None };
-        let (_signal_sender, receiver) = tokio::sync::mpsc::channel(1);
+        let (signal_sender, receiver) = tokio::sync::mpsc::channel(1);
         let mut signals = AskSignals::new(receiver);
         let mut state = Transport { writing: Some(WritePhase::Write), ..Transport::default() };
         write.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/list\"}\n").unwrap();
@@ -91,11 +92,20 @@ fn complete_backpressured_frame_observes_real_pipe_disconnect_before_output_grac
         completion.wait_on_worker().unwrap();
         assert!(completion.is_complete());
         assert_eq!(rustix::fs::fcntl_getfl(&alias).unwrap(), original);
-        tokio::time::pause();
-        let start = tokio::time::Instant::now();
-        assert!(!finish_output(&mut state, &mut connection, &mut output, &mut signals).await);
-        assert_eq!(tokio::time::Instant::now() - start, FINAL_OUTPUT_GRACE);
+        (state, connection, output, signals, received, acknowledged, signal_sender)
     });
+    // Real input settlement and virtual output timing use separate clocks.
+    // Pausing an already-running timer wheel retains its fractional tick offset.
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let start = tokio::time::Instant::now();
+            assert!(!finish_output(&mut state, &mut connection, &mut output, &mut signals).await);
+            assert_eq!(tokio::time::Instant::now() - start, FINAL_OUTPUT_GRACE);
+        });
 }
 
 #[test]
