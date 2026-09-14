@@ -54,6 +54,59 @@ fn slot_full(input: &NativeInteractiveInput) -> bool {
     input.shared.state.lock().unwrap().chunk.is_some()
 }
 
+pub(super) struct PeerWake(pub(super) AtomicBool);
+impl std::task::Wake for PeerWake {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+#[test]
+fn pipe_peer_disconnect_wakes_without_credit_or_losing_published_and_unread_bytes() {
+    let (read, mut write) = pipe();
+    let alias = read.try_clone().unwrap();
+    rustix::fs::fcntl_setfl(&alias, flags(&alias) | OFlags::NONBLOCK).unwrap();
+    let original = flags(&alias);
+    let mut reader = NativeInteractiveInput::new(
+        NativeInteractiveInputSource::PreserveNonblocking(read),
+        CancellationToken::new(),
+    );
+    let notified = Arc::new(PeerWake(AtomicBool::new(false)));
+    let waker = Waker::from(notified.clone());
+    assert!(
+        reader
+            .poll_pipe_peer_closed(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert!(
+        reader.source.is_some(),
+        "hangup polling must not admit a worker"
+    );
+    write.write_all(b"published").unwrap();
+    assert!(poll(&mut reader).is_pending());
+    until(|| slot_full(&reader));
+    write.write_all(b"unread").unwrap();
+    assert!(!reader.shared.state.lock().unwrap().demand);
+    assert!(!notified.0.load(Ordering::Acquire));
+    drop(write);
+    until(|| notified.0.load(Ordering::Acquire));
+    assert_eq!(
+        reader.poll_pipe_peer_closed(&mut Context::from_waker(&waker)),
+        Poll::Ready(Ok(true))
+    );
+    assert!(slot_full(&reader));
+    assert!(!reader.shared.state.lock().unwrap().demand);
+    assert!(
+        !reader.completion().is_complete(),
+        "hangup is not worker settlement"
+    );
+    assert_eq!(next(&mut reader).unwrap().unwrap().as_bytes(), b"published");
+    assert_eq!(next(&mut reader).unwrap().unwrap().as_bytes(), b"unread");
+    assert!(next(&mut reader).unwrap().is_none());
+    joined(&reader.completion());
+    assert_eq!(flags(&alias), original);
+}
+
 #[test]
 fn construction_disabled_drop_and_precancellation_are_inert() {
     let mut disabled = NativeInteractiveInput::default();

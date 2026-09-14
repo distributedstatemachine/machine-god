@@ -36,6 +36,16 @@ host factory. Each prepared host has its own permission registry, ephemeral MCP
 runtime and workers. The connection bridge is shared, but only the committed
 host's registry is activated for client permission requests.
 
+The admitted `cwd` spelling is bound during owned preparation to the exact
+descriptor-checked primary workspace scope used by host composition. Ancestor
+aliases such as macOS `/tmp` and `/var` are accepted without requiring clients
+to supply their canonical spelling. Session options and persisted metadata use
+the host's canonical identity. Pure prepared-host validation requires that exact
+retained primary allocation, and selection separately matches the original
+request spelling. Neither validation reopens a path; a foreign scope, substituted
+request or same-spelling replacement cannot borrow the binding. Native root
+preparation still rejects a symlink in the final workspace component.
+
 New, load and resume first validate the candidate host and ready its complete
 authoritative MCP selection. The old prompt is then cancelled and driven through
 its exact checkpoint and finalization. Only afterward does reversible native

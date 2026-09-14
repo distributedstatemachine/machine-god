@@ -245,6 +245,21 @@ impl Transport {
             };
             if self.pending.is_none() {
                 cx.waker().wake_by_ref();
+            } else {
+                // A complete backpressured frame must not hide a disconnected
+                // pipe writer. Observe HUP without consuming another byte or
+                // changing the normal demand-gated input/EOF contract.
+                match input.poll_pipe_peer_closed(cx) {
+                    Poll::Ready(Ok(true)) => self.stopping = true,
+                    Poll::Ready(Err(_)) => {
+                        self.failed = true;
+                        self.stopping = true;
+                    }
+                    Poll::Pending | Poll::Ready(Ok(false)) => {}
+                }
+                if self.stopping {
+                    cx.waker().wake_by_ref();
+                }
             }
             return;
         }

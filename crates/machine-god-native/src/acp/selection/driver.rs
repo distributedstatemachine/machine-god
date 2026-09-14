@@ -162,7 +162,7 @@ impl NativeAcpSelectionOwner {
                         return true;
                     }
                     let invalid = host.validate().is_err()
-                        || host.host.workspace_root() != pending.request.workspace
+                        || host.workspace.requested != pending.request.workspace
                         || self.current.as_ref().is_some_and(|current| {
                             Arc::ptr_eq(&current.host, &host.host)
                                 || Arc::ptr_eq(

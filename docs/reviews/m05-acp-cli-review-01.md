@@ -54,3 +54,75 @@ Linux evidence is under `/cache/target/acp-53096f44.u1HjzP` in the owned validat
 cache. The actual executable ACP tests cover process framing/lifecycle; the
 successful composed network round trip uses the real host acquisition and stdio
 owners with explicitly injected HTTP fixtures, not a live Gateway endpoint.
+
+## Candidate 66d02faa: complete local gate, R1 review rejection
+
+Candidate: `66d02faa881555e98a10ef239cba8f6030b5a2b2`.
+Base: `658f3366258cf1207904f9c2a274f32db2bb981b`.
+
+The complete Rust 1.94.1 local gate passed before review: Linux at normal test
+concurrency, macOS serial runtime tests, formatting, warnings-denied Clippy,
+fresh release helpers, focused picker/skills/MCP/ACP checks, workspace tests,
+separate doctests, release smoke, FreeBSD/WASI compilation, pinned drift and
+Unicode checks, documentation policy, dependency policy and audit. Linux's full
+269-test Python suite and fresh-target release cleanup probe passed without
+deadline changes. Its selected Git 2.55.0 supports `--no-lazy-fetch`; the
+benchmark metadata-change fixture now changes its timestamp deterministically.
+
+Release-helper SHA-256 values:
+
+- macOS: `ccd7b531b247aaaedd7e8676dabd46c94196212a36b05da12fb96fff2e8a2164`
+- Linux: `adc3b33aeee634cabfe76f86d39744aa9c97a7b41fac4ff0480e3016678cfb66`
+
+Three newly spawned local reviewers inspected the full feature diff in isolated
+exact-candidate worktrees after that gate: `acp_r1_correctness`,
+`acp_r1_lifecycle` and `acp_r1_resources`. These were static direct reviews, not
+Bugbot or runtime-test results. A host thread limit delayed the resource track
+until the lifecycle track finished; all three reviewed the same immutable SHA.
+Coordinator integration review independently identified the lifecycle defect.
+
+Two distinct introduced findings rejected the candidate:
+
+- P1, `ask/production/acp.rs` input admission: retaining a complete request
+  rejected by backpressure prevents polling input again. A blocked output frame
+  can therefore hide closed stdin indefinitely, preventing native retirement
+  and the final output grace. Lifecycle and resource reviewers reported the same
+  defect, not two separate findings. The coordinator reproduced it with the exact
+  release CLI, 400 compact initialize requests, successfully closed pipe stdin,
+  and undrained socket stdout with a 1,024-byte requested send buffer. The process
+  remained live after five seconds; owned SIGTERM cleanup exited 143. An ordinary
+  pipe-output attempt did not saturate and exited normally.
+- P2, `acp_startup/factory.rs` and native `acp/selection/driver.rs`: native root
+  preparation canonicalizes an admitted workspace, but session options and
+  selection compare its canonical root against the original request spelling.
+  Valid ancestor-symlink paths such as macOS `/tmp/project` are rejected. Existing
+  composition fixtures canonicalize the request first and mask this mismatch.
+
+No additional resource finding was established. ACP's 1 MiB decode/queue ceiling
+does not override the engine's separately configured prompt limit; oversized
+engine admission fails before turn acquisition or persistence. Neither legacy
+compatibility nor explicitly deferred product categories were review requirements.
+No feature push or remote acceptance occurred for this rejected candidate.
+
+Raw evidence remains under `target/agent-gates/acp-connection.aN177x`, with macOS
+`66d02faa-*` logs and the Linux copy in `linux-66d02faa.ReE8Eq`. Gate success is
+regression evidence only, not delivery acceptance or an M07 performance claim.
+
+### R1 remediation
+
+Source components `977694ee` and `46dc27d7` address the two findings. Workspace
+preparation binds the original request spelling to the exact descriptor-validated
+primary scope; session options use its canonical identity. Pure constructor and
+selection checks reject foreign scopes or substituted requests without reopening
+paths. Native tests cover identity substitution and alias retargeting; composed
+CLI coverage exercises aliased new/load/resume with inert persisted history.
+
+The existing input worker retains one original FIFO descriptor alias and observes
+requested peer hangup independently while read credit is paused. The transport
+uses that observation only behind a backpressured complete frame, entering the
+existing native cleanup and output-grace path. No additional reads, workers,
+status-flag changes or deadline changes are introduced. Non-pipe sources retain
+normal demand-gated EOF. Regressions cover direct/helper pipes, unread-byte custody,
+regular files, native settlement before output grace, and a production CLI with
+deterministically saturated output. Component formatting and diff checks passed;
+compilation, runtime validation and fresh product reviews remain separate gates.

@@ -274,14 +274,14 @@ impl PipeHelper {
         Ok(owned)
     }
 
-    pub(super) fn drive(mut self, shared: &Shared) -> Outcome {
-        let result = self.drive_inner(shared);
+    pub(super) fn drive(mut self, shared: &Shared, peer: &super::pipe_peer::PipePeer) -> Outcome {
+        let result = self.drive_inner(shared, peer);
         self.settle(result)
     }
 
-    fn drive_inner(&mut self, shared: &Shared) -> Outcome {
+    fn drive_inner(&mut self, shared: &Shared, peer: &super::pipe_peer::PipePeer) -> Outcome {
         loop {
-            shared.wait_for_demand()?;
+            shared.wait_for_demand(peer)?;
             let channel = self.channel.as_ref().ok_or(Error::Unavailable)?;
             let Some(chunk) = wire::next_chunk(channel, shared)? else {
                 return Ok(());

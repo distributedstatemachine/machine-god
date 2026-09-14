@@ -178,6 +178,7 @@ fn prepare(
         .map_err(|_| ())?;
     Ok(PreparedConversationHost {
         host,
+        acp_workspace: None,
         runtime,
         workspace,
         state_path,

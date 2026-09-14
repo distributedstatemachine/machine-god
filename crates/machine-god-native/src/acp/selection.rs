@@ -47,6 +47,47 @@ pub struct NativeAcpPreparedHost {
     host: Arc<NativeReferenceHost>,
     options: NativeInteractiveSessionOptions,
     permission_contexts: Arc<NativePermissionContexts>,
+    workspace: NativeAcpWorkspaceIdentity,
+}
+
+/// A request spelling bound to the descriptor-checked primary used by composition.
+/// Retaining the scope pins the actual object, not a path that can be retargeted.
+pub struct NativeAcpWorkspaceIdentity {
+    requested: PathBuf,
+    scope: crate::NativeWorkspaceScopeSnapshot,
+}
+impl NativeAcpWorkspaceIdentity {
+    /// Captures on the explicitly owned preparation worker, before consuming roots.
+    /// Validates existing descriptors only; never resolves or opens another path.
+    /// # Errors
+    /// Rejects invalid request paths or a scope not backed by the prepared roots.
+    pub fn capture(
+        roots: &crate::PreparedNativeRoots,
+        authority: &crate::NativeWorkspaceAuthority,
+    ) -> Result<Self, AcpSessionError> {
+        crate::NativeSessionMetadata::new(
+            roots.workspace_root(),
+            0,
+            crate::NativeSessionOrigin::Acp,
+        )
+        .map_err(|_| AcpSessionError::InvalidConfiguration)?;
+        let scope = authority
+            .snapshot()
+            .map_err(|_| AcpSessionError::Unavailable)?;
+        let primary = roots
+            .try_clone_workspace()
+            .map_err(|_| AcpSessionError::Unavailable)?;
+        let state = roots
+            .try_clone_skills_state()
+            .map_err(|_| AcpSessionError::Unavailable)?;
+        scope
+            .validate_host_binding(&primary, roots.canonical_workspace_root(), &state)
+            .map_err(|_| AcpSessionError::InvalidConfiguration)?;
+        Ok(Self {
+            requested: roots.workspace_root().to_owned(),
+            scope,
+        })
+    }
 }
 impl NativeAcpPreparedHost {
     /// Pure validation; no configuration, credential or environment discovery.
@@ -56,17 +97,24 @@ impl NativeAcpPreparedHost {
         host: Arc<NativeReferenceHost>,
         options: NativeInteractiveSessionOptions,
         permission_contexts: Arc<NativePermissionContexts>,
+        workspace: NativeAcpWorkspaceIdentity,
     ) -> Result<Self, AcpSessionError> {
         let value = Self {
             host,
             options,
             permission_contexts,
+            workspace,
         };
         value.validate()?;
         Ok(value)
     }
     fn validate(&self) -> Result<(), AcpSessionError> {
         self.options.validate_for_host(&self.host)?;
+        if self.workspace.scope.primary_identity() != self.host.workspace_root()
+            || !self.host.has_workspace_primary(&self.workspace.scope)
+        {
+            return Err(AcpSessionError::InvalidConfiguration);
+        }
         let contexts = self
             .host
             .permission_contexts()
@@ -423,6 +471,7 @@ impl Drop for NativeAcpSelectionOwner {
 }
 macro_rules! redacted {($($ty:ty),+)=>{$(impl fmt::Debug for $ty {fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result{f.write_str(concat!(stringify!($ty)," { .. }"))}})+};}
 redacted!(
+    NativeAcpWorkspaceIdentity,
     NativeAcpPreparedHost,
     NativeAcpSelectionTurnOutcome,
     NativeAcpSelectionOutcome,

@@ -102,6 +102,7 @@ fn cancelled_unpolled_selection_never_calls_factory_or_claims_publication() {
 }
 
 pub(crate) mod fixture;
+mod workspace_identity;
 use fixture::Factory;
 
 #[test]

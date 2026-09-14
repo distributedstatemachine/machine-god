@@ -107,15 +107,20 @@ impl NativeAcpHostFactory for AcpHostFactory {
                     let completion = host.terminal_shutdown_completion().ok_or(())?;
                     let result = (|| {
                         let mut options = NativeInteractiveSessionOptions::new(
-                            prepared.workspace,
+                            host.workspace_root().to_owned(),
                             host.loaded_config().config().model_preferences(),
                         )
                         .map_err(|_| ())?;
                         if let Some(catalog) = prepared.catalog {
                             options = options.with_catalog(catalog);
                         }
-                        NativeAcpPreparedHost::new(host.clone(), options, permission_contexts)
-                            .map_err(|_| ())
+                        NativeAcpPreparedHost::new(
+                            host.clone(),
+                            options,
+                            permission_contexts,
+                            prepared.acp_workspace.ok_or(())?,
+                        )
+                        .map_err(|_| ())
                     })();
                     drop(host);
                     if result.is_err() {

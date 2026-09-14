@@ -220,3 +220,53 @@ fn acp_preserves_the_shared_input_pipe_open_file_description_flags() {
     assert_eq!(frames.len(), 1);
     assert_eq!(rustix::fs::fcntl_getfl(&reader).unwrap(), flags);
 }
+
+#[test]
+fn acp_blocked_stdout_and_backpressured_complete_requests_do_not_hide_pipe_disconnect() {
+    use std::io::Write as _;
+    use std::os::{fd::OwnedFd, unix::net::UnixStream};
+    let directory = TestDirectory::new("acp-blocked-disconnect");
+    let (mut stdout, _undrained_peer) = UnixStream::pair().unwrap();
+    rustix::net::sockopt::set_socket_send_buffer_size(&stdout, 1024).unwrap();
+    // Fill this fixture-owned output endpoint before handing it to the child,
+    // so saturation does not depend on platform socket-buffer minimums.
+    stdout.set_nonblocking(true).unwrap();
+    let mut filled = 0;
+    loop {
+        match stdout.write(&[0; 1024]) {
+            Ok(0) => panic!("fixture output closed"),
+            Ok(count) => {
+                filled += count;
+                assert!(filled <= 1024 * 1024, "fixture output did not saturate");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => panic!("fixture output unavailable: {error}"),
+        }
+    }
+    stdout.set_nonblocking(false).unwrap();
+    let (read, mut write) = std::io::pipe().unwrap();
+    let original = rustix::fs::fcntl_getfl(&read).unwrap();
+    let mut selected = command(&directory);
+    selected
+        .stdin(Stdio::from(read.try_clone().unwrap()))
+        .stdout(Stdio::from(OwnedFd::from(stdout)));
+    let child = ScopedChild::spawn(&mut selected);
+    // The first response blocks, the second occupies the native reply lane,
+    // and the third complete request remains with transport backpressure.
+    // A single <= PIPE_BUF write is bounded even before child startup.
+    let requests = INITIALIZE.repeat(3);
+    assert!(requests.len() <= 4096);
+    write.write_all(&requests).unwrap();
+    drop(write);
+    let output = child.wait_with_output(Duration::from_secs(10));
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "blocked output must be a failure: {output:?}"
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert_eq!(rustix::fs::fcntl_getfl(&read).unwrap(), original);
+    assert!(!directory.path().join("state").exists());
+}

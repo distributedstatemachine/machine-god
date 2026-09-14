@@ -36,18 +36,15 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `validate session-picker acknowledgement and gate fixes, then complete replacement gate`
+- Next gate: `validate integrated ACP R1 fixes, then complete replacement gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
-The complete terminal, combined CLI, background, skills and MCP CLI are delivered features.
-The latest behavior commit passes the full Rust 1.94.1 local gate, three fresh
-independent reviews with zero actionable findings, and both feature and main
-CI/Benchmark gates. Native Linux
-and macOS pass on x86_64 and aarch64. Both required unexpired exact-main
-benchmark artifacts are retained. Main was advanced by fast-forward without
-force. This establishes
-regression acceptance, not an M07 performance claim; documentation-only seals
-do not increment the count or replace the canonical behavior evidence.
+The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
+The canonical behavior passed the exact local gate, three fresh reviews and
+feature/main CI and Benchmark gates on supported Linux/macOS architectures.
+Both unexpired exact-main artifacts are retained; main advanced by fast-forward.
+This is regression acceptance, not an M07 performance claim. Documentation-only
+seals neither increment the count nor replace canonical behavior evidence.
 
 Detailed candidate, failure, remediation and review history is retained in the
 [terminal review](reviews/m03-terminal-full-review-01.md),
@@ -105,12 +102,8 @@ require settings authority and invalid selected settings remain errors.
 Historical tool cards project validated saved evidence without executing tools
 or inventing current state.
 
-The exact candidate passed the full local gate and three independent local
-review tracks. Feature and exact-main CI and Benchmark passed, retaining both
-main-run artifacts, and main was fast-forwarded without force. This closes the
-frozen M03 boundary without an M07 performance claim.
-Detailed rejected candidates, controlled regressions, complete gate results
-and review provenance belong in the
+The frozen M03 boundary is closed without an M07 performance claim. Detailed
+candidates, regressions, gates and review provenance remain in the
 [combined CLI history](reviews/m03-cli-full-review-01.md).
 
 All twelve agent-readiness maintenance findings were integrated into this
@@ -343,14 +336,9 @@ catalog, installer or picker fragments. It includes:
 - Descriptor-bound publication, source revalidation, rollback/uncertainty receipts,
   bounded Git execution and retained cleanup ownership.
 
-The accepted behavior passed the complete local gate, three newly spawned R5
-review tracks with zero findings, and exact feature/main CI and artifact-producing
-Benchmark gates. Both exact-main artifacts are retained and unexpired. Main was
-advanced by fast-forward without force. The initial intermittent macOS reaping
-timeout and one unchanged passing retry remain recorded without a cause or
-source-fix claim. All completed skills worktrees are removed; external evidence
-and caches are retained. This is regression acceptance, not an M07 performance
-claim.
+The accepted R5 behavior and initial intermittent macOS reaping timeout remain
+recorded in review history; an unchanged passing retry is not a cause or source
+fix. Completed skills worktrees are removed; evidence and caches remain.
 
 The [skills CLI contract](skills-cli.md) owns durable behavior and the
 [skills CLI review](reviews/m05-skills-cli-review-01.md) retains detailed evidence.
@@ -435,10 +423,11 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: ACP and skills acknowledgement checks passed on macOS and focused
-Linux runs. Full Linux CLI stopped on an intermittent MCP PTY output deadline;
-an exact-frame session-picker fix is integrated; attribution of the original
-[failure](reviews/m05-acp-cli-review-01.md) remains unproven. Linux's cold release probe passed.
+not delivered: the complete Linux/macOS gate passed, including picker fixes and
+Linux's cold release probe. Three fresh local R1 reviews rejected the candidate:
+backpressured complete input can hide pipe closure, and valid workspace aliases
+are rejected. Both fixes are integrated for replacement validation and reviews;
+[review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.

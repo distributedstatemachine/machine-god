@@ -98,6 +98,7 @@ impl NativeAcpHostFactory for Factory {
             )
             .unwrap();
             let authority = workspace_authority(&roots);
+            let identity = NativeAcpWorkspaceIdentity::capture(&roots, &authority).unwrap();
             let contexts = Arc::new(NativePermissionContexts::new());
             let clock = Arc::new(Clock);
             let mut mcp = NativeReferenceHostMcpOptions::new(mcp_contexts, clock.clone())
@@ -148,9 +149,11 @@ impl NativeAcpHostFactory for Factory {
             let host=Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(LoadedNativeConfig::from_file(config),transport,
                 machine_god_core::NetworkTarget{scheme:"https".into(),host:"ai-gateway.vercel.sh".into(),port:None},roots,permission,question,Arc::new(Deadline),options).unwrap());
             NativeAcpPreparedHost::new(
-                host,
-                NativeInteractiveSessionOptions::new(workspace, defaults).unwrap(),
+                host.clone(),
+                NativeInteractiveSessionOptions::new(host.workspace_root().to_owned(), defaults)
+                    .unwrap(),
                 contexts,
+                identity,
             )
         })
     }
@@ -170,11 +173,11 @@ impl NativeAcpHostFactory for Factory {
         })
     }
 }
-fn workspace_authority(roots: &PreparedNativeRoots) -> NativeWorkspaceAuthority {
+pub(super) fn workspace_authority(roots: &PreparedNativeRoots) -> NativeWorkspaceAuthority {
     let open = |path: &std::path::Path| std::fs::File::open(path).unwrap().into();
     NativeWorkspaceAuthority::open_blocking(
         open(roots.workspace_root()),
-        roots.workspace_root().to_path_buf(),
+        roots.canonical_workspace_root().to_path_buf(),
         Some(open(roots.state_root())),
         roots.state_root().to_path_buf(),
         vec![],

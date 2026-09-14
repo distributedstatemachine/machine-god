@@ -11,6 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+mod pipe_peer;
 mod shared_input;
 pub use shared_input::{
     INTERACTIVE_INPUT_HELPER_ARGUMENT, NativeInteractiveInputHelper, run_interactive_input_helper,
@@ -114,6 +115,7 @@ struct State {
     chunk: Option<NativeInteractiveInputChunk>,
     terminal: Option<Outcome>,
     waker: Option<Waker>,
+    pipe_peer: pipe_peer::Observation,
 }
 struct Shared {
     state: Mutex<State>,
@@ -122,11 +124,12 @@ struct Shared {
     host_stop: CancellationToken,
 }
 impl Shared {
-    fn wait_for_demand(&self) -> Outcome {
+    fn wait_for_demand(&self, peer: &pipe_peer::PipePeer) -> Outcome {
         loop {
             if self.cancelled() {
                 return Err(NativeInteractiveInputError::Cancelled);
             }
+            peer.observe(self);
             if self
                 .state
                 .lock()
@@ -161,7 +164,7 @@ impl Shared {
     }
 
     fn finish(&self, outcome: Outcome) {
-        let waker = {
+        let (waker, peer_waker) = {
             let mut state = self
                 .state
                 .lock()
@@ -171,10 +174,16 @@ impl Shared {
             }
             state.chunk = None;
             state.demand = false;
-            state.waker.take()
+            if state.pipe_peer.result.is_none() {
+                // A successful pipe read observed EOF. Non-pipe sources have
+                // already published their unsupported observation at capture.
+                state.pipe_peer.result = Some(outcome.map(|()| true));
+            }
+            (state.waker.take(), state.pipe_peer.waker.take())
         };
         self.changed.notify_all();
         wake(waker);
+        wake(peer_waker);
     }
 
     fn pause(&self) {
@@ -281,6 +290,12 @@ impl NativeInteractiveInput {
         self.shared.changed.notify_all();
         if let Some(source) = self.source.take() {
             if matches!(source, NativeInteractiveInputSource::Disabled) {
+                self.shared
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pipe_peer
+                    .result = Some(Ok(false));
                 self.shared.finish(Ok(()));
                 self.scope.close();
             } else {
@@ -431,6 +446,7 @@ fn run_worker(source: NativeInteractiveInputSource, shared: &Shared, io: &impl I
     if shared.cancelled() {
         return Err(NativeInteractiveInputError::Cancelled);
     }
+    let peer = pipe_peer::PipePeer::capture(&source, shared)?;
     let source = match source {
         NativeInteractiveInputSource::PreserveShared { input, helper } => {
             match shared_input::acquire(
@@ -444,7 +460,7 @@ fn run_worker(source: NativeInteractiveInputSource, shared: &Shared, io: &impl I
                 shared_input::AcquiredInput::Direct(file) => {
                     NativeInteractiveInputSource::PreserveNonblocking(file)
                 }
-                shared_input::AcquiredInput::Helper(helper) => return helper.drive(shared),
+                shared_input::AcquiredInput::Helper(helper) => return helper.drive(shared, &peer),
             }
         }
         NativeInteractiveInputSource::PreserveSharedStream {
@@ -463,7 +479,7 @@ fn run_worker(source: NativeInteractiveInputSource, shared: &Shared, io: &impl I
                 shared_input::AcquiredInput::Direct(file) => {
                     NativeInteractiveInputSource::PreserveNonblocking(file)
                 }
-                shared_input::AcquiredInput::Helper(helper) => return helper.drive(shared),
+                shared_input::AcquiredInput::Helper(helper) => return helper.drive(shared, &peer),
             }
         }
         source => source,
@@ -474,7 +490,7 @@ fn run_worker(source: NativeInteractiveInputSource, shared: &Shared, io: &impl I
         empty_read_is_idle,
     } = prepare(source)?;
     loop {
-        shared.wait_for_demand()?;
+        shared.wait_for_demand(&peer)?;
         if !timed_tty {
             match io.readable(&file) {
                 Ok(true) => {}

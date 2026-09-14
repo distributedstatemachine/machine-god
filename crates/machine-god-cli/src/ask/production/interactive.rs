@@ -168,6 +168,7 @@ fn run_interactive(
     let input_completion = input.completion();
     let Ok(PreparedConversationHost {
         host,
+        acp_workspace: _,
         runtime,
         workspace,
         state_path,

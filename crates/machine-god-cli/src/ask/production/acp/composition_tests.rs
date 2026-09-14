@@ -16,7 +16,21 @@ const ANSWER: &str = "local fixture answer";
 
 #[test]
 fn shared_acquisition_owned_stdio_and_native_prompt_checkpoint_roundtrip() {
+    roundtrip(false);
+}
+
+#[test]
+fn aliased_workspace_new_load_resume_preserve_canonical_checkpoint() {
+    roundtrip(true);
+}
+
+fn roundtrip(aliased: bool) {
     let fixture = Fixture::new();
+    let requested_workspace = if aliased {
+        fixture.workspace_alias()
+    } else {
+        fixture.workspace.clone()
+    };
     let gateway = gateway::Gateway::new();
     let helper = support::release_helper();
     let launch = CapturedAcpLaunch::loopback(
@@ -51,7 +65,7 @@ fn shared_acquisition_owned_stdio_and_native_prompt_checkpoint_roundtrip() {
             client.send(
                 2,
                 "session/new",
-                &json!({"cwd":fixture.workspace,"mcpServers":[]}),
+                &json!({"cwd":requested_workspace,"mcpServers":[]}),
             );
             let selected = client.response(2).0;
             let id = selected["sessionId"]
@@ -93,7 +107,34 @@ fn shared_acquisition_owned_stdio_and_native_prompt_checkpoint_roundtrip() {
 
             // Read durable state immediately after the final wire response,
             // while this exact session is still selected and stdin stays open.
-            assert_checkpoint(&fixture, SessionId::new(id).unwrap());
+            assert_checkpoint(&fixture, SessionId::new(id.clone()).unwrap());
+            if aliased {
+                for (request, method) in [(4, "session/load"), (5, "session/resume")] {
+                    client.send(
+                        request,
+                        method,
+                        &json!({
+                            "sessionId":id,"cwd":requested_workspace,"mcpServers":[]
+                        }),
+                    );
+                    let (selected, updates) = client.response(request);
+                    assert_eq!(selected["sessionId"], id);
+                    let user_history = updates.iter().any(|update| {
+                        update["update"]["sessionUpdate"] == "user_message_chunk"
+                            && update["update"]["content"]["text"] == PROMPT
+                    });
+                    assert_eq!(user_history, method == "session/load");
+                    assert_checkpoint(&fixture, SessionId::new(id.clone()).unwrap());
+                }
+                assert_eq!(
+                    gateway
+                        .requests()
+                        .iter()
+                        .filter(|r| r.method == "inference")
+                        .count(),
+                    1
+                );
+            }
             fixture.assert_profile_unchanged();
             client.eof();
             client.drain_to_eof();

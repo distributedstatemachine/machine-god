@@ -220,6 +220,12 @@ struct Scope {
 pub struct NativeWorkspaceScopeSnapshot(Arc<Scope>);
 
 impl NativeWorkspaceScopeSnapshot {
+    /// Pure comparison of the retained primary allocation, never path spelling.
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn same_primary(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0.primary, &other.0.primary)
+    }
+
     /// Worker-only exclusion for a resolved terminal cwd. A state directory
     /// remains excluded by retained object identity even after a native rename.
     #[cfg(all(

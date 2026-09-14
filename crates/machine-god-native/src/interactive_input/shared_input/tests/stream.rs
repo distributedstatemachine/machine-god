@@ -141,6 +141,63 @@ fn stream_pipe_keeps_idle_read_cancellable_and_flags_unchanged() {
 }
 
 #[test]
+fn helper_pipe_peer_disconnect_observes_original_pipe_without_another_credit() {
+    let (read, mut write) = pipe();
+    let alias = read.try_clone().unwrap();
+    let original = flags(&alias);
+    let (helper, observations) = helper("pipe_helper_child", None);
+    let mut input = stream(read, helper, None);
+    write.write_all(b"published").unwrap();
+    assert!(poll(&mut input).is_pending());
+    until(|| input.shared.state.lock().unwrap().chunk.is_some());
+    write.write_all(b"unread").unwrap();
+    let notified = Arc::new(crate::interactive_input::tests::PeerWake(AtomicBool::new(
+        false,
+    )));
+    let waker = Waker::from(notified.clone());
+    assert!(
+        input
+            .poll_pipe_peer_closed(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    drop(write);
+    until(|| notified.0.load(Ordering::Acquire));
+    assert_eq!(
+        input.poll_pipe_peer_closed(&mut Context::from_waker(&waker)),
+        Poll::Ready(Ok(true))
+    );
+    assert!(!input.shared.state.lock().unwrap().demand);
+    assert!(input.shared.state.lock().unwrap().chunk.is_some());
+    assert!(!input.completion().is_complete());
+    assert_eq!(next(&mut input).unwrap().unwrap().as_bytes(), b"published");
+    assert_eq!(next(&mut input).unwrap().unwrap().as_bytes(), b"unread");
+    assert!(next(&mut input).unwrap().is_none());
+    joined(&input);
+    assert_eq!(flags(&alias), original);
+    assert_reaped(&observations);
+}
+
+#[test]
+fn regular_file_peer_observation_does_not_consume_or_manufacture_eof() {
+    let file = regular(&[b'x'; 8192]);
+    let mut alias = file.try_clone().unwrap();
+    let (helper, observations) = helper("pipe_helper_child", None);
+    let mut input = stream(file, helper, None);
+    assert!(poll(&mut input).is_pending());
+    until(|| input.shared.state.lock().unwrap().chunk.is_some());
+    assert_eq!(
+        input.poll_pipe_peer_closed(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Ok(false))
+    );
+    assert_eq!(alias.stream_position().unwrap(), 4096);
+    assert!(input.shared.state.lock().unwrap().chunk.is_some());
+    input.request_stop();
+    joined(&input);
+    assert_eq!(alias.stream_position().unwrap(), 4096);
+    assert_reaped(&observations);
+}
+
+#[test]
 fn explicit_matching_null_proof_is_empty_without_read_or_helper() {
     let file = File::open("/dev/null").unwrap();
     let alias = file.try_clone().unwrap();

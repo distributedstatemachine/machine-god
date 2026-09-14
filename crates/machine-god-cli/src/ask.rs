@@ -1134,6 +1134,7 @@ mod production {
                     .spawn_scoped(scope, move || {
                         let Ok(PreparedConversationHost {
                             host,
+                            acp_workspace: _,
                             runtime,
                             workspace,
                             state_path: _state_path,
@@ -1203,6 +1204,7 @@ mod production {
 
     struct PreparedConversationHost<R = machine_god_native::TokioWebSearchRuntime> {
         host: NativeReferenceHost,
+        acp_workspace: Option<machine_god_native::acp::selection::NativeAcpWorkspaceIdentity>,
         runtime: R,
         workspace: std::path::PathBuf,
         state_path: std::path::PathBuf,
@@ -1334,6 +1336,16 @@ mod production {
         before_host()?;
         let authority =
             prepare_launch_workspace(&runtime, root_selection, user_config.clone(), launch)?;
+        let acp_workspace = match mcp {
+            acp_startup::McpSelection::Ephemeral => Some(
+                machine_god_native::acp::selection::NativeAcpWorkspaceIdentity::capture(
+                    &prepared_roots,
+                    &authority,
+                )
+                .map_err(|_| ())?,
+            ),
+            acp_startup::McpSelection::Profile => None,
+        };
         acp_startup::check_cancelled(&cancellation)?;
         let skills_startup::Prepared {
             roots: prepared_roots,
@@ -1379,6 +1391,7 @@ mod production {
         )?;
         Ok(PreparedConversationHost {
             host,
+            acp_workspace,
             runtime,
             workspace,
             state_path,

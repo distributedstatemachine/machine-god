@@ -87,6 +87,11 @@ impl Fixture {
     pub fn session_root(&self) -> PathBuf {
         self.state.join("machine-god")
     }
+    pub fn workspace_alias(&self) -> PathBuf {
+        let alias = self.root.join("ancestor-alias");
+        std::os::unix::fs::symlink(&self.root, &alias).unwrap();
+        alias.join("workspace")
+    }
     pub fn assert_profile_unchanged(&self) {
         let profile = self.config.join("machine-god");
         assert_eq!(

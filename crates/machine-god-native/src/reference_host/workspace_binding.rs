@@ -10,6 +10,19 @@ pub(crate) struct WorkspaceBinding {
 }
 
 impl super::NativeReferenceHost {
+    /// Pure validation against the exact scope used during host composition.
+    pub(crate) fn has_workspace_primary(
+        &self,
+        scope: &crate::NativeWorkspaceScopeSnapshot,
+    ) -> bool {
+        self.workspace_binding.as_ref().is_some_and(|binding| {
+            binding
+                .authority
+                .snapshot()
+                .is_ok_and(|current| current.same_primary(scope))
+        })
+    }
+
     /// Attaches this host's exact descriptor authority before conversation admission.
     /// Legacy hosts leave the conversation unchanged. No root is opened or refreshed.
     ///
