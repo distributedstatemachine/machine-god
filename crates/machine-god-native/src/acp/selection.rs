@@ -19,8 +19,12 @@ use std::{
 
 mod cleanup;
 mod driver;
+mod rollback;
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+type AfterOpenHook = Box<dyn FnOnce(&NativeReferenceHost, &CancellationToken) + Send>;
 
 /// Trusted, explicitly captured host effects. Implementations must keep any
 /// admitted worker and unsuccessful preparation cleanup owned until completion.
@@ -132,6 +136,7 @@ struct Request {
     cancellation: CancellationToken,
     previous: Option<BackgroundOutputOwner>,
     candidate_may_have_persisted: bool,
+    rollback_guard: Option<NativeRuntimeQuiescence>,
 }
 struct Pending {
     request: Request,
@@ -162,6 +167,10 @@ enum Phase {
         error: AcpSessionError,
         future: Option<BoxFuture<'static, cleanup::Receipt>>,
     },
+    Revalidating {
+        error: AcpSessionError,
+        future: BoxFuture<'static, bool>,
+    },
 }
 
 /// A bounded native owner: one current, one candidate and one retained outcome.
@@ -180,6 +189,8 @@ pub struct NativeAcpSelectionOwner {
     shutdown: bool,
     fenced: bool,
     wake: Option<Waker>,
+    #[cfg(test)]
+    after_open: Option<AfterOpenHook>,
 }
 impl NativeAcpSelectionOwner {
     #[must_use]
@@ -197,6 +208,8 @@ impl NativeAcpSelectionOwner {
             shutdown: false,
             fenced: false,
             wake: None,
+            #[cfg(test)]
+            after_open: None,
         }
     }
     /// Stores bounded inert intent. Factory effects begin only during polling.
@@ -262,6 +275,7 @@ impl NativeAcpSelectionOwner {
                     .as_ref()
                     .map(|current| current.session.principal()),
                 candidate_may_have_persisted: false,
+                rollback_guard: None,
             },
             phase: Phase::Requested,
         });

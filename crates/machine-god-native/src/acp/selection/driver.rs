@@ -48,6 +48,7 @@ impl NativeAcpSelectionOwner {
                             cancellation: CancellationToken::new(),
                             previous: principal,
                             candidate_may_have_persisted: false,
+                            rollback_guard: None,
                         },
                         phase: Phase::Retiring {
                             candidate: None,
@@ -86,6 +87,7 @@ impl NativeAcpSelectionOwner {
                             cancellation: CancellationToken::new(),
                             previous: Some(current.session.principal()),
                             candidate_may_have_persisted: false,
+                            rollback_guard: None,
                         },
                         phase: Phase::Draining(None),
                     });
@@ -344,6 +346,10 @@ impl NativeAcpSelectionOwner {
                     return false;
                 }
                 Poll::Ready(result) => {
+                    #[cfg(test)]
+                    if let Some(hook) = self.after_open.take() {
+                        hook(&host.host, &pending.request.cancellation);
+                    }
                     let result = result.map_err(|error| (None, error)).and_then(|session| {
                         if host
                             .host
@@ -372,7 +378,7 @@ impl NativeAcpSelectionOwner {
                             }
                         }
                         Err((session, error)) => {
-                            drop(guard);
+                            pending.request.rollback_guard = guard;
                             pending.phase = Self::reject_host(
                                 host,
                                 session.map(|session| *session),
@@ -433,6 +439,7 @@ impl NativeAcpSelectionOwner {
                         }
                         Poll::Ready(receipt) if !receipt.complete => {
                             self.fenced = true;
+                            self.fenced_guard = pending.request.rollback_guard.take();
                             self.retained_cleanup.push(receipt);
                             self.outcome = Some(NativeAcpSelectionOutcome::Indeterminate {
                                 id: pending.request.id,
@@ -445,17 +452,53 @@ impl NativeAcpSelectionOwner {
                         Poll::Ready(_) => {}
                     }
                 }
-                self.outcome = Some(NativeAcpSelectionOutcome::Rejected {
-                    id: pending.request.id,
-                    error,
-                    old_preserved: self.current.is_some(),
-                    candidate_may_have_persisted: pending.request.candidate_may_have_persisted,
-                });
+                if pending.request.candidate_may_have_persisted
+                    && let Some(current) = &self.current
+                {
+                    pending.phase = Phase::Revalidating {
+                        error,
+                        future: super::rollback::revalidate(current),
+                    };
+                    self.pending = Some(pending);
+                    return true;
+                }
+                self.reject_preserved(pending.request, error);
+                return true;
+            }
+            Phase::Revalidating { error, mut future } => {
+                match future.as_mut().poll(cx) {
+                    Poll::Pending => {
+                        pending.phase = Phase::Revalidating { error, future };
+                        self.pending = Some(pending);
+                        return false;
+                    }
+                    Poll::Ready(true) => self.reject_preserved(pending.request, error),
+                    Poll::Ready(false) => {
+                        self.fenced = true;
+                        self.fenced_guard = pending.request.rollback_guard.take();
+                        self.outcome = Some(NativeAcpSelectionOutcome::Indeterminate {
+                            id: pending.request.id,
+                            error,
+                            previous: pending.request.previous,
+                            candidate: None,
+                        });
+                    }
+                }
                 return true;
             }
         }
         self.pending = Some(pending);
         true
+    }
+
+    fn reject_preserved(&mut self, mut request: Request, error: AcpSessionError) {
+        drop(request.rollback_guard.take());
+        self.outcome = Some(NativeAcpSelectionOutcome::Rejected {
+            id: request.id,
+            error,
+            old_preserved: self.current.is_some(),
+            candidate_may_have_persisted: request.candidate_may_have_persisted,
+        });
     }
 
     fn cancel_current(&mut self) {

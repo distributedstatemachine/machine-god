@@ -41,7 +41,13 @@ if a response wrapper is abandoned; async composition stays on the owner driver.
 Candidate opening and a final readiness check precede irreversible retirement of
 the old runtime. A rejected candidate before retirement restores old admission;
 its receipt separately reports whether candidate persistence may already have
-occurred. Retirement or cleanup uncertainty fences further mutation and yields an
+occurred. After any candidate opening attempt, failure cleanup retains old
+quiescence while an owned worker revalidates the old exact durable ID,
+incarnation and revision. A same-ID workspace rebind, missing or unavailable
+checkpoint, or another revision change yields an indeterminate fenced result,
+not an assertion that the stale old runtime is usable. The controlled read does
+not wait on a foreign writer's lock. Retirement or cleanup uncertainty also
+fences further mutation and yields an
 explicit indeterminate receipt, never a claim that a destructively retired old
 selection remains usable. Successful selection follows old native, MCP and actual
 worker settlement. The old principal's finalized turn outcome is retained
