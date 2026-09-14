@@ -8,6 +8,8 @@ use machine_god_core::{ContentBlock, SessionId, SessionStore};
 use std::{net::Ipv4Addr, time::Instant};
 use tokio::{io::AsyncWriteExt, net::TcpListener};
 
+mod command_tests;
+
 struct Clock;
 impl McpHttpClock for Clock {
     fn now(&self) -> Instant {
@@ -36,6 +38,7 @@ pub(super) fn network() -> Arc<NativeMcpNetwork> {
 struct Server {
     listener: TcpListener,
     url_mode: bool,
+    resource_mode: bool,
     stop: CancellationToken,
     continued: CancellationToken,
     release: CancellationToken,
@@ -46,10 +49,17 @@ impl Server {
         Self {
             listener: TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap(),
             url_mode,
+            resource_mode: false,
             stop: CancellationToken::new(),
             continued: CancellationToken::new(),
             release: CancellationToken::new(),
             requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+    async fn resource(url_mode: bool) -> Self {
+        Self {
+            resource_mode: true,
+            ..Self::new(url_mode).await
         }
     }
     fn config(&self) -> Value {
@@ -72,30 +82,35 @@ impl Server {
                 }
                 let result = match request["method"].as_str().unwrap() {
                     "server/discover" => {
+                        let capabilities = if self.resource_mode {
+                            json!({"resources":{}})
+                        } else {
+                            json!({"tools":{}})
+                        };
                         json!({"resultType":"complete","supportedVersions":["2026-07-28"],
-                        "capabilities":{"tools":{}}})
+                        "capabilities":capabilities})
                     }
                     "tools/list" => json!({"resultType":"complete","ttlMs":60000,"tools":[
                         {"name":"lookup","inputSchema":{"type":"object","properties":{}},
                          "annotations":{"readOnlyHint":true}}]}),
-                    "tools/call" => {
-                        calls += 1;
-                        if calls == 1 {
-                            let params = if self.url_mode {
-                                json!({"mode":"url","message":"Confirm fixture access","url":"https://example.test/connect"})
+                    "resources/list" => json!({"resultType":"complete","ttlMs":60000,
+                        "resources":[{"uri":"test://fixed","name":"fixed","mimeType":"text/plain"}]}),
+                    "resources/templates/list" => {
+                        json!({"resultType":"complete","ttlMs":60000,"resourceTemplates":[]})
+                    }
+                    method @ ("tools/call" | "resources/read") => {
+                        assert_eq!(
+                            method,
+                            if self.resource_mode {
+                                "resources/read"
                             } else {
-                                json!({"mode":"form","message":"Confirm fixture value","requestedSchema":{
-                                    "type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}})
-                            };
-                            json!({"resultType":"input_required",
-                                "inputRequests":{"confirm":{"method":"elicitation/create","params":params}},
-                                "requestState":{"step":1}})
-                        } else {
-                            assert_eq!(calls, 2, "no automatic tool replay");
-                            self.continued.cancel();
-                            self.release.cancelled().await;
-                            json!({"resultType":"complete","content":[{"type":"text","text":"x".repeat(70000)}]})
+                                "tools/call"
+                            }
+                        );
+                        if self.resource_mode {
+                            assert_eq!(request["params"]["uri"], "test://fixed");
                         }
+                        self.operation_result(&mut calls).await
                     }
                     method => panic!("unexpected modern MCP method {method}"),
                 };
@@ -112,6 +127,30 @@ impl Server {
                 futures_util::future::Either::Left(_)
             ) {
                 return;
+            }
+        }
+    }
+
+    async fn operation_result(&self, calls: &mut usize) -> Value {
+        *calls += 1;
+        if *calls == 1 {
+            let params = if self.url_mode {
+                json!({"mode":"url","message":"Confirm fixture access","url":"https://example.test/connect"})
+            } else {
+                json!({"mode":"form","message":"Confirm fixture value","requestedSchema":{
+                    "type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}})
+            };
+            json!({"resultType":"input_required",
+                "inputRequests":{"confirm":{"method":"elicitation/create","params":params}},
+                "requestState":{"step":1}})
+        } else {
+            assert_eq!(*calls, 2, "no automatic operation replay");
+            self.continued.cancel();
+            self.release.cancelled().await;
+            if self.resource_mode {
+                json!({"resultType":"complete","contents":[{"uri":"test://fixed","mimeType":"text/plain","text":"human resource complete"}]})
+            } else {
+                json!({"resultType":"complete","content":[{"type":"text","text":"x".repeat(70000)}]})
             }
         }
     }
