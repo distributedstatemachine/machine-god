@@ -56,7 +56,7 @@ impl NativeAcpHostFactory for PendingList {
 fn complete_backpressured_frame_observes_real_pipe_disconnect_before_output_grace() {
     use std::io::Write as _;
     use std::os::fd::OwnedFd;
-    let (mut state, mut connection, mut output, mut signals, _received, _acknowledged, _signal_sender) =
+    let (mut state, mut connection, mut output, mut signals, _pending_output, _acknowledged, _signal_sender) =
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         let mut connection = NativeAcpConnection::new(Arc::new(PendingList), NativeAcpClientRequests::new().unwrap());
         connection.receive(machine_god_native::acp::protocol::decode_frame(
@@ -70,7 +70,7 @@ fn complete_backpressured_frame_observes_real_pipe_disconnect_before_output_grac
         let alias = read.try_clone().unwrap();
         let mut input = NativeInteractiveInput::new(NativeInteractiveInputSource::PreserveNonblocking(OwnedFd::from(read).into()), CancellationToken::new());
         let completion = input.completion();
-        let (work, received) = tokio::sync::mpsc::channel(1);
+        let (work, pending_output) = tokio::sync::mpsc::channel(1);
         let (acknowledged, acknowledgements) = tokio::sync::mpsc::channel(1);
         let mut output = OutputBridge { work, acknowledgements, tape: None };
         let (signal_sender, receiver) = tokio::sync::mpsc::channel(1);
@@ -92,7 +92,7 @@ fn complete_backpressured_frame_observes_real_pipe_disconnect_before_output_grac
         completion.wait_on_worker().unwrap();
         assert!(completion.is_complete());
         assert_eq!(rustix::fs::fcntl_getfl(&alias).unwrap(), original);
-        (state, connection, output, signals, received, acknowledged, signal_sender)
+        (state, connection, output, signals, pending_output, acknowledged, signal_sender)
     });
     // Real input settlement and virtual output timing use separate clocks.
     // Pausing an already-running timer wheel retains its fractional tick offset.
