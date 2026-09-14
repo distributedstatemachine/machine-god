@@ -81,12 +81,7 @@ pub fn compose_user_context(
     } else {
         0
     };
-    let length = skill
-        .map_or(0, str::len)
-        .checked_add(resource.map_or(0, str::len))
-        .and_then(|length| length.checked_add(separator))
-        .filter(|length| *length <= MAX_SESSION_USER_CONTEXT_BYTES)
-        .ok_or(NativeResourcePromptContextError::ResourceLimit)?;
+    let length = combined_bytes(skill, resource)?;
     let mut text = String::with_capacity(length);
     if let Some(skill) = skill {
         text.push_str(skill);
@@ -101,6 +96,31 @@ pub fn compose_user_context(
         user_message_index,
         text,
     }))
+}
+
+/// Validates combined metadata bounds without copying retained checkpoint text.
+pub(crate) fn validate_combined_context(
+    skill: Option<&str>,
+    resource: Option<&str>,
+) -> Result<(), NativeResourcePromptContextError> {
+    combined_bytes(
+        skill.filter(|text| !text.is_empty()),
+        resource.filter(|text| !text.is_empty()),
+    )
+    .map(|_| ())
+}
+
+fn combined_bytes(
+    skill: Option<&str>,
+    resource: Option<&str>,
+) -> Result<usize, NativeResourcePromptContextError> {
+    let separator = usize::from(skill.is_some() && resource.is_some()) * 2;
+    skill
+        .map_or(0, str::len)
+        .checked_add(resource.map_or(0, str::len))
+        .and_then(|length| length.checked_add(separator))
+        .filter(|length| *length <= MAX_SESSION_USER_CONTEXT_BYTES)
+        .ok_or(NativeResourcePromptContextError::ResourceLimit)
 }
 
 /// Reads only bounded inert continuation bytes for the exact saved checkpoint.

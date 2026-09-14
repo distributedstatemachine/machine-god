@@ -69,6 +69,14 @@ impl fmt::Debug for NativeAcpResourceContextReader {
 }
 
 impl NativeAcpResourceContextReader {
+    #[cfg(test)]
+    pub(crate) fn with_test_before_read(
+        mut self,
+        hook: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        self.before_read = Some(hook);
+        self
+    }
     #[must_use]
     pub const fn new(scope: NativeWorkspaceScopeSnapshot, workers: NativeOwnedWorkerScope) -> Self {
         Self {

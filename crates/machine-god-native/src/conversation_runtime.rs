@@ -30,6 +30,9 @@ use crate::{
     NativePermissionPolicySnapshot, NativeUserConfigError, NativeUserConfigStore,
 };
 
+#[path = "acp/resource_queue.rs"]
+mod resource_queue;
+
 /// Independent native queue bounds; core still applies its configured turn limits.
 pub const MAX_NATIVE_QUEUED_JOBS: usize = 64;
 pub const MAX_NATIVE_QUEUED_PROMPT_BYTES: usize = 256 * 1024;
@@ -61,6 +64,7 @@ pub enum NativeConversationRuntimeError {
     ModelRoute(NativeConversationModelRouteError),
     Conversation(NativeConversationError),
     Skills(crate::skills_queue::NativeSkillsQueueError),
+    Resources(crate::acp::resources::NativeAcpResourceContextError),
 }
 
 impl fmt::Display for NativeConversationRuntimeError {
@@ -77,6 +81,7 @@ impl fmt::Display for NativeConversationRuntimeError {
             Self::ModelRoute(error) => error.fmt(f),
             Self::Conversation(error) => error.fmt(f),
             Self::Skills(error) => error.fmt(f),
+            Self::Resources(error) => error.fmt(f),
         }
     }
 }
@@ -151,6 +156,7 @@ struct QueuedJob {
     bytes: usize,
     checkpoint: Option<u64>,
     skills: Option<crate::skills_queue::QueuedSkills>,
+    resources: Option<resource_queue::QueuedAcpResources>,
 }
 
 type TakenJob = (
@@ -606,7 +612,24 @@ impl NativeConversationRuntime {
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
         let input = PendingInput::new(ConversationInput::Prompt(prompt));
         let bytes = input_bytes(&input)?;
-        self.insert(input, bytes, None, None)
+        self.insert(input, bytes, None, None, None)
+    }
+
+    /// Queues modern ACP input without reading instructions or acquiring new
+    /// workspace authority. Resource materialization uses the exact taken scope.
+    /// # Errors
+    /// Rejects ACP input/aggregate queue bounds and unavailable lifecycle ownership.
+    pub fn enqueue_acp(
+        &self,
+        prompt: crate::acp::session::NativeAcpPrompt,
+        workers: crate::NativeOwnedWorkerScope,
+    ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
+        let (prompt, resources) = resource_queue::QueuedAcpResources::split(prompt, workers);
+        let input = PendingInput::new(ConversationInput::Prompt(prompt));
+        let bytes = input_bytes_with_limit(&input, crate::acp::session::MAX_ACP_PROMPT_BYTES)?
+            .checked_add(resources.retained_bytes())
+            .ok_or(NativeConversationRuntimeError::InputLimit)?;
+        self.insert(input, bytes, None, None, Some(resources))
     }
 
     /// Resolves exact invocation selections from an observed snapshot without I/O.
@@ -639,7 +662,7 @@ impl NativeConversationRuntime {
         let bytes = bytes
             .checked_add(skills.retained_bytes())
             .ok_or(NativeConversationRuntimeError::InputLimit)?;
-        let queued_id = self.insert(input, bytes, None, Some(skills))?;
+        let queued_id = self.insert(input, bytes, None, Some(skills), None)?;
         Ok(crate::skills_queue::NativeQueuedSkillsReceipt {
             queued_id,
             automatic_matching_incomplete,
@@ -662,7 +685,7 @@ impl NativeConversationRuntime {
             .conversation
             .paused_turn()?
             .ok_or(NativeConversationError::NoCheckpoint)?;
-        self.insert(input, bytes, Some(checkpoint.turn_sequence), None)
+        self.insert(input, bytes, Some(checkpoint.turn_sequence), None, None)
     }
 
     fn insert(
@@ -671,6 +694,7 @@ impl NativeConversationRuntime {
         bytes: usize,
         checkpoint: Option<u64>,
         skills: Option<crate::skills_queue::QueuedSkills>,
+        resources: Option<resource_queue::QueuedAcpResources>,
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
         let _permit = self.lifecycle.acquire()?;
         let mut state = self.state.lock().expect("runtime state poisoned");
@@ -695,6 +719,7 @@ impl NativeConversationRuntime {
             bytes,
             checkpoint,
             skills,
+            resources,
         });
         state.next_id = next;
         state.bytes += bytes;
@@ -775,6 +800,32 @@ impl NativeConversationRuntime {
                 cancellation.cancel();
             }
             let mut admission = (lease, policy, workspace);
+            if let Some(resources) = job.resources.take() {
+                let scope =
+                    admission
+                        .2
+                        .clone()
+                        .ok_or(NativeConversationRuntimeError::Resources(
+                            crate::acp::resources::NativeAcpResourceContextError::WorkerUnavailable,
+                        ))?;
+                let Some(ConversationInput::Prompt(prompt)) = job.input.input.take() else {
+                    return Err(NativeConversationError::Engine.into());
+                };
+                let (returned_admission, materialized) = resources
+                    .materialize(prompt, scope, admission, cancellation.clone())
+                    .await
+                    .map_err(NativeConversationRuntimeError::Resources)?;
+                admission = returned_admission;
+                let materialized =
+                    materialized.map_err(NativeConversationRuntimeError::Resources)?;
+                job.input.input = Some(ConversationInput::Prompt(materialized.prompt));
+                job.input.resource_context = materialized.context;
+                if cancellation.is_cancelled() {
+                    return Err(NativeConversationRuntimeError::Resources(
+                        crate::acp::resources::NativeAcpResourceContextError::Cancelled,
+                    ));
+                }
+            }
             if let Some(skills) = job.skills.take() {
                 // Retain the exact policy/workspace observations alongside the
                 // runtime lease even if the admission response is abandoned.
@@ -1252,12 +1303,19 @@ impl Drop for NativeConversationRuntimeTurn {
 }
 
 fn input_bytes(input: &PendingInput) -> Result<usize, NativeConversationRuntimeError> {
+    input_bytes_with_limit(input, MAX_NATIVE_QUEUED_PROMPT_BYTES)
+}
+
+fn input_bytes_with_limit(
+    input: &PendingInput,
+    max_text_bytes: usize,
+) -> Result<usize, NativeConversationRuntimeError> {
     let (text_bytes, options) = match input.input.as_ref().expect("owned queue input") {
         ConversationInput::Prompt(prompt) => (prompt.text.len(), &prompt.options),
         ConversationInput::Continue(options) => (0, options),
     };
     let invalid = NativeConversationRuntimeError::InputLimit;
-    if text_bytes > MAX_NATIVE_QUEUED_PROMPT_BYTES
+    if text_bytes > max_text_bytes
         || options
             .model
             .as_ref()
@@ -1311,6 +1369,10 @@ impl Write for OptionsBytes {
 #[cfg(test)]
 #[path = "skills_queue/runtime_tests.rs"]
 mod skills_queue_tests;
+
+#[cfg(test)]
+#[path = "acp/resource_queue_tests.rs"]
+mod resource_queue_tests;
 
 #[cfg(test)]
 mod selection_tests {

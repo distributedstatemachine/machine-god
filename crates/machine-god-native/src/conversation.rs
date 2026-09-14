@@ -55,6 +55,7 @@ pub enum NativeConversationError {
     WorkspaceContext(crate::NativeWorkspaceContextError),
     InvalidContext(NativeContextError),
     InvalidSkillContext(crate::NativeSkillPromptContextError),
+    InvalidResourceContext(crate::conversation_resource_context::NativeResourcePromptContextError),
     InvalidModelPreferences(NativeModelPreferencesError),
     InvalidMetadata(NativeSessionMetadataError),
     Lifecycle(NativeSessionLifecycleError),
@@ -78,6 +79,7 @@ impl fmt::Display for NativeConversationError {
             Self::WorkspaceContext(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidSkillContext(error) => error.fmt(f),
+            Self::InvalidResourceContext(error) => error.fmt(f),
             Self::InvalidModelPreferences(error) => error.fmt(f),
             Self::InvalidMetadata(error) => error.fmt(f),
             Self::Lifecycle(error) => error.fmt(f),
@@ -717,11 +719,21 @@ impl NativeConversation {
         }
         let record = self.session.record();
         let checkpoint = Checkpoint::decode(&record)?;
-        crate::skills_prompt_context::saved_text(
+        let skill_context = crate::skills_prompt_context::saved_text(
             &record,
             checkpoint.map(|value| (value.turn_sequence, value.first_user_message)),
         )
         .map_err(NativeConversationError::InvalidSkillContext)?;
+        let resource_context = crate::conversation_resource_context::saved_resource_text(
+            &record,
+            checkpoint.map(|value| (value.turn_sequence, value.first_user_message)),
+        )
+        .map_err(NativeConversationError::InvalidResourceContext)?;
+        crate::conversation_resource_context::validate_combined_context(
+            skill_context,
+            resource_context,
+        )
+        .map_err(NativeConversationError::InvalidResourceContext)?;
         Ok(checkpoint.map(|checkpoint| NativePausedTurn {
             turn_sequence: checkpoint.turn_sequence,
             has_uncertain_tool_results: record.messages[checkpoint.first_user_message..]
@@ -1101,6 +1113,45 @@ impl NativeConversation {
                 skill_context.to_value(checkpoint.turn_sequence, checkpoint.first_user_message),
             );
         }
+        let resource_context = match &input.input {
+            Some(ConversationInput::Prompt(_)) => input.resource_context.take(),
+            Some(ConversationInput::Continue(_)) => {
+                crate::conversation_resource_context::saved_resource_text(
+                    &record,
+                    previous.map(|value| (value.turn_sequence, value.first_user_message)),
+                )
+                .map_err(NativeConversationError::InvalidResourceContext)?
+                .map(|text| {
+                    crate::conversation_resource_context::NativeResourcePromptContext::new(
+                        text.to_owned(),
+                    )
+                })
+                .transpose()
+                .map_err(NativeConversationError::InvalidResourceContext)?
+            }
+            None => return Err(NativeConversationError::Engine),
+        };
+        record
+            .metadata
+            .remove(crate::conversation_resource_context::NATIVE_RESOURCE_PROMPT_CONTEXT_KEY);
+        if let Some(resource_context) = &resource_context {
+            record.metadata.insert(
+                crate::conversation_resource_context::NATIVE_RESOURCE_PROMPT_CONTEXT_KEY.to_owned(),
+                resource_context.to_value(checkpoint.turn_sequence, checkpoint.first_user_message),
+            );
+        }
+        let user_context = if let Some(resource_context) = &resource_context {
+            crate::conversation_resource_context::compose_user_context(
+                skill_context
+                    .as_ref()
+                    .map(crate::NativeSkillPromptContext::text),
+                Some(resource_context.text()),
+                checkpoint.first_user_message,
+            )
+            .map_err(NativeConversationError::InvalidResourceContext)?
+        } else {
+            skill_context.map(|context| context.into_user_context(checkpoint.first_user_message))
+        };
         let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidMetadata)?;
         metadata
@@ -1142,8 +1193,7 @@ impl NativeConversation {
             expected_revision: record.revision,
             metadata: Some(record.metadata),
             context,
-            user_context: skill_context
-                .map(|context| context.into_user_context(checkpoint.first_user_message)),
+            user_context,
         };
         let turn = match input.input.take().expect("input is consumed once") {
             ConversationInput::Prompt(prompt) => {
@@ -1402,11 +1452,21 @@ pub(crate) fn validated_history(
     let history = NativeConversationHistory::from_record(record)
         .map_err(NativeConversationError::InvalidHistory)?;
     let checkpoint = Checkpoint::decode(record)?;
-    crate::skills_prompt_context::saved_text(
+    let skill_context = crate::skills_prompt_context::saved_text(
         record,
         checkpoint.map(|value| (value.turn_sequence, value.first_user_message)),
     )
     .map_err(NativeConversationError::InvalidSkillContext)?;
+    let resource_context = crate::conversation_resource_context::saved_resource_text(
+        record,
+        checkpoint.map(|value| (value.turn_sequence, value.first_user_message)),
+    )
+    .map_err(NativeConversationError::InvalidResourceContext)?;
+    crate::conversation_resource_context::validate_combined_context(
+        skill_context,
+        resource_context,
+    )
+    .map_err(NativeConversationError::InvalidResourceContext)?;
     for group in history.groups() {
         if group.state() == NativeHistoryState::Running
             && checkpoint.is_none_or(|checkpoint| {
@@ -1460,6 +1520,8 @@ pub(crate) enum ConversationInput {
 pub(crate) struct PendingInput {
     pub(crate) input: Option<ConversationInput>,
     pub(crate) skill_context: Option<crate::NativeSkillPromptContext>,
+    pub(crate) resource_context:
+        Option<crate::conversation_resource_context::NativeResourcePromptContext>,
 }
 
 impl PendingInput {
@@ -1467,6 +1529,7 @@ impl PendingInput {
         Self {
             input: Some(input),
             skill_context: None,
+            resource_context: None,
         }
     }
 }
@@ -1610,6 +1673,9 @@ impl NativeConversationTurn {
             record
                 .metadata
                 .remove(crate::NATIVE_SKILL_PROMPT_CONTEXT_KEY);
+            record
+                .metadata
+                .remove(crate::conversation_resource_context::NATIVE_RESOURCE_PROMPT_CONTEXT_KEY);
         } else {
             record.metadata.insert(
                 NATIVE_CONVERSATION_CHECKPOINT_KEY.to_owned(),

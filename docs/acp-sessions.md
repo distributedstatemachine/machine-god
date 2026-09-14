@@ -38,7 +38,13 @@ embedded text remains intact even when its URI is ineligible.
 The native context reader receives an explicit retained workspace scope and
 owned worker scope. Its future is inert before polling and checks cancellation
 before routing, opens and reads. Materialization retains the exact FIFO admission
-lease on the owned worker when the lease-bearing API is used. A target outside
+lease on the owned worker. The native ACP enqueue path charges text, inference
+options, resource paths and omission sources against the shared bounded queue,
+with its 1 MiB ACP text limit; ordinary CLI prompts keep their native limit.
+No instructions are read while queued. The first-polled take selects the exact
+workspace, permission and model observations, then materializes outside queue
+locks while retaining that admission lease through cancellation or abandonment.
+A target outside
 the admitted active roots or inside excluded state is omitted. Descriptor-relative
 opens reject symlinks and nonregular targets; target-file bytes are not read into
 the prompt. The reader gathers only `AGENTS.md` in the primary root and the
@@ -61,6 +67,12 @@ rejects foreign checkpoints, oversized text and malformed versions without
 reading resources again. Host integration composes this provider-only data with
 other native user context under the shared 65,536-byte core limit; it never
 grants tools or permission provenance from instruction text.
+Only provider requests receive the materialized instruction blocks. Canonical
+user history and permission-review provenance retain the original prompt text.
+Cancelled/failed turns keep exact inert context for continuation; successful
+finalization and fresh prompts clear the prior context. Resource and skill
+metadata identities stay separate, and their combined provider budget is
+validated both at turn admission and when inspecting saved checkpoints.
 
 ## Session configuration
 
