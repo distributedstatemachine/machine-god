@@ -36,7 +36,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Instant, Sleep};
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
 mod deferred;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod deferred_tests;
@@ -603,7 +606,10 @@ impl WebFetchTool {
     /// later hostname fetch shares its retained result, including failure.
     /// The invocation deadline covers waiting, while a started capture remains
     /// owned by the host through actual completion even if all waiters leave.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos")
+    ))]
     pub(crate) fn with_owned_workers(
         workers: crate::NativeOwnedWorkerScope,
     ) -> Result<Self, WebFetchConfigError> {
@@ -1181,7 +1187,10 @@ struct NativeWebFetchTransport {
 
 enum NativeNameserver {
     Captured(Result<SocketAddr, WebFetchTransportError>),
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(all(
+        any(test, feature = "ai-gateway-http"),
+        any(target_os = "linux", target_os = "macos")
+    ))]
     Deferred(deferred::DeferredNameserver),
 }
 
@@ -1189,7 +1198,10 @@ impl NativeNameserver {
     async fn snapshot(&self) -> Result<SocketAddr, WebFetchTransportError> {
         match self {
             Self::Captured(result) => *result,
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(all(
+                any(test, feature = "ai-gateway-http"),
+                any(target_os = "linux", target_os = "macos")
+            ))]
             Self::Deferred(resolver) => resolver.snapshot().await,
         }
     }
@@ -1222,7 +1234,10 @@ impl NativeWebFetchTransport {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(all(
+        any(test, feature = "ai-gateway-http"),
+        any(target_os = "linux", target_os = "macos")
+    ))]
     fn with_owned_workers_and_capture(
         connect_timeout: Duration,
         tls_config: RustlsClientConfig,
