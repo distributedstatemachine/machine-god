@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `integrate full ACP feature, focused checks, then complete local feature gate`
+- Next gate: `replacement focused checks, then complete local feature gate`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered features.
@@ -435,9 +435,9 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: native/CLI focused tests and all-feature lint pass before the
-default-feature boundary correction. That correction is integrated; remaining
-work is fresh release helpers, replacement focused checks and the full gates below.
+not delivered: native/CLI focused tests precede the integrated default-feature
+and portable completion boundary corrections. Corrected portability checks pass;
+fresh release helpers, replacement focused checks and the full gates remain.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.
