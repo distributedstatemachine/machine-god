@@ -444,7 +444,12 @@ sequences. It closes an in-session picker without changing the active session;
 at startup it explicitly requests a fresh session. Ctrl-C retains its ordinary
 clear/exit-arm behavior, and empty Ctrl-D exits without creating a session.
 
-Only an exact acknowledged picker frame can select a row. Input already
+Only an exact acknowledged picker frame can select a row. Both startup and
+in-session pickers retain at most one early Enter for an already-rendered
+selectable frame until its matching successful flush acknowledgement. Input
+received before a selectable frame exists cannot select a later frame. Changes
+to the query, selection, scope or presentation, cancellation and shutdown revoke
+the pending intent; a late acknowledgement cannot revive it. Input already
 received keeps its original chunk identity across opening, query changes,
 scope changes and startup handoff. Selection carries the observed session ID,
 incarnation and revision; it cannot silently retarget a replaced or revised

@@ -60,6 +60,9 @@ impl Driver {
         if !self.picker_open() {
             return false;
         }
+        if !matches!(event, ComposerEvent::Submit(_)) {
+            self.revoke_pending_picker_selection();
+        }
         if matches!(
             event,
             ComposerEvent::ExitRequested | ComposerEvent::CancelRequested
@@ -73,7 +76,7 @@ impl Driver {
         let Some((current, _)) = picker.identity() else {
             return false;
         };
-        let Some((generation, revision)) = binding.picker_view() else {
+        let Some((generation, _)) = binding.picker_view() else {
             let _ = self.input.restore_picker_query(picker.current_query());
             return true;
         };
@@ -83,31 +86,7 @@ impl Driver {
         }
         match event {
             ComposerEvent::Submit(_) => {
-                let Some(revision) = revision else {
-                    return true;
-                };
-                let status = self.owner.runtime().status();
-                if status.active || status.queued_jobs != 0 {
-                    picker
-                        .selection_failed("Finish the active response before selecting a session");
-                    return true;
-                }
-                if let Selection::Session(target) = picker.select(generation, revision) {
-                    match self.owner.request_transition(
-                        NativeInteractiveTransition::Resume(NativeResumeTarget::Observed(target)),
-                        now_ms,
-                    ) {
-                        Ok(receipt) => {
-                            self.picker_request = Some(receipt.id);
-                            self.inbox.deactivate();
-                            self.scope_active = false;
-                            self.modal.take();
-                            self.input.reset_raw_draft();
-                            self.reset_skills();
-                        }
-                        Err(_) => picker.selection_failed("Session transition is busy; try again"),
-                    }
-                }
+                self.select_picker(binding, now_ms);
             }
             ComposerEvent::Changed => {
                 if let Some((query, _)) = self.input.raw_draft() {
@@ -124,6 +103,47 @@ impl Driver {
             _ => {}
         }
         true
+    }
+
+    fn select_picker(&mut self, binding: &InputBinding, now_ms: i64) {
+        if self.shutting_down
+            || !self.scope_active
+            || self.modal.is_some()
+            || self.saved_rule.is_some()
+            || self.picker_request.is_some()
+        {
+            self.revoke_pending_picker_selection();
+            return;
+        }
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        let status = self.owner.runtime().status();
+        if status.active || status.queued_jobs != 0 {
+            picker.selection_failed("Finish the active response before selecting a session");
+            return;
+        }
+        if let Selection::Session(target) = picker.select_input(binding) {
+            match self.owner.request_transition(
+                NativeInteractiveTransition::Resume(NativeResumeTarget::Observed(target)),
+                now_ms,
+            ) {
+                Ok(receipt) => {
+                    self.picker_request = Some(receipt.id);
+                    self.inbox.deactivate();
+                    self.scope_active = false;
+                    self.input.reset_raw_draft();
+                    self.reset_skills();
+                }
+                Err(_) => picker.selection_failed("Session transition is busy; try again"),
+            }
+        }
+    }
+
+    pub(super) fn revoke_pending_picker_selection(&mut self) {
+        if let Some(picker) = &mut self.picker {
+            picker.revoke_pending_selection();
+        }
     }
 
     pub(super) fn picker_outcome(&mut self, outcome: &NativeInteractiveOutcome) {
@@ -168,6 +188,14 @@ impl Driver {
             && let Some(picker) = &mut self.picker
         {
             picker.acknowledge(*generation, *revision);
+            if let Some(selection) = picker.take_acknowledged_selection() {
+                if let Ok(now_ms) = super::wall_clock_ms() {
+                    self.select_picker(&selection, now_ms);
+                } else {
+                    self.native_failed = true;
+                    self.shutdown();
+                }
+            }
         }
     }
 

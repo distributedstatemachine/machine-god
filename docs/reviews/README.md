@@ -123,3 +123,4 @@ product behavior; they are not penetration tests.
 - [subagent](m05-subagent-review-01.md)
 - [background CLI](m05-background-cli-review-01.md)
 - [background supervisor](m05-background-supervisor-review-01.md)
+- [Modern ACP CLI](m05-acp-cli-review-01.md)

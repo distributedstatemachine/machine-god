@@ -196,3 +196,74 @@ fn menu_labels_cannot_inject_controls_or_wrap_at_small_sizes() {
     assert!(super::super::composer_view::label("abc", 1, 512).is_empty());
     assert!(super::super::composer_view::label(&"x".repeat(1000), 1000, 512).len() <= 512);
 }
+
+#[test]
+fn early_picker_intent_requires_rendered_selection_and_its_exact_acknowledgement() {
+    let runtime = runtime();
+    let fixture = support::Fixture::new();
+    runtime.block_on(async {
+        save(&fixture, "target", "Target", 30, &fixture.workspace).await;
+        let mut picker = Picker::new(fixture.host.session_catalog_reader().unwrap(), None, 24);
+        picker.open(NativeSessionCatalogScope::CurrentWorkspace);
+        let before_render = picker.input_binding().unwrap();
+        picker.render(80, 24, 100).unwrap();
+        let loading = picker.input_binding().unwrap();
+        ready(&mut picker).await;
+        let before_selectable_render = picker.input_binding().unwrap();
+        let frame = picker.render(80, 24, 100).unwrap();
+        for binding in [before_render, loading, before_selectable_render] {
+            assert!(matches!(picker.select_input(&binding), Selection::None));
+            assert!(!picker.has_pending_selection());
+        }
+        let rendered = picker.input_binding().unwrap();
+        for _ in 0..3 {
+            assert!(matches!(picker.select_input(&rendered), Selection::None));
+            assert!(picker.has_pending_selection());
+        }
+        picker.acknowledge(frame.generation, frame.revision + 1);
+        assert!(picker.take_acknowledged_selection().is_none());
+        assert!(
+            picker.has_pending_selection(),
+            "unrelated ACK must not consume intent"
+        );
+        picker.acknowledge(frame.generation, frame.revision);
+        let binding = picker.take_acknowledged_selection().unwrap();
+        assert!(!picker.has_pending_selection());
+        assert!(matches!(
+            picker.select_input(&binding),
+            Selection::Session(_)
+        ));
+        assert!(matches!(picker.select_input(&rendered), Selection::None));
+        assert!(picker.take_acknowledged_selection().is_none());
+    });
+    fixture.finish();
+}
+
+#[test]
+fn hidden_and_replaced_picker_views_never_inherit_pending_selection() {
+    let runtime = runtime();
+    let fixture = support::Fixture::new();
+    runtime.block_on(async {
+        save(&fixture, "target", "Target", 30, &fixture.workspace).await;
+        let mut picker = Picker::new(fixture.host.session_catalog_reader().unwrap(), None, 24);
+        picker.open(NativeSessionCatalogScope::CurrentWorkspace);
+        ready(&mut picker).await;
+        picker.render(1, 24, 100).unwrap();
+        let hidden = picker.input_binding().unwrap();
+        assert!(matches!(picker.select_input(&hidden), Selection::None));
+        assert!(!picker.has_pending_selection());
+        picker.redraw();
+        let frame = picker.render(80, 24, 100).unwrap();
+        let binding = picker.input_binding().unwrap();
+        assert!(matches!(picker.select_input(&binding), Selection::None));
+        assert!(picker.has_pending_selection());
+        picker.resize(12);
+        picker.acknowledge(frame.generation, frame.revision);
+        assert!(picker.take_acknowledged_selection().is_none());
+        assert!(matches!(picker.select_input(&binding), Selection::None));
+        let frame = picker.render(80, 12, 100).unwrap();
+        picker.acknowledge(frame.generation, frame.revision);
+        assert!(matches!(picker.select_input(&binding), Selection::None));
+    });
+    fixture.finish();
+}

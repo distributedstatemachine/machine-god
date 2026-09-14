@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `validate exact-frame picker acknowledgement fix, then replacement local gate`
+- Next gate: `validate session-picker acknowledgement and gate fixes, then complete replacement gate`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered features.
@@ -435,10 +435,10 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: composed ACP and credential regressions passed. The replacement
-gate exposed a skills-picker flush-ack race; exact-frame pending selection and
-regressions are integrated, pending validation. Prior cold probes: parent 586s,
-candidate over 600s; the unchanged full Python gate will run on Linux as in CI.
+not delivered: ACP and skills acknowledgement checks passed on macOS and focused
+Linux runs. Full Linux CLI stopped on an intermittent MCP PTY output deadline;
+an exact-frame session-picker fix is integrated; attribution of the original
+[failure](reviews/m05-acp-cli-review-01.md) remains unproven. Linux's cold release probe passed.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.
@@ -481,7 +481,7 @@ toolchain with `rustup`; no floating-channel substitution satisfies the gate.
 
 Run affected tests first, with the same prerequisites. From the repository root,
 use this canonical full-gate recipe in one shell. Both Linux and macOS runtime
-tests require `/bin/bash`, `/bin/zsh` and tmux; install them before starting.
+tests require `/bin/bash`, `/bin/zsh`, tmux and Git supporting `--no-lazy-fetch`.
 Containerized runs need an unprivileged test UID without DAC-bypass capabilities,
 a passwd entry, private home and valid login shell before their first test.
 They also need a reaping init (for example Docker `--init`) so adopted child

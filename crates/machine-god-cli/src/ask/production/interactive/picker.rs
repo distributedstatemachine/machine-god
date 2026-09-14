@@ -105,6 +105,8 @@ struct View {
     generation: u64,
     revision: u64,
     acknowledged: Option<u64>,
+    rendered_selectable: Option<u64>,
+    pending_selection: Option<u64>,
     scope: NativeSessionCatalogScope,
     query: String,
     page: Page,
@@ -123,6 +125,8 @@ impl View {
             .checked_add(1)
             .expect("bounded picker view revisions");
         self.acknowledged = None;
+        self.rendered_selectable = None;
+        self.pending_selection = None;
         self.dirty = true;
     }
 
@@ -206,6 +210,8 @@ impl Picker {
             generation: self.generation,
             revision: 0,
             acknowledged: None,
+            rendered_selectable: None,
+            pending_selection: None,
             scope,
             query,
             page: self.cache[scope_index(scope)].clone().unwrap_or_default(),
@@ -326,6 +332,7 @@ impl Picker {
             } else {
                 super::InputBinding::AwaitingPicker {
                     generation: view.generation,
+                    pending_revision: view.rendered_selectable,
                 }
             }
         })
@@ -352,6 +359,71 @@ impl Picker {
         } else {
             Selection::None
         }
+    }
+
+    /// A rendered frame is not selection authority until its flush succeeds.
+    /// Retain at most one intent; bytes captured before rendering cannot borrow
+    /// a later frame, even if they are decoded after that frame is acknowledged.
+    pub fn select_input(&mut self, binding: &super::InputBinding) -> Selection {
+        match binding {
+            super::InputBinding::Picker {
+                generation,
+                revision,
+            } => self.select(*generation, *revision),
+            super::InputBinding::AwaitingPicker {
+                generation,
+                pending_revision: Some(revision),
+            } => {
+                let Some(view) = &mut self.view else {
+                    return Selection::None;
+                };
+                if (view.generation, view.revision) != (*generation, *revision)
+                    || view.rendered_selectable != Some(*revision)
+                    || view.selecting
+                {
+                    return Selection::None;
+                }
+                if view.acknowledged == Some(*revision) {
+                    self.select(*generation, *revision)
+                } else {
+                    view.pending_selection = Some(*revision);
+                    Selection::None
+                }
+            }
+            _ => Selection::None,
+        }
+    }
+
+    pub fn take_acknowledged_selection(&mut self) -> Option<super::InputBinding> {
+        let view = self.view.as_mut()?;
+        let revision = view.pending_selection?;
+        if view.revision == revision
+            && view.acknowledged == Some(revision)
+            && view.rendered_selectable == Some(revision)
+        {
+            view.pending_selection = None;
+            Some(super::InputBinding::Picker {
+                generation: view.generation,
+                revision,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn revoke_pending_selection(&mut self) {
+        if let Some(view) = &mut self.view
+            && (view.pending_selection.is_some() || view.rendered_selectable.is_some())
+        {
+            view.changed();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn has_pending_selection(&self) -> bool {
+        self.view
+            .as_ref()
+            .is_some_and(|view| view.pending_selection.is_some())
     }
 
     pub fn selection_failed(&mut self, reason: &'static str) {

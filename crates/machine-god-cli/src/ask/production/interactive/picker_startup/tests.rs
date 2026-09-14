@@ -8,6 +8,8 @@ use machine_god_native::{
 };
 use std::{fs::File, future::poll_fn, io::Write as _, os::fd::OwnedFd};
 
+mod acknowledgement;
+
 struct Harness {
     startup: Startup,
     inbox: NativeInteractivePromptInbox,

@@ -68,6 +68,9 @@ impl Picker {
             labels.drain(..2);
         }
         labels.truncate(usize::from(rows).max(1));
+        view.rendered_selectable =
+            (!view.loading && !view.selecting && columns > 1 && view.selected < items)
+                .then_some(view.revision);
         let mut bytes = Vec::new();
         for (index, label) in labels.iter().enumerate() {
             if index != 0 {

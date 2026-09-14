@@ -243,6 +243,7 @@ impl Driver {
         // authority before the next native poll, never an already confirmed save.
         self.inbox.deactivate();
         self.scope_active = false;
+        self.revoke_pending_picker_selection();
         self.modal.take();
         self.input.reset_raw_draft();
         self.reset_skills();

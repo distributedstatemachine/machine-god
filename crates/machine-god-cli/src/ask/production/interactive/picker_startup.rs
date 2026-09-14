@@ -190,6 +190,7 @@ impl Startup {
             .input_binding()
             .unwrap_or(InputBinding::AwaitingPrompt);
         let tape = &mut self.output.tape;
+        let mut received_nonselection = false;
         let polled = self.input.poll_event_recorded(
             cx,
             binding,
@@ -199,11 +200,15 @@ impl Startup {
                 ..ComposerContext::default()
             },
             |bytes| {
+                received_nonselection = bytes.iter().any(|byte| *byte != b'\r');
                 if let Some(tape) = tape {
                     tape.stdin(bytes);
                 }
             },
         );
+        if received_nonselection {
+            self.picker.revoke_pending_selection();
+        }
         if self.input.take_cancel_disarm() {
             self.cancel_armed = None;
         }
@@ -221,6 +226,7 @@ impl Startup {
         match event {
             ComposerEvent::ExitRequested => self.stop(AskCommandOutcome::Completed),
             ComposerEvent::CancelRequested => {
+                self.picker.revoke_pending_selection();
                 let now = Instant::now();
                 if self
                     .cancel_armed
@@ -238,7 +244,10 @@ impl Startup {
     }
 
     fn picker_event(&mut self, event: &ComposerEvent, binding: &InputBinding) {
-        let Some((generation, revision)) = binding.picker_view() else {
+        if !matches!(event, ComposerEvent::Submit(_)) {
+            self.picker.revoke_pending_selection();
+        }
+        let Some((generation, _)) = binding.picker_view() else {
             let _ = self.input.restore_picker_query(self.picker.current_query());
             return;
         };
@@ -252,8 +261,7 @@ impl Startup {
         }
         match event {
             ComposerEvent::Submit(_) => {
-                let Some(revision) = revision else { return };
-                if let Selection::Session(target) = self.picker.select(generation, revision) {
+                if let Selection::Session(target) = self.picker.select_input(binding) {
                     self.open(NativeInteractiveInitialSession::Resume(
                         NativeResumeTarget::Observed(target),
                     ));
@@ -291,6 +299,13 @@ impl Startup {
                     }) = self.in_flight.take()
                     {
                         self.picker.acknowledge(generation, revision);
+                        if self.stopped.is_none()
+                            && self.pending.is_none()
+                            && self.owner.is_none()
+                            && let Some(binding) = self.picker.take_acknowledged_selection()
+                        {
+                            self.picker_event(&ComposerEvent::Submit(String::new()), &binding);
+                        }
                     }
                 }
                 Poll::Ready(Some(_) | None) => {

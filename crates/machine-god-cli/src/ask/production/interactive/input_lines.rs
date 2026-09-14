@@ -28,6 +28,8 @@ pub(super) enum InputBinding {
     SavedRule(u64),
     AwaitingPicker {
         generation: u64,
+        /// Only a selectable frame already rendered for this exact view.
+        pending_revision: Option<u64>,
     },
     Picker {
         generation: u64,
@@ -64,7 +66,7 @@ impl InputBinding {
                 generation,
                 revision,
             } => Some((*generation, Some(*revision))),
-            Self::AwaitingPicker { generation } => Some((*generation, None)),
+            Self::AwaitingPicker { generation, .. } => Some((*generation, None)),
             _ => None,
         }
     }
@@ -742,6 +744,29 @@ mod tests {
     }
 
     #[test]
+    fn pending_picker_chunks_retain_the_rendered_revision_after_acknowledgement() {
+        for pending_revision in [None, Some(1)] {
+            let (mut input, mut write) = raw_source();
+            let pending = InputBinding::AwaitingPicker {
+                generation: 7,
+                pending_revision,
+            };
+            runtime().block_on(async {
+                write.write_all(b"\r\r").unwrap();
+                let first = event(&mut input, pending.clone(), false).await;
+                assert!(matches!(first.0, ComposerEvent::Submit(_)));
+                assert!(first.1 == pending);
+                let retained = event(&mut input, picker(1), false).await;
+                assert!(matches!(retained.0, ComposerEvent::Submit(_)));
+                assert!(retained.1 == pending);
+                write.write_all(b"\r").unwrap();
+                assert!(event(&mut input, picker(2), false).await.1 == picker(2));
+            });
+            finish(input);
+        }
+    }
+
+    #[test]
     fn picker_split_sequences_and_paste_keep_first_received_view() {
         for (first, second, expected) in [
             (b"\x1b[".as_slice(), b"1;5A".as_slice(), "PickerPrevious"),
@@ -825,7 +850,7 @@ mod tests {
                     binding.clone(),
                     ComposerContext {
                         active_response: active,
-                        session_picker: matches!(binding, InputBinding::Picker { .. }),
+                        session_picker: binding.picker_view().is_some(),
                         ..ComposerContext::default()
                     },
                 )

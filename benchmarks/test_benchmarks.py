@@ -4360,7 +4360,15 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
             def hash_then_change(source: object, expected_bytes: int) -> str:
                 checksum = original_hash(source, expected_bytes)
+                before = executable.stat()
                 executable.write_bytes(b"#!/bin/zsh")
+                # Equal-length writes can share a filesystem timestamp tick.
+                # Exercise the changed-metadata check deterministically without
+                # relying on scheduler delay or timestamp resolution.
+                os.utime(
+                    executable,
+                    ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000),
+                )
                 return checksum
 
             with (

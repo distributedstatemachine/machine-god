@@ -214,12 +214,14 @@ impl Terminal {
             }
             assert!(
                 self.child.poll().is_none(),
-                "CLI exited before expected output: {}",
+                "CLI exited before expected output {:?}: {}",
+                String::from_utf8_lossy(bytes),
                 String::from_utf8_lossy(&self.output)
             );
             assert!(
                 Instant::now() < deadline,
-                "CLI output deadline: {}",
+                "CLI output deadline waiting for {:?}: {}",
+                String::from_utf8_lossy(bytes),
                 String::from_utf8_lossy(&self.output)
             );
             std::thread::sleep(Duration::from_millis(2));

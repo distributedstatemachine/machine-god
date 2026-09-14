@@ -214,12 +214,14 @@ impl Driver {
                     .is_none_or(|modal| modal.view.token() != view.token())
                 {
                     self.reset_skills();
+                    self.revoke_pending_picker_selection();
                     self.modal = Some(Modal::new(view));
                 }
             }
             Poll::Pending => {
                 if self.modal.take().is_some() {
                     self.reset_skills();
+                    self.revoke_pending_picker_selection();
                 }
             }
             Poll::Ready(None) => {
@@ -343,17 +345,21 @@ impl Driver {
     }
 
     fn poll_raw_input(&mut self, cx: &mut Context<'_>, binding: InputBinding, now_ms: i64) {
-        use super::composer::ComposerEvent;
+        if binding.picker_view().is_none() {
+            self.revoke_pending_picker_selection();
+        }
         let context = self.raw_input_context();
         let tape = &mut self.output.tape;
         let skills = &mut self.skills;
         let mut edit_failed = false;
         let mut received_nonselection = false;
+        let mut received_non_picker_selection = false;
         let polled = self.input.poll_event_observed(
             cx,
             binding,
             context,
             |bytes| {
+                received_non_picker_selection = bytes.iter().any(|byte| *byte != b'\r');
                 received_nonselection = bytes
                     .iter()
                     .any(|byte| !matches!(byte, b'\t' | b'\r' | b'\n'));
@@ -369,6 +375,9 @@ impl Driver {
                 }
             },
         );
+        if received_non_picker_selection {
+            self.revoke_pending_picker_selection();
+        }
         if received_nonselection {
             // Revoke even while an edit/escape is incomplete. The input lane
             // continues under blocked stdout; a later ACK cannot erase it.
@@ -398,6 +407,15 @@ impl Driver {
             }
             Poll::Ready(Some(Ok(event))) => event,
         };
+        self.raw_input_event(event, now_ms);
+    }
+
+    fn raw_input_event(
+        &mut self,
+        event: (super::composer::ComposerEvent, InputBinding),
+        now_ms: i64,
+    ) {
+        use super::composer::ComposerEvent;
         let frontend = self.frontend.as_mut().expect("raw frontend");
         frontend.dirty = true;
         if !matches!(event.0, ComposerEvent::CancelRequested) {

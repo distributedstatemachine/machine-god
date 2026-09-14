@@ -20,6 +20,9 @@ mod mcp_eof;
 #[path = "driver_tests/skills_ack.rs"]
 mod skills_ack;
 
+#[path = "driver_tests/picker_ack.rs"]
+mod picker_ack;
+
 struct Harness {
     driver: Driver,
     input_writer: std::io::PipeWriter,
