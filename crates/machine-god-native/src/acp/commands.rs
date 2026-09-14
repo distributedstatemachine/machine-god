@@ -216,11 +216,11 @@ impl NativeAcpCommandOwner {
         if pending.principal != session.principal() {
             return Err(Error::WrongSession);
         }
-        session
+        let accepted = session
             .request_cancel(&session.id())
             .map_err(|_| Error::Unavailable)?;
-        pending.cancellation_requested = true;
-        Ok(true)
+        pending.cancellation_requested |= accepted;
+        Ok(accepted)
     }
     /// Consumes only an exact ID+incarnation receipt; mismatches leave this
     /// pending command untouched. Native failures/partial effects are retained.

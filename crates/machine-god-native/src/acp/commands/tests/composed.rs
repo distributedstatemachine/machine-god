@@ -116,6 +116,7 @@ fn real_control_receipts_cancellation_and_foreign_receipts_keep_exact_custody() 
         assert!(session.take_model_save_outcome().is_none());
         assert!(owner.cancel(session).unwrap());
         let mut received = Some(receipt(&mut selection).await);
+        assert!(!owner.cancel(selection.current_mut().unwrap()).unwrap());
         let old_id = received.as_ref().unwrap().id;
         owner.complete(&mut received).unwrap();
         assert!(received.is_none());
