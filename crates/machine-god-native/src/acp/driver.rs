@@ -142,12 +142,13 @@ impl NativeAcpConnection {
                 }
             }
             AcpMessage::Notification { method, params } => {
-                if method == "session/cancel" && self.initialized && !self.shutting_down {
-                    if let Ok(request::Request::Cancel { session }) =
+                if method == "session/cancel"
+                    && self.initialized
+                    && !self.shutting_down
+                    && let Ok(request::Request::Cancel { session }) =
                         request::decode(&method, params)
-                    {
-                        let _ = self.selection.request_cancel(&session);
-                    }
+                {
+                    let _ = self.selection.request_cancel(&session);
                 }
             }
             AcpMessage::Request { id, method, params } => {
@@ -245,12 +246,11 @@ impl NativeAcpConnection {
             self.wake = Some(cx.waker().clone());
         }
         let progress = self.selection.poll_progress(cx, now_ms);
-        if let Some(Control::List { future, result, .. }) = &mut self.control {
-            if result.is_none() {
-                if let Poll::Ready(value) = future.as_mut().poll(cx) {
-                    *result = Some(value);
-                }
-            }
+        if let Some(Control::List { future, result, .. }) = &mut self.control
+            && result.is_none()
+            && let Poll::Ready(value) = future.as_mut().poll(cx)
+        {
+            *result = Some(value);
         }
         if self.shutting_down {
             self.drain_shutdown(cx);

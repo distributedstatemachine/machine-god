@@ -61,13 +61,13 @@ impl NativeAcpConnection {
         }
         if let Some(outcome) = self.selection.take_turn_outcome() {
             if let Some(prompt) = self.prompt.take() {
-                let result = if prompt.owner != outcome.owner {
-                    Err(rpc_error(-32603, "ACP turn ownership mismatch"))
-                } else {
+                let result = if prompt.owner == outcome.owner {
                     match outcome.outcome {
                         Ok(event) => stop_result(&event.payload),
                         Err(_) => Err(rpc_error(-32603, "ACP native turn failed")),
                     }
+                } else {
+                    Err(rpc_error(-32603, "ACP turn ownership mismatch"))
                 };
                 return self.encode(AcpMessage::Response {
                     id: Some(prompt.id),
@@ -101,12 +101,15 @@ impl NativeAcpConnection {
     }
 
     fn encode(&mut self, message: AcpMessage) -> Poll<Option<Vec<u8>>> {
-        match protocol::encode_frame(&message) {
-            Ok(frame) => Poll::Ready(Some(frame)),
-            Err(_) => {
-                self.fail(NativeAcpConnectionError::Protocol);
-                Poll::Pending
-            }
+        let encoded = protocol::encode_frame(&message);
+        // Release the projected tree before shutdown effects or caller output
+        // retention; this lane consumes, rather than queues, the message.
+        drop(message);
+        if let Ok(frame) = encoded {
+            Poll::Ready(Some(frame))
+        } else {
+            self.fail(NativeAcpConnectionError::Protocol);
+            Poll::Pending
         }
     }
 
@@ -183,7 +186,7 @@ impl NativeAcpConnection {
                 self.respond(Some(id), Ok(json!({})));
             }
             NativeAcpSelectionOutcome::Rejected { error, .. } => {
-                self.respond(Some(id), Err(session_error(&error)))
+                self.respond(Some(id), Err(session_error(&error)));
             }
             NativeAcpSelectionOutcome::Indeterminate { error, .. } => {
                 self.respond(Some(id), Err(session_error(&error)));
