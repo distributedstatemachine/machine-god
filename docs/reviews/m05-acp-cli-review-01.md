@@ -152,3 +152,21 @@ the observation, grants credit, consumes bytes or changes descriptor flags.
 Existing direct/helper regressions retain their original deadlines and actual
 worker cleanup assertions. This is a platform correctness fix, not a legacy
 protocol path; this rejected candidate was not pushed.
+
+Candidate `70b8fce3` passed the complete macOS gate, including all focused checks,
+3,544 native unit tests, integration suites, doctests and fresh-release smoke.
+Linux's focused checks also passed. Its full workspace run stopped in
+`bounded_transport_times_out_while_queued_without_starting_an_effect`: both calls
+timed out, but the fixture observed two underlying transport constructions rather
+than one. The fixture and production web-fetch code are unchanged from the feature
+base. Each first poll establishes its own absolute deadline, so a later-started
+queued call may legitimately acquire capacity before its own deadline after the
+first call expires. A real-time join does not establish simultaneous deadlines.
+Independent read-only inspection confirmed deadline checks before transport
+construction and retained capacity through completion; it found no production
+deadline-order defect. The fixture now uses a paused clock and tests both expiry
+polling orders with equal start times. A second case explicitly staggers starts
+and proves admission within the remaining original budget. Both keep the 30 ms
+timeout and assert exact clock, construction, active, peak and drop counts.
+No production deadline or implementation changed. This interrupted Linux gate
+is not acceptance; no feature push or new formal review occurred for this candidate.

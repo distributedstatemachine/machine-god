@@ -190,6 +190,14 @@ fn runtime() -> tokio::runtime::Runtime {
         .expect("build deterministic test runtime")
 }
 
+fn paused_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .expect("build paused test runtime")
+}
+
 fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
     let waker = futures_util::task::noop_waker();
     future.poll(&mut Context::from_waker(&waker))
@@ -482,21 +490,73 @@ fn bounded_transport_queued_calls_share_one_non_resetting_deadline() {
 
 #[test]
 fn bounded_transport_times_out_while_queued_without_starting_an_effect() {
+    let request_timeout = Duration::from_millis(30);
+    for active_first in [false, true] {
+        let limits = WebFetchLimits::new(Duration::from_millis(1), request_timeout, 1).unwrap();
+        let state = BoundedState::scripted([BoundedMode::Pending, BoundedMode::Pending]);
+        let tool = bounded_tool(&state, limits);
+
+        paused_runtime().block_on(async {
+            let started = tokio::time::Instant::now();
+            let mut first = Box::pin(execute_bounded(&tool, CancellationToken::new()));
+            let mut queued = Box::pin(execute_bounded(&tool, CancellationToken::new()));
+            // First polls share one instant; real-time join does not promise this.
+            assert!(poll_once(first.as_mut()).is_pending());
+            assert!(poll_once(queued.as_mut()).is_pending());
+            assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+            tokio::time::advance(request_timeout).await;
+            if active_first {
+                assert_error_code(first.as_mut().await, "web_fetch_timeout");
+                assert_eq!(state.active.load(Ordering::SeqCst), 0);
+            }
+            // Expiry wins both while capacity is held and after its release.
+            assert_error_code(queued.await, "web_fetch_timeout");
+            assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+            if !active_first {
+                assert_eq!(state.active.load(Ordering::SeqCst), 1);
+                assert_error_code(first.await, "web_fetch_timeout");
+            }
+            assert_eq!(started.elapsed(), request_timeout);
+        });
+        assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.active.load(Ordering::SeqCst), 0);
+        assert_eq!(state.peak_active.load(Ordering::SeqCst), 1);
+        assert_eq!(state.drops.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn bounded_transport_may_admit_a_queued_call_before_its_later_deadline() {
+    let half_timeout = Duration::from_millis(15);
     let limits =
         WebFetchLimits::new(Duration::from_millis(1), Duration::from_millis(30), 1).unwrap();
     let state = BoundedState::scripted([BoundedMode::Pending, BoundedMode::Pending]);
     let tool = bounded_tool(&state, limits);
 
-    runtime().block_on(async {
-        let first = execute_bounded(&tool, CancellationToken::new());
-        let queued = execute_bounded(&tool, CancellationToken::new());
-        let (first_result, queued_result) = futures_util::future::join(first, queued).await;
-        assert_error_code(first_result, "web_fetch_timeout");
-        assert_error_code(queued_result, "web_fetch_timeout");
+    paused_runtime().block_on(async {
+        let started = tokio::time::Instant::now();
+        let mut first = Box::pin(execute_bounded(&tool, CancellationToken::new()));
+        assert!(poll_once(first.as_mut()).is_pending());
+        tokio::time::advance(half_timeout).await;
+        let mut queued = Box::pin(execute_bounded(&tool, CancellationToken::new()));
+        assert!(poll_once(queued.as_mut()).is_pending());
+        assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+        tokio::time::advance(half_timeout).await;
+        assert_error_code(first.await, "web_fetch_timeout");
+        assert_eq!(state.active.load(Ordering::SeqCst), 0);
+
+        // The queued request still has half its original budget, not a reset one.
+        assert!(poll_once(queued.as_mut()).is_pending());
+        assert_eq!(state.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(state.active.load(Ordering::SeqCst), 1);
+        tokio::time::advance(half_timeout).await;
+        assert_error_code(queued.await, "web_fetch_timeout");
+        assert_eq!(started.elapsed(), Duration::from_millis(45));
     });
-    assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.calls.load(Ordering::SeqCst), 2);
     assert_eq!(state.active.load(Ordering::SeqCst), 0);
-    assert_eq!(state.drops.load(Ordering::SeqCst), 1);
+    assert_eq!(state.peak_active.load(Ordering::SeqCst), 1);
+    assert_eq!(state.drops.load(Ordering::SeqCst), 2);
 }
 
 #[test]
