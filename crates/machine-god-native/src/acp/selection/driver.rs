@@ -167,6 +167,13 @@ impl NativeAcpSelectionOwner {
                                     &current.permission_contexts,
                                     &host.permission_contexts,
                                 )
+                                || current
+                                    .host
+                                    .mcp_contexts()
+                                    .zip(host.host.mcp_contexts())
+                                    .is_some_and(|(current, candidate)| {
+                                        Arc::ptr_eq(&current, &candidate)
+                                    })
                         });
                     if invalid || pending.request.cancellation.is_cancelled() {
                         let error = if invalid {

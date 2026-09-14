@@ -1,13 +1,15 @@
 use super::{
     Arc, BackgroundOutputOwner, BoxFuture, EngineEvent, NativeConversation,
-    NativeConversationError, NativeConversationRuntime, NativeInteractiveError,
-    NativeInteractiveRequestId, NativeInteractiveSessionOptions, NativeInteractiveTransition,
-    NativeModelCatalog, NativeReferenceHost, NativeRuntimeQuiescence, NativeTerminalHandoffReceipt,
+    NativeConversationRuntime, NativeInteractiveError, NativeInteractiveRequestId,
+    NativeInteractiveSessionOptions, NativeInteractiveTransition, NativeModelCatalog,
+    NativeReferenceHost, NativeRuntimeQuiescence, NativeTerminalHandoffReceipt,
     NativeTerminalResetReceipt, NativeTerminalTransitionError,
 };
+use crate::NativePermissionPolicySnapshot;
 use crate::file_undo::FileUndoClearReservation;
-use crate::{NativePermissionPolicySnapshot, NativeSessionMetadata, prepare_native_session_resume};
 use machine_god_core::CancellationToken;
+
+mod preparation;
 
 pub(super) struct Request {
     pub id: NativeInteractiveRequestId,
@@ -99,30 +101,18 @@ pub(super) async fn prepare(
             .await
             .map_err(NativeInteractiveError::Resume)
         }
-        NativeInteractiveTransition::Resume(target) => prepare_native_session_resume(
-            host.session_lifecycle(),
-            target,
-            &options.workspace,
-            now_ms,
-        )
-        .await
-        .map_err(NativeInteractiveError::Resume)?
-        .adopt()
-        .await
-        .map_err(NativeInteractiveError::Resume),
-        NativeInteractiveTransition::Clear
-        | NativeInteractiveTransition::New
-        | NativeInteractiveTransition::Reset => {
-            let metadata = NativeSessionMetadata::new(&options.workspace, now_ms, options.origin)
-                .map_err(|_| NativeInteractiveError::Configuration)?;
-            let session = host
-                .session_lifecycle()
-                .create_generated_with_metadata(metadata)
-                .await
-                .map_err(|error| {
-                    NativeInteractiveError::Conversation(NativeConversationError::Lifecycle(error))
-                })?;
-            NativeConversation::from_session(session).map_err(Into::into)
+        kind => {
+            preparation::Preparation::new(
+                host.session_lifecycle().clone(),
+                options.clone(),
+                kind,
+                now_ms,
+            )
+            .run(
+                host.control_workers()
+                    .ok_or(NativeInteractiveError::Configuration)?,
+            )
+            .await
         }
     }
 }

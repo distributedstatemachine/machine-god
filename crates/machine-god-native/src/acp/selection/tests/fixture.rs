@@ -5,7 +5,7 @@ use crate::mcp::{
 use crate::*;
 use std::{fs, os::unix::fs::DirBuilderExt, time::Instant};
 
-pub(super) struct Factory {
+pub(crate) struct Factory {
     directory: PathBuf,
     pub workspace: PathBuf,
     environment: NativeEnvironment,
@@ -13,6 +13,7 @@ pub(super) struct Factory {
     pub wait: Arc<AtomicBool>,
     pub cancel_observed: Arc<AtomicBool>,
     pub provider_started: Arc<AtomicBool>,
+    pub mcp_contexts_override: std::sync::Mutex<Option<Arc<NativeMcpContexts>>>,
 }
 impl Factory {
     pub fn new() -> Self {
@@ -39,6 +40,7 @@ impl Factory {
             wait: Arc::new(AtomicBool::new(false)),
             cancel_observed: Arc::new(AtomicBool::new(false)),
             provider_started: Arc::new(AtomicBool::new(false)),
+            mcp_contexts_override: std::sync::Mutex::new(None),
         }
     }
 }
@@ -58,6 +60,12 @@ impl NativeAcpHostFactory for Factory {
         let wait = self.wait.clone();
         let observed = self.cancel_observed.clone();
         let provider_started = self.provider_started.clone();
+        let mcp_contexts = self
+            .mcp_contexts_override
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| Arc::new(NativeMcpContexts::new()));
         Box::pin(async move {
             if wait.load(Ordering::Acquire) {
                 cancellation.cancelled().await;
@@ -80,23 +88,20 @@ impl NativeAcpHostFactory for Factory {
             .unwrap();
             let contexts = Arc::new(NativePermissionContexts::new());
             let clock = Arc::new(Clock);
-            let mcp = NativeReferenceHostMcpOptions::new(
-                Arc::new(NativeMcpContexts::new()),
-                clock.clone(),
-            )
-            .with_ephemeral_startup(NativeReferenceHostMcpEphemeralStartupOptions {
-                captured_environment: vec![],
-                stdio: None,
-                clock,
-                catalog_epoch: Instant::now(),
-                owner_cancellation: CancellationToken::new(),
-                #[cfg(feature = "mcp-http")]
-                network: None,
-                peer_lifetime: McpPeerLifetime::OwnerControlled,
-                max_retained_bytes: 1024 * 1024,
-                max_retained_generations: 4,
-            })
-            .unwrap();
+            let mcp = NativeReferenceHostMcpOptions::new(mcp_contexts, clock.clone())
+                .with_ephemeral_startup(NativeReferenceHostMcpEphemeralStartupOptions {
+                    captured_environment: vec![],
+                    stdio: None,
+                    clock,
+                    catalog_epoch: Instant::now(),
+                    owner_cancellation: CancellationToken::new(),
+                    #[cfg(feature = "mcp-http")]
+                    network: None,
+                    peer_lifetime: McpPeerLifetime::OwnerControlled,
+                    max_retained_bytes: 1024 * 1024,
+                    max_retained_generations: 4,
+                })
+                .unwrap();
             let options =
                 NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
                     .with_workspace(authority, Arc::new(NativeWorkspaceContexts::new()))

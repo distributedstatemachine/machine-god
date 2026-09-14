@@ -101,7 +101,7 @@ fn cancelled_unpolled_selection_never_calls_factory_or_claims_publication() {
     });
 }
 
-mod fixture;
+pub(crate) mod fixture;
 use fixture::Factory;
 
 #[test]
@@ -192,6 +192,57 @@ fn resume_replaces_owned_host_without_replaying_history() {
         assert!(owner.current_mut().unwrap().take_loaded_history().is_none());
         assert_eq!(owner.current().unwrap().id(), id);
         owner.request_shutdown();
+        assert!(matches!(
+            outcome(&mut owner).await,
+            NativeAcpSelectionOutcome::Closed { .. }
+        ));
+    });
+}
+
+#[test]
+fn shared_candidate_mcp_contexts_are_rejected_before_activation() {
+    run(async {
+        let factory = Arc::new(Factory::new());
+        let mut owner = NativeAcpSelectionOwner::new(factory.clone());
+        owner
+            .request(
+                NativeAcpSessionSelection::New,
+                factory.workspace.clone(),
+                empty(),
+                1,
+            )
+            .unwrap();
+        let _ = outcome(&mut owner).await;
+        let id = owner.current().unwrap().id();
+        *factory.mcp_contexts_override.lock().unwrap() =
+            owner.current_host().unwrap().mcp_contexts();
+        owner
+            .request(
+                NativeAcpSessionSelection::New,
+                factory.workspace.clone(),
+                empty(),
+                2,
+            )
+            .unwrap();
+        assert!(matches!(
+            outcome(&mut owner).await,
+            NativeAcpSelectionOutcome::Rejected {
+                error: AcpSessionError::InvalidConfiguration,
+                old_preserved: true,
+                candidate_may_have_persisted: false,
+                ..
+            }
+        ));
+        assert!(
+            owner
+                .current_host()
+                .unwrap()
+                .mcp_ephemeral_owner()
+                .unwrap()
+                .ready()
+                .is_ok()
+        );
+        owner.request_close(&id).unwrap();
         assert!(matches!(
             outcome(&mut owner).await,
             NativeAcpSelectionOutcome::Closed { .. }

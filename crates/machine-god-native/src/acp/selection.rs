@@ -20,7 +20,7 @@ use std::{
 mod cleanup;
 mod driver;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// Trusted, explicitly captured host effects. Implementations must keep any
 /// admitted worker and unsuccessful preparation cleanup owned until completion.

@@ -33,6 +33,10 @@ its exact checkpoint and finalization. Only afterward does reversible native
 quiescence admit candidate creation or adoption. In particular, same-ID load and
 resume cannot read a stale pre-cancellation checkpoint. Loaded tool JSON preserves
 its exact arbitrary-precision numeric representation; history remains inert.
+Fresh creation and exact-ID prepare/adopt execute their blocking identity and
+store work on the exact host-owned worker scope, not the connection polling
+thread. Accepted preparation retains its lifecycle lease through the result even
+if a response wrapper is abandoned; async composition stays on the owner driver.
 
 Candidate opening and a final readiness check precede irreversible retirement of
 the old runtime. A rejected candidate before retirement restores old admission;
