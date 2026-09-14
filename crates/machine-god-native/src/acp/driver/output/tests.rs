@@ -44,7 +44,7 @@ fn settled_engine_completion_keeps_its_actual_stop_reason() {
     ] {
         let event = TurnEvent::Completed {
             reason,
-            usage: Default::default(),
+            usage: machine_god_core::TokenUsage::default(),
         };
         assert_eq!(
             stop_result(Ok(&event)).unwrap(),
