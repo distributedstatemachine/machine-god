@@ -14,6 +14,12 @@ pub(crate) struct Factory {
     pub cancel_observed: Arc<AtomicBool>,
     pub provider_started: Arc<AtomicBool>,
     pub mcp_contexts_override: std::sync::Mutex<Option<Arc<NativeMcpContexts>>>,
+    pub transport_override: std::sync::Mutex<Option<Arc<dyn AiGatewayTransport>>>,
+    pub prompt_bridge_override: std::sync::Mutex<Option<Arc<NativeInteractivePromptBridge>>>,
+    pub presenter_override:
+        std::sync::Mutex<Option<Arc<dyn crate::mcp::interaction::McpElicitationPresenter>>>,
+    #[cfg(feature = "mcp-http")]
+    pub network_override: std::sync::Mutex<Option<Arc<crate::mcp::network::NativeMcpNetwork>>>,
 }
 impl Factory {
     pub fn new() -> Self {
@@ -41,6 +47,11 @@ impl Factory {
             cancel_observed: Arc::new(AtomicBool::new(false)),
             provider_started: Arc::new(AtomicBool::new(false)),
             mcp_contexts_override: std::sync::Mutex::new(None),
+            transport_override: std::sync::Mutex::new(None),
+            prompt_bridge_override: std::sync::Mutex::new(None),
+            presenter_override: std::sync::Mutex::new(None),
+            #[cfg(feature = "mcp-http")]
+            network_override: std::sync::Mutex::new(None),
         }
     }
 }
@@ -60,6 +71,16 @@ impl NativeAcpHostFactory for Factory {
         let wait = self.wait.clone();
         let observed = self.cancel_observed.clone();
         let provider_started = self.provider_started.clone();
+        let transport = self
+            .transport_override
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| Arc::new(Transport(provider_started)));
+        let bridge = self.prompt_bridge_override.lock().unwrap().clone();
+        let presenter = self.presenter_override.lock().unwrap().clone();
+        #[cfg(feature = "mcp-http")]
+        let network = self.network_override.lock().unwrap().clone();
         let mcp_contexts = self
             .mcp_contexts_override
             .lock()
@@ -76,19 +97,10 @@ impl NativeAcpHostFactory for Factory {
                 NativeRootSelection::from_environment(&environment, &workspace).unwrap(),
             )
             .unwrap();
-            let open = |path: &std::path::Path| std::fs::File::open(path).unwrap().into();
-            let authority = NativeWorkspaceAuthority::open_blocking(
-                open(roots.workspace_root()),
-                roots.workspace_root().to_path_buf(),
-                Some(open(roots.state_root())),
-                roots.state_root().to_path_buf(),
-                vec![],
-                false,
-            )
-            .unwrap();
+            let authority = workspace_authority(&roots);
             let contexts = Arc::new(NativePermissionContexts::new());
             let clock = Arc::new(Clock);
-            let mcp = NativeReferenceHostMcpOptions::new(mcp_contexts, clock.clone())
+            let mut mcp = NativeReferenceHostMcpOptions::new(mcp_contexts, clock.clone())
                 .with_ephemeral_startup(NativeReferenceHostMcpEphemeralStartupOptions {
                     captured_environment: vec![],
                     stdio: None,
@@ -96,12 +108,15 @@ impl NativeAcpHostFactory for Factory {
                     catalog_epoch: Instant::now(),
                     owner_cancellation: CancellationToken::new(),
                     #[cfg(feature = "mcp-http")]
-                    network: None,
+                    network,
                     peer_lifetime: McpPeerLifetime::OwnerControlled,
                     max_retained_bytes: 1024 * 1024,
                     max_retained_generations: 4,
                 })
                 .unwrap();
+            if let Some(presenter) = presenter {
+                mcp = mcp.with_form_responder(presenter);
+            }
             let options =
                 NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
                     .with_workspace(authority, Arc::new(NativeWorkspaceContexts::new()))
@@ -122,8 +137,16 @@ impl NativeAcpHostFactory for Factory {
                     .with_mcp_runtime(mcp);
             let config=crate::config::parse_config_bytes(br#"{"schema_version":5,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","credential_source":"environment","model":"fixture/main","effort":"auto","fast_mode":false}"#).unwrap();
             let defaults = config.model_preferences();
-            let host=Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(LoadedNativeConfig::from_file(config),Arc::new(Transport(provider_started)),
-                machine_god_core::NetworkTarget{scheme:"https".into(),host:"ai-gateway.vercel.sh".into(),port:None},roots,Arc::new(Prompter),Arc::new(Prompter),Arc::new(Deadline),options).unwrap());
+            let permission: Arc<dyn PermissionPrompter> = bridge.as_ref().map_or_else(
+                || Arc::new(Prompter) as Arc<dyn PermissionPrompter>,
+                |bridge| bridge.clone(),
+            );
+            let question: Arc<dyn QuestionPrompter> = match bridge {
+                Some(bridge) => bridge,
+                None => Arc::new(Prompter),
+            };
+            let host=Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(LoadedNativeConfig::from_file(config),transport,
+                machine_god_core::NetworkTarget{scheme:"https".into(),host:"ai-gateway.vercel.sh".into(),port:None},roots,permission,question,Arc::new(Deadline),options).unwrap());
             NativeAcpPreparedHost::new(
                 host,
                 NativeInteractiveSessionOptions::new(workspace, defaults).unwrap(),
@@ -146,6 +169,18 @@ impl NativeAcpHostFactory for Factory {
             Err(NativeSessionCatalogReadError::Unavailable)
         })
     }
+}
+fn workspace_authority(roots: &PreparedNativeRoots) -> NativeWorkspaceAuthority {
+    let open = |path: &std::path::Path| std::fs::File::open(path).unwrap().into();
+    NativeWorkspaceAuthority::open_blocking(
+        open(roots.workspace_root()),
+        roots.workspace_root().to_path_buf(),
+        Some(open(roots.state_root())),
+        roots.state_root().to_path_buf(),
+        vec![],
+        false,
+    )
+    .unwrap()
 }
 struct Clock;
 impl NativeMcpRuntimeClock for Clock {
