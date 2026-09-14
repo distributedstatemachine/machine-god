@@ -158,6 +158,9 @@ silently skips renderable rows or substitutes its filtered tail as a cursor.
 
 Transport output acquisition is separate from `poll_progress`: a blocked writer
 cannot abandon admitted preparation, cancellation, catalog reads or shutdown.
+Every newly queued frame schedules acknowledgement polling, including when no
+input or native event is forthcoming. Write and flush acknowledgements each
+retain their own wake registration; progress never relies on another request.
 EOF closes admission and native human waiters, then polls actual retirement.
 Unsent presentation may be discarded at this terminal cutoff; it is not a
 successful delivery claim. One already-ready protocol reply may survive settled

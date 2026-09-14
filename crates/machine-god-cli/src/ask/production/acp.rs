@@ -214,6 +214,9 @@ impl Transport {
                 connection.output_failed();
             } else {
                 self.writing = Some(WritePhase::Write);
+                // This poll has not waited for this frame's acknowledgement.
+                // Schedule that registration even if native work and input idle.
+                cx.waker().wake_by_ref();
             }
         }
         if connection.is_closed() {

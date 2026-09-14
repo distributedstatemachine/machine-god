@@ -9,7 +9,8 @@ use machine_god_native::{
     },
 };
 use std::path::PathBuf;
-use std::task::Waker;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Wake, Waker};
 
 struct NoHosts;
 impl NativeAcpHostFactory for NoHosts {
@@ -219,6 +220,123 @@ fn eof_drives_native_shutdown_behind_blocked_stdout_then_uses_one_final_grace() 
                 assert!(connection.has_output());
             }
         });
+}
+
+struct OutputWake(AtomicBool);
+impl Wake for OutputWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn new_output_frame_schedules_acknowledgements_without_unrelated_events() {
+    let notified = Arc::new(OutputWake(AtomicBool::new(false)));
+    let waker = Waker::from(notified.clone());
+    let mut cx = Context::from_waker(&waker);
+    let mut connection = NativeAcpConnection::new(
+        Arc::new(PendingList),
+        NativeAcpClientRequests::new().unwrap(),
+    );
+    let decode = machine_god_native::acp::protocol::decode_frame;
+    connection
+        .receive(
+            decode(
+                br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}"#,
+            )
+            .unwrap(),
+            0,
+        )
+        .unwrap();
+    assert!(
+        connection
+            .poll_output(&mut Context::from_waker(Waker::noop()), 0)
+            .is_ready()
+    );
+    connection
+        .receive(
+            decode(br#"{"jsonrpc":"2.0","id":2,"method":"session/list"}"#).unwrap(),
+            0,
+        )
+        .unwrap();
+    connection
+        .receive_error(AcpProtocolError::ParseError)
+        .unwrap();
+    let mut state = Transport {
+        pending: Some(Ok(decode(
+            br#"{"jsonrpc":"2.0","id":3,"method":"session/list"}"#,
+        )
+        .unwrap())),
+        ..Transport::default()
+    };
+    // The pending control rejects the complete input frame. Leave input inert:
+    // no pipe, worker, timer or extra request can supply an incidental wake.
+    let mut input = NativeInteractiveInput::default();
+    let (work, mut pending_output) = tokio::sync::mpsc::channel(1);
+    let (acknowledged, acknowledgements) = tokio::sync::mpsc::channel(1);
+    let mut output = OutputBridge {
+        work,
+        acknowledgements,
+        tape: None,
+    };
+    let (_signal_sender, receiver) = tokio::sync::mpsc::channel(1);
+    let mut signals = AskSignals::new(receiver);
+
+    let mut poll = |state: &mut Transport| {
+        assert!(
+            state
+                .poll(
+                    &mut cx,
+                    &mut connection,
+                    &mut input,
+                    &mut output,
+                    &mut signals
+                )
+                .is_pending()
+        );
+    };
+    poll(&mut state);
+    assert!(matches!(
+        pending_output.try_recv(),
+        Ok(OutputWork::Write(_))
+    ));
+    assert!(
+        notified.0.swap(false, Ordering::SeqCst),
+        "new frame must schedule ACK registration"
+    );
+
+    // Consume that scheduled poll before the writer acknowledges anything.
+    poll(&mut state);
+    assert!(!notified.0.swap(false, Ordering::SeqCst));
+    acknowledged
+        .try_send(OutputAcknowledgement::Succeeded)
+        .unwrap();
+    assert!(
+        notified.0.swap(false, Ordering::SeqCst),
+        "write ACK must wake the registered receiver"
+    );
+    poll(&mut state);
+    assert!(matches!(pending_output.try_recv(), Ok(OutputWork::Flush)));
+    assert!(
+        notified.0.swap(false, Ordering::SeqCst),
+        "flush must schedule its own ACK registration"
+    );
+
+    poll(&mut state);
+    assert!(!notified.0.swap(false, Ordering::SeqCst));
+    acknowledged
+        .try_send(OutputAcknowledgement::Succeeded)
+        .unwrap();
+    assert!(notified.0.swap(false, Ordering::SeqCst));
+    poll(&mut state);
+    assert!(state.writing.is_none());
+    assert!(state.pending.is_some());
+    assert!(pending_output.try_recv().is_err());
+    input.request_stop();
+    assert!(input.completion().is_complete());
 }
 
 #[test]

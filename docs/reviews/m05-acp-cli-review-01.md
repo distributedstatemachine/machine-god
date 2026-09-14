@@ -170,3 +170,27 @@ and proves admission within the remaining original budget. Both keep the 30 ms
 timeout and assert exact clock, construction, active, peak and drop counts.
 No production deadline or implementation changed. This interrupted Linux gate
 is not acceptance; no feature push or new formal review occurred for this candidate.
+
+## Candidate 0a3f5d2d: output-wake diagnosis
+
+Candidate `0a3f5d2d15e16d53705ff9c7d1a9b1a400a92b89` passed the complete Linux
+gate, including the corrected web-fetch cases and all 269 Python tests. macOS
+passed focused web-fetch, input and native ACP tests, then stopped in the aliased
+workspace new/load/resume composition fixture at its unchanged ten-second
+deadline. The original diagnostic did not identify the awaited response or EOF
+phase. Four unchanged isolated runs and three unchanged nine-test ACP runs passed;
+these are diagnostic observations, not a source fix or complete macOS gate.
+
+Two isolated read-only agents traced fixture/output flow and native selection.
+No native selection lost wake or custody defect was established. Output inspection
+did establish a separate liveness defect: queueing a new frame did not schedule
+the next poll that registers its acknowledgement waiter. If input and native work
+stay idle, a write acknowledgement can arrive without waking the transport.
+A deterministic regression failed at that missing wake, with no input worker,
+timer or incidental request event. The transport now self-wakes after queueing a
+frame, as its existing flush and final-output paths already do. The regression
+then passed and verified delayed write and flush acknowledgements independently.
+This proves that handoff fix, not the cause of the original timed-out run.
+No deadline, retry policy or protocol compatibility path changed. Both diagnosis
+worktrees were clean and removed; replacement gates and fresh formal product
+reviews remain separate from this diagnostic evidence.
