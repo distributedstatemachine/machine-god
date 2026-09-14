@@ -6,7 +6,9 @@ use super::{
     selection::{NativeAcpHostFactory, NativeAcpSelectionId, NativeAcpSelectionOwner},
     session::NativeAcpHistory,
 };
-use crate::{NativeSessionCatalogPage, NativeSessionCatalogReadError};
+use crate::{
+    NativeInteractiveControlOutcome, NativeSessionCatalogPage, NativeSessionCatalogReadError,
+};
 use machine_god_core::{BackgroundOutputOwner, BoxFuture, CancellationToken};
 use serde_json::Value;
 use std::{
@@ -15,6 +17,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+mod commands;
 #[cfg(test)]
 mod composed_tests;
 mod dispatch;
@@ -44,6 +47,11 @@ impl std::error::Error for NativeAcpConnectionError {}
 struct PromptRequest {
     id: AcpId,
     owner: BackgroundOutputOwner,
+}
+struct CommandRequest {
+    id: AcpId,
+    principal: BackgroundOutputOwner,
+    owner: Box<super::commands::NativeAcpCommandOwner>,
 }
 enum Control {
     Selection {
@@ -84,6 +92,9 @@ pub struct NativeAcpConnection {
     selection: NativeAcpSelectionOwner,
     clients: NativeAcpClientRequests,
     prompt: Option<PromptRequest>,
+    command: Option<CommandRequest>,
+    commands_update: Option<BackgroundOutputOwner>,
+    failed_control: Option<Box<NativeInteractiveControlOutcome>>,
     control: Option<Control>,
     reply: Option<AcpMessage>,
     initialized: bool,
@@ -116,6 +127,9 @@ impl NativeAcpConnection {
             factory,
             clients,
             prompt: None,
+            command: None,
+            commands_update: None,
+            failed_control: None,
             control: None,
             reply: None,
             initialized: false,
@@ -155,7 +169,7 @@ impl NativeAcpConnection {
                     if let Ok(request::Request::Cancel { session }) =
                         request::decode(&method, params)
                     {
-                        let _ = self.selection.request_cancel(&session);
+                        let _ = self.cancel_prompt(&session);
                     }
                 } else {
                     request::discard(params);
@@ -171,6 +185,10 @@ impl NativeAcpConnection {
                     return Err(AcpMessage::Request { id, method, params });
                 }
                 if self.prompt.as_ref().is_some_and(|prompt| prompt.id == id)
+                    || self
+                        .command
+                        .as_ref()
+                        .is_some_and(|command| command.id == id)
                     || self
                         .control
                         .as_ref()
@@ -217,6 +235,7 @@ impl NativeAcpConnection {
             return;
         }
         self.shutting_down = true;
+        self.commands_update = None;
         self.clients.close();
         if let Some(Control::List { cancellation, .. }) = &self.control {
             cancellation.cancel();
@@ -244,6 +263,7 @@ impl NativeAcpConnection {
             && self.selection.is_closed()
             && self.control.is_none()
             && self.prompt.is_none()
+            && self.command.is_none()
     }
 
     /// Advances native effects without pulling a second encoded output frame.
@@ -317,7 +337,7 @@ fn rpc_error(code: i64, message: &str) -> AcpRpcError {
 fn discard_message(message: AcpMessage) {
     match message {
         AcpMessage::Request { params, .. } | AcpMessage::Notification { params, .. } => {
-            request::discard(params)
+            request::discard(params);
         }
         AcpMessage::Response {
             outcome: Ok(value), ..

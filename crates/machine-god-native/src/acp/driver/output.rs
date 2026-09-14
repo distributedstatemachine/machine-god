@@ -77,6 +77,12 @@ impl NativeAcpConnection {
             self.fail(NativeAcpConnectionError::Native);
             return Poll::Pending;
         }
+        if let Some(update) = self.command_output() {
+            return self.encode(update);
+        }
+        if self.shutting_down {
+            return Poll::Pending;
+        }
         if let Some(outcome) = self.selection.take_outcome() {
             self.selection_output(outcome);
             if let Some(reply) = self.reply.take() {
@@ -89,6 +95,9 @@ impl NativeAcpConnection {
         self.control_output();
         if let Some(reply) = self.reply.take() {
             return self.encode(reply);
+        }
+        if let Some(update) = self.commands_output() {
+            return self.encode(update);
         }
         match self.clients.poll_request(cx) {
             Poll::Ready(Ok(Some(frame))) => Poll::Ready(Some(frame)),
@@ -180,9 +189,11 @@ impl NativeAcpConnection {
                     let result = selection_response(session).map_err(|error| session_error(&error));
                     self.respond(Some(id), result);
                 }
+                self.refresh_commands();
             }
             NativeAcpSelectionOutcome::Closed { .. } => {
                 self.clients.deactivate();
+                self.commands_update = None;
                 self.respond(Some(id), Ok(json!({})));
             }
             NativeAcpSelectionOutcome::Rejected { error, .. } => {
@@ -226,6 +237,7 @@ impl NativeAcpConnection {
                         )
                     });
                     self.respond(Some(id), result.map_err(|error| session_error(&error)));
+                    self.refresh_commands();
                 }
             }
             _ => {}
@@ -233,6 +245,7 @@ impl NativeAcpConnection {
     }
 
     pub(super) fn drain_shutdown(&mut self, cx: &mut Context<'_>) {
+        self.discard_settled_command();
         // EOF/output cutoff cannot wait for a peer to drain presentation. The
         // native checkpoint and cleanup receipts remain mandatory, even though
         // unsent presentation may now be discarded under this terminal cutoff.
@@ -278,6 +291,7 @@ impl NativeAcpConnection {
         }
         if self.selection.is_closed() {
             self.prompt = None;
+            self.failed_control = None;
             if !matches!(self.control, Some(Control::List { .. })) {
                 self.control = None;
             }
@@ -285,7 +299,7 @@ impl NativeAcpConnection {
     }
 }
 
-fn update_message(session: &SessionId, update: Value) -> AcpMessage {
+pub(super) fn update_message(session: &SessionId, update: Value) -> AcpMessage {
     let mut params = json!({"sessionId":session.as_str()});
     params["update"] = update;
     AcpMessage::Notification {

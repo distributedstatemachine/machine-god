@@ -17,6 +17,12 @@ pub mod session;
     feature = "ai-gateway-http",
     any(target_os = "linux", target_os = "macos")
 ))]
+pub mod commands;
+
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
 pub mod resources;
 
 #[cfg(all(

@@ -17,6 +17,16 @@ sequence labels in `_meta.machineGod`; those labels are data, not authority.
 Provider stops and terminal engine events never emit a final prompt response:
 only the separately finalized native interactive outcome can do so.
 
+Local commands occupy the same single active-prompt lane, independently of a
+pending session selection. Close and replacement can cancel a native command;
+its exact control receipt remains with the old session until output acquisition.
+The command update and original prompt reply precede the replacement response
+and activation of its client registry. Synchronous command observations retain
+their original principal even if that native session has since retired. Command
+capabilities are refreshed after selection and model changes. EOF drains owned
+command effects without requiring an output consumer; cancellation metadata does
+not assert rollback of effects that may already have completed.
+
 Permission projection requires both the inbox view and its actual tool call
 from the live native permission-review context. A permission request ID is not
 a tool-call ID, and event-order guessing is not accepted provenance. The

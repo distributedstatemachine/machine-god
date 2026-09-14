@@ -61,7 +61,7 @@ impl NativeAcpConnection {
                 Ok(None)
             }
             Request::List { cwd, cursor } => {
-                if self.prompt.is_some() {
+                if self.prompt.is_some() || self.command.is_some() {
                     return Err(AcpSessionError::Busy);
                 }
                 let cancellation = CancellationToken::new();
@@ -75,8 +75,11 @@ impl NativeAcpConnection {
                 Ok(None)
             }
             Request::Prompt { session, prompt } => {
-                if self.prompt.is_some() {
+                if self.prompt.is_some() || self.command.is_some() {
                     return Err(AcpSessionError::Busy);
+                }
+                if self.begin_command(id, &session, &prompt, now_ms)? {
+                    return Ok(None);
                 }
                 let current = self.selection.current_mut().ok_or(AcpSessionError::Busy)?;
                 current.enqueue(&session, prompt)?;
@@ -87,7 +90,7 @@ impl NativeAcpConnection {
                 Ok(None)
             }
             Request::Cancel { session } => {
-                self.selection.request_cancel(&session)?;
+                self.cancel_prompt(&session)?;
                 Ok(Some(serde_json::Value::Null))
             }
             Request::SetMode { session, mode } => {
@@ -102,7 +105,7 @@ impl NativeAcpConnection {
                 config,
                 value,
             } => {
-                if self.prompt.is_some() {
+                if self.prompt.is_some() || self.command.is_some() {
                     return Err(AcpSessionError::Busy);
                 }
                 let current = self.selection.current_mut().ok_or(AcpSessionError::Busy)?;
