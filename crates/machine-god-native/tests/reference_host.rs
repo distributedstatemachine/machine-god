@@ -976,7 +976,14 @@ fn acquired_credential_transport_factory_preserves_validation_order_and_redacted
         let config = if invalid_selection {
             load_config(
                 temporary.path(),
-                r#"{"schema_version":2,"permission_mode":"auto"}"#,
+                &json!({
+                    "schema_version": 7, "permission_mode": "auto", "sandbox_mode": "none",
+                    "permission_rules": [], "workspace_permission_rules": [],
+                    "workspace_directories": [], "provider": "vercel_ai_gateway",
+                    "transport": "ai_gateway_http", "credential_source": "environment",
+                    "model": "private/main", "effort": "auto", "fast_mode": false,
+                })
+                .to_string(),
             )
         } else {
             built_in_config()
