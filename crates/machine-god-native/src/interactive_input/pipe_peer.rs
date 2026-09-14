@@ -128,12 +128,11 @@ impl NativeInteractiveInput {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match state.pipe_peer.result {
-                Some(result) => (Poll::Ready(result), None),
-                None => {
-                    state.pipe_peer.requested = true;
-                    (Poll::Pending, state.pipe_peer.waker.replace(incoming))
-                }
+            if let Some(result) = state.pipe_peer.result {
+                (Poll::Ready(result), None)
+            } else {
+                state.pipe_peer.requested = true;
+                (Poll::Pending, state.pipe_peer.waker.replace(incoming))
             }
         };
         discard_waker(previous);
