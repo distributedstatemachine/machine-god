@@ -172,6 +172,12 @@ impl NativeAcpSession {
         self.command_control.is_some()
     }
 
+    /// Observed native cancellation intent, not proof that an effect was reversed.
+    #[must_use]
+    pub const fn cancellation_requested(&self) -> bool {
+        self.cancelling
+    }
+
     pub(crate) fn check_command_admission(
         &self,
         expected: &SessionId,

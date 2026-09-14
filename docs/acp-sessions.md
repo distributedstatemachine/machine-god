@@ -150,7 +150,9 @@ effect was undone. A mismatched completion leaves both the pending command and
 the supplied foreign receipt untouched. A late cancel after native receipt
 drainage does not create new cancellation intent. An uncertain undo explicitly requires
 manual inspection; generic native failures report unconfirmed effects and never
-request automatic retry. Model-save and command-control receipts
+request automatic retry. The connection can annotate observed cancellation using
+the exact principal; this metadata operation cannot cancel native work itself.
+Model-save and command-control receipts
 have separate facade custody; selection retirement waits for both to drain.
 
 Completed commands produce an agent text update with a structured

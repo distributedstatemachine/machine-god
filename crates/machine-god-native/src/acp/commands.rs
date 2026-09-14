@@ -116,6 +116,24 @@ impl NativeAcpCommandOwner {
             .as_ref()
             .map(|pending| (pending.id, pending.principal.clone()))
     }
+
+    /// Records already-observed native cancellation for the exact pending owner.
+    /// This changes presentation metadata only and never cancels native work.
+    /// # Errors
+    /// Rejects a foreign session incarnation without changing this command.
+    pub fn note_cancellation_requested(
+        &mut self,
+        principal: &BackgroundOutputOwner,
+    ) -> Result<bool> {
+        let Some(pending) = &mut self.pending else {
+            return Ok(false);
+        };
+        if pending.principal != *principal {
+            return Err(Error::WrongSession);
+        }
+        pending.cancellation_requested = true;
+        Ok(true)
+    }
     /// Accepts intent only after exact current-session and bounded lane checks.
     /// # Errors
     /// Rejects unavailable capabilities, invalid identities or an occupied lane.

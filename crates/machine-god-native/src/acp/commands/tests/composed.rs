@@ -115,7 +115,9 @@ fn real_control_receipts_cancellation_and_foreign_receipts_keep_exact_custody() 
         assert!(owner.take_result().is_none());
         assert!(session.take_model_save_outcome().is_none());
         assert!(owner.cancel(session).unwrap());
+        assert!(session.cancellation_requested());
         let mut received = Some(receipt(&mut selection).await);
+        assert!(!selection.current().unwrap().cancellation_requested());
         assert!(!owner.cancel(selection.current_mut().unwrap()).unwrap());
         let old_id = received.as_ref().unwrap().id;
         owner.complete(&mut received).unwrap();
@@ -131,6 +133,24 @@ fn real_control_receipts_cancellation_and_foreign_receipts_keep_exact_custody() 
         owner
             .begin(session, &session.id(), command("/undo"), 100)
             .unwrap();
+        let foreign = BackgroundOutputOwner::new(
+            session.id(),
+            machine_god_core::SessionIncarnationId::new("foreign").unwrap(),
+        );
+        assert_eq!(
+            owner.note_cancellation_requested(&foreign),
+            Err(Error::WrongSession)
+        );
+        assert!(!owner.pending.as_ref().unwrap().cancellation_requested);
+        assert!(
+            owner
+                .note_cancellation_requested(&session.principal())
+                .unwrap()
+        );
+        assert!(
+            !session.cancellation_requested(),
+            "annotation must not perform native cancellation"
+        );
         let mut wrong = Some(NativeInteractiveControlOutcome {
             id: old_id,
             source: session.principal(),
@@ -149,9 +169,16 @@ fn real_control_receipts_cancellation_and_foreign_receipts_keep_exact_custody() 
         assert!(real.is_some());
         real.as_mut().unwrap().source = source;
         owner.complete(&mut real).unwrap();
+        let result = owner.take_result().unwrap();
+        assert!(result.cancelled());
         assert_eq!(
-            owner.take_result().unwrap().update()["command_result"]["receipt"]["outcome"],
+            result.update()["command_result"]["receipt"]["outcome"],
             "empty"
+        );
+        assert!(
+            !owner
+                .note_cancellation_requested(result.principal())
+                .unwrap()
         );
         assert!(!factory.provider_started.load(Ordering::Acquire));
         close(&mut selection).await;
