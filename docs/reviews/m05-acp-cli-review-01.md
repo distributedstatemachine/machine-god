@@ -262,3 +262,19 @@ projection are also removed; this scope alignment is not a third review finding.
 Native `ask`/`auto`/`yolo` remain available through `session/set_config_option`.
 The replacement requires the full exact gate and three new reviewers; prior
 gate success or unstarted review tracks cannot accept changed source.
+
+## Candidate f30e6616: newly published dependency advisory
+
+Candidate `f30e6616c57d5da80a769996429056f31c64b9ea` integrated both R2 fixes,
+modern-only wire cleanup and their regression tests/contracts. Exact Rust 1.94.1
+formatting and warnings-denied full Clippy passed on macOS and Linux. The isolated
+component worktree was verified integrated, clean and removed. Before runtime
+tests began, cargo-deny rejected locked rustls 0.23.39 for
+[RUSTSEC-2026-0285](https://github.com/rustls/rustls/security/advisories/GHSA-2mjx-qc3c-rqvc),
+published September 14, 2026. The upstream advisory names 0.23.45 as patched.
+The coordinator interrupted only the identified owned release-build jobs; both
+pipelines settled with status 130. These interrupted builds are not acceptance.
+No runtime tests, formal R3 reviews or remote pushes occurred for this candidate.
+The correction raises the workspace rustls minimum and lockfile to 0.23.45;
+there is no advisory exception or policy relaxation. The replacement requires
+fresh release helpers and the complete gate before three new product reviewers.

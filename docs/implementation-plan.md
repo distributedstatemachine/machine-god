@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `fix ACP configuration updates and alias listing, then complete replacement gate and three fresh reviews`
+- Next gate: `validate ACP fixes with patched rustls, then complete replacement gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -428,7 +428,9 @@ alias preparation, output-wake and transport-aware network capture fixes.
 A fresh R2 correctness review found missing model configuration notifications
 and alias filtering in session/list. Fix both and remove superseded Session Modes
 wire duplication under the modern-only policy, then rerun the complete gate and
-three fresh reviews; unstarted R2 tracks are not accepted results.
+three fresh reviews; unstarted R2 tracks are not accepted results. The integrated
+fix passed Clippy, but a newly published rustls advisory rejected its dependency
+gate; update the minimum and lock to the patched release without an exception.
 [review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
