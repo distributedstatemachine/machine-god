@@ -345,3 +345,22 @@ Unrelated errors, real worker custody, editor identity and deadlines remain inta
 Component formatting and diff checks passed; those checks alone do not establish
 runtime acceptance. This replacement requires the complete local gate and three
 new reviewers before any feature push or delivery.
+
+## Replacement preflight: cancellation fixture lifetime
+
+Integrated `e59727766f9013078ef3c2171fc6306410ce8fb0` first hit a
+warnings-denied Clippy test-style error; `7817055d743b6bbc0596778f120112ed5750cfd1`
+names the token-usage default explicitly. The latter passed Linux build checks,
+both platforms' full Clippy, dependency policy/audit and documentation/drift checks.
+Its Linux cancellation preflight passed EOF but timed out both explicit-cancel
+fixtures at the unchanged 20-second bound. No full runtime or review acceptance
+followed. A retained reviewer was reused for read-only diagnosis, not fresh review.
+
+Both failing fixtures retained an `Arc<NativeConversationRuntime>` while awaiting
+shutdown. That handle retains the core session's host resource; the resource's
+drop closes the terminal worker scope that ACP cleanup awaits. The passing EOF
+fixture retained no such handle. The correction drops the two observation handles
+after their assertions and before shutdown. It changes neither production
+cancellation nor deadlines. The changed candidate must rerun focused tests and
+the complete replacement gate; an older in-flight build is cache preparation,
+not evidence for the changed commit.

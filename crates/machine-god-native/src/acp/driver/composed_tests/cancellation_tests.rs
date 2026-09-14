@@ -32,6 +32,9 @@ fn cancellation_before_first_poll_returns_cancelled_and_keeps_session_usable() {
             response(&mut connection, 4).await.0.unwrap()["stopReason"],
             "cancelled"
         );
+        // The runtime retains the host resource whose drop closes its workers.
+        // Observation handles must not outlive the shutdown they would prevent.
+        drop(runtime);
         shutdown(&mut connection).await;
     });
 }
@@ -91,6 +94,7 @@ fn cancellation_reply_waits_for_actual_resource_worker_settlement() {
         assert!(!runtime.status().active);
         assert_eq!(runtime.record_snapshot(), before);
         assert!(!factory.provider_started.load(Ordering::Acquire));
+        drop(runtime);
         shutdown(&mut connection).await;
     });
 }
