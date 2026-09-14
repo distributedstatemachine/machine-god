@@ -117,6 +117,51 @@ finalization and fresh prompts clear the prior context. Resource and skill
 metadata identities stay separate, and their combined provider budget is
 validated both at turn admission and when inspecting saved checkpoints.
 
+## Native slash commands
+
+ACP routes recognized local slash commands before provider prompt admission.
+Invalid or unsupported local commands are explicit rejections, not model input;
+ordinary text and slash-prefixed paths containing another path separator remain
+ordinary prompts. Unknown slash words are rejected. Command routing
+uses the native slash grammar, with its 65,536-byte input bound, and does not
+read attached resource targets or change canonical user history.
+
+`available_commands_update` advertises only the same-session native subset:
+`help`, `status`, `model`, `compact` and `undo`; `permissions` and effective-view
+`allowlist` require current permission ownership; `models` requires an injected
+catalog, and `fast` requires the selected model's advertised support. `skills`
+lists an explicitly injected native skills service. `mcp` reports ephemeral
+publication state and supports existing human resource/prompt feature operations
+through that selected runtime. No profile MCP fallback, mutation, authentication
+or logout command is exposed. Skills installation and management, persistent
+allowlist edits, user-default model saves, terminal UI operations and
+identity-changing slash commands are not advertised. Session new/load/resume
+remain the dedicated ACP lifecycle methods; deferred product categories stay
+deferred. The pinned ACP advertisement is reference data, not evidence that its
+slash entries have handlers.
+
+Model and effort selection and fast toggling affect the exact native session;
+the receipt distinguishes accepted preference generation from saved, unchanged,
+deferred or not-started persistence. Compact, undo, skills discovery and MCP
+feature commands use the existing owned native control lane. One accepted
+command and its exact control ID/incarnation retain custody through cancellation
+and shutdown. Cancellation is an intent, never a claim that an already completed
+effect was undone. A mismatched completion leaves both the pending command and
+the supplied foreign receipt untouched. Model-save and command-control receipts
+have separate facade custody; selection retirement waits for both to drain.
+
+Completed commands produce an agent text update with a structured
+`command_result` extension, never a fabricated model turn or tool-call ID. The
+result retains the underlying native receipt until presentation releases it.
+Updates are bounded to 64 KiB, structured data to 32 KiB and catalog projections
+to 128 rows, with explicit omission counts and bounded text previews. MCP JSON
+numbers preserve their exact admitted representation. Large individual MCP
+response data is explicitly omitted rather than eagerly copied; this does not
+change its native operation receipt. Debug and error diagnostics omit inputs,
+paths, results and nested native errors. The connection emits the command update
+before settling the original prompt RPC, using cancellation status independently
+from native effect failure.
+
 ## Session configuration
 
 Permission modes are the native `ask`, `auto` and `yolo` selections. Changes

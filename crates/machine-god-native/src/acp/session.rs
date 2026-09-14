@@ -82,6 +82,8 @@ pub struct NativeAcpSession {
     history: Option<NativeAcpHistory>,
     prompt: Option<NativeQueuedJobId>,
     model_save: Option<crate::NativeInteractiveControlId>,
+    command_control: Option<(crate::NativeInteractiveControlId, BackgroundOutputOwner)>,
+    pub(crate) command_services: super::commands::Services,
     cancelling: bool,
     closing: bool,
 }
@@ -105,6 +107,7 @@ impl NativeAcpSession {
         now_ms: i64,
     ) -> BoxFuture<'static, Result<Self, AcpSessionError>> {
         Box::pin(async move {
+            let command_services = super::commands::Services::from_host(&host);
             let replay = matches!(selection, NativeAcpSessionSelection::Load(_));
             let initial = match selection {
                 NativeAcpSessionSelection::New => NativeInteractiveInitialSession::Fresh,
@@ -125,6 +128,8 @@ impl NativeAcpSession {
                 history,
                 prompt: None,
                 model_save: None,
+                command_control: None,
+                command_services,
                 cancelling: false,
                 closing: false,
             })
@@ -160,6 +165,89 @@ impl NativeAcpSession {
     #[must_use]
     pub fn has_pending_model_save(&self) -> bool {
         self.model_save.is_some()
+    }
+
+    #[must_use]
+    pub fn has_pending_command_control(&self) -> bool {
+        self.command_control.is_some()
+    }
+
+    pub(crate) fn check_command_admission(
+        &self,
+        expected: &SessionId,
+    ) -> Result<(), AcpSessionError> {
+        self.check_session(expected)?;
+        if self.prompt.is_some() || self.model_save.is_some() || self.command_control.is_some() {
+            return Err(AcpSessionError::Busy);
+        }
+        Ok(())
+    }
+
+    /// Admits only same-session ACP command operations to the owned native lane.
+    /// # Errors
+    /// Rejects foreign identity, unsupported controls or occupied prompt/save lanes.
+    pub fn request_command_control(
+        &mut self,
+        expected: &SessionId,
+        control: crate::NativeInteractiveControl,
+        now_ms: i64,
+    ) -> Result<crate::NativeInteractiveControlId, AcpSessionError> {
+        self.check_command_admission(expected)?;
+        if !matches!(
+            &control,
+            crate::NativeInteractiveControl::UndoLast
+                | crate::NativeInteractiveControl::Compact
+                | crate::NativeInteractiveControl::SaveModelSession
+                | crate::NativeInteractiveControl::Skills {
+                    command: crate::NativeSkillsCommand::List
+                }
+                | crate::NativeInteractiveControl::Mcp {
+                    command: crate::mcp::commands::McpCommand::Feature(_)
+                }
+        ) {
+            return Err(AcpSessionError::Unavailable);
+        }
+        let principal = self.principal();
+        let id = self.inner.request_control(control, now_ms)?;
+        self.command_control = Some((id, principal));
+        Ok(id)
+    }
+
+    /// Drains accepted command receipts even while close/shutdown is fenced.
+    /// Model-save receipts have independent custody and are never consumed here.
+    #[must_use]
+    pub fn take_command_control_outcome(
+        &mut self,
+    ) -> Option<crate::NativeInteractiveControlOutcome> {
+        let (expected, source) = self.command_control.as_ref()?;
+        let outcome = self.inner.take_control_outcome()?;
+        debug_assert!(
+            *expected == outcome.id,
+            "native command receipt ID mismatch"
+        );
+        debug_assert!(
+            *source == outcome.source,
+            "native command receipt principal mismatch"
+        );
+        self.command_control = None;
+        if self.prompt.is_none() {
+            self.cancelling = false;
+        }
+        Some(outcome)
+    }
+
+    /// Accepts session preferences; this is not a durable save receipt.
+    /// # Errors
+    /// Rejects foreign identity or occupied native work lanes.
+    pub fn set_command_model_preferences(
+        &mut self,
+        expected: &SessionId,
+        preferences: crate::NativeModelPreferences,
+    ) -> Result<u64, AcpSessionError> {
+        self.check_command_admission(expected)?;
+        self.inner
+            .set_model_preferences(preferences)
+            .map_err(Into::into)
     }
 
     /// A failed shutdown remains owned and fenced, not a successful close.
@@ -198,7 +286,7 @@ impl NativeAcpSession {
         prompt: NativeAcpPrompt,
     ) -> Result<NativeQueuedJobId, AcpSessionError> {
         self.check_session(expected)?;
-        if self.prompt.is_some() {
+        if self.prompt.is_some() || self.command_control.is_some() {
             return Err(AcpSessionError::Busy);
         }
         let job = self.inner.enqueue_acp(prompt)?;
@@ -211,7 +299,7 @@ impl NativeAcpSession {
     /// Rejects a stale or closed session identity.
     pub fn request_cancel(&mut self, expected: &SessionId) -> Result<bool, AcpSessionError> {
         self.check_session(expected)?;
-        self.cancelling = self.prompt.is_some();
+        self.cancelling = self.prompt.is_some() || self.command_control.is_some();
         if self.cancelling {
             self.inner.request_cancel();
         }
@@ -334,7 +422,7 @@ impl NativeAcpSession {
         now_ms: i64,
     ) -> Result<crate::NativeInteractiveControlId, AcpSessionError> {
         self.check_session(expected)?;
-        if self.model_save.is_some() {
+        if self.model_save.is_some() || self.command_control.is_some() {
             return Err(AcpSessionError::Busy);
         }
         let id = self

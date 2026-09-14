@@ -254,6 +254,7 @@ impl NativeAcpSelectionOwner {
                     || self.current.as_ref().is_some_and(|current| {
                         current.session.has_pending_prompt()
                             || current.session.has_pending_model_save()
+                            || current.session.has_pending_command_control()
                     })
                 {
                     pending.phase = Phase::Draining(host);

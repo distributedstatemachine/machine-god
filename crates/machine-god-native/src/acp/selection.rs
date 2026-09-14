@@ -376,6 +376,21 @@ impl NativeAcpSelectionOwner {
         }
         result
     }
+    /// Drains an exact command receipt while shutdown fences new mutations.
+    #[must_use]
+    pub fn take_command_control_outcome(
+        &mut self,
+    ) -> Option<crate::NativeInteractiveControlOutcome> {
+        let result = self
+            .current
+            .as_mut()?
+            .session
+            .take_command_control_outcome();
+        if result.is_some() {
+            self.notify();
+        }
+        result
+    }
     #[must_use]
     pub fn take_presentation(&mut self) -> Option<(BackgroundOutputOwner, EngineEvent)> {
         let current = self.current.as_mut()?;
