@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `finish ACP composed-host regression, then replacement local gate`
+- Next gate: `validate integrated ACP composed-host regression, then replacement local gate`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered features.
@@ -435,9 +435,9 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: macOS Rust, release smoke and portability passed before the pending
-composed-host regression. Parent cold build passed in 586s; candidate exceeded
-600s. Complete acquisition/stdio coverage and replacement gates remain.
+not delivered: prior macOS Rust, release smoke and portability passed. The full
+acquisition/stdio regression is integrated; its runtime and replacement gates
+remain. Parent cold build passed in 586s; the prior candidate exceeded 600s.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.
