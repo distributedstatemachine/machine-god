@@ -166,6 +166,16 @@ fn block_reader(
     (observe, release)
 }
 
+#[cfg(feature = "ai-gateway-http")]
+impl NativeConversationRuntime {
+    pub(crate) fn block_next_acp_resource_read_for_test(
+        &self,
+    ) -> (mpsc::Receiver<()>, mpsc::SyncSender<()>) {
+        let id = self.state.lock().unwrap().queue.front().unwrap().id;
+        block_reader(self, id)
+    }
+}
+
 #[test]
 fn acp_fifo_reads_after_take_and_only_provider_gets_advisory_context() {
     let fixture = Fixture::new();

@@ -42,6 +42,27 @@ pub(super) enum InputBinding {
 }
 
 impl InputBinding {
+    /// Mixed input cannot defer a selection until a later flush. Keep its
+    /// original editor identity so the edit/escape still decodes there, but
+    /// remove authority from every event subsequently decoded from this chunk.
+    fn revoke_mixed_deferred_selection(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Skills { pending_frame, .. }
+                if bytes
+                    .iter()
+                    .any(|byte| !matches!(byte, b'\t' | b'\r' | b'\n')) =>
+            {
+                *pending_frame = None;
+            }
+            Self::AwaitingPicker {
+                pending_revision, ..
+            } if bytes.iter().any(|byte| *byte != b'\r') => {
+                *pending_revision = None;
+            }
+            _ => {}
+        }
+    }
+
     fn same_editor(&self, other: &Self) -> bool {
         match (self, other) {
             (
@@ -125,6 +146,13 @@ impl InputLines {
         self.composer
             .as_ref()
             .map(|composer| (composer.text(), composer.cursor()))
+    }
+
+    #[cfg(test)]
+    pub fn received_chunk_remainder(&self) -> Option<&[u8]> {
+        self.chunk
+            .as_ref()
+            .map(|chunk| &chunk.as_bytes()[self.offset..])
     }
 
     pub fn original_draft(&self) -> Option<(&str, usize)> {
@@ -310,7 +338,7 @@ impl InputLines {
     pub fn poll_event_observed(
         &mut self,
         cx: &mut Context<'_>,
-        binding: InputBinding,
+        mut binding: InputBinding,
         context: ComposerContext,
         mut received: impl FnMut(&[u8]),
         mut edited: impl FnMut(&InputBinding, Range<usize>, &str, usize),
@@ -340,6 +368,10 @@ impl InputLines {
                 }
                 Poll::Ready(Ok(Some(chunk))) => {
                     received(chunk.as_bytes());
+                    binding.revoke_mixed_deferred_selection(chunk.as_bytes());
+                    if let Some(partial) = &mut self.line_binding {
+                        partial.revoke_mixed_deferred_selection(chunk.as_bytes());
+                    }
                     self.chunk = Some(chunk);
                     self.offset = 0;
                     self.chunk_binding = binding;

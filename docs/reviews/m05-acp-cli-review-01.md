@@ -317,3 +317,31 @@ same error. No new reviewer was created and no formal R3 review took place;
 the coordinator's bounded source inspection is not a substitute. The unused
 isolated review checkout was verified at the exact candidate, clean, and removed.
 No source fix, relaxed gate, remote push or delivery followed this capacity error.
+
+## Candidate c8e12295: restored R3 review and rejection
+
+After capacity was restored, three new isolated read-only direct-review agents
+examined exact `c8e122950bc080d7a26eaeeff04a28b40afdc33f` against delivered
+main `658f3366258cf1207904f9c2a274f32db2bb981b`. Correctness/API and
+performance/resources each reported zero actionable introduced findings.
+Lifecycle/platform reported two P2 findings, rejecting the whole candidate:
+
+- Cancelling an ACP prompt during native resource preparation settled as the
+  typed resource cancellation error, but output mapped it to JSON-RPC `-32603`
+  instead of the required cancelled stop reason. The related EOF drain also
+  classified this expected cancellation as a native failure.
+- With a selectable frame awaiting flush, one chunk containing Tab then an edit
+  or Escape could clear and immediately re-arm a skill selection. A queued ACK
+  then selected the skill and discarded the remaining input as stale. The
+  session picker's deferred Enter had the same input-custody issue.
+
+These were static full-feature reviews, not Bugbot or independent platform test
+runs. The coordinator confirmed both paths. Two isolated implementation workers
+supplied precise settled-outcome classification with pure tests and persistent
+mixed-chunk revocation with actual-driver held-ACK regressions for skills/picker.
+The coordinator added protocol-boundary cancellation-before-poll, held-reader
+settlement and EOF regressions using the existing test-only native reader seam.
+Unrelated errors, real worker custody, editor identity and deadlines remain intact.
+Component formatting and diff checks passed; those checks alone do not establish
+runtime acceptance. This replacement requires the complete local gate and three
+new reviewers before any feature push or delivery.

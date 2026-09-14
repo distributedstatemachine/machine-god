@@ -4,6 +4,7 @@ use crate::acp::{protocol::decode_frame, selection::tests::fixture::Factory};
 use serde_json::json;
 use std::sync::atomic::Ordering;
 
+mod cancellation_tests;
 mod command_tests;
 
 fn run(future: impl std::future::Future<Output = ()>) {

@@ -420,6 +420,10 @@ Tab/Enter chunk cannot select and silently submit the changed draft. Resize and
 navigation invalidate prior frame acknowledgements and pending selection intents.
 Edits (including newly received partial text/escape input), resets, modal/session
 transfers, cancellation, EOF and output failure discard pending intents.
+When a single received chunk combines selection keys with an edit or escape,
+its deferred selection authority stays revoked through every decoded event and
+intervening flush acknowledgement. The original editor identity is retained so
+the remaining text or cancellation is still processed, including split UTF-8.
 Tiny or hidden frames cannot
 authorize selection. Escape closes the menu and preserves the original draft
 and valid bindings; idle Ctrl-C clears the draft, including a suspended slash-menu

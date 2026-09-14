@@ -58,10 +58,7 @@ impl NativeAcpConnection {
         if let Some(outcome) = self.selection.take_turn_outcome() {
             if let Some(prompt) = self.prompt.take() {
                 let result = if prompt.owner == outcome.owner {
-                    match outcome.outcome {
-                        Ok(event) => stop_result(&event.payload),
-                        Err(_) => Err(rpc_error(-32603, "ACP native turn failed")),
-                    }
+                    stop_result(outcome.outcome.as_ref().map(|event| &event.payload))
                 } else {
                     Err(rpc_error(-32603, "ACP turn ownership mismatch"))
                 };
@@ -254,7 +251,9 @@ impl NativeAcpConnection {
             cx.waker().wake_by_ref();
         }
         if let Some(outcome) = self.selection.take_turn_outcome() {
-            if outcome.outcome.is_err() {
+            if let Err(error) = &outcome.outcome
+                && !resource_preparation_cancelled(error)
+            {
                 self.error.get_or_insert(NativeAcpConnectionError::Native);
             }
             self.prompt = None;
@@ -305,14 +304,34 @@ pub(super) fn update_message(session: &SessionId, update: Value) -> AcpMessage {
         params: Some(params),
     }
 }
-fn stop_result(event: &TurnEvent) -> Result<Value, super::protocol::AcpRpcError> {
-    match event {
-        TurnEvent::Completed { reason, .. } => Ok(json!({"stopReason":match reason {
+// Called only after the exact native outcome settles and its principal matches.
+// Resource preparation can settle cancellation before a core turn exists; do
+// not manufacture an engine event or infer cancellation from requested intent.
+fn stop_result(
+    outcome: Result<&TurnEvent, &crate::NativeInteractiveError>,
+) -> Result<Value, super::protocol::AcpRpcError> {
+    match outcome {
+        Ok(TurnEvent::Completed { reason, .. }) => Ok(json!({"stopReason":match reason {
             StopReason::Cancelled=>"cancelled",
             StopReason::MaxOutputTokens=>"max_tokens",
             StopReason::ContentFilter=>"refusal",
             _=>"end_turn",
         }})),
+        Err(error) if resource_preparation_cancelled(error) => {
+            Ok(json!({"stopReason":"cancelled"}))
+        }
         _ => Err(rpc_error(-32603, "ACP native turn failed")),
     }
 }
+
+fn resource_preparation_cancelled(error: &crate::NativeInteractiveError) -> bool {
+    matches!(
+        error,
+        crate::NativeInteractiveError::Runtime(crate::NativeConversationRuntimeError::Resources(
+            crate::acp::resources::NativeAcpResourceContextError::Cancelled,
+        ))
+    )
+}
+
+#[cfg(test)]
+mod tests;

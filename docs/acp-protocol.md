@@ -180,6 +180,13 @@ native shutdown for the transport's final output grace. Output failure follows
 the same native cleanup path, with a payload-free failure diagnostic. No
 JSON-RPC response is itself a worker-join or checkpoint receipt.
 
+Cancellation during prompt resource preparation reports `stopReason: cancelled`
+only after the exact native operation has settled, including cancellation before
+its first poll. It does not start a provider or fabricate a checkpoint. EOF waits
+for the same worker settlement without treating this typed cancellation as a
+native failure. Unrelated resource, persistence and native failures remain errors;
+cancellation intent or error text cannot reclassify them.
+
 When a complete input frame is retained under backpressure, the CLI also requests
 an independent observation of the original input pipe's writer disconnect. The
 existing owned input worker retains an exact FIFO alias (including helper-backed

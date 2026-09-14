@@ -131,6 +131,63 @@ fn queued_skill_flush_ack_does_not_lose_a_new_exact_frame_tab() {
 }
 
 #[test]
+fn mixed_skill_chunk_cannot_rearm_selection_before_flush_or_discard_its_tail() {
+    for keys in [b"\tv".as_slice(), b"\t\tv", b"\t\x1b", b"\t\x03", b"\t\xc3"] {
+        let runtime = executor();
+        let fixture = support::Fixture::new_with_skills();
+        let mut harness = runtime.block_on(prepared(&fixture, 100));
+        let result = runtime.block_on(async {
+            hold_frame_flush(&mut harness).await;
+            release_flush(&harness);
+            harness.input_writer.write_all(keys).unwrap();
+            // Stop immediately after the first Tab from the actual native
+            // chunk. Consume the already queued successful ACK in the same
+            // input-then-output order as Driver::poll, before any tail event.
+            input_until(&mut harness, |driver| {
+                driver.input.received_chunk_remainder() == Some(&keys[1..])
+            })
+            .await;
+            assert!(!harness.driver.has_pending_skills_selection());
+            poll_fn(|cx| {
+                harness.driver.poll_output(cx);
+                Poll::Ready(())
+            })
+            .await;
+            assert_eq!(harness.driver.input.raw_draft(), Some(("Help $re", 8)));
+            assert!(!harness.driver.has_pending_skills_selection());
+            if keys.ends_with(b"\xc3") {
+                // Complete UTF-8 only after the original chunk has paid its
+                // revocation, preserving its first editor across both polls.
+                input_until(&mut harness, |driver| {
+                    driver.input.received_chunk_remainder().is_none()
+                })
+                .await;
+                harness.input_writer.write_all(b"\xa9").unwrap();
+            }
+            pump_until(&mut harness, |driver| {
+                let applied = if keys.ends_with(b"v") {
+                    driver.input.raw_draft() == Some(("Help $rev", 9))
+                } else if keys.ends_with(b"\xc3") {
+                    driver.input.raw_draft() == Some(("Help $reé", 10))
+                } else if keys.ends_with(b"\x03") {
+                    driver.input.raw_draft() == Some(("", 0)) && !driver.skills_open()
+                } else {
+                    !driver.skills_open()
+                };
+                applied && presentation_idle(driver)
+            })
+            .await;
+            assert!(!harness.driver.has_pending_skills_selection());
+            assert_eq!(harness.driver.owner.runtime().status().queued_jobs, 0);
+            assert!(fixture.transport.requests().is_empty());
+            finish_signal(&mut harness).await
+        });
+        let mut tail = dispose(harness, fixture, result);
+        runtime.block_on(finish_raw_tail(&mut tail));
+    }
+}
+
+#[test]
 fn pending_skill_intent_is_revoked_by_new_edit_navigation_or_partial_input() {
     for changed in [b"v".as_slice(), b"\x1b[B", b"\x1b", b"\xc3", b"\x1b["] {
         let runtime = executor();

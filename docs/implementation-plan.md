@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `restore fresh reviewer capacity; three new ACP reviews on locally green c8e12295, then exact remote gates`
+- Next gate: `validate R3 cancellation and mixed-input fixes; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -424,15 +424,16 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
 not delivered: candidate `c8e122950bc080d7a26eaeeff04a28b40afdc33f` passed the
-complete replacement Linux/macOS local gate, including patched rustls policy,
-fresh release helpers, workspace tests, doctests and smoke checks. Both R2 fixes,
-modern-only wire cleanup and the canonical-preview fixture correction are included.
-All three new review tracks remain unstarted: two direct fresh-agent attempts and
-one nested attempt were refused by the host's agent-thread limit. The unused
-review worktree was verified clean and removed. Restore fresh reviewer capacity;
-do not substitute prior authors, unstarted tracks or local tests for independent
-review. No ACP commit has been pushed. Documentation-only checkpoint updates do
-not change this frozen behavior candidate or establish remote acceptance.
+complete replacement Linux/macOS local gate. Fresh reviewer capacity was restored;
+R3 correctness/API and resources reported zero findings, but lifecycle rejected
+the candidate for preparation cancellation returning an internal error and
+coalesced input restoring a revoked pending selection. The replacement maps only
+settled typed cancellation, preserves actual worker ownership through EOF, and
+keeps mixed input's deferred selection revoked without dropping its editor tail.
+Protocol-boundary and actual interactive-driver regressions accompany the fixes.
+Run focused tests and the complete replacement gate before three fresh reviewers;
+prior zero-finding tracks do not accept this changed candidate. No ACP commit has
+been pushed and no remote acceptance is established.
 [review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,

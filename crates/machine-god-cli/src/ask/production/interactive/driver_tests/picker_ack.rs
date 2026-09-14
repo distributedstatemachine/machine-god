@@ -168,6 +168,52 @@ fn pending_picker_enter_is_revoked_by_edit_navigation_and_partial_chunks() {
 }
 
 #[test]
+fn mixed_picker_chunk_cannot_rearm_enter_before_flush_or_change_sessions() {
+    for keys in [b"\rx".as_slice(), b"\r\rx", b"\r\x1b", b"\r\x03"] {
+        let runtime = executor();
+        let fixture = support::Fixture::new();
+        let mut harness = runtime.block_on(prepared(&fixture));
+        let original = harness.driver.owner.runtime().id();
+        let result = runtime.block_on(async {
+            hold_frame_flush(&mut harness).await;
+            release_flush(&harness);
+            harness.input_writer.write_all(keys).unwrap();
+            input_until(&mut harness, |driver| {
+                driver.input.received_chunk_remainder() == Some(&keys[1..])
+            })
+            .await;
+            assert!(!pending(&harness.driver));
+            // Match the actual driver's input-then-output phase ordering,
+            // consuming the queued frame ACK before decoding the retained tail.
+            poll_fn(|cx| {
+                harness.driver.poll_output(cx);
+                Poll::Ready(())
+            })
+            .await;
+            assert!(harness.driver.picker_request.is_none());
+            pump_until(&mut harness, |driver| {
+                let applied = if keys.ends_with(b"x") {
+                    driver.input.raw_draft() == Some(("x", 1))
+                } else if keys.ends_with(b"\x03") {
+                    driver.frontend.as_ref().unwrap().cancel_armed.is_some()
+                } else {
+                    !driver.picker_open()
+                };
+                applied && presentation_idle(driver)
+            })
+            .await;
+            assert!(!pending(&harness.driver));
+            assert!(harness.driver.picker_request.is_none());
+            assert_eq!(harness.driver.owner.runtime().id(), original);
+            assert!(fixture.transport.requests().is_empty());
+            finish_signal(&mut harness).await
+        });
+        let mut tail = dispose(harness, fixture, result);
+        runtime.block_on(finish_raw_tail(&mut tail));
+    }
+}
+
+#[test]
 fn pending_picker_enter_cannot_transfer_to_new_view_or_input_owner() {
     for change in 0..6 {
         let runtime = executor();
