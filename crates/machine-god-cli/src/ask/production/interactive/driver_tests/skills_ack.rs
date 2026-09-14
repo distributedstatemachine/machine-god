@@ -281,7 +281,7 @@ fn pending_skill_selection_cannot_hold_shutdown_or_survive_failed_output() {
             result.outcome,
             match stop {
                 0 => AskCommandOutcome::Interrupted,
-                1 => AskCommandOutcome::Completed,
+                1 => AskCommandOutcome::OperationalFailure,
                 2 => AskCommandOutcome::OutputFailure,
                 _ => unreachable!(),
             }

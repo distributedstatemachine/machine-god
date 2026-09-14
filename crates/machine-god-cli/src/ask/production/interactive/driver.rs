@@ -328,10 +328,9 @@ impl Driver {
         }
     }
 
-    fn poll_raw_input(&mut self, cx: &mut Context<'_>, binding: InputBinding, now_ms: i64) {
-        use super::composer::{ComposerContext, ComposerEvent};
+    fn raw_input_context(&self) -> super::composer::ComposerContext {
         let status = self.owner.runtime().status();
-        let context = ComposerContext {
+        super::composer::ComposerContext {
             active_response: status.active || status.queued_jobs != 0,
             session_picker: self.picker_open(),
             skills: if self.skills_query_open() {
@@ -340,7 +339,12 @@ impl Driver {
                 self.skills_open()
                     .then_some(machine_god_native::NativeSkillPickerMode::Inline)
             },
-        };
+        }
+    }
+
+    fn poll_raw_input(&mut self, cx: &mut Context<'_>, binding: InputBinding, now_ms: i64) {
+        use super::composer::ComposerEvent;
+        let context = self.raw_input_context();
         let tape = &mut self.output.tape;
         let skills = &mut self.skills;
         let mut edit_failed = false;
