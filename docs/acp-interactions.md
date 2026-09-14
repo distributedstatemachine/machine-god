@@ -27,6 +27,9 @@ capabilities are refreshed after selection and model changes. EOF drains owned
 command effects without requiring an output consumer; cancellation metadata does
 not assert rollback of effects that may already have completed.
 
+Duplicate active request IDs are rejected without retaining their parameters;
+discarding even deeply constructed native-call parameters uses iterative cleanup.
+
 Permission projection requires both the inbox view and its actual tool call
 from the live native permission-review context. A permission request ID is not
 a tool-call ID, and event-order guessing is not accepted provenance. The

@@ -21,6 +21,8 @@ mod commands;
 #[cfg(test)]
 mod composed_tests;
 mod dispatch;
+#[cfg(test)]
+mod interaction_tests;
 mod output;
 mod request;
 #[cfg(test)]
@@ -194,6 +196,7 @@ impl NativeAcpConnection {
                         .as_ref()
                         .is_some_and(|control| control.id() == &id)
                 {
+                    request::discard(params);
                     self.respond(
                         Some(id),
                         Err(rpc_error(-32600, "Duplicate active request identifier")),

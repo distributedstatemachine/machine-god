@@ -252,6 +252,19 @@ fn discarded_constructed_notifications_and_replies_have_iterative_cleanup() {
                 )
                 .unwrap();
             assert!(connection.reply.is_none());
+            connection
+                .receive(message(7, "session/list", json!({})), 1)
+                .unwrap();
+            connection
+                .receive(message(7, "session/cancel", deep()), 1)
+                .unwrap();
+            assert!(matches!(
+                reply(&mut connection),
+                AcpMessage::Response {
+                    outcome: Err(AcpRpcError { code: -32600, .. }),
+                    ..
+                }
+            ));
             connection.begin_shutdown();
             assert!(matches!(poll(&mut connection), Poll::Ready(None)));
         })
