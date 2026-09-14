@@ -1355,6 +1355,14 @@ impl NativeReferenceHost {
             .with_permission_contexts(contexts)
     }
 
+    /// Observes this host's exact permission-context routes without enrolling
+    /// another session or acquiring effects. Prepared ACP hosts use this to bind
+    /// client presentation to the selected host, never a connection-global route.
+    #[must_use]
+    pub fn permission_contexts(&self) -> Option<Arc<crate::NativePermissionContexts>> {
+        self.permission_contexts.as_ref().map(Arc::clone)
+    }
+
     /// Observes settlement of this host's complete terminal workers, including
     /// transferred child cleanup, without keeping any Engine/Session alive.
     /// Legacy constructors return `None`. Retain this handle before dropping

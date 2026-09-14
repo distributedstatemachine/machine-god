@@ -22,9 +22,10 @@ fn owner() -> BackgroundOutputOwner {
     )
 }
 fn connection() -> NativeAcpClientRequests {
-    let mut connection =
-        NativeAcpClientRequests::new(Arc::new(NativePermissionContexts::new())).unwrap();
-    connection.activate(owner()).unwrap();
+    let mut connection = NativeAcpClientRequests::new().unwrap();
+    connection
+        .activate(owner(), Arc::new(NativePermissionContexts::new()))
+        .unwrap();
     connection
 }
 fn request(url: bool) -> McpElicitationPromptRequest {
@@ -159,7 +160,9 @@ fn same_principal_reactivation_invalidates_old_response_and_never_reuses_ids() {
     let mut first = presenter.present(request(false), CancellationToken::new());
     assert!(poll(&mut first).is_pending());
     let first_id = id(frame(&mut connection));
-    connection.activate(owner()).unwrap();
+    connection
+        .activate(owner(), Arc::new(NativePermissionContexts::new()))
+        .unwrap();
     assert!(matches!(poll(&mut first), Poll::Ready(Err(_))));
     let mut second = presenter.present(request(false), CancellationToken::new());
     assert!(poll(&mut second).is_pending());
@@ -222,7 +225,7 @@ fn close_invalidates_accepted_but_unconsumed_response_and_is_terminal() {
     connection.close();
     assert!(matches!(poll(&mut pending), Poll::Ready(Err(_))));
     assert_eq!(
-        connection.activate(owner()),
+        connection.activate(owner(), Arc::new(NativePermissionContexts::new())),
         Err(NativeAcpClientRequestError::Closed)
     );
     assert!(connection.ids.is_empty());
@@ -289,7 +292,9 @@ fn abandoned_or_replaced_url_registration_never_emits_success() {
         assert!(poll(&mut pending).is_pending());
         let _ = frame(&mut connection);
         if replace {
-            connection.activate(owner()).unwrap();
+            connection
+                .activate(owner(), Arc::new(NativePermissionContexts::new()))
+                .unwrap();
             complete.finish(McpClientUrlOutcome::Completed);
         } else {
             drop(complete);

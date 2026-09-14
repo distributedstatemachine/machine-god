@@ -555,6 +555,18 @@ impl NativeConversationRuntime {
             .clone()
     }
 
+    /// Shares the explicitly supplied catalog without fetching new capabilities.
+    /// # Panics
+    /// Panics if an earlier panic poisoned the runtime state mutex.
+    #[must_use]
+    pub fn model_catalog(&self) -> Option<Arc<NativeModelCatalog>> {
+        self.state
+            .lock()
+            .expect("runtime state poisoned")
+            .catalog
+            .clone()
+    }
+
     /// Accepts new runtime settings immediately, even while a turn/save is active.
     /// All pending/future jobs observe the replacement; a taken job cannot change.
     /// The returned generation is acceptance, not a persistence receipt.

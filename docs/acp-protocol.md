@@ -60,8 +60,10 @@ boundaries under the [implementation plan](implementation-plan.md).
 
 `acp::client_requests::NativeAcpClientRequests` keeps the connection-lifetime
 correlation table together with the actual native inbox and client URL endpoint.
-Its explicitly injected permission-context registry supplies the exact live
-authorizing call; a tool name, request-ID conversion or observed event order is
+Each activation selects the prepared host's exact permission-context registry.
+Independent candidate hosts can validate even a same-ID load without colliding
+with the old host's routes. The connection's selected registry supplies the exact
+live authorizing call; a tool name, request-ID conversion or observed event order is
 not a substitute. The native inbox displays one request at a time, and this
 owner retains only that view. It returns at most one bounded encoded frame per
 poll, which the I/O driver must retain in its empty bounded output slot until
@@ -75,3 +77,33 @@ and never reuses outbound RPC identifiers. EOF and output failure close prompt
 admission; they do not replace the session driver's owned native settlement.
 Modern `elicitation/complete` is encoded only from the registered operation's
 actual completion notice, not from answer acceptance.
+
+## Connection orchestration
+
+`NativeAcpConnection` owns initialization, the selected native actor, one prompt
+request, one control operation and one ready reply. The CLI owns only framing,
+the input chunk and one acquired output frame. A request rejected by bounded
+backpressure is returned unchanged to its caller, not copied into an internal
+queue. Client responses and cancel notifications can still be admitted while a
+normal control operation is pending. Cancel requests additionally need the one
+reply slot. Unknown notifications are inert; invalid client replies cannot
+settle another waiter.
+
+The connection accepts only modern initialization and native session methods.
+Selection effects start during native polling, not request decoding. Listing
+uses the factory's explicitly captured read-only catalog authority even before
+a session is selected. Configured model choices share the supplied native
+catalog without fetching capabilities. Model changes respond only after the
+exact session-save receipt; mode changes affect future jobs without writing
+profile rules. Load history is emitted incrementally before its selection
+response. Engine observations and completed URL notices drain before the old
+prompt response and activation of the next permission registry.
+
+Transport output acquisition is separate from `poll_progress`: a blocked writer
+cannot abandon admitted preparation, cancellation, catalog reads or shutdown.
+EOF closes admission and native human waiters, then polls actual retirement.
+Unsent presentation may be discarded at this terminal cutoff; it is not a
+successful delivery claim. One already-ready protocol reply may survive settled
+native shutdown for the transport's final output grace. Output failure follows
+the same native cleanup path, with a payload-free failure diagnostic. No
+JSON-RPC response is itself a worker-join or checkpoint receipt.

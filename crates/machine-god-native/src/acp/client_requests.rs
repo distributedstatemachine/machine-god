@@ -53,7 +53,7 @@ pub struct NativeAcpClientRequests {
     bridge: Arc<NativeInteractivePromptBridge>,
     inbox: NativeInteractivePromptInbox,
     presenter: Arc<NativeAcpElicitationPresenter>,
-    contexts: Arc<NativePermissionContexts>,
+    contexts: Option<Arc<NativePermissionContexts>>,
     ids: AcpPendingRequests,
     pending: Option<Pending>,
     owner: Option<BackgroundOutputOwner>,
@@ -66,12 +66,10 @@ impl fmt::Debug for NativeAcpClientRequests {
     }
 }
 impl NativeAcpClientRequests {
-    /// Retains explicit permission context routes; construction performs no I/O.
+    /// Constructs an inactive connection; construction performs no I/O.
     /// # Errors
     /// Rejects unavailable native inbox construction.
-    pub fn new(
-        contexts: Arc<NativePermissionContexts>,
-    ) -> Result<Self, NativeAcpClientRequestError> {
+    pub fn new() -> Result<Self, NativeAcpClientRequestError> {
         let (bridge, inbox) =
             NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default())
                 .map_err(|_| NativeAcpClientRequestError::Unavailable)?;
@@ -80,7 +78,7 @@ impl NativeAcpClientRequests {
             bridge,
             inbox,
             presenter,
-            contexts,
+            contexts: None,
             ids: AcpPendingRequests::new(),
             pending: None,
             owner: None,
@@ -108,6 +106,7 @@ impl NativeAcpClientRequests {
     pub fn activate(
         &mut self,
         owner: BackgroundOutputOwner,
+        contexts: Arc<NativePermissionContexts>,
     ) -> Result<(), NativeAcpClientRequestError> {
         if self.closed {
             return Err(NativeAcpClientRequestError::Closed);
@@ -123,6 +122,7 @@ impl NativeAcpClientRequests {
         self.pending = None;
         let _ = self.ids.clear();
         self.owner = Some(owner);
+        self.contexts = Some(contexts);
         self.epoch = epoch;
         Ok(())
     }
@@ -135,6 +135,7 @@ impl NativeAcpClientRequests {
         self.pending = None;
         let _ = self.ids.clear();
         self.owner = None;
+        self.contexts = None;
     }
 
     /// EOF/output failure closes interaction admission. The session driver must
@@ -193,6 +194,8 @@ impl NativeAcpClientRequests {
         let request = if let Some(permission) = view.permission() {
             let context = self
                 .contexts
+                .as_ref()
+                .ok_or(NativeAcpClientRequestError::Unavailable)?
                 .snapshot(permission)
                 .map_err(|_| NativeAcpClientRequestError::Stale)?;
             let Some(ContentBlock::ToolCall { call }) = context.pending_assistant().content.first()
