@@ -147,7 +147,9 @@ feature commands use the existing owned native control lane. One accepted
 command and its exact control ID/incarnation retain custody through cancellation
 and shutdown. Cancellation is an intent, never a claim that an already completed
 effect was undone. A mismatched completion leaves both the pending command and
-the supplied foreign receipt untouched. Model-save and command-control receipts
+the supplied foreign receipt untouched. An uncertain undo explicitly requires
+manual inspection; generic native failures report unconfirmed effects and never
+request automatic retry. Model-save and command-control receipts
 have separate facade custody; selection retirement waits for both to drain.
 
 Completed commands produce an agent text update with a structured

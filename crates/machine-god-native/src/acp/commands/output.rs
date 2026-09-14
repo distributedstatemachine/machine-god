@@ -249,7 +249,12 @@ pub(super) fn receipt(
             }
             mcp_receipt(receipt)
         }
-        Err(_) => json!({"outcome":"nativeFailure"}),
+        Err(crate::NativeInteractiveControlError::Undo(crate::FileUndoError::Ambiguous)) => {
+            json!({"outcome":"uncertain", "manualInspectionRequired":true, "automaticRetry":false})
+        }
+        Err(_) => {
+            json!({"outcome":"nativeFailure", "effects":"unconfirmed", "automaticRetry":false})
+        }
         Ok(_) => {
             failed = true;
             json!({"outcome":"unexpectedReceipt"})
