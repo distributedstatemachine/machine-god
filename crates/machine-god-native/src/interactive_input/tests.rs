@@ -93,8 +93,31 @@ fn pipe_peer_readiness_is_not_disconnect_or_read_credit() {
         assert!(!notified.0.load(Ordering::Acquire));
         assert!(!reader.shared.state.lock().unwrap().demand);
     }
+    // Closing one writer is not disconnect while an exact duplicate remains.
+    let retained_writer = write.try_clone().unwrap();
     drop(write);
     peer.observe(&reader.shared);
+    assert!(
+        reader
+            .shared
+            .state
+            .lock()
+            .unwrap()
+            .pipe_peer
+            .result
+            .is_none()
+    );
+    assert!(!notified.0.load(Ordering::Acquire));
+    assert!(!reader.shared.state.lock().unwrap().demand);
+    drop(retained_writer);
+    // Match the worker's repeated observation rather than assuming one poll
+    // must report HUP immediately after our local writer closes. In particular,
+    // EINTR is retryable and other processes may temporarily retain a writer.
+    until(|| {
+        peer.observe(&reader.shared);
+        assert!(!reader.shared.state.lock().unwrap().demand);
+        notified.0.load(Ordering::Acquire)
+    });
     assert!(notified.0.load(Ordering::Acquire));
     assert_eq!(
         reader.poll_pipe_peer_closed(&mut Context::from_waker(&waker)),

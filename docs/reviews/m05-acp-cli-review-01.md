@@ -364,3 +364,28 @@ after their assertions and before shutdown. It changes neither production
 cancellation nor deadlines. The changed candidate must rerun focused tests and
 the complete replacement gate; an older in-flight build is cache preparation,
 not evidence for the changed commit.
+
+## Candidate eb57d916: pipe-observation fixture correction
+
+Candidate `eb57d9165b1dc054de40262be034eb6e2262bf25` passed both exact platform
+build gates, fresh release checks, portable compilation and policy checks.
+Linux passed six cancellation/outcome tests and fifteen neighboring skills/picker
+acknowledgement tests. An initial neighboring-test filter matched zero tests;
+that invocation was not acceptance and was replaced with the correct module
+filters and positive test-count checks. The full runtime pipeline then passed
+native ACP, CLI ACP, catalog and HTTP focused checks but stopped in input tests:
+45 passed, three existing helper entrypoints were ignored, and
+`pipe_peer_readiness_is_not_disconnect_or_read_credit` failed its immediate
+notification assertion. Workspace, Python and macOS runtime gates did not run.
+
+An isolated implementation worker found the fixture's one-observation assumption
+exceeded the production observation contract. A local writer drop does not prove
+all kernel writers have closed, and the observer deliberately retries interrupted
+polls. The failed syscall and any temporary inherited writer were not captured;
+no specific concurrency cause is claimed. The test-only correction retains an
+explicit duplicate writer to assert non-closure, then releases it and observes
+actual closure using the existing five-second helper. No-credit, unread-byte,
+descriptor-flag and wake assertions remain, with no production or deadline change.
+Component formatting and diff checks passed. The replacement requires focused
+tests, the complete exact gate and three fresh reviews; no push accepted this
+candidate. Its logs remain retained, not overwritten by the replacement.

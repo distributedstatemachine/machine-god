@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `validate R3 cancellation and mixed-input fixes; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
+- Next gate: `validate pipe-observation fixture correction; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -431,6 +431,8 @@ coalesced input restoring a revoked pending selection. The replacement maps only
 settled typed cancellation, preserves actual worker ownership through EOF, and
 keeps mixed input's deferred selection revoked without dropping its editor tail.
 Protocol-boundary and actual interactive-driver regressions accompany the fixes.
+The following gate exposed a one-shot pipe-closure observation assumption in a
+fixture; its correction preserves production behavior and the existing wait bound.
 Run focused tests and the complete replacement gate before three fresh reviewers;
 prior zero-finding tracks do not accept this changed candidate. No ACP commit has
 been pushed and no remote acceptance is established.
