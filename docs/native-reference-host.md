@@ -122,6 +122,18 @@ separate explicit subagent injection seam accepts the same root/transport
 composition plus one trusted authority allocation. Neither path probes or polls
 the authority during construction.
 
+`compose_ai_gateway_with_prepared_roots_and_conversation_and_credential_and_transport`
+accepts an already discovered credential and a trusted one-shot transport factory.
+It shares the production prepared-host construction path, retains the exact OIDC
+or API-key source observation, and moves the token into the factory only after
+the ordinary selection and retained-root checks. Factory configuration errors
+retain the fixed `HttpTransport` stage. The caller supplies the canonical target
+actually contacted by the returned transport and owns any factory effects; the
+host never polls that transport during construction. Existing production
+constructors continue selecting the pinned HTTP endpoint and default limits.
+This programmatic injection adds no CLI flag, configuration or environment
+endpoint override and does not bypass credential discovery in CLI acquisition.
+
 `NativeReferenceHostConversationOptions::new(Arc<FileUndoTracker>)` is an
 explicit trusted-host authority choice, not a passive display preference. It
 grants the five file mutation tools bounded preimage **read** authority and

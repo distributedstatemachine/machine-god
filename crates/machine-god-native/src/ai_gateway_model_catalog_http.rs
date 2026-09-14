@@ -339,12 +339,28 @@ impl AiGatewayModelCatalogHttpTransport {
     pub fn with_discovered_credential(
         credential: &DiscoveredAiGatewayCredential,
     ) -> Result<Self, AiGatewayModelCatalogHttpConfigError> {
-        let authorization = catalog_authorization(Some(credential.bearer_token()))?;
-        Self::with_authorization(
-            authorization,
+        Self::with_discovered_credential_and_endpoint_and_limits(
+            credential,
             AiGatewayModelCatalogHttpEndpoint::default(),
             AiGatewayModelCatalogHttpLimits::default(),
         )
+    }
+
+    /// Borrows an acquired credential with an approved endpoint and explicit limits.
+    ///
+    /// Retains the same sensitive-header policy as production construction without
+    /// cloning or consuming the credential. Endpoint admission remains unchanged;
+    /// only explicit numeric-loopback test endpoints can replace production.
+    ///
+    /// # Errors
+    /// Returns the existing fixed redacted header or backend initialization error.
+    pub fn with_discovered_credential_and_endpoint_and_limits(
+        credential: &DiscoveredAiGatewayCredential,
+        endpoint: AiGatewayModelCatalogHttpEndpoint,
+        limits: AiGatewayModelCatalogHttpLimits,
+    ) -> Result<Self, AiGatewayModelCatalogHttpConfigError> {
+        let authorization = catalog_authorization(Some(credential.bearer_token()))?;
+        Self::with_authorization(authorization, endpoint, limits)
     }
 
     /// Creates a transport with an approved endpoint and explicit limits.
@@ -1005,6 +1021,38 @@ mod tests {
         drop(pending);
         assert_eq!(transport.permits.available_permits(), 8);
         drop(transport);
+        let token = credential.into_bearer_token();
+        assert_eq!(
+            authorization_value(&token).unwrap().to_str().unwrap(),
+            format!("Bearer {marker}")
+        );
+    }
+
+    #[test]
+    fn acquired_credential_explicit_endpoint_keeps_sensitive_header_and_token_custody() {
+        let marker = "EXPLICIT_CATALOG_CREDENTIAL_SENTINEL";
+        let credential = crate::discover_ai_gateway_credential(
+            crate::AiGatewayCredentialEnvironment::new(None, Some(marker.into())),
+        )
+        .unwrap();
+        let endpoint =
+            AiGatewayModelCatalogHttpEndpoint::loopback_http("http://127.0.0.1:1/catalog").unwrap();
+        let transport =
+            AiGatewayModelCatalogHttpTransport::with_discovered_credential_and_endpoint_and_limits(
+                &credential,
+                endpoint,
+                AiGatewayModelCatalogHttpLimits::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            transport.endpoint.url.as_str(),
+            "http://127.0.0.1:1/catalog"
+        );
+        let header = transport.authorization.as_ref().unwrap();
+        assert!(header.is_sensitive());
+        assert_eq!(header.to_str().unwrap(), format!("Bearer {marker}"));
+        assert!(!format!("{header:?} {transport:?} {credential:?}").contains(marker));
+        assert_eq!(transport.permits.available_permits(), 8);
         let token = credential.into_bearer_token();
         assert_eq!(
             authorization_value(&token).unwrap().to_str().unwrap(),

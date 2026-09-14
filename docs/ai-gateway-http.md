@@ -258,6 +258,13 @@ values. The only alternate endpoint is the same strict class of canonical
 numeric-loopback HTTP test URL; it is not reachable from CLI, config, or
 environment endpoint input.
 
+`with_discovered_credential` borrows an already validated credential for the
+authenticated production catalog without consuming the token needed by inference.
+`with_discovered_credential_and_endpoint_and_limits` performs the same borrow
+with an explicitly admitted endpoint and limits. Both construct sensitive headers
+without rediscovering or cloning the bearer token; strict loopback admission and
+the production resolver-construction boundary are unchanged.
+
 The CLI enables only `ai-gateway-model-catalog-http`. Its resolved native
 feature graph contains the shared bearer/TLS and catalog HTTP dependencies plus
 Hickory's system-configuration support and its transitive protocol, network,

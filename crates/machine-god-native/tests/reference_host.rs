@@ -28,7 +28,8 @@ use machine_god_core::{
 };
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, ASK_USER_QUESTION_TOOL_NAME, AiGatewayByteStream,
-    AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayModelCatalogHttpTransport,
+    AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpEndpoint,
+    AiGatewayHttpLimits, AiGatewayHttpTransport, AiGatewayModelCatalogHttpTransport,
     AiGatewayTransport, AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME,
     ConfigOrigin, DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, FileUndoOutcome,
     FileUndoTracker, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, INSTALL_SKILL_TOOL_NAME,
@@ -909,6 +910,105 @@ fn acquired_catalog_credential_moves_into_host_with_exact_source_without_runtime
         drop(host);
         assert_eq!(Arc::strong_count(&tracker), 1);
         assert!(!format!("{catalog:?}").contains(marker));
+    }
+}
+
+#[test]
+fn acquired_credential_transport_factory_is_once_and_preserves_source_and_authority() {
+    let marker = "FACTORY_HOST_CREDENTIAL_SENTINEL";
+    for source in [
+        AiGatewayCredentialSource::VercelOidcToken,
+        AiGatewayCredentialSource::AiGatewayApiKey,
+    ] {
+        let temporary = TemporaryDirectory::new("acquired-transport-factory");
+        let (prepared, state) = complete_terminal_roots(temporary.path());
+        let environment = if source == AiGatewayCredentialSource::VercelOidcToken {
+            AiGatewayCredentialEnvironment::new(Some(marker.into()), None)
+        } else {
+            AiGatewayCredentialEnvironment::new(None, Some(marker.into()))
+        };
+        let credential = discover_ai_gateway_credential(environment).unwrap();
+        let tracker = Arc::new(FileUndoTracker::new());
+        let routes = Arc::new(machine_god_native::NativeConversationModelRoutes::new());
+        let observations = Arc::new(machine_god_native::NativeConversationObservations::new());
+        let prompter = AllowingPrompter::default();
+        let calls = std::cell::Cell::new(0);
+        let counter = &calls;
+        let one_shot = String::from("owned factory capture");
+        let host = NativeReferenceHost::compose_ai_gateway_with_prepared_roots_and_conversation_and_credential_and_transport(
+            built_in_config(), credential, prepared, Arc::new(prompter.clone()),
+            inert_question_prompter(), never_deadline(),
+            NativeReferenceHostConversationOptions::new(Arc::clone(&tracker))
+                .with_model_routes(routes.clone()).with_observations(observations.clone()),
+            move |token| {
+                drop(one_shot);
+                counter.set(counter.get() + 1);
+                let transport = AiGatewayHttpTransport::with_endpoint_and_limits(
+                    token,
+                    AiGatewayHttpEndpoint::loopback_http("http://127.0.0.1:1/inference")?,
+                    AiGatewayHttpLimits::default(),
+                )?;
+                Ok((Arc::new(transport), NetworkTarget {
+                    scheme: "http".into(), host: "127.0.0.1".into(), port: Some(1),
+                }))
+            },
+        ).unwrap();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(host.credential_source(), Some(source));
+        assert!(Arc::ptr_eq(&routes, &host.model_routes().unwrap()));
+        assert!(Arc::ptr_eq(&observations, &host.observations().unwrap()));
+        assert!(Arc::ptr_eq(&tracker, &host.undo_tracker().unwrap()));
+        assert!(prompter.requests().is_empty());
+        assert_eq!(fs::read_dir(state).unwrap().count(), 0);
+        assert!(!format!("{host:?}").contains(marker));
+        drop(host);
+        assert_eq!(Arc::strong_count(&tracker), 1);
+    }
+}
+
+#[test]
+fn acquired_credential_transport_factory_preserves_validation_order_and_redacted_failure() {
+    let marker = "REJECTED_FACTORY_CREDENTIAL_SENTINEL";
+    let rejected_endpoint = "http://REJECTED_ENDPOINT_SENTINEL.invalid:1/inference";
+    for invalid_selection in [false, true] {
+        let temporary = TemporaryDirectory::new("rejected-transport-factory");
+        let (prepared, state) = complete_terminal_roots(temporary.path());
+        let config = if invalid_selection {
+            load_config(
+                temporary.path(),
+                r#"{"schema_version":2,"permission_mode":"auto"}"#,
+            )
+        } else {
+            built_in_config()
+        };
+        let credential = discover_ai_gateway_credential(AiGatewayCredentialEnvironment::new(
+            None,
+            Some(marker.into()),
+        ))
+        .unwrap();
+        let tracker = Arc::new(FileUndoTracker::new());
+        let mut calls = 0;
+        let error = build_error(NativeReferenceHost::compose_ai_gateway_with_prepared_roots_and_conversation_and_credential_and_transport(
+            config, credential, prepared, Arc::new(AllowingPrompter::default()),
+            inert_question_prompter(), never_deadline(),
+            NativeReferenceHostConversationOptions::new(Arc::clone(&tracker)),
+            |_token| {
+                calls += 1;
+                Err(AiGatewayHttpEndpoint::loopback_http(rejected_endpoint).unwrap_err())
+            },
+        ));
+        assert_eq!(calls, usize::from(!invalid_selection));
+        assert_eq!(
+            error.kind(),
+            if invalid_selection {
+                NativeReferenceHostBuildErrorKind::UnsupportedSelection
+            } else {
+                NativeReferenceHostBuildErrorKind::HttpTransport
+            }
+        );
+        assert_redacted(error, &[marker, rejected_endpoint]);
+        assert_eq!(fs::read_dir(state).unwrap().count(), 0);
+        assert_eq!(Arc::strong_count(&tracker), 1);
     }
 }
 

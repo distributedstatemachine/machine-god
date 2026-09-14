@@ -30,21 +30,21 @@ use crate::terminal_host::{NativeTerminalHost, NativeTerminalHostResource};
 use crate::terminal_host_authority::{TerminalHostAccountShell, TerminalHostAuthorityInputs};
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
-    AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
-    AiGatewayLimits, AiGatewayProvider, AiGatewayToolInputLimits, AiGatewayTransport,
-    AiGatewayVisionTransport, AiGatewayWebSearchTransport, AskUserQuestionTool,
-    DiscoveredAiGatewayCredential, FileSessionStore, FileUndoTracker, LoadedNativeConfig,
-    McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
-    McpFeatureRequest, McpSearchToolsTool, McpSelectTool, McpToolCatalog, McpToolCatalogError,
-    McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind, NativeProviderKind,
-    NativeSessionLifecycle, NativeToolResultArchiveAdapter, NativeTransportKind, PermissionMode,
-    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
-    TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundOutputReader,
-    TerminalBackgroundSignaler, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
-    TerminalBackgroundWaitDelayError, TerminalBackgroundWriter, TerminalTool, ToolResultArchive,
-    VisionDeadline, VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind,
-    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind,
-    discover_ai_gateway_credential,
+    AiGatewayBearerToken, AiGatewayCredentialEnvironment, AiGatewayCredentialSource,
+    AiGatewayHttpConfigError, AiGatewayHttpTransport, AiGatewayLimits, AiGatewayProvider,
+    AiGatewayToolInputLimits, AiGatewayTransport, AiGatewayVisionTransport,
+    AiGatewayWebSearchTransport, AskUserQuestionTool, DiscoveredAiGatewayCredential,
+    FileSessionStore, FileUndoTracker, LoadedNativeConfig, McpFeatureAuthority, McpFeatureError,
+    McpFeatureErrorKind, McpFeaturePayload, McpFeatureRequest, McpSearchToolsTool, McpSelectTool,
+    McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool,
+    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
+    NativeToolResultArchiveAdapter, NativeTransportKind, PermissionMode, PermissionPrompter,
+    PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalBackgroundCatalog,
+    TerminalBackgroundInspector, TerminalBackgroundOutputReader, TerminalBackgroundSignaler,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalBackgroundWriter, TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits,
+    VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
+    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -720,6 +720,7 @@ impl NativeReferenceHost {
             question_prompter,
             web_search_deadline,
             options,
+            production_ai_gateway_transport,
         )
     }
 
@@ -753,9 +754,52 @@ impl NativeReferenceHost {
             question_prompter,
             web_search_deadline,
             conversation_options.into(),
+            production_ai_gateway_transport,
         )
     }
 
+    /// Composes the prepared credential-bearing host with a trusted transport factory.
+    ///
+    /// Preserves the acquired credential's source and moves its token into the
+    /// one-shot factory after the ordinary selection and retained-root checks.
+    /// No credential discovery is repeated. The factory must return the canonical
+    /// target actually contacted by its transport; any factory effects belong to
+    /// the explicitly injecting host. Composition never polls the returned transport.
+    /// All conversation authorities and cleanup requirements match the production
+    /// constructor. This is a programmatic seam, not a CLI endpoint selection.
+    ///
+    /// # Errors
+    /// Returns the existing redacted composition stages. Factory configuration
+    /// failures map to `HttpTransport` without reflecting their inputs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compose_ai_gateway_with_prepared_roots_and_conversation_and_credential_and_transport(
+        loaded_config: LoadedNativeConfig,
+        credential: DiscoveredAiGatewayCredential,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        conversation_options: NativeReferenceHostConversationOptions,
+        make_transport: impl FnOnce(
+            AiGatewayBearerToken,
+        ) -> Result<
+            (Arc<dyn AiGatewayTransport>, NetworkTarget),
+            AiGatewayHttpConfigError,
+        >,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::compose_production_prepared_with_credential(
+            loaded_config,
+            || Ok(credential),
+            prepared_roots,
+            permission_prompter,
+            question_prompter,
+            web_search_deadline,
+            conversation_options.into(),
+            make_transport,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn compose_production_prepared_with_credential(
         loaded_config: LoadedNativeConfig,
         acquire_credential: impl FnOnce() -> Result<
@@ -767,6 +811,12 @@ impl NativeReferenceHost {
         question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         options: PreparedCompositionOptions,
+        make_transport: impl FnOnce(
+            AiGatewayBearerToken,
+        ) -> Result<
+            (Arc<dyn AiGatewayTransport>, NetworkTarget),
+            AiGatewayHttpConfigError,
+        >,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
         let mcp_management = options.mcp_management.clone();
@@ -789,14 +839,14 @@ impl NativeReferenceHost {
         let memory = open_memory_tool(&session_store)?;
         let credential = acquire_credential()?;
         let credential_source = credential.source();
-        let transport =
-            AiGatewayHttpTransport::new(credential.into_bearer_token()).map_err(|_| {
+        let (transport, network_target) =
+            make_transport(credential.into_bearer_token()).map_err(|_| {
                 NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::HttpTransport)
             })?;
         Self::finish_composition_with_extensions(
             loaded_config,
-            Arc::new(transport),
-            production_ai_gateway_target(),
+            transport,
+            network_target,
             web_search_deadline,
             workspace_tools,
             session_store,
@@ -2177,6 +2227,15 @@ fn map_vision_deadline_error(error: crate::WebSearchTransportError) -> VisionTra
         WebSearchTransportErrorKind::Cancelled => VisionTransportErrorKind::Cancelled,
     };
     VisionTransportError::new(kind)
+}
+
+fn production_ai_gateway_transport(
+    token: AiGatewayBearerToken,
+) -> Result<(Arc<dyn AiGatewayTransport>, NetworkTarget), AiGatewayHttpConfigError> {
+    Ok((
+        Arc::new(AiGatewayHttpTransport::new(token)?),
+        production_ai_gateway_target(),
+    ))
 }
 
 fn production_ai_gateway_target() -> NetworkTarget {
