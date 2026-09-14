@@ -435,9 +435,9 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: native/CLI focused tests precede the integrated default-feature
-and portable completion boundary corrections. Corrected portability checks pass;
-fresh release helpers, replacement focused checks and the full gates remain.
+not delivered: fresh release, 156 focused tests and portable checks pass. A stale
+help-order fixture was corrected; all 115 CLI integration tests then pass.
+The cold-release Python probe timeout and complete replacement gates remain.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.

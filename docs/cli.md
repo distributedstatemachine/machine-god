@@ -110,8 +110,8 @@ from `/allowlist` configured patterns and `s` volatile session grants; see the
 | --- | --- | --- |
 | `help` | Show command help | This page |
 | No arguments | Start a fresh interactive session | This page |
-| `ask [--] [<prompt...>]` | Run one noninteractive request from argv or whole stdin | [ask](ask-cli.md) |
 | `acp` | Serve modern ACP v1 over newline-framed stdio | [ACP](#the-acp-command) |
+| `ask [--] [<prompt...>]` | Run one noninteractive request from argv or whole stdin | [ask](ask-cli.md) |
 | `background [last\|<id>] [--json]` | Inspect bounded persisted background history | [background](background-cli.md) |
 | `doctor [--json]` | Run bounded local health checks | [doctor](doctor-cli.md) |
 | `doctor cleanup [--apply] [--json]` | Report or explicitly remove proven redundant session staging files | [cleanup](doctor-cli.md#guarded-native-session-cleanup) |
