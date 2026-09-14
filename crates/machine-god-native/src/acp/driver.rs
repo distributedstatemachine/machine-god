@@ -15,6 +15,8 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+#[cfg(test)]
+mod composed_tests;
 mod dispatch;
 mod output;
 mod request;
@@ -135,20 +137,28 @@ impl NativeAcpConnection {
     /// # Errors
     /// Returns ownership of a message which has not been admitted.
     pub fn receive(&mut self, message: AcpMessage, now_ms: i64) -> Result<(), AcpMessage> {
+        if protocol::validate_message_shape(&message).is_err() {
+            if self.reply.is_some() || self.shutting_down {
+                return Err(message);
+            }
+            discard_message(message);
+            self.respond(None, Err(rpc_error(-32600, "Invalid ACP envelope")));
+            self.notify();
+            return Ok(());
+        }
         match message {
             AcpMessage::Response { id, outcome } => {
-                if let Some(id) = id {
-                    let _ = self.clients.reply(&id, outcome);
-                }
+                self.client_response(id, outcome);
             }
             AcpMessage::Notification { method, params } => {
-                if method == "session/cancel"
-                    && self.initialized
-                    && !self.shutting_down
-                    && let Ok(request::Request::Cancel { session }) =
+                if method == "session/cancel" && self.initialized && !self.shutting_down {
+                    if let Ok(request::Request::Cancel { session }) =
                         request::decode(&method, params)
-                {
-                    let _ = self.selection.request_cancel(&session);
+                    {
+                        let _ = self.selection.request_cancel(&session);
+                    }
+                } else {
+                    request::discard(params);
                 }
             }
             AcpMessage::Request { id, method, params } => {
@@ -266,6 +276,26 @@ impl NativeAcpConnection {
         debug_assert!(self.reply.is_none());
         self.reply = Some(AcpMessage::Response { id, outcome });
     }
+
+    fn client_response(&mut self, id: Option<AcpId>, outcome: Result<Value, AcpRpcError>) {
+        let outcome = match outcome {
+            Ok(value) if protocol::validate_value(&value, 1).is_ok() => Ok(value),
+            Ok(value) => {
+                request::discard(Some(value));
+                Err(rpc_error(-32602, "Invalid client response"))
+            }
+            Err(error) => {
+                // A remote error cancels its exact waiter; none of its data or
+                // text is a diagnostic or authority input. Reclaim even deeply
+                // constructed native values without recursive destruction.
+                request::discard(error.data);
+                Err(rpc_error(-32603, "Client request failed"))
+            }
+        };
+        if let Some(id) = id {
+            let _ = self.clients.reply(&id, outcome);
+        }
+    }
     fn fail(&mut self, error: NativeAcpConnectionError) {
         self.error.get_or_insert(error);
         self.begin_shutdown();
@@ -281,5 +311,20 @@ fn rpc_error(code: i64, message: &str) -> AcpRpcError {
         code,
         message: message.to_owned(),
         data: None,
+    }
+}
+
+fn discard_message(message: AcpMessage) {
+    match message {
+        AcpMessage::Request { params, .. } | AcpMessage::Notification { params, .. } => {
+            request::discard(params)
+        }
+        AcpMessage::Response {
+            outcome: Ok(value), ..
+        } => request::discard(Some(value)),
+        AcpMessage::Response {
+            outcome: Err(error),
+            ..
+        } => request::discard(error.data),
     }
 }

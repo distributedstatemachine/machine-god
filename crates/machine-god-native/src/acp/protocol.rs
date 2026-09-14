@@ -270,6 +270,13 @@ fn validate_params(params: Option<&Value>) -> Result<(), AcpProtocolError> {
 /// # Errors
 /// Rejects invalid constructed envelopes and depth/node/retention/output limits.
 pub fn encode_frame(message: &AcpMessage) -> Result<Vec<u8>, AcpProtocolError> {
+    validate_message_shape(message)?;
+    bounds::encode(message)
+}
+
+/// Shared shallow admission for explicitly constructed native envelopes.
+/// Payload projection still enforces its own borrowed-tree and byte budgets.
+pub(crate) fn validate_message_shape(message: &AcpMessage) -> Result<(), AcpProtocolError> {
     match message {
         AcpMessage::Request { id, method, params } => {
             validate_id(id)?;
@@ -289,7 +296,7 @@ pub fn encode_frame(message: &AcpMessage) -> Result<Vec<u8>, AcpProtocolError> {
             }
         }
     }
-    bounds::encode(message)
+    Ok(())
 }
 
 impl Serialize for AcpMessage {

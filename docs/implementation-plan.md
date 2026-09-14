@@ -433,11 +433,11 @@ Do not deliver codec, session or interaction fragments separately.
 
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
-components now include host/readiness, wire/reply custody and resource materialization.
-Integrated, not delivered: `0b8c5f4b` passes the locked release build, workspace
-Clippy and 139 focused macOS tests. Remaining: atomic session/MCP replacement,
-resource FIFO/provider wiring and retirement of the temporary text-only decoder,
-complete dispatch/updates, thin CLI I/O, transport scenarios and full gates below.
+now compose native resource FIFO/provider context, selection/retirement, typed
+request/reply dispatch and owned CLI stdio. Integrated, not delivered: component
+tests (including 22 wire/driver cases) and native/CLI component lint checks pass,
+not full-feature acceptance. Remaining: supported command handling, complete
+human/transport scenarios, fresh release helpers and the complete gates below.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
   new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.

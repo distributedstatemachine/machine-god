@@ -180,3 +180,82 @@ fn failed_preparation_is_correlated_and_does_not_initialize_an_actor() {
     connection.begin_shutdown();
     assert!(matches!(poll(&mut connection), Poll::Ready(None)));
 }
+
+#[test]
+fn constructed_envelope_ids_are_bounded_before_reply_retention() {
+    let mut connection = initialized(Arc::new(Factory::default()));
+    connection
+        .receive(
+            AcpMessage::Request {
+                id: AcpId::String("x".repeat(protocol::ACP_MAX_ID_BYTES + 1)),
+                method: "session/list".to_owned(),
+                params: Some(json!({})),
+            },
+            1,
+        )
+        .unwrap();
+    assert!(matches!(
+        reply(&mut connection),
+        AcpMessage::Response {
+            id: None,
+            outcome: Err(AcpRpcError { code: -32600, .. })
+        }
+    ));
+    connection.begin_shutdown();
+    assert!(matches!(poll(&mut connection), Poll::Ready(None)));
+}
+
+#[test]
+fn discarded_constructed_notifications_and_replies_have_iterative_cleanup() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            fn deep() -> Value {
+                let mut value = Value::Null;
+                for _ in 0..4096 {
+                    value = Value::Array(vec![value]);
+                }
+                value
+            }
+            let mut connection = initialized(Arc::new(Factory::default()));
+            let mut notification = serde_json::Map::new();
+            notification.insert("ignored".to_owned(), deep());
+            connection
+                .receive(
+                    AcpMessage::Notification {
+                        method: "ignored".to_owned(),
+                        params: Some(Value::Object(notification)),
+                    },
+                    1,
+                )
+                .unwrap();
+            connection
+                .receive(
+                    AcpMessage::Response {
+                        id: Some(AcpId::Integer(9)),
+                        outcome: Ok(deep()),
+                    },
+                    1,
+                )
+                .unwrap();
+            connection
+                .receive(
+                    AcpMessage::Response {
+                        id: Some(AcpId::Integer(9)),
+                        outcome: Err(AcpRpcError {
+                            code: -1,
+                            message: "discarded remote text".to_owned(),
+                            data: Some(deep()),
+                        }),
+                    },
+                    1,
+                )
+                .unwrap();
+            assert!(connection.reply.is_none());
+            connection.begin_shutdown();
+            assert!(matches!(poll(&mut connection), Poll::Ready(None)));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

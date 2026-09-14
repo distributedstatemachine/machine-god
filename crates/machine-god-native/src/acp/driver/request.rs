@@ -236,6 +236,10 @@ impl Write for BoundedWriter {
 }
 
 struct Params(Option<Value>);
+
+pub(super) fn discard(params: Option<Value>) {
+    drop(Params(params));
+}
 impl Drop for Params {
     fn drop(&mut self) {
         enum Children {

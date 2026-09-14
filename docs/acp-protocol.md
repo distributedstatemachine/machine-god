@@ -116,6 +116,11 @@ normal control operation is pending. Cancel requests additionally need the one
 reply slot. Unknown notifications are inert; invalid client replies cannot
 settle another waiter.
 
+Native callers constructing envelopes directly pay the same ID/method/shape
+checks before reply retention. Ignored notifications and rejected/remote-error
+reply trees are reclaimed iteratively, including caller-constructed excessive
+nesting; error payloads and text are never retained as native diagnostics.
+
 The connection accepts only modern initialization and native session methods.
 Selection effects start during native polling, not request decoding. Listing
 uses the factory's explicitly captured read-only catalog authority even before
