@@ -10,6 +10,7 @@ use serde_json::value::RawValue;
 use std::{fmt, sync::Arc};
 
 mod completion;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) use completion::McpClientUrlCompletions;
 pub use completion::{
     McpClientUrlCompletion, McpClientUrlCompletionObserver, McpClientUrlEndpoint,

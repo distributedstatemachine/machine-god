@@ -81,6 +81,11 @@ accepted URL is retained through the continuation; declining, cancelling or
 dropping a pending answer abandons its registration. Answer acceptance and
 browser handoff are never operation-completion evidence.
 
+Endpoint and completion-handle contracts, including drop abandonment, remain
+portable. The internal operation-wide collection and successful finalization
+are compiled with their Linux/macOS native execution and continuation owners;
+unsupported platforms do not gain an executable continuation path.
+
 For model tools, successful terminal observation follows the final admitted
 response and native archive publication. Human resource-read and prompt-get
 actions retain the same custody until their final admitted response. Unresolved

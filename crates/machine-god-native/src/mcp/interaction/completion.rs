@@ -51,6 +51,7 @@ impl McpClientUrlCompletion {
         }
     }
 
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     pub(crate) fn finish(mut self, outcome: McpClientUrlOutcome) {
         if let Some(observer) = self.observer.take() {
             observer.finish(outcome);
@@ -73,7 +74,9 @@ impl fmt::Debug for McpClientUrlCompletion {
 /// Eight continuation rounds of at most 32 requests. Host endpoints must also
 /// enforce their own independently bounded correlation/output allocations.
 #[derive(Default)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) struct McpClientUrlCompletions(Vec<McpClientUrlCompletion>);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl McpClientUrlCompletions {
     pub(crate) fn register(
         &self,
@@ -131,6 +134,16 @@ mod tests {
     }
 
     #[test]
+    fn dropping_portable_completion_abandons_exactly_once() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let completion = McpClientUrlCompletion::new(Box::new(Observer(events.clone())));
+        assert!(events.lock().unwrap().is_empty());
+        drop(completion);
+        assert_eq!(*events.lock().unwrap(), [McpClientUrlOutcome::Abandoned]);
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn dropping_an_operation_abandons_each_exact_registration() {
         let first = Arc::new(Mutex::new(Vec::new()));
         let other = Arc::new(Mutex::new(Vec::new()));
