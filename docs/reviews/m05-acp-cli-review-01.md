@@ -278,3 +278,20 @@ No runtime tests, formal R3 reviews or remote pushes occurred for this candidate
 The correction raises the workspace rustls minimum and lockfile to 0.23.45;
 there is no advisory exception or policy relaxation. The replacement requires
 fresh release helpers and the complete gate before three new product reviewers.
+
+## Candidate 89620b56: alias fixture correction
+
+Candidate `89620b5674510d73d7543ac9c22531f390d3dc42` passed exact dependency
+policy/audit, compatibility, Unicode, documentation and Linux build checks.
+Linux's fresh release helper and workspace/all-feature test compilation finished;
+macOS passed full Clippy but had not finished its gate. Three filesystem-only
+alias tests then ran on Linux without process-heavy fixtures: two passed, and
+the combined-predicate case returned no rows. Its records had neither titles nor
+canonical user previews, but the query searched for their ID prefix. The catalog
+intentionally does not search IDs, so this was an invalid fixture expectation,
+not an alias resolver defect. The correction supplies canonical user messages
+for the existing preview-search predicate. Production filtering, query bounds,
+assertions and deadlines remain unchanged. No full runtime gate, formal R3 review
+or push accepted this candidate; the corrected exact commit requires the full
+replacement gate. An in-flight build of unchanged release code can populate
+the compilation cache but cannot substitute for that new exact-commit gate.

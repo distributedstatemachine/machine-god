@@ -31,7 +31,10 @@ fn workspace_alias_resolution_is_opt_in_deferred_and_preserves_every_predicate()
         ("match-old", 1, workspace.as_path()),
         ("match-other", 3, canonical.as_path()),
     ] {
-        fixture.save(record(name, Some(time), path.to_str().unwrap()));
+        let mut entry = record(name, Some(time), path.to_str().unwrap());
+        // Search matches canonical user previews, never session ID spelling.
+        entry.messages.push(Message::text(Role::User, name));
+        fixture.save(entry);
     }
     fs::write(fixture.root.join(data_name("corrupt")), b"invalid").unwrap();
     assert!(

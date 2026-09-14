@@ -426,11 +426,12 @@ and request dispatch, bounded session projections and owned CLI stdio. Integrate
 not delivered: the replacement Linux/macOS gate passed after the R1 lifecycle,
 alias preparation, output-wake and transport-aware network capture fixes.
 A fresh R2 correctness review found missing model configuration notifications
-and alias filtering in session/list. Fix both and remove superseded Session Modes
-wire duplication under the modern-only policy, then rerun the complete gate and
-three fresh reviews; unstarted R2 tracks are not accepted results. The integrated
-fix passed Clippy, but a newly published rustls advisory rejected its dependency
-gate; update the minimum and lock to the patched release without an exception.
+and alias filtering in session/list. Both fixes and modern-only removal of the
+superseded Session Modes wire duplication are integrated. Patched rustls passed
+the dependency gate without an exception. Focused alias validation then exposed
+a fixture that incorrectly expected ID search; provide canonical preview data,
+then rerun the complete gate and three fresh reviews. Unstarted R2 tracks are
+not accepted results.
 [review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
