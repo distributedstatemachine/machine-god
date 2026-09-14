@@ -399,7 +399,16 @@ impl NativeAcpSelectionOwner {
     /// separately: this observation alone is not a successful cleanup receipt.
     #[must_use]
     pub fn is_closed(&self) -> bool {
-        self.shutdown && self.current.is_none() && self.pending.is_none()
+        self.shutdown
+            && self.current.is_none()
+            && self.pending.is_none()
+            // Even error receipts are constructed only after async worker
+            // settlement. Keep that invariant explicit at terminal cutoff.
+            && self
+                .retained_cleanup
+                .iter()
+                .flat_map(|receipt| &receipt.workers)
+                .all(crate::NativeOwnedWorkerCompletion::is_complete)
     }
     #[must_use]
     pub fn take_outcome(&mut self) -> Option<NativeAcpSelectionOutcome> {

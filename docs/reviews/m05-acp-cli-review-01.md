@@ -438,3 +438,43 @@ Cancelled waiters do not restart discovery or abandon an already-started worker.
 Standalone transports without a supplied scope retain synchronous capture.
 Deterministic lifecycle tests and durable contracts accompany this change; the
 complete replacement gate and three fresh reviews remain required before push.
+
+## Candidate 085c24f2: local acceptance and R4 rejection
+
+Candidate `085c24f28583e5b17924a2830801aca604dc34d5` integrated deferred resolver
+capture and five deterministic regressions. The complete required Rust 1.94.1
+local gate passed: Linux native units 3,566/zero failures/11 existing ignores,
+macOS native units 3,568/zero/12, CLI units 549/zero/six on each platform,
+focused suites, workspace integrations, doctests, 269 Python tests, release
+smoke, pinned drift/generation checks, documentation, dependency policy/audit
+and required FreeBSD/WASI portability lint. Native unit durations were 52.53
+seconds on Linux and 921.64 seconds on macOS; no M07 performance claim follows.
+An additional FreeBSD all-features compilation probe failed in `aws-lc-sys`
+because the cross-compiler lacked FreeBSD C headers. That supplementary probe
+did not establish Rust compatibility and is not reported as passing.
+
+Three fresh read-only R4 agents reviewed the full branch against
+`658f3366258cf1207904f9c2a274f32db2bb981b` in isolated exact-SHA worktrees.
+Correctness/API reported zero actionable findings. Lifecycle/platform found one
+P2, independently confirmed by performance/resources on follow-up, superseding
+that track's initial zero-finding report. This is one shared finding, not two.
+
+`acp/selection/cleanup.rs` started a new unscoped worker to join a retired host.
+Capacity or thread-admission failure could return an incomplete receipt whose
+worker completions were retained but never observed again. Selection closure
+ignored them; CLI finalization joined only its separate input/factory scopes and
+could exit before retired host cleanup settled. This rejects the candidate despite
+the passing gate. Replace observer-worker admission with direct asynchronous
+completion, test actual settlement and failure paths, and repeat the complete
+gate with three fresh reviewers. No feature push or remote acceptance occurred.
+
+The repair adds infallible asynchronous observation of the existing scope's
+closed-and-settled predicate, without a new worker, polling timer or admission
+budget. Independent notification registrations retain actual collector/TLS/reap
+completion and contain caller-waker panics. Blocking self-wait rejection remains.
+ACP retirement awaits this observation before retaining any cleanup receipt;
+closure also checks retained completion handles. A thread-local, test-only
+unscoped-admission rejection exercises close and EOF while a real host worker
+remains held, without saturating the process-wide collector. Primitive waiter
+and wake/drop regressions accompany it. These component changes require the
+replacement gate; they are not a new acceptance record.

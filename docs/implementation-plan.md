@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `finish host-owned deferred web-fetch DNS discovery; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
+- Next gate: `fix ACP shutdown completion without observer-worker admission; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -422,14 +422,12 @@ Do not deliver codec, session or interaction fragments separately.
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) compose
 native session ownership, request dispatch, bounded projections and CLI stdio.
-Integrated, not delivered: R3 rejected preparation-cancellation classification
-and mixed-chunk pending-selection revocation. Both fixes and their regressions
-are integrated. Subsequent fixture corrections preserve production deadlines.
-The replacement Linux gate passed after an unexplained tmux timeout; macOS twice
-timed out awaiting initial session creation. Passing startup samples identified
-eager, unused web-fetch DNS discovery as substantial acquisition work, not the
-proven cause of the uncaptured failures. Complete hosts now need deferred,
-single-flight discovery on their existing owned scope, retaining actual cleanup.
+Integrated, not delivered: cancellation and mixed-input fixes, fixture corrections
+and host-owned deferred resolver capture passed the complete required local gate
+on Linux and macOS. R4 then rejected one shutdown defect: failed admission of a
+new completion-observer worker can allow connection closure before retired host
+workers settle. The repair observes actual completion asynchronously without
+new worker admission; deterministic worker/ACP regressions accompany it.
 Run focused checks and the full replacement gate before three fresh reviewers;
 prior zero-finding tracks do not accept a changed candidate. No ACP commit has
 been pushed and no remote acceptance is established. Exact failures, samples,

@@ -71,8 +71,11 @@ not wait on a foreign writer's lock. Retirement or cleanup uncertainty also
 fences further mutation and yields an
 explicit indeterminate receipt, never a claim that a destructively retired old
 selection remains usable. Successful selection follows old native, MCP and actual
-worker settlement. The old principal's finalized turn outcome is retained
-separately so the connection can settle its outstanding prompt response and drain
+worker settlement. Completion is observed asynchronously without admitting a
+new observer worker, so collector capacity or thread-admission failure cannot
+turn incomplete retired-host cleanup into connection closure. The old principal's
+finalized turn outcome is retained separately so the connection can settle its
+outstanding prompt response and drain
 old completion notices before publishing the new selection.
 
 Cancellation of a selected prompt remains available during candidate preparation

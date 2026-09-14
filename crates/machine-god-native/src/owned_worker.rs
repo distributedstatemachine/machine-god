@@ -95,6 +95,19 @@ impl fmt::Debug for NativeOwnedWorkerCleanup {
 struct ScopeState {
     status: Mutex<ScopeStatus>,
     wake: Condvar,
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    completed: tokio::sync::Notify,
+}
+
+impl ScopeState {
+    fn notify_complete(&self) {
+        self.wake.notify_all();
+        #[cfg(any(test, feature = "ai-gateway-http"))]
+        // Notification invokes caller wakers only after releasing scope state.
+        // The forwarding wakers below isolate each caller's panic so one broken
+        // observer cannot interrupt broadcasting to the other observers.
+        let _ = contain(|| self.completed.notify_waiters());
+    }
 }
 
 #[derive(Default)]
@@ -172,7 +185,7 @@ impl Drop for ScopeTicket {
         let complete = status.closed && status.tickets == 0;
         drop(status);
         if complete {
-            self.state.wake.notify_all();
+            self.state.notify_complete();
         }
     }
 }
@@ -215,9 +228,14 @@ impl NativeOwnedWorkerScope {
             .status
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let complete = !status.closed && status.tickets == 0;
         status.closed = true;
         drop(status);
-        self.state.wake.notify_all();
+        if complete {
+            self.state.notify_complete();
+        } else {
+            self.state.wake.notify_all();
+        }
     }
 
     /// Returns a handle which observes settlement without retaining host life.
@@ -304,6 +322,50 @@ impl NativeOwnedWorkerCompletion {
         status.closed && status.tickets == 0
     }
 
+    /// Observes actual collector/TLS/reap completion without another worker or
+    /// timer. Dropping one waiter cannot cancel the scope or another waiter.
+    /// A worker may first-poll this future and transfer it to another driver,
+    /// but must not block its own enrolled thread waiting for its own join.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) async fn wait(&self) {
+        loop {
+            // Retain the forwarding waker until after Notified is removed from
+            // its intrusive list, including when this future is abandoned.
+            let mut forwarded = None;
+            let notified = self.state.completed.notified();
+            let mut notified = std::pin::pin!(notified);
+            // Enroll before checking the closed/ticket predicate. Completion
+            // between this registration, the check and polling cannot be lost.
+            notified.as_mut().enable();
+            if self.is_complete() {
+                return;
+            }
+            std::future::poll_fn(|cx| {
+                if self.is_complete() {
+                    return Poll::Ready(());
+                }
+                let Ok(waker) = contain(|| cx.waker().clone()) else {
+                    // A broken caller cannot guarantee notification. Preserve
+                    // custody; a later poll can still observe real completion.
+                    return if self.is_complete() {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    };
+                };
+                let waker = Waker::from(Arc::new(CompletionWake(Some(waker))));
+                let previous = forwarded.replace(waker);
+                let mut forwarded_context = Context::from_waker(forwarded.as_ref().unwrap());
+                let result = notified.as_mut().poll(&mut forwarded_context);
+                // Keep the previous forwarding allocation alive while Notify
+                // replaces it, so its last user-waker drop is outside all locks.
+                drop(previous);
+                result
+            })
+            .await;
+        }
+    }
+
     /// Blocks a dedicated caller worker until this scope closes and settles.
     /// This does not stop or drain unrelated workers. Never call on an async
     /// polling thread; no timeout converts incomplete cleanup into success.
@@ -331,6 +393,50 @@ impl NativeOwnedWorkerCompletion {
     }
 }
 
+/// Notify only receives standard Arc wakers. Raw caller clone/drop callbacks
+/// stay outside its internal mutex, and wake panics cannot stop its broadcast.
+#[cfg(any(test, feature = "ai-gateway-http"))]
+struct CompletionWake(Option<Waker>);
+#[cfg(any(test, feature = "ai-gateway-http"))]
+impl std::task::Wake for CompletionWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        let _ = contain(|| {
+            self.0
+                .as_ref()
+                .expect("retained completion waker")
+                .wake_by_ref()
+        });
+    }
+}
+#[cfg(any(test, feature = "ai-gateway-http"))]
+impl Drop for CompletionWake {
+    fn drop(&mut self) {
+        let _ = contain(|| drop(self.0.take()));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static REJECT_UNSCOPED_WORKERS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Per-poll test injection; scoped admissions and concurrent threads are intact.
+#[cfg(test)]
+pub(crate) fn with_rejected_unscoped_workers<T>(operation: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            REJECT_UNSCOPED_WORKERS.with(|reject| reject.set(self.0));
+        }
+    }
+    let _restore = Restore(REJECT_UNSCOPED_WORKERS.with(|reject| reject.replace(true)));
+    operation()
+}
+
 impl NativeOwnedWorkerSpawner {
     /// Constructs the binding without threads, native effects or reservations.
     #[must_use]
@@ -350,6 +456,10 @@ impl NativeOwnedWorkerSpawner {
         &self,
         operation: impl FnOnce() + Send + 'static,
     ) -> Result<(), NativeOwnedWorkerSpawnError> {
+        #[cfg(test)]
+        if REJECT_UNSCOPED_WORKERS.with(std::cell::Cell::get) {
+            return Err(NativeOwnedWorkerSpawnError);
+        }
         let registry = worker_ownership_registry().map_err(|()| NativeOwnedWorkerSpawnError)?;
         let reservation = registry
             .reserve_partitioned(&[1])
@@ -513,6 +623,9 @@ impl<T> Drop for OwnedWorkerFuture<T> {
         self.abandon();
     }
 }
+
+#[cfg(test)]
+mod completion_tests;
 
 #[cfg(test)]
 mod tests {

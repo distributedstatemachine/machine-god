@@ -1,5 +1,5 @@
 use super::{Arc, BoxFuture, CancellationToken, NativeAcpSession, NativeReferenceHost, Poll};
-use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerSpawner};
+use crate::NativeOwnedWorkerCompletion;
 use std::time::Duration;
 
 pub(super) struct Receipt {
@@ -54,12 +54,11 @@ pub(super) fn retire(
                 workers: Vec::new(),
             };
         };
-        let observer = completion.clone();
-        let joined = NativeOwnedWorkerSpawner::new()
-            .run(move || observer.wait_on_worker())
-            .await;
+        // Retirement must not need a fresh worker admission: the collector can
+        // be full while the exact host's final worker or reap is still running.
+        completion.wait().await;
         Receipt {
-            complete: !failed && matches!(joined, Ok(Ok(()))) && completion.is_complete(),
+            complete: !failed && completion.is_complete(),
             workers: vec![completion],
         }
     })
