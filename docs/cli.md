@@ -111,6 +111,7 @@ from `/allowlist` configured patterns and `s` volatile session grants; see the
 | `help` | Show command help | This page |
 | No arguments | Start a fresh interactive session | This page |
 | `ask [--] [<prompt...>]` | Run one noninteractive request from argv or whole stdin | [ask](ask-cli.md) |
+| `acp` | Serve modern ACP v1 over newline-framed stdio | [ACP](#the-acp-command) |
 | `background [last\|<id>] [--json]` | Inspect bounded persisted background history | [background](background-cli.md) |
 | `doctor [--json]` | Run bounded local health checks | [doctor](doctor-cli.md) |
 | `doctor cleanup [--apply] [--json]` | Report or explicitly remove proven redundant session staging files | [cleanup](doctor-cli.md#guarded-native-session-cleanup) |
@@ -151,6 +152,46 @@ adaptive `COLUMNS` wrapping, additional global
 flags, examples, and resources. Those presentation and product-surface details
 are intentional scenario differences. This slice makes no byte-equivalence or
 complete-fx-help claim.
+
+## The `acp` command
+
+`machine-god acp` selects the modern ACP v1 newline JSON-RPC host. It takes no
+argv session, workspace, transport or protocol-compatibility options; session
+requests carry their explicit native workspace and authoritative `mcpServers`.
+The CLI owns launch capture and stdio I/O, not ACP session/product state.
+
+ACP captures its environment, trusted helper and native login shell once per
+connection. Request workspaces use native explicit-root selection without
+changing the process current directory. The shared ordinary-CLI acquisition
+pipeline composes native configuration, workspace authority, permissions,
+skills, inference credentials and model catalog with that exact snapshot.
+One paired async runtime/deadline drives all candidate, active and retired
+hosts. A connection-owned native worker scope owns blocking preparation and
+read-only session catalog listing; listing does not require an active host,
+configuration loading or inference credentials.
+
+Each candidate has a separate permission-context registry and dedicated
+ephemeral MCP runtime. Shared connection prompt and URL endpoints do not share
+session execution authority. ACP's preparation path never selects profile MCP
+management, profile startup or saved MCP authentication, including when the
+request omits `mcpServers` or supplies an empty array. Native readiness and
+session replacement own publication and retirement. Injected environment and
+Authorization bytes are not saved to native configuration or credentials.
+
+The stdio adapter reuses the native owned input helper, preserving inherited
+shared pipe flags. It retains at most one decoded inbound frame, one 4 KiB input
+chunk, and one outbound frame awaiting write/flush acknowledgement. Native
+progress continues while stdout is blocked. EOF, input failure, output failure,
+and signals stop admission and drain native shutdown before the input and host
+factory workers are joined. Only after those joins does final output receive a
+single three-second grace, shortened to 100 ms for a signal. An unresponsive
+stdout writer cannot delay process exit beyond that post-cleanup grace.
+
+The native [wire](acp-protocol.md), [session](acp-sessions.md),
+[interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) contracts own
+protocol bounds, supported methods, exact reply custody and persistence.
+There is no legacy negotiation, deprecated SSE transport, foreign-session
+import, or editor-side filesystem/terminal delegation.
 
 ## Interactive ownership
 

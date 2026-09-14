@@ -61,7 +61,7 @@ fn read_on_worker(
     collect_and_settle(&runtime, input, signals)
 }
 
-fn capture() -> Result<NativeInteractiveInputSource, ()> {
+pub(super) fn capture() -> Result<NativeInteractiveInputSource, ()> {
     let path = std::env::current_exe().map_err(|_| ())?;
     let helper =
         NativeInteractiveInputHelper::new(&path, std::fs::File::open(&path).map_err(|_| ())?)

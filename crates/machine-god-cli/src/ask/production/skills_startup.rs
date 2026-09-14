@@ -7,7 +7,7 @@ use machine_god_core::CancellationToken;
 use machine_god_native::{
     NativeEnvironment, NativeOwnedWorkerScope, NativeReferenceHostTerminalOptions,
     NativeSkillSnapshot, NativeSkillsCommand, NativeSkillsService, NativeSkillsServiceResult,
-    PreparedNativeRoots, TokioWebSearchRuntime, prepare_native_skills,
+    PreparedNativeRoots, prepare_native_skills,
 };
 use std::{ffi::OsString, sync::Arc};
 
@@ -35,12 +35,31 @@ pub(super) fn environment(values: &[(OsString, OsString)]) -> NativeEnvironment 
 
 /// The caller latches setup signals before entering. All effects finish before
 /// this returns, including error/panic paths, and before a full host is acquired.
+#[cfg(test)]
 pub(super) fn prepare(
-    runtime: &TokioWebSearchRuntime,
+    runtime: &impl super::acp_startup::HostRuntime,
     roots: PreparedNativeRoots,
     environment: NativeEnvironment,
     terminal: NativeReferenceHostTerminalOptions,
     discover: bool,
+) -> Result<Prepared, ()> {
+    prepare_with_cancel(
+        runtime,
+        roots,
+        environment,
+        terminal,
+        discover,
+        CancellationToken::new(),
+    )
+}
+
+pub(super) fn prepare_with_cancel(
+    runtime: &impl super::acp_startup::HostRuntime,
+    roots: PreparedNativeRoots,
+    environment: NativeEnvironment,
+    terminal: NativeReferenceHostTerminalOptions,
+    discover: bool,
+    cancellation: CancellationToken,
 ) -> Result<Prepared, ()> {
     let workers = NativeOwnedWorkerScope::new();
     let completion = workers.completion();
@@ -51,7 +70,7 @@ pub(super) fn prepare(
                 environment,
                 terminal,
                 workers.clone(),
-                CancellationToken::new(),
+                cancellation.clone(),
             )
             .await
             .map_err(|_| ())?;
@@ -59,9 +78,7 @@ pub(super) fn prepare(
                 let selected = Arc::clone(&service);
                 let cwd = roots.workspace_root().to_owned();
                 let result = workers
-                    .run(move || {
-                        selected.execute(NativeSkillsCommand::List, &cwd, &CancellationToken::new())
-                    })
+                    .run(move || selected.execute(NativeSkillsCommand::List, &cwd, &cancellation))
                     .await
                     .map_err(|_| ())?
                     .map_err(|_| ())?;

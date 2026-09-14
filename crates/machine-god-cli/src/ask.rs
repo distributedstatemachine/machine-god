@@ -81,6 +81,10 @@ impl AskCommandOutcome {
 }
 
 pub(crate) trait AskCommandHost {
+    fn execute_acp(&self, _output: &mut dyn io::Write) -> AskCommandExecution {
+        AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
+    }
+
     /// Retains validated launch inputs only; alternate hosts must explicitly
     /// support them instead of silently dropping requested authority selection.
     fn with_launch(
@@ -284,7 +288,7 @@ fn run_prompt(
     finish_prompt_execution(execution, stderr, operational_failure, output_failure)
 }
 
-fn finish_prompt_execution(
+pub(crate) fn finish_prompt_execution(
     execution: AskCommandExecution,
     stderr: &mut impl io::Write,
     operational_failure: &'static str,
@@ -335,6 +339,8 @@ pub(crate) fn run_interactive(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod production {
+    mod acp;
+    mod acp_startup;
     mod interactive;
     mod mcp_startup;
     mod output;
@@ -353,18 +359,17 @@ mod production {
     use machine_god_core::{CancellationToken, ModelEvent, TurnEvent};
     use machine_god_native::mcp::startup::NativeMcpStartupPhase;
     use machine_god_native::{
-        AiGatewayCredentialEnvironment, AiGatewayModelCatalogAccessMode,
-        AiGatewayModelCatalogHttpTransport, AiGatewayModelCatalogProvider, FileUndoTracker,
-        NativeConversation, NativeConversationModelRoutes, NativeConversationObservations,
-        NativeConversationRuntime, NativeConversationRuntimeTurn, NativeModelCatalog,
-        NativeModelCatalogCache, NativeModelCatalogCacheState, NativePermissionContexts,
-        NativeReferenceHost, NativeReferenceHostConversationOptions,
-        NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,
-        NativeRootSelection, NativeSessionMetadata, NativeSessionOrigin, PermissionPromptDecision,
-        PermissionPromptError, PermissionPrompter, PreparedNativeRoots, QuestionPromptError,
-        QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, TerminalShell,
-        TokioPermissionReviewClock, TokioWebSearchDeadline, discover_ai_gateway_credential,
-        load_native_config,
+        AiGatewayModelCatalogAccessMode, AiGatewayModelCatalogHttpTransport,
+        AiGatewayModelCatalogProvider, FileUndoTracker, NativeConversation,
+        NativeConversationModelRoutes, NativeConversationObservations, NativeConversationRuntime,
+        NativeConversationRuntimeTurn, NativeModelCatalog, NativeModelCatalogCache,
+        NativeModelCatalogCacheState, NativePermissionContexts, NativeReferenceHost,
+        NativeReferenceHostConversationOptions, NativeReferenceHostPermissionOptions,
+        NativeReferenceHostTerminalOptions, NativeRootSelection, NativeSessionMetadata,
+        NativeSessionOrigin, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
+        PreparedNativeRoots, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
+        QuestionPrompter, TokioPermissionReviewClock, TokioWebSearchDeadline,
+        discover_ai_gateway_credential, load_native_config,
     };
 
     use super::{
@@ -1029,6 +1034,28 @@ mod production {
                 }
             }
         }
+        fn execute_acp(&self, output: &mut dyn std::io::Write) -> AskCommandExecution {
+            if self.workspace.selected() || self.record_requested {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            }
+            let Ok(controller) = AskSignalController::spawn() else {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            };
+            if !controller.registration_complete() {
+                let _ = controller.enter_final();
+                return AskCommandExecution::with_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                    controller,
+                );
+            }
+            let (outcome, controller) = acp::execute(output, controller);
+            AskCommandExecution::with_finalizer(outcome, controller)
+        }
+
         fn execute_interactive(
             &self,
             selection: super::InteractiveSessionSelection,
@@ -1175,9 +1202,9 @@ mod production {
         }
     }
 
-    struct PreparedConversationHost {
+    struct PreparedConversationHost<R = machine_god_native::TokioWebSearchRuntime> {
         host: NativeReferenceHost,
-        runtime: machine_god_native::TokioWebSearchRuntime,
+        runtime: R,
         workspace: std::path::PathBuf,
         state_path: std::path::PathBuf,
         model_routes: Arc<NativeConversationModelRoutes>,
@@ -1217,46 +1244,88 @@ mod production {
     ) -> Result<PreparedConversationHost, ()> {
         let captured_environment: Vec<_> = std::env::vars_os().collect();
         let environment = skills_startup::environment(&captured_environment);
+        let root_selection =
+            NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
+        let terminal = acp_startup::TerminalCapture::capture()?;
+        let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
+        prepare_conversation_host_captured(
+            launch,
+            ConversationAdapters {
+                permission: permission_prompter,
+                question: question_prompter,
+                mcp: mcp_presenter,
+                background_url,
+            },
+            before_host,
+            discover_skills,
+            acp_startup::CapturedHostInputs {
+                environment: captured_environment,
+                roots: root_selection,
+                terminal,
+                mcp: acp_startup::McpSelection::Profile,
+                permission_contexts: Arc::new(NativePermissionContexts::new()),
+                cancellation: CancellationToken::new(),
+            },
+            runtime,
+            Arc::new(deadline),
+        )
+    }
+
+    struct ConversationAdapters {
+        permission: Arc<dyn PermissionPrompter>,
+        question: Arc<dyn QuestionPrompter>,
+        mcp: Option<Arc<dyn machine_god_native::mcp::interaction::McpElicitationPresenter>>,
+        background_url: Option<interactive::background_open::Authority>,
+    }
+
+    fn prepare_conversation_host_captured<R: acp_startup::HostRuntime>(
+        launch: &crate::workspace::launch::LaunchWorkspaceOptions,
+        adapters: ConversationAdapters,
+        before_host: impl FnOnce() -> Result<(), ()>,
+        discover_skills: bool,
+        captured: acp_startup::CapturedHostInputs,
+        runtime: R,
+        deadline: Arc<dyn machine_god_native::WebSearchDeadline>,
+    ) -> Result<PreparedConversationHost<R>, ()> {
+        let acp_startup::CapturedHostInputs {
+            environment: captured_environment,
+            roots: root_selection,
+            terminal,
+            mcp,
+            permission_contexts,
+            cancellation,
+        } = captured;
+        acp_startup::check_cancelled(&cancellation)?;
+        let environment = skills_startup::environment(&captured_environment);
         let status = machine_god_native::inspect_native_status(&environment);
         let profile_directory = status.config_file_path().and_then(std::path::Path::parent);
-        let mcp_management = mcp_startup::prepare(profile_directory)?;
+        let mcp_management = mcp.prepare_management(profile_directory)?;
         let user_config = profile_directory.map(|directory| {
             Arc::new(machine_god_native::NativeUserConfigStore::new(
                 directory.to_owned(),
             ))
         });
         let loaded_config = load_native_config(&environment).map_err(|_| ())?;
-        let root_selection =
-            NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
         let prepared_roots =
             PreparedNativeRoots::prepare(root_selection.clone()).map_err(|_| ())?;
+        let credential_environment = acp_startup::credential_environment(&captured_environment);
         let terminal_options =
-            capture_terminal_options(prepared_roots.workspace_root(), captured_environment)?;
-        let mcp_options = mcp_startup::prepare_runtime(
+            terminal.configure(prepared_roots.workspace_root(), captured_environment)?;
+        let mcp_options = mcp.prepare_runtime(
             &prepared_roots,
             &terminal_options,
             mcp_management.as_deref(),
-            mcp_presenter,
+            adapters.mcp,
         )?;
         let workspace = prepared_roots.workspace_root().to_owned();
         let state_path = prepared_roots.state_root().to_owned();
-        let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
         // Validate inference access before any catalog request.
         // Catalog loading precedes terminal-host acquisition:
         // setup signals can exit without abandoning native workers.
-        let credential =
-            discover_ai_gateway_credential(AiGatewayCredentialEnvironment::from_process())
-                .map_err(|_| ())?;
-        let catalog_transport =
-            AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential)
-                .map_err(|_| ())?;
-        let cache = Arc::new(NativeModelCatalogCache::new(Arc::new(
-            AiGatewayModelCatalogProvider::new(
-                AiGatewayModelCatalogAccessMode::Authenticated,
-                Arc::new(catalog_transport),
-            ),
-        )));
-        let catalog = runtime.block_on(load_conversation_catalog(&cache))?;
+        let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| ())?;
+        let (cache, catalog) =
+            prepare_conversation_catalog(&runtime, &credential, cancellation.clone())?;
+        acp_startup::check_cancelled(&cancellation)?;
         let model_routes = Arc::new(NativeConversationModelRoutes::new());
         let observations = Arc::new(NativeConversationObservations::new());
         // From the first owned workspace worker onward, signals latch until
@@ -1264,16 +1333,18 @@ mod production {
         before_host()?;
         let authority =
             prepare_launch_workspace(&runtime, root_selection, user_config.clone(), launch)?;
+        acp_startup::check_cancelled(&cancellation)?;
         let skills_startup::Prepared {
             roots: prepared_roots,
             service: skills,
             snapshot: skills_snapshot,
-        } = skills_startup::prepare(
+        } = skills_startup::prepare_with_cancel(
             &runtime,
             prepared_roots,
             environment,
             terminal_options.clone(),
             discover_skills,
+            cancellation.clone(),
         )?;
         let mut options =
             NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
@@ -1285,21 +1356,25 @@ mod production {
                 .with_skills(skills)
                 .with_model_routes(model_routes.clone())
                 .with_observations(Arc::clone(&observations))
-                .with_permissions(capture_permission_options());
-        options = interactive::background_open::configure(options, background_url);
-        if let Some((service, mcp_options)) = mcp_management.zip(mcp_options) {
-            options = options
-                .with_mcp_management(service)
-                .with_mcp_runtime(mcp_options);
+                .with_permissions(capture_permission_options_with_contexts(
+                    permission_contexts,
+                ));
+        options = interactive::background_open::configure(options, adapters.background_url);
+        if let Some(service) = mcp_management {
+            options = options.with_mcp_management(service);
         }
+        if let Some(mcp_options) = mcp_options {
+            options = options.with_mcp_runtime(mcp_options);
+        }
+        acp_startup::check_cancelled(&cancellation)?;
         let host =
             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
                 loaded_config,
                 credential,
                 prepared_roots,
-                permission_prompter,
-                question_prompter,
-                Arc::new(deadline),
+                adapters.permission,
+                adapters.question,
+                deadline,
                 options,
             )
             .map_err(|_| ())?;
@@ -1317,10 +1392,34 @@ mod production {
         })
     }
 
+    fn prepare_conversation_catalog(
+        runtime: &impl acp_startup::HostRuntime,
+        credential: &machine_god_native::DiscoveredAiGatewayCredential,
+        cancellation: CancellationToken,
+    ) -> Result<
+        (
+            Arc<NativeModelCatalogCache>,
+            Option<Arc<NativeModelCatalog>>,
+        ),
+        (),
+    > {
+        let transport = AiGatewayModelCatalogHttpTransport::with_discovered_credential(credential)
+            .map_err(|_| ())?;
+        let cache = Arc::new(NativeModelCatalogCache::new(Arc::new(
+            AiGatewayModelCatalogProvider::new(
+                AiGatewayModelCatalogAccessMode::Authenticated,
+                Arc::new(transport),
+            ),
+        )));
+        let catalog =
+            runtime.block_on(load_conversation_catalog_with_cancel(&cache, cancellation))?;
+        Ok((cache, catalog))
+    }
+
     /// Startup owns and joins its temporary worker scope on both success and
     /// failure before the complete terminal host can be acquired.
     fn prepare_launch_workspace(
-        runtime: &machine_god_native::TokioWebSearchRuntime,
+        runtime: &impl acp_startup::HostRuntime,
         roots: NativeRootSelection,
         store: Option<Arc<machine_god_native::NativeUserConfigStore>>,
         launch: &crate::workspace::launch::LaunchWorkspaceOptions,
@@ -1413,15 +1512,13 @@ mod production {
         Ok(result.outcome)
     }
 
-    /// Runs only on the existing constructor worker. This executable is the
-    /// trusted CLI that implements all private terminal helper modes.
-    fn capture_terminal_options(
+    fn terminal_options_from_capture(
         workspace: &std::path::Path,
         environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+        helper: std::path::PathBuf,
+        shell: std::path::PathBuf,
     ) -> Result<NativeReferenceHostTerminalOptions, ()> {
         use std::os::unix::fs::PermissionsExt;
-        let shell = TerminalShell::for_current_user(None, None).map_err(|_| ())?;
-        let helper = std::env::current_exe().map_err(|_| ())?;
         let tmux = environment
             .iter()
             .find(|(name, _)| name == "PATH")
@@ -1435,21 +1532,24 @@ mod production {
                             })
                     })
             });
-        let options = NativeReferenceHostTerminalOptions::new(
-            helper,
-            Some(shell.program().to_owned()),
-            environment,
-        )
-        .map_err(|_| ())?;
+        let options = NativeReferenceHostTerminalOptions::new(helper, Some(shell), environment)
+            .map_err(|_| ())?;
         match tmux {
             Some(program) => options.with_tmux(program).map_err(|_| ()),
             None => Ok(options),
         }
     }
 
+    #[cfg(test)]
     fn capture_permission_options() -> NativeReferenceHostPermissionOptions {
+        capture_permission_options_with_contexts(Arc::new(NativePermissionContexts::new()))
+    }
+
+    fn capture_permission_options_with_contexts(
+        contexts: Arc<NativePermissionContexts>,
+    ) -> NativeReferenceHostPermissionOptions {
         let options = NativeReferenceHostPermissionOptions::new(
-            Arc::new(NativePermissionContexts::new()),
+            contexts,
             Arc::new(TokioPermissionReviewClock),
         );
         // This blocking CLI owner chooses the fixed system executable explicitly.
@@ -1535,15 +1635,20 @@ mod production {
         i64::try_from(elapsed.as_millis()).map_err(|_| ())
     }
 
+    #[cfg(test)]
     async fn load_conversation_catalog(
         cache: &NativeModelCatalogCache,
     ) -> Result<Option<Arc<NativeModelCatalog>>, ()> {
+        load_conversation_catalog_with_cancel(cache, CancellationToken::new()).await
+    }
+
+    async fn load_conversation_catalog_with_cancel(
+        cache: &NativeModelCatalogCache,
+        cancellation: CancellationToken,
+    ) -> Result<Option<Arc<NativeModelCatalog>>, ()> {
         // This cache is new for one noninteractive invocation; zero is its
         // explicit monotonic origin, not a persisted wall-clock timestamp.
-        let snapshot = cache
-            .load(0, CancellationToken::new())
-            .await
-            .map_err(|_| ())?;
+        let snapshot = cache.load(0, cancellation).await.map_err(|_| ())?;
         match snapshot.state {
             NativeModelCatalogCacheState::Ready | NativeModelCatalogCacheState::Failed => {
                 Ok(snapshot.catalog)

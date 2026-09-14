@@ -1,5 +1,6 @@
 use machine_god_core::SessionId;
 use std::{env, ffi::OsString, io, process::ExitCode};
+mod acp;
 mod ask;
 mod background;
 mod bounded_output;
@@ -36,13 +37,14 @@ use workspace::{
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64> | <terminal-id>] [--json] | doctor [--json] | doctor cleanup [--apply] [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | session migrate <id> [--json] | session recover <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | acp | ask [--] <prompt...> | background [last | <unsigned-decimal-u64> | <terminal-id>] [--json] | doctor [--json] | doctor cleanup [--apply] [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | session migrate <id> [--json] | session recover <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Command {
+    Acp,
     Identity,
     Interactive {
         selection: InteractiveSessionSelection,
@@ -373,6 +375,7 @@ fn run_parsed_command(
     } = hosts;
 
     let output = match command {
+        Command::Acp => return acp::run(ask_host, stdout, stderr),
         Command::Identity => identity(),
         Command::Interactive { selection } => {
             return run_interactive(ask_host, selection, stdout, stderr, OUTPUT_FAILURE);
@@ -438,6 +441,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
         // any command-specific parsing or effects.
         "help" | "--help" | "-h" => return Ok(Command::Help),
         "--version" | "-V" => Command::Identity,
+        "acp" => Command::Acp,
         "ask" => match parse_ask_arguments(arguments.by_ref())? {
             Some(prompt) => Command::Ask { prompt },
             None => Command::AskStdin,
@@ -641,6 +645,7 @@ fn help() -> String {
             "  machine-god [<interactive-resume-options>] --record\n",
             "  machine-god [--add-dir PATH | --add-dir=PATH]... [--no-additional-dirs] [ask ... | resume ... | <interactive-resume-options>]\n",
             "  machine-god help\n",
+            "  machine-god acp\n",
             "  machine-god ask [--] [<prompt...>]\n",
             "  machine-god background [last | <unsigned-decimal-u64> | <terminal-id>] [--json]\n",
             "  machine-god doctor [--json]\n",
@@ -663,6 +668,7 @@ fn help() -> String {
             "\n",
             "Commands:\n",
             "  help         Show this help\n",
+            "  acp          Run the modern ACP stdio agent\n",
             "  ask          Run one noninteractive prompt\n",
             "  background   Inspect persisted background history\n",
             "  doctor       Run local health and preflight checks\n",

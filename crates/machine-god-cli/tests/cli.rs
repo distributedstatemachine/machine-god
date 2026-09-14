@@ -42,6 +42,10 @@ mod session_maintenance;
 #[path = "cli/permissions.rs"]
 mod configured_permissions;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "acp/mod.rs"]
+mod acp;
+
 const IDENTITY: &str = "machine-god 0.1.0 (engine API 1)\n";
 const PERMISSIONS: &str = concat!(
     "machine-god 0.1.0 (engine API 1)\n",
@@ -70,6 +74,7 @@ const HELP: &str = concat!(
     "  machine-god [--add-dir PATH | --add-dir=PATH]... [--no-additional-dirs] [ask ... | resume ... | <interactive-resume-options>]\n",
     "  machine-god help\n",
     "  machine-god ask [--] [<prompt...>]\n",
+    "  machine-god acp\n",
     "  machine-god background [last | <unsigned-decimal-u64> | <terminal-id>] [--json]\n",
     "  machine-god doctor [--json]\n",
     "  machine-god doctor cleanup [--apply] [--json]\n",
@@ -92,6 +97,7 @@ const HELP: &str = concat!(
     "Commands:\n",
     "  help         Show this help\n",
     "  ask          Run one noninteractive prompt\n",
+    "  acp          Run the modern ACP stdio agent\n",
     "  background   Inspect persisted background history\n",
     "  doctor       Run local health and preflight checks\n",
     "  models       List available models\n",
@@ -137,7 +143,7 @@ const STATUS_MISSING_AUTH_HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64> | <terminal-id>] [--json] | doctor [--json] | doctor cleanup [--apply] [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | session migrate <id> [--json] | session recover <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | acp | ask [--] <prompt...> | background [last | <unsigned-decimal-u64> | <terminal-id>] [--json] | doctor [--json] | doctor cleanup [--apply] [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | -r | --resume [last | <id>] | --resume-last | --continue | -c | --resume-<id> | resume [last | <id>] | resume --id <id> | resume --resume --last | session resume [last | <id>] | session resume --id <id> | resume <id> [--] <prompt...> | session <id> [--json] | session migrate <id> [--json] | session recover <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list | add <path> | remove <path> | clear] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
