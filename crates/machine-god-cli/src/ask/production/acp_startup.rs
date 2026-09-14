@@ -72,6 +72,23 @@ pub(super) enum McpSelection {
     Ephemeral,
 }
 impl McpSelection {
+    pub(super) fn capture_workspace_identity(
+        self,
+        roots: &PreparedNativeRoots,
+        authority: &machine_god_native::NativeWorkspaceAuthority,
+    ) -> Result<Option<machine_god_native::acp::selection::NativeAcpWorkspaceIdentity>, ()> {
+        match self {
+            Self::Ephemeral => {
+                machine_god_native::acp::selection::NativeAcpWorkspaceIdentity::capture(
+                    roots, authority,
+                )
+                .map(Some)
+                .map_err(|_| ())
+            }
+            Self::Profile => Ok(None),
+        }
+    }
+
     pub(super) fn prepare_management(
         self,
         directory: Option<&Path>,

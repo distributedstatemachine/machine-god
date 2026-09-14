@@ -109,30 +109,12 @@ fn roundtrip(aliased: bool) {
             // while this exact session is still selected and stdin stays open.
             assert_checkpoint(&fixture, SessionId::new(id.clone()).unwrap());
             if aliased {
-                for (request, method) in [(4, "session/load"), (5, "session/resume")] {
-                    client.send(
-                        request,
-                        method,
-                        &json!({
-                            "sessionId":id,"cwd":requested_workspace,"mcpServers":[]
-                        }),
-                    );
-                    let (selected, updates) = client.response(request);
-                    assert_eq!(selected["sessionId"], id);
-                    let user_history = updates.iter().any(|update| {
-                        update["update"]["sessionUpdate"] == "user_message_chunk"
-                            && update["update"]["content"]["text"] == PROMPT
-                    });
-                    assert_eq!(user_history, method == "session/load");
-                    assert_checkpoint(&fixture, SessionId::new(id.clone()).unwrap());
-                }
-                assert_eq!(
-                    gateway
-                        .requests()
-                        .iter()
-                        .filter(|r| r.method == "inference")
-                        .count(),
-                    1
+                assert_alias_reselection(
+                    &mut client,
+                    &fixture,
+                    &id,
+                    &requested_workspace,
+                    &gateway,
                 );
             }
             fixture.assert_profile_unchanged();
@@ -149,6 +131,38 @@ fn roundtrip(aliased: bool) {
         assert_eq!(outcome, AskCommandOutcome::Completed);
     });
     gateway.finish();
+}
+
+fn assert_alias_reselection(
+    client: &mut Client,
+    fixture: &Fixture,
+    id: &str,
+    requested_workspace: &std::path::Path,
+    gateway: &gateway::Gateway,
+) {
+    for (request, method) in [(4, "session/load"), (5, "session/resume")] {
+        client.send(
+            request,
+            method,
+            &json!({"sessionId":id,"cwd":requested_workspace,"mcpServers":[]}),
+        );
+        let (selected, updates) = client.response(request);
+        assert_eq!(selected["sessionId"], id);
+        let user_history = updates.iter().any(|update| {
+            update["update"]["sessionUpdate"] == "user_message_chunk"
+                && update["update"]["content"]["text"] == PROMPT
+        });
+        assert_eq!(user_history, method == "session/load");
+        assert_checkpoint(fixture, SessionId::new(id.to_owned()).unwrap());
+    }
+    assert_eq!(
+        gateway
+            .requests()
+            .iter()
+            .filter(|r| r.method == "inference")
+            .count(),
+        1
+    );
 }
 
 fn assert_checkpoint(fixture: &Fixture, id: SessionId) {

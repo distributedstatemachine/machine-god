@@ -1336,16 +1336,7 @@ mod production {
         before_host()?;
         let authority =
             prepare_launch_workspace(&runtime, root_selection, user_config.clone(), launch)?;
-        let acp_workspace = match mcp {
-            acp_startup::McpSelection::Ephemeral => Some(
-                machine_god_native::acp::selection::NativeAcpWorkspaceIdentity::capture(
-                    &prepared_roots,
-                    &authority,
-                )
-                .map_err(|_| ())?,
-            ),
-            acp_startup::McpSelection::Profile => None,
-        };
+        let acp_workspace = mcp.capture_workspace_identity(&prepared_roots, &authority)?;
         acp_startup::check_cancelled(&cancellation)?;
         let skills_startup::Prepared {
             roots: prepared_roots,
