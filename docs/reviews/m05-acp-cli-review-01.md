@@ -222,3 +222,43 @@ Profile capture, required-peer readiness and fail-closed network admission remai
 unchanged. No legacy fallback, fixture-only network suppression or deadline
 change is part of this correction. Replacement validation and fresh full-feature
 reviews remain required before delivery.
+
+## Candidate dd7b210a: complete local gate and R2 rejection
+
+Candidate `dd7b210a9d697b156ebfd166302e914e9419f07c` passed the complete exact
+Rust 1.94.1 Linux/macOS local gate: fresh locked release helpers, Clippy,
+portability, dependency/policy checks, focused regressions, workspace tests,
+doctests and release smoke. Linux passed 269 Python tests and 3,549 native unit
+tests; macOS passed 3,551 native unit tests. The seven transport-aware capture
+regressions passed on both platforms. macOS's composed alias fixture passed at
+its unchanged ten-second deadline; that result does not prove the cause of the
+previous unsampled timeout. One Linux focused web-fetch invocation initially
+omitted `--all-features` and ran zero tests; a corrected invocation passed all
+15 before macOS runtime started. The zero-test invocation is not acceptance
+evidence. Raw logs and helper hashes are retained with local gate evidence.
+
+A fresh correctness/API reviewer used the local direct-review fallback because
+the host supplied no Bugbot reviewer. It rejected the candidate with two P2
+findings, independently confirmed by the coordinator:
+
+- Native `/model` changed live preferences but never emitted modern
+  `config_option_update`, leaving clients' advertised model configuration stale.
+- Production `session/list` compared the client's original workspace spelling
+  literally with canonical stored metadata, so an ancestor alias accepted by
+  new/load/resume could omit those same sessions from a scoped list.
+
+Fresh lifecycle/platform and resources/performance tracks did not start because
+of the host's agent-thread limit; neither is a zero-finding result. The rejected
+candidate was not pushed. All three allocated review worktrees were clean and
+removed, including the two unused checkouts.
+
+The replacement work adds original-principal, bounded complete configuration
+updates before command results and prompt completion, reflecting actual live
+preferences independently of persistence outcome. Alias resolution is explicit
+native work on the existing owned list worker, with descriptive literal filters
+for deleted workspaces and no host preparation or workspace creation. Under the
+user's modern-only policy, the superseded Session Modes wire method and duplicate
+projection are also removed; this scope alignment is not a third review finding.
+Native `ask`/`auto`/`yolo` remain available through `session/set_config_option`.
+The replacement requires the full exact gate and three new reviewers; prior
+gate success or unstarted review tracks cannot accept changed source.

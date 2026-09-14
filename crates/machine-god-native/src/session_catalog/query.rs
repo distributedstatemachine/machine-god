@@ -3,6 +3,7 @@ use super::{
     NativeSessionCatalogErrorKind as Kind,
 };
 use crate::NativeSessionCatalogCursor;
+use machine_god_core::BoxFuture;
 use std::{
     fmt,
     os::unix::ffi::OsStrExt,
@@ -74,6 +75,36 @@ impl NativeSessionCatalogQuery {
         }
         self.workspace = Some(workspace.to_owned());
         Ok(self)
+    }
+    /// Resolves an explicitly selected workspace spelling on first poll.
+    /// Missing paths retain their literal filter so deleted workspace history
+    /// remains discoverable. No directory, host, or state root is created.
+    /// Other predicates are preserved; the result grants no workspace authority.
+    /// Synchronous path resolution runs on the polling thread without a hard
+    /// wall-clock bound. Construction and unpolled drop perform no I/O.
+    ///
+    /// # Errors
+    /// Returns `Unavailable` for resolution failures other than missing paths,
+    /// or `InvalidQuery` if the resolved spelling exceeds query bounds.
+    #[must_use]
+    pub fn resolve_workspace_alias(self) -> BoxFuture<'static, Result<Self, Error>> {
+        Box::pin(async move {
+            let Some(workspace) = self.workspace.as_deref() else {
+                return Ok(self);
+            };
+            match std::fs::canonicalize(workspace) {
+                Ok(workspace) => self.with_workspace(&workspace),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    Ok(self)
+                }
+                Err(_) => Err(Error::new(Kind::Unavailable)),
+            }
+        })
     }
     /// Case-insensitive ASCII substring search over known title/workspace and
     /// the explicitly bounded canonical-user-text preview, not full transcript search.

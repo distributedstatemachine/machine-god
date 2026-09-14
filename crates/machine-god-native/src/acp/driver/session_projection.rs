@@ -9,7 +9,7 @@ use std::{
 
 const MAX_CATALOG_ROWS: usize = 100;
 const MAX_MODEL_OPTIONS: usize = crate::AI_GATEWAY_MODEL_CATALOG_MAX_MODELS;
-// Includes conservative object framing, modes, metadata and a native cursor.
+// Includes conservative object framing, configuration, metadata and a native cursor.
 // Leave room for the bounded RPC ID and enclosing response envelope.
 const MAX_PROJECTION_BYTES: usize =
     crate::acp::protocol::ACP_MAX_FRAME_BYTES - (6 * crate::acp::protocol::ACP_MAX_ID_BYTES + 256);
@@ -24,13 +24,8 @@ pub(super) fn config_response(session: &NativeAcpSession) -> Result<Value, AcpSe
 }
 
 pub(super) fn selection_response(session: &NativeAcpSession) -> Result<Value, AcpSessionError> {
-    // One mode observation serves both representations in this response.
-    let mode = session.mode()?;
-    let mut result = config_for_mode(session, mode)?;
+    let mut result = config_response(session)?;
     result["sessionId"] = Value::String(session.id().as_str().to_owned());
-    let mut modes = json!({"currentModeId":mode.as_str()});
-    modes["availableModes"] = Value::Array(mode_options("id"));
-    result["modes"] = modes;
     Ok(result)
 }
 
@@ -81,7 +76,7 @@ fn config_value<'a>(
         options.push(json!({"value":current,"name":current}));
     }
     let mut permission_option = json!({"id":"mode","name":"Permission mode","category":"mode","type":"select","currentValue":mode.as_str()});
-    permission_option["options"] = Value::Array(mode_options("value"));
+    permission_option["options"] = Value::Array(mode_options());
     let mut model_option = json!({"id":"model","name":"Model","category":"model","type":"select","currentValue":current});
     model_option["options"] = Value::Array(options);
     Ok(Value::Object(Map::from_iter([(
@@ -90,12 +85,12 @@ fn config_value<'a>(
     )])))
 }
 
-fn mode_options(field: &str) -> Vec<Value> {
+fn mode_options() -> Vec<Value> {
     MODES
         .iter()
         .map(|(mode, name)| {
             Value::Object(Map::from_iter([
-                (field.to_owned(), Value::String(mode.as_str().to_owned())),
+                ("value".to_owned(), Value::String(mode.as_str().to_owned())),
                 ("name".to_owned(), Value::String((*name).to_owned())),
             ]))
         })

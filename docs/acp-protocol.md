@@ -47,7 +47,7 @@ session activation or any filesystem work. Initialization requires exactly the
 integer token `1`; client extensions confer no filesystem or terminal authority.
 Supported methods are `initialize`, `session/new`, `session/load`,
 `session/resume`, `session/close`, `session/list`, `session/prompt`,
-`session/cancel`, `session/set_mode` and `session/set_config_option`. Unknown
+`session/cancel` and `session/set_config_option`. Unknown
 methods return `-32601`; invalid parameters return `-32602`, without echoing
 input in diagnostics.
 
@@ -63,9 +63,11 @@ Selection's `mcpServers` uses a separate bounded 1 MiB JSON writer and the nativ
 ephemeral configuration decoder. Omission and an empty array authoritatively
 select no servers; null, profile syntax and deprecated transports are invalid.
 Decoding does not start peers or consult profiles. Prompts retain canonical text
-and separately bounded advisory resource targets. Mode changes accept `ask`,
-`auto` or `yolo`; configuration changes accept only `mode` and a validated native
-`model` identifier. Unknown bounded extension fields are inert.
+and separately bounded advisory resource targets. Configuration changes accept
+only `mode` (`ask`, `auto` or `yolo`) and a validated native `model` identifier.
+The superseded `session/set_mode` method and duplicate `modes` response are not
+implemented; modern `configOptions` is the only wire configuration interface.
+Unknown bounded extension fields are inert.
 
 ## Correlation ownership
 
@@ -134,7 +136,12 @@ prompt response and activation of the next permission registry.
 
 Session/configuration replies project one native permission-mode observation,
 the current native model and the already supplied catalog, without fetching or
-inferring model capabilities. Catalog model order is preserved; the current
+inferring model capabilities, through complete `configOptions`. Native command
+changes to the live model emit a complete `config_option_update` for the original
+session before the command result and prompt completion. This reports the live
+selection even if a subsequent save fails or cancellation arrives; it is not a
+persistence receipt. Unchanged configuration does not manufacture an update.
+Catalog model order is preserved; the current
 model is appended only when absent. Projection preflights all escaped string
 bytes and framing before cloning model or session rows, leaving response-envelope
 headroom under the 8 MiB wire limit. At most 512 catalog models plus one absent
@@ -142,6 +149,11 @@ current model are projected. A session-list page exceeding the factory's
 100-entry contract fails instead of truncating rows under an incorrect cursor.
 
 Each listed row requires a valid absolute, control-free UTF-8 native `cwd`.
+The production factory resolves an explicitly supplied list `cwd` on its owned
+worker before filtering, so existing ancestor aliases match canonical stored
+metadata. Missing paths retain their exact filter for deleted-workspace history;
+other resolution failures return an error. This observation creates no workspace
+or host and grants no tool authority; it is not a retained identity or snapshot.
 Records with absent or unrepresentable workspace metadata are omitted, with a
 bounded `omittedWorkspace` count in `_meta.machineGod`; no current directory is
 invented for them. Optional `title` is only the native title, never a preview.

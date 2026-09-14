@@ -36,10 +36,6 @@ pub(super) enum Request {
     Cancel {
         session: SessionId,
     },
-    SetMode {
-        session: SessionId,
-        mode: String,
-    },
     SetConfig {
         session: SessionId,
         config: String,
@@ -67,7 +63,6 @@ pub(super) fn decode(method: &str, params: Option<Value>) -> Result<Request, Acp
             | "session/list"
             | "session/prompt"
             | "session/cancel"
-            | "session/set_mode"
             | "session/set_config_option"
     ) {
         return Err(error(-32601, "Method not found"));
@@ -119,14 +114,6 @@ pub(super) fn decode(method: &str, params: Option<Value>) -> Result<Request, Acp
         "session/cancel" => Ok(Request::Cancel {
             session: session(object)?,
         }),
-        "session/set_mode" => {
-            let mode = string(object, "modeId")?;
-            validate_mode(mode)?;
-            Ok(Request::SetMode {
-                session: session(object)?,
-                mode: mode.to_owned(),
-            })
-        }
         "session/set_config_option" => {
             let config = string(object, "configId")?;
             let value = string(object, "value")?;

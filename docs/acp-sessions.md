@@ -187,16 +187,28 @@ change its native operation receipt. Debug and error diagnostics omit inputs,
 paths, results and nested native errors. The connection emits the command update
 before settling the original prompt RPC, using cancellation status independently
 from native effect failure.
+When a command changes the actual live model, a complete bounded
+`config_option_update` for its original principal precedes that command result
+and prompt response. Accepted live preferences can survive a failed or cancelled
+save; the configuration update reports those preferences, while the separate
+command receipt reports persistence honestly. Unchanged, read-only or rejected
+commands with no live configuration change emit no configuration update.
 
 ## Session configuration
 
 Permission modes are the native `ask`, `auto` and `yolo` selections. Changes
 affect future taken jobs, not a running turn or persisted permission rules.
-The `mode` configuration option uses the same session policy. The `model`
+Modern `configOptions` is the only wire configuration interface; there is no
+older `session/set_mode` method or duplicate `modes` projection. The `mode`
+configuration option uses the same session policy. The `model`
 configuration option changes the same runtime's model preferences;
 its acceptance generation is separate from session-only persistence. It never
 writes user-default configuration. Session saves use the existing owned native
 control lane: dropping a response wrapper does not discard an accepted save.
 Listing delegates to the host's bounded
-native catalog and opaque cursor; workspace scope is a descriptive filter,
-not filesystem authority.
+native catalog and opaque cursor. The production factory resolves existing
+workspace aliases on its owned list worker, without preparing a host or creating
+directories. A missing path (including an ancestor that is no longer a directory)
+retains its literal filter so canonical history remains listable after workspace
+deletion; other resolution failures are errors. This workspace scope is a
+descriptive observation, not filesystem authority or a stable identity binding.

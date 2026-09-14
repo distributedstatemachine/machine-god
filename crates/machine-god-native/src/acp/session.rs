@@ -12,7 +12,10 @@ use machine_god_core::{
 };
 use std::{
     fmt,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
 };
 
@@ -79,9 +82,22 @@ pub struct NativeAcpSession {
     prompt: Option<NativeQueuedJobId>,
     model_save: Option<crate::NativeInteractiveControlId>,
     command_control: Option<(crate::NativeInteractiveControlId, BackgroundOutputOwner)>,
+    command_configuration: Arc<AtomicBool>,
     pub(crate) command_services: super::commands::Services,
     cancelling: bool,
     closing: bool,
+}
+
+// An exact-session, single-slot presentation barrier, including the case where
+// preferences were accepted but native save admission failed synchronously.
+// It retains no projected configuration or encoded output. Dropping the command
+// on terminal cutoff releases the barrier without claiming delivery.
+#[derive(Debug)]
+pub(crate) struct NativeAcpCommandConfiguration(Arc<AtomicBool>);
+impl Drop for NativeAcpCommandConfiguration {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 impl fmt::Debug for NativeAcpSession {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -125,6 +141,7 @@ impl NativeAcpSession {
                 prompt: None,
                 model_save: None,
                 command_control: None,
+                command_configuration: Arc::new(AtomicBool::new(false)),
                 command_services,
                 cancelling: false,
                 closing: false,
@@ -165,7 +182,13 @@ impl NativeAcpSession {
 
     #[must_use]
     pub fn has_pending_command_control(&self) -> bool {
-        self.command_control.is_some()
+        self.command_control.is_some() || self.command_configuration.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn retain_command_configuration(&self) -> NativeAcpCommandConfiguration {
+        let previous = self.command_configuration.swap(true, Ordering::AcqRel);
+        debug_assert!(!previous, "one command configuration lease per session");
+        NativeAcpCommandConfiguration(self.command_configuration.clone())
     }
 
     /// Observed native cancellation intent, not proof that an effect was reversed.
@@ -179,7 +202,8 @@ impl NativeAcpSession {
         expected: &SessionId,
     ) -> Result<(), AcpSessionError> {
         self.check_session(expected)?;
-        if self.prompt.is_some() || self.model_save.is_some() || self.command_control.is_some() {
+        if self.prompt.is_some() || self.model_save.is_some() || self.has_pending_command_control()
+        {
             return Err(AcpSessionError::Busy);
         }
         Ok(())

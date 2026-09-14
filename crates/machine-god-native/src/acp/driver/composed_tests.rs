@@ -231,6 +231,73 @@ fn eof_finalizes_running_native_prompt_without_an_output_consumer() {
 }
 
 #[test]
+fn modern_mode_configuration_returns_complete_state_during_a_prompt() {
+    run(async {
+        let factory = Arc::new(Factory::new());
+        let (mut connection, id) = connection(factory.clone()).await;
+        request(
+            &mut connection,
+            3,
+            "session/prompt",
+            json!({"sessionId":id,
+            "prompt":[{"type":"text","text":"retain the original turn policy"}]}),
+        );
+        started(&mut connection, &factory).await;
+        for (rpc, mode) in [(4, "auto"), (5, "yolo"), (6, "ask")] {
+            request(
+                &mut connection,
+                rpc,
+                "session/set_config_option",
+                json!({"sessionId":id,
+                "configId":"mode","value":mode}),
+            );
+            let config = response(&mut connection, rpc).await.0.unwrap();
+            assert_eq!(config["configOptions"].as_array().unwrap().len(), 2);
+            assert_eq!(config["configOptions"][0]["currentValue"], mode);
+            assert_eq!(config["configOptions"][1]["currentValue"], "fixture/main");
+            assert!(config.get("modes").is_none());
+            assert!(connection.prompt.is_some());
+            assert_eq!(
+                connection
+                    .selection
+                    .current()
+                    .unwrap()
+                    .mode()
+                    .unwrap()
+                    .as_str(),
+                mode
+            );
+        }
+        request(
+            &mut connection,
+            7,
+            "session/set_mode",
+            json!({"sessionId":id,"modeId":"auto"}),
+        );
+        assert_eq!(
+            response(&mut connection, 7).await.0.unwrap_err().code,
+            -32601
+        );
+        assert_eq!(
+            connection
+                .selection
+                .current()
+                .unwrap()
+                .mode()
+                .unwrap()
+                .as_str(),
+            "ask"
+        );
+        cancel(&mut connection, &id);
+        assert_eq!(
+            response(&mut connection, 3).await.0.unwrap()["stopReason"],
+            "cancelled"
+        );
+        shutdown(&mut connection).await;
+    });
+}
+
+#[test]
 fn session_model_response_follows_owned_save_and_survives_resume() {
     run(async {
         let factory = Arc::new(Factory::new());

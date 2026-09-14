@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
 - Active phase: `M05 complete modern ACP implementation`
-- Next gate: `validate transport-aware ACP startup, then complete replacement gate and three fresh reviews`
+- Next gate: `fix ACP configuration updates and alias listing, then complete replacement gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -423,15 +423,16 @@ Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md)
 now compose provider-neutral resource FIFO/context, selection/retirement, command
 and request dispatch, bounded session projections and owned CLI stdio. Integrated,
-not delivered: the complete Linux/macOS gate passed, including picker fixes and
-Linux's cold release probe. Three fresh local R1 reviews rejected the candidate:
-backpressured complete input can hide pipe closure, and valid workspace aliases
-are rejected. Those fixes, an independently reproduced output-wake fix and
-transport-aware network capture require replacement validation and reviews;
+not delivered: the replacement Linux/macOS gate passed after the R1 lifecycle,
+alias preparation, output-wake and transport-aware network capture fixes.
+A fresh R2 correctness review found missing model configuration notifications
+and alias filtering in session/list. Fix both and remove superseded Session Modes
+wire duplication under the modern-only policy, then rerun the complete gate and
+three fresh reviews; unstarted R2 tracks are not accepted results.
 [review history](reviews/m05-acp-cli-review-01.md) retains exact evidence.
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
-  new/load/resume/close/list, prompt/cancel, set_mode and set_config_option.
+  new/load/resume/close/list, prompt/cancel and set_config_option.
   Preserve the pinned 8 MiB frame and 32 pending-outbound bounds, one active
   prompt, correlation, backpressure, malformed-input handling and EOF cleanup.
 - Native session creation/origin, bounded scoped listing, owned transitions,

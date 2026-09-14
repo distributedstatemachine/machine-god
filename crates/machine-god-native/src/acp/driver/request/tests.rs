@@ -181,18 +181,6 @@ fn prompt_keeps_canonical_text_and_typed_resource_targets() {
 #[test]
 fn mode_and_configuration_are_current_native_choices() {
     for mode in ["ask", "auto", "yolo"] {
-        let Request::SetMode {
-            session,
-            mode: parsed,
-        } = parse(
-            "session/set_mode",
-            json!({"sessionId":"one", "modeId":mode}),
-        )
-        else {
-            panic!()
-        };
-        assert_eq!(session.as_str(), "one");
-        assert_eq!(parsed, mode);
         let Request::SetConfig {
             session,
             config,
@@ -226,9 +214,14 @@ fn mode_and_configuration_are_current_native_choices() {
             json!({"sessionId":"one","configId":config,"value":value}),
         );
     }
-    rejected(
-        "session/set_mode",
-        json!({"sessionId":"one","modeId":"legacy"}),
+    assert_eq!(
+        decode(
+            "session/set_mode",
+            Some(json!({"sessionId":"one","modeId":"ask"})),
+        )
+        .unwrap_err()
+        .code,
+        -32601,
     );
 }
 

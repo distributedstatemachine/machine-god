@@ -264,6 +264,10 @@ impl NativeAcpCommandOwner {
     pub fn take_result(&mut self) -> Option<NativeAcpCommandResult> {
         self.result.take()
     }
+
+    pub(crate) fn result(&self) -> Option<&NativeAcpCommandResult> {
+        self.result.as_ref()
+    }
 }
 
 fn model_control(

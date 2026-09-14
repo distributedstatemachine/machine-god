@@ -20,7 +20,7 @@ fn shared_acquisition_owned_stdio_and_native_prompt_checkpoint_roundtrip() {
 }
 
 #[test]
-fn aliased_workspace_new_load_resume_preserve_canonical_checkpoint() {
+fn aliased_workspace_new_load_resume_list_preserve_canonical_checkpoint() {
     roundtrip(true);
 }
 
@@ -153,6 +153,15 @@ fn assert_alias_reselection(
                 && update["update"]["content"]["text"] == PROMPT
         });
         assert_eq!(user_history, method == "session/load");
+        assert_checkpoint(fixture, SessionId::new(id.to_owned()).unwrap());
+    }
+    for (request, workspace) in [(6, requested_workspace), (7, fixture.workspace.as_path())] {
+        client.send(request, "session/list", &json!({"cwd":workspace}));
+        let listed = client.response(request).0;
+        let rows = listed["sessions"].as_array().expect("session list");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["sessionId"], id);
+        assert_eq!(rows[0]["cwd"], json!(fixture.workspace));
         assert_checkpoint(fixture, SessionId::new(id.to_owned()).unwrap());
     }
     assert_eq!(

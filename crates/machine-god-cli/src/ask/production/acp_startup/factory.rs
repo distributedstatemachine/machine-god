@@ -165,6 +165,12 @@ impl NativeAcpHostFactory for AcpHostFactory {
                     if let Some(cursor) = cursor {
                         query = query.with_continuation(cursor);
                     }
+                    let query = handle
+                        .block_on(query.resolve_workspace_alias())
+                        .map_err(NativeSessionCatalogReadError::Catalog)?;
+                    if cancellation.is_cancelled() {
+                        return Err(NativeSessionCatalogReadError::Cancelled);
+                    }
                     let page = handle
                         .block_on(machine_god_native::list_native_session_catalog(
                             environment,

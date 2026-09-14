@@ -2,6 +2,8 @@
 
 #[path = "session_catalog/paging.rs"]
 mod paging;
+#[path = "session_catalog/workspace_alias.rs"]
+mod workspace_alias;
 
 use futures_executor::block_on;
 use machine_god_core::{

@@ -55,6 +55,7 @@ struct CommandRequest {
     id: AcpId,
     principal: BackgroundOutputOwner,
     owner: Box<super::commands::NativeAcpCommandOwner>,
+    configuration: Option<super::session::NativeAcpCommandConfiguration>,
 }
 enum Control {
     Selection {

@@ -217,6 +217,17 @@ space/tab/CR/LF and matches ASCII-case-insensitive substrings of known title,
 known workspace spelling, or bounded preview; it does not search IDs, generated
 unknown-value labels, omitted preview text, or the full transcript.
 
+`query.resolve_workspace_alias()` explicitly opts into native path resolution.
+Its future is inert until first poll, then resolves only the selected workspace
+filter on that polling thread. Successful resolution reapplies the same path
+bound; `NotFound` and `NotADirectory` retain the literal filter so history of a
+deleted workspace remains discoverable. Other resolution errors are fixed
+`Unavailable`. No directory or host is created, source-file contents are not read,
+and every other query predicate is preserved. The resulting spelling is a
+descriptive observation, not workspace authority or a stable identity binding.
+No hard wall-clock bound is asserted. Ordinary query construction and catalog
+listing do not opt into this lookup; the ACP factory does so on its owned worker.
+
 The rich scanner shares the ID-only scanner's descriptor-relative no-follow
 access, acquired-root identity checks, canonical naming, permanent per-ID
 locks, strict record decoder, and corruption rules. It uses the same 1,024

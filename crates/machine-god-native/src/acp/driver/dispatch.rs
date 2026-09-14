@@ -5,7 +5,6 @@ use crate::acp::{
     session::{AcpSessionError, NativeAcpConfigChange},
 };
 use machine_god_core::CancellationToken;
-use serde_json::json;
 
 impl NativeAcpConnection {
     pub(super) fn dispatch(&mut self, id: AcpId, request: Request, now_ms: i64) {
@@ -93,19 +92,14 @@ impl NativeAcpConnection {
                 self.cancel_prompt(&session)?;
                 Ok(Some(serde_json::Value::Null))
             }
-            Request::SetMode { session, mode } => {
-                self.selection
-                    .current()
-                    .ok_or(AcpSessionError::WrongSession)?
-                    .set_mode(&session, &mode)?;
-                Ok(Some(json!({})))
-            }
             Request::SetConfig {
                 session,
                 config,
                 value,
             } => {
-                if self.prompt.is_some() || self.command.is_some() {
+                // Mode observations affect future jobs only and remain available
+                // during a prompt; model persistence needs the native control lane.
+                if config != "mode" && (self.prompt.is_some() || self.command.is_some()) {
                     return Err(AcpSessionError::Busy);
                 }
                 let current = self.selection.current_mut().ok_or(AcpSessionError::Busy)?;

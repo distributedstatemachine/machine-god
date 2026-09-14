@@ -20,14 +20,18 @@ impl NativeAcpConnection {
             return Ok(false);
         };
         let current = self.selection.current_mut().ok_or(AcpSessionError::Busy)?;
+        let previous_model = current.runtime().model_preferences().model().to_owned();
         let mut owner = Box::new(NativeAcpCommandOwner::new());
         owner
             .begin(current, session, command, now_ms)
             .map_err(command_error)?;
+        let configuration = (current.runtime().model_preferences().model() != previous_model)
+            .then(|| current.retain_command_configuration());
         self.command = Some(CommandRequest {
             id: id.clone(),
             principal: current.principal(),
             owner,
+            configuration,
         });
         Ok(true)
     }
@@ -72,11 +76,37 @@ impl NativeAcpConnection {
     pub(super) fn command_output(&mut self) -> Option<AcpMessage> {
         self.command_progress();
         let command = self.command.as_mut()?;
-        let result = command.owner.take_result()?;
+        let result = command.owner.result()?;
         if command.principal != *result.principal() {
             self.fail(NativeAcpConnectionError::Native);
             return None;
         }
+        if command.configuration.is_some() {
+            let Some(current) = self
+                .selection
+                .current()
+                .filter(|current| current.principal() == command.principal)
+            else {
+                self.fail(NativeAcpConnectionError::Native);
+                return None;
+            };
+            // Native preferences may already be accepted even if persistence
+            // failed or cancellation was observed. Project actual live state,
+            // not a claim about saving it. This acquisition follows the exact
+            // native receipt drain, before another poll can retire its session.
+            // Keep the owned result until the following command-result frame.
+            let Ok(mut update) = super::session_projection::config_response(current) else {
+                self.fail(NativeAcpConnectionError::Protocol);
+                return None;
+            };
+            update["sessionUpdate"] = json!("config_option_update");
+            command.configuration = None;
+            return Some(super::output::update_message(
+                command.principal.session_id(),
+                update,
+            ));
+        }
+        let result = command.owner.take_result()?;
         let update =
             super::output::update_message(result.principal().session_id(), result.update());
         let Some(CommandRequest { id, .. }) = self.command.take() else {
@@ -128,6 +158,7 @@ impl NativeAcpConnection {
                 self.error.get_or_insert(NativeAcpConnectionError::Native);
             }
             self.command = None;
+            self.notify();
         }
     }
 }

@@ -342,7 +342,7 @@ fn actual_selected_session_uses_its_current_mode_model_and_identity_without_new_
             let config = config_response(session).unwrap();
             assert_eq!(projected["sessionId"], session.id().as_str());
             assert_eq!(projected["configOptions"], config["configOptions"]);
-            assert_eq!(projected["modes"]["currentModeId"], "auto");
+            assert!(projected.get("modes").is_none());
             assert_eq!(projected["configOptions"][0]["currentValue"], "auto");
             assert_eq!(
                 projected["configOptions"][1]["currentValue"],

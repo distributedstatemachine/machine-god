@@ -192,8 +192,8 @@ async fn start(server: &Server) -> (Arc<Factory>, NativeAcpConnection, String, A
     request(
         &mut connection,
         3,
-        "session/set_mode",
-        json!({"sessionId":session,"modeId":"auto"}),
+        "session/set_config_option",
+        json!({"sessionId":session,"configId":"mode","value":"auto"}),
     );
     response(&mut connection, 3).await;
     prompt(&mut connection, &session, 4);
