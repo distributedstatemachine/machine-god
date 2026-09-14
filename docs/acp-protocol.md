@@ -39,6 +39,33 @@ response SSE framing is a separate transport concern and remains supported.
 - Debug and error diagnostics omit IDs, methods, request/response payloads and
   remote error text. Explicit wire serialization naturally contains those data.
 
+## Request decoding
+
+The native driver projects admitted parameters into typed modern requests before
+session activation or any filesystem work. Initialization requires exactly the
+integer token `1`; client extensions confer no filesystem or terminal authority.
+Supported methods are `initialize`, `session/new`, `session/load`,
+`session/resume`, `session/close`, `session/list`, `session/prompt`,
+`session/cancel`, `session/set_mode` and `session/set_config_option`. Unknown
+methods return `-32601`; invalid parameters return `-32602`, without echoing
+input in diagnostics.
+
+Programmatically constructed parameters pay the same depth, token and raw-byte
+budgets as wire input, plus an 8 MiB serialized-parameter ceiling. Rejected trees
+are reclaimed iteratively. Native session IDs and pagination cursors retain
+their existing bounded formats. Selection requires a control-free absolute
+`cwd` of at most 4,096 UTF-8 bytes, without parent traversal; lexical normalization
+does not resolve or authorize the directory. Listing accepts omitted parameters
+and optional `cwd` and native `cursor` fields.
+
+Selection's `mcpServers` uses a separate bounded 1 MiB JSON writer and the native
+ephemeral configuration decoder. Omission and an empty array authoritatively
+select no servers; null, profile syntax and deprecated transports are invalid.
+Decoding does not start peers or consult profiles. Prompts retain canonical text
+and separately bounded advisory resource targets. Mode changes accept `ask`,
+`auto` or `yolo`; configuration changes accept only `mode` and a validated native
+`model` identifier. Unknown bounded extension fields are inert.
+
 ## Correlation ownership
 
 One connection-scoped `AcpPendingRequests` table admits at most 32 outbound
