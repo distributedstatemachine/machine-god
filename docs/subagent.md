@@ -101,6 +101,42 @@ around a managed tool. Native privately constructs its admitted principal/run
 lease only after checking the witness and authority. Core identity alone is
 never a native permission or resource grant.
 
+## Principal isolation
+
+Native registers each principal from an actual session's weak allocation witness,
+with a nonzero private generation. The registry admits at most 64 resident
+routes (configurable downward), not 64 lifetime creations. Dropped, retired and
+dead-session routes can be reclaimed; retiring an old owner never removes its
+replacement or a sibling. Duplicate live registration of the same actual session
+fails closed, even when a caller supplies a different generation.
+
+Each registration forks an independent workspace selection and creates a fresh
+owner/generation-bound undo history under the host domain's shared undo budget.
+It copies neither transcripts nor grants. The host supplies the selected immutable
+permission policy and model/effort preferences at turn registration; mutable permission/grant and ephemeral
+MCP lifetimes remain with the separate principal runtime, not in the registry.
+The actual turn is registered before its provider is polled. Its workspace
+snapshot, policy and model defaults remain pinned independently of later selection
+changes. Omitted child model/effort defaults never query the displayed runtime.
+
+Tool and UI reverse routes are weak. Candidate IDs are lookup hints only: call
+admission verifies the live actual session owns the live actual turn, checks the
+original generation, and consumes the core invocation's one-shot claim. Repeated
+provider call IDs cannot replay a claim; different actual sessions with identical
+public IDs cannot claim one another's calls. Managed child turns additionally bind
+the exact weak scheduler run and its captured FIFO work generation, which is
+distinct from the principal generation. Calls require current execution quota;
+registration itself may precede scheduler acquisition.
+
+The private nonclone admitted-call lease retains original workspace/undo/policy
+resource custody, never a session, engine or conversation runtime. Dropping the
+turn registration, cancelling/completing the actual turn, retiring the principal
+or dropping the registry ends new authority without stealing already-owned
+settlement resources. Host composition must retain the turn registration beside
+the real turn and revalidate its admitted lease before new effects. Registry and
+principal locks cover only short routing/admission updates, not filesystem effects,
+callbacks or asynchronous waits.
+
 ## Cancellation and durable ownership
 
 Create/message acceptance is durable before execution; user cancellation is
