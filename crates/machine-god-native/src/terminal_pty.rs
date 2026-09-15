@@ -1441,7 +1441,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         assert_eq!(pty.status().unwrap(), TerminalPtyStatus::Exited(0));
-        assert_eq!(pty.close(false).unwrap(), TerminalPtyStatus::Exited(0));
+        let closed = pty.close_with_output(false, |_| {}).unwrap();
+        assert_eq!(closed.status, TerminalPtyStatus::Exited(0));
+        // The sole slave holder has positively exited, so the final drain can
+        // observe EOF. macOS separately retains ioctl signal-flush uncertainty.
+        #[cfg(target_os = "linux")]
+        assert!(!closed.output_incomplete);
     }
 
     #[test]
@@ -1787,12 +1792,23 @@ mod tests {
             &["-c", "trap '' HUP TERM; printf ready; while :; do :; done"],
         );
         read_until(&mut pty, b"ready");
+        // SIGKILL may finish before the final drain, making EOF observable even
+        // though the shell ignored TERM. Hold this exact PTY's slave open so
+        // incomplete output tests unobserved EOF, not that scheduling race.
+        let slave_name = rustix::pty::ptsname(pty.master.as_ref().unwrap(), Vec::new()).unwrap();
+        let retained_slave = rustix::fs::open(
+            slave_name.as_c_str(),
+            OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .unwrap();
         let started = Instant::now();
         let closed = pty.close_with_output(false, |_| {}).unwrap();
         assert!(started.elapsed() >= Duration::from_millis(800));
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(closed.output_incomplete);
         assert_eq!(closed.status, TerminalPtyStatus::Signalled(9));
+        drop(retained_slave);
     }
 
     #[test]

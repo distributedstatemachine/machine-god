@@ -551,3 +551,76 @@ error. Actual worker joining is retained; deadlines and production code are
 unchanged. Adjacent partial/empty-head cases require peer closure before their
 worker can finish and are unchanged. Component formatting and diff checks
 passed; this record does not assert replacement runtime or remote acceptance.
+
+## Candidate a7f3a118: replacement gate, R6 and feature acceptance
+
+Candidate `a7f3a1184b9851a27f06c0253db818c0c4dbd6d7` integrates the joined
+malformed-head fixture repair with its failure history and plan compaction.
+No production Rust changed from the preceding candidate. The complete Rust
+1.94.1 local replacement gate passed on Linux and macOS, using fresh locked
+release helpers and separate process-heavy runtime runs.
+
+The repaired model-catalog suite passed all 20 tests on each platform. Native
+units passed 3,579 on Linux (49.48 seconds, 11 existing ignores) and 3,581 on
+macOS (834.07 seconds, 12 existing ignores), with zero failures. CLI units
+passed 549 on each platform with six existing ignores. Both platforms passed
+the twelve completion regressions, composed close/EOF regression, 157 focused
+native ACP tests, full workspace integrations and doctests. All 269 Python
+checks passed in 163.478 seconds. Formatting, warnings-denied workspace Clippy,
+required FreeBSD/WASI lint, dependency policy/audit, pinned drift and Unicode
+checks, documentation policy and fresh-release smoke passed. Supplemental
+standalone web-fetch compilation does not assert warnings-denied lint.
+
+Three fresh local adversarial reviewers independently inspected the whole ACP
+feature against original base `658f3366258cf1207904f9c2a274f32db2bb981b`:
+
+| Track | Fresh reviewer | Actionable introduced findings |
+| --- | --- | ---: |
+| Correctness/API | `acp_r6_correctness` | 0 |
+| Lifecycle/platform | `acp_r6_lifecycle` | 0 |
+| Performance/resources | `acp_r6_resources` | 0 |
+
+Reviews covered related callers, contracts and regression sources, including
+the latest fixture, worker completion, deferred resolver and mixed-input fixes.
+These were static local reviews, not Bugbot, runtime reruns or interoperability
+evidence. The resources track started after another track completed and freed
+capacity; no prior reviewer or repair author was reused. All review worktrees
+were verified clean at the exact candidate and removed. No M07 claim follows.
+
+Exact feature CI `34925060472` passed all nine applicable jobs, including all
+four Linux/macOS architecture jobs and the aggregate; the unchanged dependency
+audit job correctly skipped. Benchmark evidence `34925060510` passed all four
+jobs. Nonempty, unexpired artifacts `10379936912` (bootstrap) and `10379508337`
+(pinned upstream) matched the full candidate SHA, branch and workflow run;
+both expire on 2026-12-14. Their metadata was revalidated before main advanced
+from `f4ce36823885b9a73c7ee9b350047d2a6f721410` by fast-forward without force.
+This records local, review and feature acceptance, not subsequent main delivery.
+
+## Exact-main Linux PTY close regression
+
+Main CI `34926807286`, Linux x86-64 job `104246494712`, failed
+`terminal_pty::tests::graceful_close_has_800ms_budget_and_reports_unobserved_tail`
+at `crates/machine-god-native/src/terminal_pty.rs:1794`: the assertion
+`closed.output_incomplete` was false. Native units reported 3,578 passed,
+one failed and 11 existing ignores in 61.08 seconds. The file was unchanged
+throughout ACP against the original base; its preceding change was
+`805a9214fe429646fa8d0d801a050474c2dc4d45`. Passing local and feature gates do
+not accept this main failure or establish whether fixture ordering or production
+close reporting caused it. Preserve the 800 ms budget and investigate before
+repair and replacement validation; no blind retry or weakened assertion follows.
+
+Exact-main Benchmark `34926807311` passed. Its bootstrap artifact `10380371307`
+and pinned-upstream artifact `10379718795` were nonempty, unexpired and matched
+the exact SHA, main branch and workflow run; both expire on 2026-12-14.
+Benchmark success does not override the native-test failure.
+
+Source inspection established that SIGKILL precedes the final drain. The silent
+fixture can reach EOF first and correctly report complete output; its former
+incomplete-output assertion assumed an ordering it did not establish. Component
+`32091089f2997dad63ab7b8997870f01d8703d3f` retains an RAII descriptor for the
+exact live PTY slave through close, making EOF unobserved independently of kill
+scheduling. The existing positive-exit test additionally asserts complete output
+on Linux; macOS retains its documented ioctl signal-flush uncertainty. All
+original timing, incomplete-output and SIGKILL assertions remain. Only existing
+tests changed; production behavior and its 800 ms budget are unchanged. Component
+formatting and diff checks passed, without runtime or replacement acceptance.
