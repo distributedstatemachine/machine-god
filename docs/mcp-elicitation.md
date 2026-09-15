@@ -22,8 +22,10 @@ admission, not feature execution or continuation authority.
 
 Views expose the source enum through `source()`; there is no unconditional
 model-only context/tool getter. Debug is redacted. Inbox admission compares the
-real source session/incarnation with its active owner and checks the scope
-captured when the presenter is called, including for futures not yet polled.
+real source session/incarnation with its exact registered owner and checks the
+registration captured when the presenter is called, including futures not yet
+polled. A fixed bridge cannot route another registered principal; the shared
+router never binds an unknown source to a later registration.
 
 The original admitted elicitation object is shared unchanged. Nested MRTR forms
 therefore retain their inherited 256-field limit rather than being reparsed
@@ -65,8 +67,10 @@ permission-rule invalidation and wake-outside-lock behavior remain intact.
 
 Unpolled calls enqueue nothing. Dropping a pending call unregisters it. Engine
 cancellation wins over a ready answer and returns `Cancelled`; UI cancellation
-instead supplies the protocol's canonical cancel action. Inbox deactivation,
-reactivation, closure, or drop invalidates queued and ready responses. No model
+instead supplies the protocol's canonical cancel action. Exact principal retirement
+invalidates only that owner's queued and ready responses; unrelated forms and URL
+recovery retain their original source and response custody. Closure or inbox drop
+invalidates all registrations. No model
 text is interpreted as human input.
 
 ## Bounds and authority

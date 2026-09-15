@@ -526,28 +526,42 @@ approvals without keeping the controller or core turn alive.
 
 ## Owned interactive prompt bridge
 
-`NativeInteractivePromptBridge` supplies shared permission and contextual
-question prompters plus one uniquely owned `NativeInteractivePromptInbox`.
+`NativeInteractivePromptInbox` supplies one uniquely owned observer and shared
+permission, contextual question and MCP prompters through
+`NativeInteractivePromptBridge`.
 It acquires no input, output, thread, task, timer, environment, or session
 authority. The host routes its existing input owner to this inbox.
 
-The inbox explicitly activates an exact session/incarnation. Every activation
-advances a checked scope generation, including reactivation of the same owner.
-Prompt construction only observes that scope; first polling performs bounded
-validation and FIFO admission. An old unpolled future cannot inherit a new
-binding. Tokens combine the scope, a checked request generation, and inert
-bridge identity. Requests retain exact permission request/turn identities or
+The inbox explicitly registers exact session/incarnations with unique
+`NativeInteractivePromptPrincipal` leases. Each registration advances a checked
+scope generation; duplicate live owners reject. A lease supplies a fixed-owner
+bridge. Shared tools may instead use the inbox router, which captures an existing
+matching registration from the actual request source when a prompt is constructed.
+Unknown owners fail closed; an old unpolled future cannot inherit a later binding.
+Neither endpoint owns registration custody or grants execution authority.
+First polling performs bounded validation and FIFO admission. Tokens combine
+the exact owner, registration scope, checked request generation, and inert inbox
+allocation identity. Requests retain exact permission request/turn identities or
 the actual question `ToolContext`; reused call IDs cannot revive old tokens.
 
-One prompt is displayed at a time. Polling returns its same token until
-answered, cancelled, or dropped; empty observations do not self-wake. Replies
+Default polling returns the oldest unanswered token until answered, cancelled,
+or dropped; empty observations do not self-wake. Bounded pages expose only owner,
+opaque token and prompt kind, not permission rationale, forms or authorization
+URLs. Each page has at most 64 rows and a separate 192 KiB conservative retained
+byte ceiling; its cursor preserves admission order even if previous rows retire.
+Paging registers the same sole observer wake and does not mark requests displayed.
+Explicit selection can present another exact unanswered token without retiring
+any principal. Native selection is not a terminal flush acknowledgement; the host
+still gates input by exact acknowledged owner, editor and presentation epochs. Replies
 must match the displayed unanswered token and response type. All four permission
 choices are preserved. Explicit cancellation returns Deny for permissions and
 Cancelled for ordinary questions. AllowSession is an in-memory grant, not a
 saved rule; saved-rule management keeps the separate confirmed controller API.
 
-Limits allow one through eight outstanding entries and one through 67,108,864
-aggregate request payload bytes; defaults are eight and 8,388,608. Replied but
+Limits allow one through 64 outstanding entries and one through 67,108,864
+aggregate request payload bytes; defaults are 64 and 8,388,608. At most 64 principal
+registrations coexist, with retired capacity reusable rather than a lifetime
+creation cap. All principals share the same count, payload and response budgets. Replied but
 unconsumed entries still count. Permission size uses bounded compact
 serialization after depth-64/node-65,536 JSON validation; question size counts
 normalized presentation and identity UTF-8 bytes. Bounded entry/question/option
@@ -558,9 +572,12 @@ error text; rejected and unpolled permission JSON is dropped iteratively.
 Immutable views retain bounded payloads but no admission or grant; caller-held
 views are outside outstanding-entry accounting.
 
-Future drop removes only its exact registration. `deactivate` retires the scope
-while allowing later activation; close and inbox drop permanently close it.
-Queued, displayed, and already-replied entries are invalidated on retirement.
+Future drop removes only its exact request. Principal lease drop or explicit
+retirement invalidates only that exact registration's queued, displayed and
+already-replied entries, saved-rule proposals, and retained charges. Repeating old
+retirement cannot affect a replacement; unrelated principal prompts survive.
+Dropping bridge clones does not retire registrations. Close and inbox drop alone
+permanently close all admission. UI navigation does not replace registration custody.
 Ready responses are checked again after cleanup callbacks. Waker clone, wake,
 drop, and payload cleanup run outside state locks. Hosts must pin input framing
 to the displayed token and discard obsolete fragments instead of applying them

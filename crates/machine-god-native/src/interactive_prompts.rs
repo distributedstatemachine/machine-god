@@ -1,6 +1,7 @@
 //! Owned human interaction without acquiring an input, output, or worker.
 
 mod payload;
+mod projection;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -22,10 +23,17 @@ use crate::{
 };
 use payload::AcceptedResponse;
 use payload::Payload;
+pub use projection::{
+    NativeInteractivePromptKind, NativeInteractivePromptPage, NativeInteractivePromptSummary,
+};
 use state::Shared;
 
 /// Includes queued, displayed, and replied-but-not-yet-consumed requests.
-pub const MAX_NATIVE_INTERACTIVE_PROMPTS: usize = 8;
+pub const MAX_NATIVE_INTERACTIVE_PROMPTS: usize = 64;
+/// Simultaneously registered principals, not a lifetime creation limit.
+pub const MAX_NATIVE_INTERACTIVE_PROMPT_PRINCIPALS: usize = 64;
+/// A payload-free inbox page has its own conservative retained byte bound.
+pub const MAX_NATIVE_INTERACTIVE_PROMPT_PAGE_BYTES: usize = 192 * 1024;
 /// Hard aggregate retained request payload bound; response bytes are separately bounded.
 pub const MAX_NATIVE_INTERACTIVE_PROMPT_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
 /// Independent aggregate replied-but-unconsumed response bound.
@@ -100,7 +108,7 @@ impl fmt::Display for NativeInteractivePromptError {
 }
 impl std::error::Error for NativeInteractivePromptError {}
 
-/// Opaque UI activation epoch. Re-activating even the same principal advances it.
+/// Opaque registration epoch, independent of UI navigation and presentation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeInteractivePromptScope(u64);
 
@@ -110,9 +118,14 @@ pub struct NativeInteractivePromptToken {
     identity: Arc<()>,
     scope: NativeInteractivePromptScope,
     generation: u64,
+    owner: BackgroundOutputOwner,
 }
 
 impl NativeInteractivePromptToken {
+    #[must_use]
+    pub const fn owner(&self) -> &BackgroundOutputOwner {
+        &self.owner
+    }
     #[must_use]
     pub const fn scope(&self) -> NativeInteractivePromptScope {
         self.scope
@@ -127,6 +140,7 @@ impl PartialEq for NativeInteractivePromptToken {
         Arc::ptr_eq(&self.identity, &other.identity)
             && self.scope == other.scope
             && self.generation == other.generation
+            && self.owner == other.owner
     }
 }
 impl Eq for NativeInteractivePromptToken {}
@@ -208,28 +222,51 @@ impl fmt::Debug for NativeInteractivePromptResponse {
 /// Shared trait endpoint. It owns no input reader, renderer, session, or worker.
 pub struct NativeInteractivePromptBridge {
     shared: Arc<Shared>,
+    principal: Option<PrincipalKey>,
 }
 
-impl NativeInteractivePromptBridge {
-    /// Creates one uniquely owned inbox and shared prompt endpoint without I/O.
-    /// # Errors
-    /// Rejects invalid limits defensively; no scope is activated automatically.
-    pub fn new(
-        limits: NativeInteractivePromptLimits,
-    ) -> Result<(Arc<Self>, NativeInteractivePromptInbox), NativeInteractivePromptError> {
-        let limits = NativeInteractivePromptLimits::new(limits.pending, limits.payload_bytes)?
-            .with_response_bytes(limits.response_bytes)?;
-        let shared = Arc::new(Shared {
-            identity: Arc::new(()),
-            limits,
-            state: Mutex::new(state::State::default()),
-        });
-        Ok((
-            Arc::new(Self {
-                shared: Arc::clone(&shared),
-            }),
-            NativeInteractivePromptInbox { shared },
-        ))
+#[derive(Clone, Eq, PartialEq)]
+struct PrincipalKey {
+    scope: NativeInteractivePromptScope,
+    owner: BackgroundOutputOwner,
+}
+
+/// Unique registration custody. Dropping or explicitly retiring this lease
+/// invalidates only this exact registration, including unconsumed answers.
+pub struct NativeInteractivePromptPrincipal {
+    shared: Arc<Shared>,
+    key: PrincipalKey,
+}
+impl NativeInteractivePromptPrincipal {
+    #[must_use]
+    pub const fn owner(&self) -> &BackgroundOutputOwner {
+        &self.key.owner
+    }
+    #[must_use]
+    pub const fn scope(&self) -> NativeInteractivePromptScope {
+        self.key.scope
+    }
+    /// An inert fixed-principal endpoint. Its clones never own registration custody.
+    #[must_use]
+    pub fn bridge(&self) -> Arc<NativeInteractivePromptBridge> {
+        Arc::new(NativeInteractivePromptBridge {
+            shared: Arc::clone(&self.shared),
+            principal: Some(self.key.clone()),
+        })
+    }
+    /// Idempotent exact retirement; it cannot retire a replacement registration.
+    pub fn retire(&mut self) {
+        self.shared.retire(&self.key);
+    }
+}
+impl Drop for NativeInteractivePromptPrincipal {
+    fn drop(&mut self) {
+        self.retire();
+    }
+}
+impl fmt::Debug for NativeInteractivePromptPrincipal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativeInteractivePromptPrincipal { .. }")
     }
 }
 impl fmt::Debug for NativeInteractivePromptBridge {
@@ -251,14 +288,14 @@ impl PermissionPrompter for NativeInteractivePromptBridge {
         request: PermissionRequest,
         rule: Option<crate::NativePermissionRulePrompt>,
     ) -> BoxFuture<'_, Result<PermissionPromptDecision, PermissionPromptError>> {
-        let scope = self.shared.scope();
         let shared = Arc::clone(&self.shared);
         let payload = Arc::new(Payload::Permission {
             request,
             rule: rule.map(Box::new),
         });
+        let principal = shared.capture(self.principal.as_ref(), &payload);
         Box::pin(async move {
-            match shared.request(scope, payload).await {
+            match shared.request(principal, payload).await {
                 Ok(AcceptedResponse::Permission(decision)) => Ok(decision),
                 Ok(_) | Err(_) => Err(PermissionPromptError::new()),
             }
@@ -279,11 +316,11 @@ impl QuestionPrompter for NativeInteractivePromptBridge {
         context: ToolContext,
         request: QuestionPromptRequest,
     ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>> {
-        let scope = self.shared.scope();
         let shared = Arc::clone(&self.shared);
         let payload = Arc::new(Payload::Question { context, request });
+        let principal = shared.capture(self.principal.as_ref(), &payload);
         Box::pin(async move {
-            match shared.request(scope, payload).await {
+            match shared.request(principal, payload).await {
                 Ok(AcceptedResponse::Question(outcome)) => Ok(outcome),
                 Ok(_) | Err(_) => Err(QuestionPromptError::new()),
             }
@@ -329,9 +366,9 @@ impl NativeInteractivePromptBridge {
     + Send
     + 'static
     + use<> {
-        let scope = self.shared.scope();
         let shared = Arc::clone(&self.shared);
         let payload = Arc::new(payload);
+        let principal = shared.capture(self.principal.as_ref(), &payload);
         async move {
             use futures_util::future::{Either, select};
             if cancellation.is_cancelled() {
@@ -339,7 +376,7 @@ impl NativeInteractivePromptBridge {
             }
             let result = match select(
                 Box::pin(cancellation.cancelled()),
-                Box::pin(shared.request(scope, payload)),
+                Box::pin(shared.request(principal, payload)),
             )
             .await
             {
@@ -371,6 +408,69 @@ impl fmt::Debug for NativeInteractivePromptInbox {
     }
 }
 impl NativeInteractivePromptInbox {
+    /// Projects pending owners and kinds without retaining request payloads or
+    /// marking any prompt displayed. Installs the sole UI wake for subsequent
+    /// changes; this observer is shared with `poll_prompt` and `poll_pending`.
+    /// A removed cursor remains usable within this inbox's monotonic sequence.
+    /// # Errors
+    /// Rejects closure, foreign cursors, or a zero/over-cap page limit.
+    pub fn page(
+        &mut self,
+        cx: &mut Context<'_>,
+        after: Option<&NativeInteractivePromptToken>,
+        limit: usize,
+    ) -> Result<NativeInteractivePromptPage, NativeInteractivePromptError> {
+        self.shared.page(cx, after, limit)
+    }
+    /// Selects an exact unanswered request for presentation, independently of
+    /// FIFO default navigation. This is not a terminal flush acknowledgement.
+    /// # Errors
+    /// Rejects closed, foreign, retired, or already answered tokens.
+    pub fn select_prompt(
+        &mut self,
+        token: &NativeInteractivePromptToken,
+    ) -> Result<NativeInteractivePromptView, NativeInteractivePromptError> {
+        self.shared.select_prompt(token)
+    }
+    /// Creates the sole observer and shared aggregate budgets without I/O.
+    /// # Errors
+    /// Rejects invalid limits; no principal is registered automatically.
+    pub fn new(
+        limits: NativeInteractivePromptLimits,
+    ) -> Result<Self, NativeInteractivePromptError> {
+        let limits = NativeInteractivePromptLimits::new(limits.pending, limits.payload_bytes)?
+            .with_response_bytes(limits.response_bytes)?;
+        Ok(Self {
+            shared: Arc::new(Shared {
+                identity: Arc::new(()),
+                limits,
+                state: Mutex::new(state::State::default()),
+            }),
+        })
+    }
+    /// Endpoint for shared host tools constructed before session identity exists.
+    /// Each call captures a matching live registration from its actual source;
+    /// an unknown source cannot bind to a registration created later.
+    #[must_use]
+    pub fn router(&self) -> Arc<NativeInteractivePromptBridge> {
+        Arc::new(NativeInteractivePromptBridge {
+            shared: Arc::clone(&self.shared),
+            principal: None,
+        })
+    }
+    /// Registers exact session/incarnation custody independently of navigation.
+    /// # Errors
+    /// Rejects duplicate live owners, capacity, closure, or generation exhaustion.
+    pub fn register(
+        &mut self,
+        owner: BackgroundOutputOwner,
+    ) -> Result<NativeInteractivePromptPrincipal, NativeInteractivePromptError> {
+        let key = self.shared.register(owner)?;
+        Ok(NativeInteractivePromptPrincipal {
+            shared: Arc::clone(&self.shared),
+            key,
+        })
+    }
     /// Proposes an exact saved change from the current unanswered native prompt.
     /// The returned token still requires a separate human confirmation.
     /// # Errors
@@ -381,20 +481,6 @@ impl NativeInteractivePromptInbox {
         decision: crate::NativePermissionRuleDecision,
     ) -> Result<crate::NativePermissionRuleProposal, NativeInteractivePromptError> {
         self.shared.propose_rule_change(token, decision)
-    }
-    /// Replaces the exact UI principal and invalidates every prior response,
-    /// including a response accepted but not yet consumed by its future.
-    /// # Errors
-    /// Rejects a closed inbox or exhausted scope counter without rebinding.
-    pub fn activate(
-        &mut self,
-        owner: BackgroundOutputOwner,
-    ) -> Result<NativeInteractivePromptScope, NativeInteractivePromptError> {
-        self.shared.activate(owner)
-    }
-    /// Invalidates current admission without closing the reusable inbox.
-    pub fn deactivate(&mut self) {
-        self.shared.deactivate(false);
     }
     /// Returns the same displayed token until answered/cancelled/dropped. An
     /// empty open inbox registers a wake without self-waking on observation.
@@ -439,7 +525,7 @@ impl NativeInteractivePromptInbox {
     }
     /// Permanently closes admission and invalidates pending/ready responses.
     pub fn close(&mut self) {
-        self.shared.deactivate(true);
+        self.shared.close();
     }
 }
 impl Drop for NativeInteractivePromptInbox {

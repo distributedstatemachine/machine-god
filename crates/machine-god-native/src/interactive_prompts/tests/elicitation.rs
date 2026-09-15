@@ -56,7 +56,7 @@ fn prompt(
 
 #[test]
 fn real_inbox_preserves_context_shared_request_and_every_form_kind() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let request = form();
     let mut future = prompt(&bridge, request.clone(), CancellationToken::new());
     assert!(poll(&mut future).is_pending());
@@ -104,7 +104,7 @@ fn real_inbox_preserves_context_shared_request_and_every_form_kind() {
 
 #[test]
 fn invalid_and_cross_kind_answers_leave_displayed_request_usable() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut future = prompt(&bridge, form(), CancellationToken::new());
     assert!(poll(&mut future).is_pending());
     let view = view(&mut inbox);
@@ -145,7 +145,7 @@ fn invalid_and_cross_kind_answers_leave_displayed_request_usable() {
 
 #[test]
 fn url_actions_are_data_and_engine_cancellation_has_precedence() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for action in [
         McpElicitationAction::Accept,
         McpElicitationAction::Decline,
@@ -194,7 +194,7 @@ fn url_actions_are_data_and_engine_cancellation_has_precedence() {
 
 #[test]
 fn scope_owner_tokens_unpolled_drop_and_unavailable_are_explicit() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let request = url();
     let count = Arc::strong_count(&request);
     drop(prompt(&bridge, request.clone(), CancellationToken::new()));
@@ -214,7 +214,7 @@ fn scope_owner_tokens_unpolled_drop_and_unavailable_are_explicit() {
     let mut future = prompt(&bridge, request.clone(), CancellationToken::new());
     assert!(poll(&mut future).is_pending());
     let old = view(&mut inbox);
-    let (other, mut other_inbox) = self::super::bridge();
+    let (other, mut other_inbox, _other_principal) = self::super::bridge();
     let mut other_future = prompt(&other, request.clone(), CancellationToken::new());
     assert!(poll(&mut other_future).is_pending());
     let foreign = view(&mut other_inbox);
@@ -222,7 +222,8 @@ fn scope_owner_tokens_unpolled_drop_and_unavailable_are_explicit() {
         inbox.reply(foreign.token(), input(r#"{"action":"accept"}"#)),
         Err(NativeInteractivePromptError::Stale)
     );
-    inbox.activate(owner()).unwrap();
+    drop(_principal);
+    let _principal = inbox.register(owner()).unwrap();
     assert!(block_on(never).is_err() && block_on(future).is_err());
     assert_eq!(
         inbox.cancel(old.token()),
@@ -247,11 +248,12 @@ fn request_and_response_aggregate_charges_survive_reply_until_consumption() {
     let request = url();
     let charge = sourced(context(), request.clone()).retained_byte_charge();
     for (limit, accepted) in [(charge - 1, false), (charge, true)] {
-        let (bridge, mut inbox) = NativeInteractivePromptBridge::new(
+        let mut inbox = NativeInteractivePromptInbox::new(
             NativeInteractivePromptLimits::new(2, limit).unwrap(),
         )
         .unwrap();
-        inbox.activate(owner()).unwrap();
+        let bridge = inbox.router();
+        let _principal = inbox.register(owner()).unwrap();
         let mut future = prompt(&bridge, request.clone(), CancellationToken::new());
         assert_eq!(poll(&mut future).is_pending(), accepted);
         if accepted {
@@ -264,8 +266,9 @@ fn request_and_response_aggregate_charges_survive_reply_until_consumption() {
             .unwrap()
             .with_response_bytes(limit)
             .unwrap();
-        let (bridge, mut inbox) = NativeInteractivePromptBridge::new(limits).unwrap();
-        inbox.activate(owner()).unwrap();
+        let mut inbox = NativeInteractivePromptInbox::new(limits).unwrap();
+        let bridge = inbox.router();
+        let _principal = inbox.register(owner()).unwrap();
         let mut first = prompt(&bridge, request.clone(), CancellationToken::new());
         let mut second = prompt(&bridge, request.clone(), CancellationToken::new());
         assert!(poll(&mut first).is_pending() && poll(&mut second).is_pending());
@@ -311,7 +314,7 @@ fn request_and_response_aggregate_charges_survive_reply_until_consumption() {
 
 #[test]
 fn cancellation_and_reentrant_ready_cleanup_never_reopen_an_answered_token() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let cancel = CancellationToken::new();
     cancel.cancel();
     assert!(matches!(
@@ -377,7 +380,7 @@ fn nested_256_field_form_reaches_inbox_without_standalone_reparse() {
     };
     let request = request.clone();
     drop(required);
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut future = prompt(&bridge, request.clone(), CancellationToken::new());
     assert!(poll(&mut future).is_pending());
     let view = view(&mut inbox);

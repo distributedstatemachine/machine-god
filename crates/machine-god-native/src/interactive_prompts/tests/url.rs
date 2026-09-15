@@ -29,7 +29,7 @@ fn recovery() -> McpUrlRecoveryPromptRequest {
 
 #[test]
 fn typed_choices_are_not_interchangeable_with_json_or_each_other() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for answer in [
         McpUrlRecoveryAnswer::ContinueManually,
         McpUrlRecoveryAnswer::RetryBrowser,
@@ -73,7 +73,7 @@ fn typed_choices_are_not_interchangeable_with_json_or_each_other() {
 
 #[test]
 fn cancellation_drop_and_retirement_invalidate_recovery() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let cancellation = CancellationToken::new();
     let mut future = bridge.recover_url(recovery(), cancellation.clone());
     assert!(poll(&mut future).is_pending());
@@ -103,7 +103,8 @@ fn cancellation_drop_and_retirement_invalidate_recovery() {
             NativeInteractivePromptResponse::UrlRecovery(McpUrlRecoveryAnswer::RetryBrowser),
         )
         .unwrap();
-    inbox.activate(owner()).unwrap();
+    drop(_principal);
+    let _principal = inbox.register(owner()).unwrap();
     assert!(block_on(future).is_err());
     assert_eq!(
         inbox.cancel(old.token()),
@@ -133,7 +134,7 @@ fn defaults_are_inert_unavailable_and_respect_real_cancellation() {
         block_on(presenter.recover_url(recovery(), cancellation.clone())),
         Err(McpElicitationPromptError::Cancelled)
     );
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     drop(bridge.recover_url(recovery(), CancellationToken::new()));
     assert!(
         inbox
@@ -141,7 +142,8 @@ fn defaults_are_inert_unavailable_and_respect_real_cancellation() {
             .is_pending()
     );
     let future = bridge.recover_url(recovery(), CancellationToken::new());
-    inbox.activate(owner()).unwrap();
+    drop(_principal);
+    let _principal = inbox.register(owner()).unwrap();
     assert!(block_on(future).is_err());
     let mut foreign = context();
     foreign.session_incarnation_id = SessionIncarnationId::new("foreign").unwrap();
@@ -161,8 +163,9 @@ fn charges_include_source_and_remain_until_answer_consumption() {
         .unwrap()
         .with_response_bytes(64)
         .unwrap();
-    let (bridge, mut inbox) = NativeInteractivePromptBridge::new(limits).unwrap();
-    inbox.activate(owner()).unwrap();
+    let mut inbox = NativeInteractivePromptInbox::new(limits).unwrap();
+    let bridge = inbox.router();
+    let _principal = inbox.register(owner()).unwrap();
     let mut first = bridge.recover_url(recovery(), CancellationToken::new());
     let mut second = bridge.recover_url(recovery(), CancellationToken::new());
     assert!(poll(&mut first).is_pending() && poll(&mut second).is_pending());
@@ -228,11 +231,12 @@ fn recovery_source_and_independent_request_budgets_are_checked() {
             source(context()).retained_byte_charge()
         };
         for (limit, admitted) in [(charge - 1, false), (charge, true)] {
-            let (bridge, mut inbox) = NativeInteractivePromptBridge::new(
+            let mut inbox = NativeInteractivePromptInbox::new(
                 NativeInteractivePromptLimits::new(1, limit).unwrap(),
             )
             .unwrap();
-            inbox.activate(owner()).unwrap();
+            let bridge = inbox.router();
+            let _principal = inbox.register(owner()).unwrap();
             if recovery_phase {
                 let mut future = bridge.recover_url(recovery(), CancellationToken::new());
                 assert_eq!(poll(&mut future).is_pending(), admitted);
@@ -246,7 +250,7 @@ fn recovery_source_and_independent_request_budgets_are_checked() {
 
 #[test]
 fn cancellation_removes_queued_and_presented_recovery_without_synthetic_retry() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for display in [false, true] {
         let cancellation = CancellationToken::new();
         let mut future = bridge.recover_url(recovery(), cancellation.clone());

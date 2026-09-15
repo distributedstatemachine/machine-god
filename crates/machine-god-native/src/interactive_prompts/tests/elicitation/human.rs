@@ -81,7 +81,7 @@ fn human_source_preserves_only_actual_owner_action_server_and_shared_request() {
 
 #[test]
 fn human_forms_and_url_consent_roundtrip_through_real_inbox() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for action in [McpFeatureAction::ResourceRead, McpFeatureAction::PromptGet] {
         for is_url in [false, true] {
             let request = if is_url {
@@ -125,7 +125,7 @@ fn human_forms_and_url_consent_roundtrip_through_real_inbox() {
 
 #[test]
 fn human_owner_and_captured_activation_reject_foreign_or_stale_prompts() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for owner in [
         BackgroundOutputOwner::new(
             SessionId::new("foreign").unwrap(),
@@ -149,7 +149,8 @@ fn human_owner_and_captured_activation_reject_foreign_or_stale_prompts() {
         human(McpFeatureAction::PromptGet, url()),
         CancellationToken::new(),
     );
-    inbox.activate(human_owner()).unwrap();
+    drop(_principal);
+    let _principal = inbox.register(human_owner()).unwrap();
     assert!(block_on(unpolled).is_err());
     let mut future = bridge.present(
         human(McpFeatureAction::ResourceRead, url()),
@@ -160,7 +161,8 @@ fn human_owner_and_captured_activation_reject_foreign_or_stale_prompts() {
     inbox
         .reply(old.token(), input(r#"{"action":"accept"}"#))
         .unwrap();
-    inbox.activate(human_owner()).unwrap();
+    drop(_principal);
+    let _principal = inbox.register(human_owner()).unwrap();
     assert!(block_on(future).is_err());
     assert_eq!(
         inbox.cancel(old.token()),
@@ -170,7 +172,7 @@ fn human_owner_and_captured_activation_reject_foreign_or_stale_prompts() {
 
 #[test]
 fn human_cancellation_wins_queued_displayed_and_ready_answers() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for stage in 0..3 {
         let cancellation = CancellationToken::new();
         let mut future = bridge.present(
@@ -217,11 +219,12 @@ fn human_request_and_response_limits_remain_charged_until_consumed() {
     let request = url();
     let charge = human(McpFeatureAction::PromptGet, request.clone()).retained_byte_charge();
     for (limit, admitted) in [(charge - 1, false), (charge, true)] {
-        let (bridge, mut inbox) = NativeInteractivePromptBridge::new(
+        let mut inbox = NativeInteractivePromptInbox::new(
             NativeInteractivePromptLimits::new(1, limit).unwrap(),
         )
         .unwrap();
-        inbox.activate(human_owner()).unwrap();
+        let bridge = inbox.router();
+        let _principal = inbox.register(human_owner()).unwrap();
         let mut future = bridge.present(
             human(McpFeatureAction::PromptGet, request.clone()),
             CancellationToken::new(),
@@ -233,8 +236,9 @@ fn human_request_and_response_limits_remain_charged_until_consumed() {
         .unwrap()
         .with_response_bytes(answer_charge)
         .unwrap();
-    let (bridge, mut inbox) = NativeInteractivePromptBridge::new(limits).unwrap();
-    inbox.activate(human_owner()).unwrap();
+    let mut inbox = NativeInteractivePromptInbox::new(limits).unwrap();
+    let bridge = inbox.router();
+    let _principal = inbox.register(human_owner()).unwrap();
     let mut first = bridge.present(
         human(McpFeatureAction::PromptGet, request.clone()),
         CancellationToken::new(),
@@ -268,7 +272,7 @@ fn human_request_and_response_limits_remain_charged_until_consumed() {
 
 #[test]
 fn human_url_recovery_preserves_origin_and_obeys_cancellation() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for action in [McpFeatureAction::ResourceRead, McpFeatureAction::PromptGet] {
         for answer in [
             McpUrlRecoveryAnswer::ContinueManually,

@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake, Waker};
 mod elicitation;
+mod principals;
 mod url;
 
 fn context() -> ToolContext {
@@ -42,11 +43,13 @@ fn request(id: &str) -> PermissionRequest {
 fn bridge() -> (
     Arc<NativeInteractivePromptBridge>,
     NativeInteractivePromptInbox,
+    NativeInteractivePromptPrincipal,
 ) {
-    let (bridge, mut inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
-    inbox.activate(owner()).unwrap();
-    (bridge, inbox)
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
+    let _principal = inbox.register(owner()).unwrap();
+    (bridge, inbox, _principal)
 }
 fn permission<'a>(
     bridge: &'a NativeInteractivePromptBridge,
@@ -115,7 +118,7 @@ fn question_request() -> QuestionPromptRequest {
 
 #[test]
 fn construction_is_inert_and_all_four_permission_choices_roundtrip() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     drop(permission(&bridge, "never-polled"));
     assert!(
         inbox
@@ -148,8 +151,9 @@ fn construction_is_inert_and_all_four_permission_choices_roundtrip() {
 #[test]
 fn fifo_backpressure_drop_and_ready_responses_keep_admission_bounded() {
     let limits = NativeInteractivePromptLimits::new(2, 4096).unwrap();
-    let (bridge, mut inbox) = NativeInteractivePromptBridge::new(limits).unwrap();
-    inbox.activate(owner()).unwrap();
+    let mut inbox = NativeInteractivePromptInbox::new(limits).unwrap();
+    let bridge = inbox.router();
+    let _principal = inbox.register(owner()).unwrap();
     let mut first = permission(&bridge, "first");
     let mut second = permission(&bridge, "second");
     assert!(poll(&mut first).is_pending());
@@ -179,13 +183,14 @@ fn fifo_backpressure_drop_and_ready_responses_keep_admission_bounded() {
 
 #[test]
 fn reactivation_rejects_old_unpolled_and_ready_answers_even_for_same_principal() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let never = permission(&bridge, "never");
     let mut ready = permission(&bridge, "ready");
     assert!(poll(&mut ready).is_pending());
     let old = view(&mut inbox);
     respond(&mut inbox, &old, PermissionPromptDecision::AllowSession);
-    inbox.activate(owner()).unwrap();
+    drop(_principal);
+    let _principal = inbox.register(owner()).unwrap();
     assert!(block_on(never).is_err());
     assert!(block_on(ready).is_err());
     let mut replacement = permission(&bridge, "ready");
@@ -205,10 +210,11 @@ fn reactivation_rejects_old_unpolled_and_ready_answers_even_for_same_principal()
 
 #[test]
 fn no_ambient_scope_cross_bridge_token_or_closed_inbox_can_authorize() {
-    let (bridge, mut inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
     let no_scope = permission(&bridge, "unbound");
-    inbox.activate(owner()).unwrap();
+    let _principal = inbox.register(owner()).unwrap();
     assert!(block_on(no_scope).is_err());
     let mut other = request("wrong-owner");
     other.session_incarnation_id = SessionIncarnationId::new("different").unwrap();
@@ -216,7 +222,7 @@ fn no_ambient_scope_cross_bridge_token_or_closed_inbox_can_authorize() {
     let mut future = permission(&bridge, "active");
     assert!(poll(&mut future).is_pending());
     let active = view(&mut inbox);
-    let (second, mut second_inbox) = self::bridge();
+    let (second, mut second_inbox, _second_principal) = self::bridge();
     let mut second_future = permission(&second, "active");
     assert!(poll(&mut second_future).is_pending());
     let second_view = view(&mut second_inbox);
@@ -224,7 +230,7 @@ fn no_ambient_scope_cross_bridge_token_or_closed_inbox_can_authorize() {
         inbox.cancel(second_view.token()),
         Err(NativeInteractivePromptError::Stale)
     );
-    inbox.deactivate();
+    drop(_principal);
     assert!(block_on(future).is_err());
     assert_eq!(
         inbox.cancel(active.token()),
@@ -232,8 +238,8 @@ fn no_ambient_scope_cross_bridge_token_or_closed_inbox_can_authorize() {
     );
     inbox.close();
     assert_eq!(
-        inbox.activate(owner()),
-        Err(NativeInteractivePromptError::Closed)
+        inbox.register(owner()).unwrap_err(),
+        NativeInteractivePromptError::Closed
     );
     assert!(matches!(
         inbox.poll_prompt(&mut Context::from_waker(Waker::noop())),
@@ -246,7 +252,7 @@ fn no_ambient_scope_cross_bridge_token_or_closed_inbox_can_authorize() {
 
 #[test]
 fn actual_question_tool_forwards_exact_context_options_and_freeform_answers() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let tool = AskUserQuestionTool::shared_prompter(bridge);
     let mut future = tool.execute(context(), prepared(&tool), CancellationToken::new());
     assert!(poll(&mut future).is_pending());
@@ -281,7 +287,7 @@ fn actual_question_tool_forwards_exact_context_options_and_freeform_answers() {
 #[test]
 fn question_contextless_rejects_legacy_default_survives_and_cancel_is_real() {
     let request = question_request(); // Real execute used the new default method on a legacy host.
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     assert!(block_on(QuestionPrompter::prompt(bridge.as_ref(), request.clone())).is_err());
     let mut future = bridge.prompt_with_context(context(), request);
     assert!(poll(&mut future).is_pending());
@@ -292,7 +298,7 @@ fn question_contextless_rejects_legacy_default_survives_and_cancel_is_real() {
 
 #[test]
 fn actual_question_cancellation_drops_registration_and_reused_call_cannot_take_old_reply() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let tool = AskUserQuestionTool::shared_prompter(bridge);
     let cancel = CancellationToken::new();
     let mut future = tool.execute(context(), prepared(&tool), cancel.clone());
@@ -317,7 +323,7 @@ fn actual_question_cancellation_drops_registration_and_reused_call_cannot_take_o
 
 #[test]
 fn typed_answer_bounds_reject_without_consuming_displayed_request() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut future = bridge.prompt_with_context(context(), question_request());
     assert!(poll(&mut future).is_pending());
     let prompt = view(&mut inbox);
@@ -370,11 +376,12 @@ fn exact_payload_byte_limit_aggregate_limit_and_invalid_limits_are_enforced() {
     };
     let bytes = payload.bytes(usize::MAX).unwrap();
     for (limit, accepted) in [(bytes - 1, false), (bytes, true)] {
-        let (bridge, mut inbox) = NativeInteractivePromptBridge::new(
+        let mut inbox = NativeInteractivePromptInbox::new(
             NativeInteractivePromptLimits::new(2, limit).unwrap(),
         )
         .unwrap();
-        inbox.activate(owner()).unwrap();
+        let bridge = inbox.router();
+        let _principal = inbox.register(owner()).unwrap();
         let mut future = permission(&bridge, "bound");
         assert_eq!(poll(&mut future).is_pending(), accepted);
         if accepted {
@@ -384,7 +391,7 @@ fn exact_payload_byte_limit_aggregate_limit_and_invalid_limits_are_enforced() {
             assert!(block_on(future).is_ok());
         }
     }
-    for (count, bytes) in [(0, 1), (9, 1), (1, 0), (1, usize::MAX)] {
+    for (count, bytes) in [(0, 1), (65, 1), (1, 0), (1, usize::MAX)] {
         assert!(NativeInteractivePromptLimits::new(count, bytes).is_err());
     }
 }
@@ -392,7 +399,7 @@ fn exact_payload_byte_limit_aggregate_limit_and_invalid_limits_are_enforced() {
 #[test]
 fn deep_and_excess_node_payloads_reject_and_unpolled_drop_is_iterative() {
     for polled in [false, true] {
-        let (bridge, _inbox) = bridge();
+        let (bridge, _inbox, _principal) = bridge();
         let mut value = Value::Null;
         for _ in 0..20_000 {
             value = Value::Array(vec![value]);
@@ -409,7 +416,7 @@ fn deep_and_excess_node_payloads_reject_and_unpolled_drop_is_iterative() {
             drop(future);
         }
     }
-    let (bridge, _inbox) = bridge();
+    let (bridge, _inbox, _principal) = bridge();
     let mut request = request("wide");
     request.capability = Capability::Custom {
         name: "wide".into(),
@@ -469,7 +476,7 @@ impl Wake for Counter {
 
 #[test]
 fn empty_observations_do_not_self_wake_but_admission_reply_and_close_do() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let counter = Arc::new(Counter::default());
     let wake = Waker::from(counter.clone());
     for _ in 0..3 {
@@ -504,7 +511,7 @@ fn empty_observations_do_not_self_wake_but_admission_reply_and_close_do() {
 #[test]
 fn waker_clone_drop_and_wake_reenter_outside_bridge_locks() {
     for callback in [Callback::Clone, Callback::Drop, Callback::Wake] {
-        let (bridge, mut inbox) = bridge();
+        let (bridge, mut inbox, _principal) = bridge();
         let shared = bridge.shared.clone();
         let (wake, handle) = reentrant_waker(callback, move || {
             assert!(shared.state.try_lock().is_ok());
@@ -531,14 +538,15 @@ fn waker_clone_drop_and_wake_reenter_outside_bridge_locks() {
 
 #[test]
 fn retirement_from_ready_poll_waker_drop_suppresses_old_positive_response() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut future = permission(&bridge, "ready-drop");
     assert!(poll(&mut future).is_pending());
     let prompt = view(&mut inbox);
     respond(&mut inbox, &prompt, PermissionPromptDecision::AllowSession);
     let shared = bridge.shared.clone();
+    let key = _principal.key.clone();
     let (wake, _) = reentrant_waker(Callback::Drop, move || {
-        shared.deactivate(false);
+        shared.retire(&key);
     });
     assert!(matches!(
         future.as_mut().poll(&mut Context::from_waker(&wake)),
@@ -552,7 +560,7 @@ fn retirement_from_ready_poll_waker_drop_suppresses_old_positive_response() {
 
 #[test]
 fn debug_and_errors_never_format_human_or_permission_payloads() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut future = permission(&bridge, "private-id");
     assert!(poll(&mut future).is_pending());
     let prompt = view(&mut inbox);
