@@ -9,6 +9,7 @@ mod notification;
 mod projection;
 mod pump;
 mod replay;
+mod reservation;
 #[cfg(test)]
 mod tests;
 mod waiting;
@@ -34,6 +35,7 @@ use machine_god_core::{
     BoxFuture, CancellationToken, ManagedAgentState, ManagedQueueStatus, ToolCallId,
 };
 pub(crate) use projection::{ManagedChildProjection, ManagedSelection};
+pub(crate) use reservation::ManagedForegroundReservation;
 use std::{
     collections::VecDeque,
     fmt,
@@ -167,6 +169,8 @@ pub(crate) struct ManagedManager {
     children: Vec<Child>,
     retiring: Vec<Retiring>,
     foregrounds: Vec<foreground::Foreground>,
+    foreground_reservations: Vec<Weak<reservation::State>>,
+    reservation_wake: Arc<futures_util::task::AtomicWaker>,
     active: Option<Active>,
     waiters: Vec<waiting::Waiter>,
     approvals: Vec<waiting::Approval>,
@@ -218,6 +222,8 @@ impl ManagedManager {
             children: Vec::new(),
             retiring: Vec::new(),
             foregrounds: Vec::new(),
+            foreground_reservations: Vec::new(),
+            reservation_wake: Arc::new(futures_util::task::AtomicWaker::new()),
             active: None,
             waiters: Vec::new(),
             approvals: Vec::new(),
@@ -247,6 +253,7 @@ impl ManagedManager {
             return;
         }
         self.closing = true;
+        self.wake_foreground_reservations();
         self.mailbox.close();
         self.pending_job.take();
         self.ready_jobs.clear();
@@ -280,6 +287,7 @@ impl ManagedManager {
         if self.children.is_empty()
             && self.retiring.is_empty()
             && self.foregrounds.is_empty()
+            && !self.has_foreground_reservations()
             && self.active.is_none()
             && self.waiters.is_empty()
             && self.approvals.is_empty()
@@ -293,7 +301,10 @@ impl ManagedManager {
     }
     fn progress(&self) -> ManagerProgress {
         ManagerProgress {
-            residents: self.children.len() + self.retiring.len() + self.foregrounds.len(),
+            residents: self.children.len()
+                + self.retiring.len()
+                + self.foregrounds.len()
+                + self.reserved_foregrounds(),
             executing: self
                 .children
                 .iter()
@@ -321,7 +332,7 @@ impl ManagedManager {
                         .any(foreground::Foreground::settling)
                 {
                     Some(ManagerBlock::Cleanup)
-                } else if self.pending_job.is_some() {
+                } else if self.pending_job.is_some() || self.waiting_foreground() {
                     Some(ManagerBlock::Capacity)
                 } else {
                     None

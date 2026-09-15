@@ -160,6 +160,31 @@ pub struct NativeMcpController {
 type Result<T> = std::result::Result<T, NativeMcpControllerFailure>;
 
 impl NativeMcpController {
+    /// Managed admission may initialize a never-started controller once. A
+    /// retained failed generation still requires an explicit reload, not retry.
+    pub(crate) fn needs_initial_startup(&self) -> bool {
+        !state::lock(&self.inner.state).activation_attempted
+    }
+
+    pub(crate) fn activation_failure(&self) -> Option<NativeMcpControllerError> {
+        state::lock(&self.inner.state).activation_failure
+    }
+
+    /// Settles only an unpublished failed initial activation. It preserves the
+    /// open controller and credential service for explicit interactive repair.
+    pub(crate) fn settle_failed_startup(
+        &self,
+        deadline: Instant,
+        cancellation: CancellationToken,
+        completion: Option<crate::NativeOwnedWorkerCompletion>,
+    ) -> BoxFuture<'static, Result<NativeMcpControllerCleanup>> {
+        cleanup::settle_failed_startup(
+            Arc::downgrade(&self.inner),
+            deadline,
+            cancellation,
+            completion,
+        )
+    }
     #[cfg(all(feature = "mcp-http", any(test, feature = "ai-gateway-http")))]
     pub(crate) fn prepare_authentication(
         &self,

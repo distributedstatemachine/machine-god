@@ -166,6 +166,10 @@ impl ManagedConversationOwner {
             .map(|settlement| (reference, settlement))
     }
 
+    pub(crate) fn execution_is_idle(&self) -> bool {
+        self.0.scheduler.resident_is_idle(&self.0.resident)
+    }
+
     /// End new principal authority while retaining original cleanup custody.
     pub(crate) fn retire(&self) {
         self.0.closed.store(true, Ordering::Release);

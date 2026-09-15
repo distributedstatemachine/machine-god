@@ -156,6 +156,18 @@ fn current_delivery(slot: &Slot) -> Option<&Arc<DeliveryRecord>> {
     }
 }
 impl ParentNoticeContext {
+    /// Includes in-flight and uncertain custody, not only observable receipts.
+    pub(crate) fn has_pending_delivery(&self) -> bool {
+        !matches!(
+            *self
+                .inner
+                .slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Slot::Idle | Slot::Retired
+        )
+    }
+
     /// Observes only a previously confirmed publication/repair, never a raw saved record.
     pub(crate) fn delivery(&self) -> Option<NoticeDelivery> {
         if !self.inner.session.is_live() {

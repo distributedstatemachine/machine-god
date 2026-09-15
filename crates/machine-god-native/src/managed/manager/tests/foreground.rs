@@ -11,7 +11,7 @@ use futures_executor::block_on;
 use futures_util::StreamExt;
 use machine_god_core::{
     CancellationToken, ManagedConfiguration, ManagedNotifications, ManagedPermissionMode,
-    SessionId, SessionIncarnationId,
+    ManagedSubagentAuthority, SessionId, SessionIncarnationId,
 };
 use std::{
     sync::{Arc, atomic::Ordering},
@@ -48,16 +48,169 @@ fn prepare(f: &Fixture, id: &str) -> PreparedManagedRuntime {
     }
 }
 
+fn reserve(f: &mut Fixture) -> crate::managed::manager::ManagedForegroundReservation {
+    let reservation = f.manager.reserve_foreground().unwrap();
+    f.drive(|f| {
+        f.manager
+            .poll_foreground_reservation(&reservation, &Context::from_waker(Waker::noop()))
+            .is_ready()
+    });
+    reservation
+}
+
+fn enroll(
+    f: &mut Fixture,
+    prepared: PreparedManagedRuntime,
+) -> crate::managed::manager::ManagedForegroundSelection {
+    let reservation = reserve(f);
+    f.manager
+        .enroll_foreground(Box::new(prepared), &reservation)
+        .unwrap()
+}
+
+#[test]
+fn candidate_reservations_are_bounded_inert_and_cannot_be_reused_or_transferred() {
+    let mut f = Fixture::new(vec![]);
+    let mut foreign = Fixture::new(vec![]);
+    f.manager.limits.residents = 1;
+    let reservation = f.manager.reserve_foreground().unwrap();
+    let cx = Context::from_waker(Waker::noop());
+    assert!(
+        f.manager
+            .poll_foreground_reservation(&reservation, &cx)
+            .is_pending()
+    );
+    assert_eq!(f.factory.prepared.load(Ordering::Acquire), 0);
+    assert!(matches!(
+        f.manager.reserve_foreground(),
+        Err(ManagedRuntimeError::Capacity)
+    ));
+    f.drive(|f| f.manager.reserved_foregrounds() == 1);
+    assert!(!f.manager.has_capacity());
+    assert_eq!(
+        foreign
+            .manager
+            .poll_foreground_reservation(&reservation, &cx),
+        std::task::Poll::Ready(Err(ManagedRuntimeError::Invalid))
+    );
+    let prepared = prepare(&f, "reserved-parent");
+    let (_, prepared) = foreign
+        .manager
+        .enroll_foreground(Box::new(prepared), &reservation)
+        .unwrap_err();
+    let selected = f.manager.enroll_foreground(prepared, &reservation).unwrap();
+    assert!(f.manager.foreground_runtime(&selected).is_some());
+    assert_eq!(f.manager.reserved_foregrounds(), 0);
+    assert_eq!(
+        f.manager.poll_foreground_reservation(&reservation, &cx),
+        std::task::Poll::Ready(Err(ManagedRuntimeError::Invalid))
+    );
+    // A consumed observation no longer pins shutdown or occupies ticket capacity.
+    block_on(futures_util::future::poll_fn(|cx| {
+        f.manager.poll_shutdown(cx, 2)
+    }))
+    .unwrap();
+}
+
+#[test]
+fn pending_candidate_shutdown_waits_for_ticket_release_without_preparing_a_runtime() {
+    let mut f = Fixture::new(vec![]);
+    f.manager.limits.residents = 1;
+    let prepared = prepare(&f, "retained-parent");
+    enroll(&mut f, prepared);
+    let reservation = f.manager.reserve_foreground().unwrap();
+    let mut cx = Context::from_waker(Waker::noop());
+    let _ = f.manager.poll_progress(&mut cx, 2);
+    assert!(
+        f.manager
+            .poll_foreground_reservation(&reservation, &cx)
+            .is_pending()
+    );
+    assert!(f.manager.poll_shutdown(&mut cx, 3).is_pending());
+    assert_eq!(
+        f.manager.poll_foreground_reservation(&reservation, &cx),
+        std::task::Poll::Ready(Err(ManagedRuntimeError::Unavailable))
+    );
+    drop(reservation);
+    block_on(futures_util::future::poll_fn(|cx| {
+        f.manager.poll_shutdown(cx, 3)
+    }))
+    .unwrap();
+    assert_eq!(f.factory.prepared.load(Ordering::Acquire), 1);
+    assert!(f.factory.provider.requests().is_empty());
+}
+
+#[test]
+fn candidate_pressure_retires_only_one_idle_child_and_waits_for_original_cleanup() {
+    let mut f = Fixture::new(vec![]);
+    f.manager.limits.residents = 3;
+    let prepared = prepare(&f, "retained-parent");
+    let foreground = enroll(&mut f, prepared);
+    for name in ["first", "second"] {
+        assert!(
+            f.command(serde_json::json!({"create": {"name": name, "mode": "persistent"}}))
+                .ok
+        );
+    }
+    f.drive(|f| f.manager.active.is_none());
+    f.manager.limits.work_per_poll = 1;
+    let reservation = f.manager.reserve_foreground().unwrap();
+    f.drive(|f| f.manager.retiring.len() == 1);
+    f.factory.cleanup.store(false, Ordering::Release);
+    let mut cx = Context::from_waker(Waker::noop());
+    for _ in 0..4 {
+        assert!(!matches!(
+            f.manager.poll_progress(&mut cx, 101),
+            std::task::Poll::Ready(Err(_))
+        ));
+    }
+    assert_eq!(f.manager.children.len(), 1);
+    assert_eq!(f.manager.retiring.len(), 1);
+    assert!(f.manager.foreground_runtime(&foreground).is_some());
+    assert!(
+        f.manager
+            .poll_foreground_reservation(&reservation, &cx)
+            .is_pending()
+    );
+    f.factory.cleanup.store(true, Ordering::Release);
+    f.drive(|f| f.manager.reserved_foregrounds() == 1);
+    assert!(f.manager.retiring.is_empty());
+    assert_eq!(f.manager.children.len(), 1);
+    assert!(!f.manager.has_capacity());
+    drop(reservation);
+    assert!(f.manager.has_capacity());
+    assert!(block_on(f.journal.inspect("child-1".into())).is_ok());
+}
+
+#[test]
+fn granted_preparation_custody_prevents_empty_manager_shutdown_receipt() {
+    let mut f = Fixture::new(vec![]);
+    let reservation = reserve(&mut f);
+    assert_eq!(f.manager.reserved_foregrounds(), 1);
+    assert!(f.manager.foregrounds.is_empty());
+    assert!(
+        f.manager
+            .poll_shutdown(&mut Context::from_waker(Waker::noop()), 2)
+            .is_pending()
+    );
+    drop(reservation);
+    block_on(futures_util::future::poll_fn(|cx| {
+        f.manager.poll_shutdown(cx, 2)
+    }))
+    .unwrap();
+    assert!(f.factory.provider.requests().is_empty());
+}
+
 #[test]
 fn foreground_retirement_is_allocation_bound_and_waits_for_actual_cleanup() {
     let mut f = Fixture::new(vec![]);
     let a = prepare(&f, "foreground-a");
     let a_weak = Arc::downgrade(&a.runtime);
     let a_principal = a.owner.principal().clone();
-    let a = f.manager.enroll_foreground(Box::new(a)).unwrap();
+    let a = enroll(&mut f, a);
     let b = prepare(&f, "foreground-b");
     let b_principal = b.owner.principal().clone();
-    let b = f.manager.enroll_foreground(Box::new(b)).unwrap();
+    let b = enroll(&mut f, b);
     assert!(f.factory.provider.requests().is_empty());
     f.factory.cleanup.store(false, Ordering::Release);
     assert!(f.manager.retire_foreground(&a));
@@ -86,7 +239,7 @@ fn foreground_retirement_is_allocation_bound_and_waits_for_actual_cleanup() {
 fn foreground_next_turn_waits_for_original_run_settlement() {
     let mut f = Fixture::new(vec![completed(), completed()]);
     let prepared = prepare(&f, "foreground");
-    let selected = f.manager.enroll_foreground(Box::new(prepared)).unwrap();
+    let selected = enroll(&mut f, prepared);
     let runtime = f.manager.foreground_runtime(&selected).unwrap().clone();
     runtime.enqueue("first".into()).unwrap();
     let turn = block_on(runtime.start_next(2)).unwrap().unwrap();
@@ -115,8 +268,12 @@ fn shutdown_rejects_enrollment_without_discarding_prepared_resource_custody() {
     let mut f = Fixture::new(vec![]);
     let prepared = prepare(&f, "foreground");
     let original = Arc::downgrade(&prepared.runtime);
+    let reservation = reserve(&mut f);
     f.manager.request_shutdown();
-    let (error, mut retained) = f.manager.enroll_foreground(Box::new(prepared)).unwrap_err();
+    let (error, mut retained) = f
+        .manager
+        .enroll_foreground(Box::new(prepared), &reservation)
+        .unwrap_err();
     assert_eq!(error, ManagedRuntimeError::Unavailable);
     assert!(Arc::ptr_eq(&original.upgrade().unwrap(), &retained.runtime));
     retained.resources.begin_close();
@@ -132,7 +289,7 @@ fn shutdown_rejects_enrollment_without_discarding_prepared_resource_custody() {
 fn shutdown_cannot_complete_while_foreground_cleanup_is_pending() {
     let mut f = Fixture::new(vec![]);
     let prepared = prepare(&f, "foreground");
-    f.manager.enroll_foreground(Box::new(prepared)).unwrap();
+    enroll(&mut f, prepared);
     f.factory.cleanup.store(false, Ordering::Release);
     assert!(
         f.manager
@@ -152,7 +309,7 @@ fn shared_residency_pressure_evicts_settled_child_not_the_retained_foreground() 
     let mut f = Fixture::new(vec![]);
     f.manager.limits.residents = 2;
     let prepared = prepare(&f, "foreground");
-    let foreground = f.manager.enroll_foreground(Box::new(prepared)).unwrap();
+    let foreground = enroll(&mut f, prepared);
     for name in ["first", "second"] {
         assert!(
             f.command(serde_json::json!({"create": {"name": name, "mode": "persistent"}}))
@@ -175,7 +332,7 @@ fn foreground_retirement_acknowledges_original_notice_before_clearing_and_retiri
     let original = super::delivery::original(&mut f, &session);
     let prepared = f.notified_foreground(session);
     let context = prepared.notice_context.as_ref().unwrap().clone();
-    let selected = f.manager.enroll_foreground(Box::new(prepared)).unwrap();
+    let selected = enroll(&mut f, prepared);
     let runtime = f.manager.foreground_runtime(&selected).unwrap().clone();
     runtime.enqueue("consume original notice".into()).unwrap();
     let turn = block_on(runtime.start_next(2)).unwrap().unwrap();
@@ -200,5 +357,133 @@ fn foreground_retirement_acknowledges_original_notice_before_clearing_and_retiri
                 checkpoint: delivery.checkpoint().clone(),
             })
     );
+    assert_eq!(f.factory.provider.requests().len(), 1);
+}
+
+#[test]
+fn residency_pressure_retains_saved_outbox_without_a_live_delivery_receipt() {
+    use crate::managed::prompt_context::NOTICE_OUTBOX_KEY;
+    let mut f = Fixture::new(vec![]);
+    f.manager.limits.residents = 1;
+    assert!(
+        f.command(serde_json::json!({"create": {
+            "name": "original", "mode": "persistent"
+        }}))
+        .ok
+    );
+    f.drive(|f| f.manager.active.is_none());
+    let session = f.child_session("child-1");
+    let original = Arc::downgrade(&f.manager.children[0].prepared.runtime);
+    // Even malformed retained evidence requires explicit repair, not eviction.
+    let mut record = session.record();
+    record
+        .metadata
+        .insert(NOTICE_OUTBOX_KEY.into(), serde_json::Value::Null);
+    block_on(session.update_metadata(record.revision, record.metadata)).unwrap();
+    assert!(f.manager.children[0].prepared.notice_context.is_none());
+    assert!(
+        f.manager.children[0]
+            .prepared
+            .runtime
+            .notice_cleanup_pending()
+    );
+
+    let (_admission, invocation) = f.invocation(serde_json::json!({"create": {
+        "name": "replacement", "mode": "persistent"
+    }}));
+    let requester = f.requester.clone();
+    let mut response = requester.execute(invocation, CancellationToken::new());
+    assert!(
+        response
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+    );
+    f.drive(|f| f.manager.pending_job.is_some() && f.manager.active.is_none());
+    assert!(original.upgrade().is_some());
+    assert!(f.manager.retiring.is_empty());
+    assert_eq!(f.factory.prepared.load(Ordering::Acquire), 1);
+
+    // Model-free confirmed metadata repair makes the same idle slot reusable.
+    let mut record = session.record();
+    record.metadata.remove(NOTICE_OUTBOX_KEY);
+    block_on(session.update_metadata(record.revision, record.metadata)).unwrap();
+    f.drive(|f| {
+        f.manager
+            .children()
+            .iter()
+            .any(|child| child.id == "child-2")
+    });
+    assert!(block_on(response).unwrap().ok);
+    f.drive(|f| f.manager.active.is_none() && f.manager.retiring.is_empty());
+    assert!(original.upgrade().is_none());
+    block_on(f.journal.inspect("child-1".into())).unwrap();
+    assert!(f.factory.provider.requests().is_empty());
+}
+
+#[test]
+fn quiesced_foreground_clears_original_notice_without_reopening_prompt_or_save_admission() {
+    let mut f = Fixture::new(vec![completed()]);
+    let session = f.notice_session();
+    let original = super::delivery::original(&mut f, &session);
+    let prepared = f.notified_foreground(session);
+    let context = prepared.notice_context.as_ref().unwrap().clone();
+    let selected = enroll(&mut f, prepared);
+    let runtime = f.manager.foreground_runtime(&selected).unwrap().clone();
+    runtime.enqueue("consume notice".into()).unwrap();
+    let turn = block_on(runtime.start_next(2)).unwrap().unwrap();
+    assert!(block_on(turn.collect::<Vec<_>>()).iter().all(Result::is_ok));
+    let delivery = context.delivery().unwrap();
+    let mut guard = f.manager.quiesce_foreground(&selected).unwrap();
+    assert!(guard.notice_cleanup_pending());
+    assert_eq!(
+        guard.try_retire(),
+        Err(crate::NativeConversationRuntimeError::Busy)
+    );
+    assert!(runtime.enqueue("not admitted".into()).is_err());
+    assert!(block_on(runtime.rename("not saved", 3)).is_err());
+    assert!(block_on(runtime.clear_notice_delivery(&delivery)).is_err());
+    f.drive(|f| !context.has_pending_delivery() && f.manager.active.is_none());
+    assert!(!guard.notice_cleanup_pending());
+    assert!(runtime.enqueue("still not admitted".into()).is_err());
+    assert!(block_on(runtime.rename("still not saved", 4)).is_err());
+    let snapshot = block_on(f.journal.inspect("child-1".into())).unwrap();
+    let history = block_on(f.journal.history(snapshot, None, 100)).unwrap();
+    assert!(
+        history
+            .records
+            .contains(&crate::managed::store::JournalRecord::NoticeAcknowledged {
+                identity: original.identity(),
+                target: original.target,
+                checkpoint: delivery.checkpoint().clone(),
+            })
+    );
+    guard.try_retire().unwrap();
+    f.manager.retire_foreground(&selected);
+    f.drive(|f| f.manager.foregrounds.is_empty());
+    assert!(context.is_retired());
+    assert_eq!(f.factory.provider.requests().len(), 1);
+}
+
+#[test]
+fn dropped_quiescence_restores_original_notice_cleanup_without_reviving_stale_selection() {
+    let mut f = Fixture::new(vec![completed()]);
+    let session = f.notice_session();
+    super::delivery::original(&mut f, &session);
+    let prepared = f.notified_foreground(session);
+    let context = prepared.notice_context.as_ref().unwrap().clone();
+    let selected = enroll(&mut f, prepared);
+    let runtime = f.manager.foreground_runtime(&selected).unwrap().clone();
+    runtime.enqueue("consume notice".into()).unwrap();
+    let turn = block_on(runtime.start_next(2)).unwrap().unwrap();
+    assert!(block_on(turn.collect::<Vec<_>>()).iter().all(Result::is_ok));
+    drop(f.manager.quiesce_foreground(&selected).unwrap());
+    f.drive(|f| !context.has_pending_delivery() && f.manager.active.is_none());
+    block_on(runtime.rename("reopened admission", 3)).unwrap();
+    let mut next = f.manager.quiesce_foreground(&selected).unwrap();
+    next.try_retire().unwrap();
+    f.manager.retire_foreground(&selected);
+    f.drive(|f| f.manager.foregrounds.is_empty());
+    assert!(f.manager.quiesce_foreground(&selected).is_err());
     assert_eq!(f.factory.provider.requests().len(), 1);
 }

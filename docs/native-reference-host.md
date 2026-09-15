@@ -43,6 +43,54 @@ ephemeral selection is preserved, not copied to children; every instantiated
 owner has independent cancellation. Actual foreground enrollment preserves
 saved model preferences, while child work keeps its explicitly captured choice.
 
+`NativeInteractiveSession::open_managed` consumes that explicitly selected host
+and private journal descriptor. Initial preparation applies any process model
+override after saved preferences; later new/resume transitions use their normal
+defaults and saved selection. The native owner enrolls and retains foreground
+candidates through supersession, terminal handoff and uncertain outcomes. MCP
+human controls resolve the selected foreground's own runtime/controller, never
+a managed host-global fallback. Child progress is polled before presentation or
+control backpressure, and interactive shutdown is not complete until the outer
+manager has settled all child and foreground custody.
+
+Managed parent preparation starts its own configured `All` MCP selection under
+an actual journal-retaining admission cohort. An empty child creates no MCP
+connections: its first durably accepted work item initializes configured servers
+inside that work's native admission, before provider execution. Failed activation
+is not automatically retried by another prompt; explicit reload remains the
+repair path. Request-scoped ephemeral servers still never flow to children.
+Recoverable initial activation failures settle their failed generation and
+original admission without closing the selected controller or credential
+service. The interactive owner remains available for `/mcp` repair and exposes
+the fixed startup failure; a successful explicit reload clears it. Readiness
+still blocks provider execution until the required selection is usable.
+Supersession or shutdown signals only the uncommitted candidate's startup token;
+the original future remains driven through its receipt and owned peer cleanup.
+A replacement receives a fresh token. Failed initial terminal activation also
+drives the already-enrolled manager's cleanup before returning its error.
+
+Interactive workspace controls use the actual foreground's independent selection,
+not the host's original defaults. New/resume preparation captures the settled
+source selection under its quiescence guard and forks it for the candidate.
+Later edits cannot mutate the retired source or another principal's selection.
+
+`NativeReferenceHostManagedOptions::with_prompt_inbox` explicitly binds runtime
+preparation to the existing bounded interactive inbox. A weak native registrar
+enrolls each actual parent/child session before execution; its registration lease
+stays with that runtime's cleanup resources, not the displayed selection. Closing
+one principal invalidates only its pending requests and unconsumed answers.
+Parent replacement cannot retire a hidden child's approval. Dropping the sole
+inbox rejects later preparation instead of recreating an input or prompt owner.
+
+Foreground quiescence keeps ordinary prompts and saves fenced while granting
+only exact original notice cleanup a weak, generation-bound continuation route.
+Source acknowledgement and confirmed outbox removal precede irreversible
+retirement; raw saved outboxes and uncertain cleanup remain blockers. Transition
+preparation also waits for the original managed run/admission cleanup, not only
+the end of the visible stream. Dropping a reversible guard invalidates its
+continuation route and allows ordinary cleanup again; a replacement generation
+cannot reuse the old route.
+
 ## Availability
 
 The complete reference host is compiled when all of these are true:

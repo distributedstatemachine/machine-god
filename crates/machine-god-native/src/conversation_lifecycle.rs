@@ -167,6 +167,14 @@ pub(crate) struct LifecycleQuiescence {
 }
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 impl LifecycleQuiescence {
+    /// A weak, exact-generation continuation route. Only native finalization
+    /// receives this value; ordinary callers still cannot acquire while fenced.
+    pub(crate) fn continuation(&self) -> LifecycleContinuation {
+        LifecycleContinuation {
+            gate: Arc::downgrade(&self.gate),
+            generation: self.generation,
+        }
+    }
     pub(crate) fn belongs_to(&self, gate: &Arc<LifecycleGate>) -> bool {
         Arc::ptr_eq(&self.gate, gate)
     }
@@ -205,6 +213,35 @@ impl LifecycleQuiescence {
             wake.wake();
         }
         Ok(())
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[derive(Clone)]
+pub(crate) struct LifecycleContinuation {
+    gate: std::sync::Weak<LifecycleGate>,
+    generation: u64,
+}
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+impl LifecycleContinuation {
+    pub(crate) fn acquire(
+        &self,
+        gate: &Arc<LifecycleGate>,
+    ) -> Result<LifecyclePermit, LifecycleError> {
+        if !self.gate.ptr_eq(&Arc::downgrade(gate)) {
+            return Err(LifecycleError::Stale);
+        }
+        let mut state = gate.state.lock().expect("lifecycle poisoned");
+        if state.phase != LifecyclePhase::Quiescing || state.generation != self.generation {
+            return Err(LifecycleError::Stale);
+        }
+        if state.permits == MAX_PERMITS {
+            return Err(LifecycleError::Busy);
+        }
+        state.permits += 1;
+        Ok(LifecyclePermit {
+            gate: gate.clone(),
+            generation: self.generation,
+        })
     }
 }
 #[cfg(any(target_os = "linux", target_os = "macos", test))]

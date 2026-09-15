@@ -29,6 +29,7 @@ impl ManagedManager {
             let mut progress = self.poll_active(cx, now_ms)?;
             progress |= self.poll_foregrounds(cx)?;
             progress |= self.poll_retiring(cx)?;
+            progress |= self.poll_foreground_reservations(cx);
             progress |= self.pump_waiters(cx);
             progress |= self.poll_delivery_clears(cx);
             let len = self.children.len();

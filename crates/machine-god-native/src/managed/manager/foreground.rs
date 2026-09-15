@@ -22,6 +22,7 @@ pub(super) struct Foreground {
     closing: bool,
     closed: bool,
     admission_waiting: bool,
+    notice_drain: Option<crate::conversation_runtime::NativeNoticeDrain>,
 }
 impl Foreground {
     fn matches(&self, selected: &ManagedForegroundSelection) -> bool {
@@ -62,15 +63,14 @@ impl ManagedManager {
     pub(crate) fn enroll_foreground(
         &mut self,
         prepared: Box<PreparedManagedRuntime>,
+        reservation: &super::ManagedForegroundReservation,
     ) -> Result<super::ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
     {
         let validate = || {
             if self.closing || !prepared.owner.principal().is_live() {
                 return Err(ManagedRuntimeError::Unavailable);
             }
-            if !self.has_capacity() {
-                return Err(ManagedRuntimeError::Capacity);
-            }
+            self.validate_foreground_reservation(reservation)?;
             if prepared.runtime.status().active
                 || self.foregrounds.iter().any(|parent| {
                     Arc::ptr_eq(
@@ -92,6 +92,9 @@ impl ManagedManager {
             return Err((error, prepared));
         }
         let identity = Arc::new(Identity);
+        if let Err(error) = self.consume_foreground_reservation(reservation) {
+            return Err((error, prepared));
+        }
         let selection = ManagedForegroundSelection(Arc::downgrade(&identity));
         self.remember_principal(prepared.owner.principal());
         self.foregrounds.push(Foreground {
@@ -101,6 +104,7 @@ impl ManagedManager {
             closing: false,
             closed: false,
             admission_waiting: false,
+            notice_drain: None,
         });
         Ok(selection)
     }
@@ -113,6 +117,49 @@ impl ManagedManager {
             .iter()
             .find(|parent| !parent.closing && parent.matches(selection))
             .map(|parent| &parent.prepared.runtime)
+    }
+
+    /// Fence this exact foreground while preserving source-ACK cleanup access.
+    /// The returned guard remains the only owner allowed to retire/reopen it.
+    pub(crate) fn quiesce_foreground(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+    ) -> Result<crate::NativeRuntimeQuiescence, crate::NativeConversationRuntimeError> {
+        let parent = self
+            .foregrounds
+            .iter_mut()
+            .find(|parent| parent.matches(selection))
+            .ok_or(crate::NativeConversationRuntimeError::Retired)?;
+        let guard = parent.prepared.runtime.begin_quiescence()?;
+        parent.notice_drain = Some(guard.notice_drain());
+        Ok(guard)
+    }
+
+    pub(crate) fn foreground_mcp_controls(
+        &self,
+        selection: &ManagedForegroundSelection,
+    ) -> Option<super::factory::ManagedMcpControls> {
+        self.foregrounds
+            .iter()
+            .find(|parent| !parent.closing && parent.matches(selection))?
+            .prepared
+            .resources
+            .mcp_controls()
+    }
+
+    pub(crate) fn foreground_turn_settled(&self, selection: &ManagedForegroundSelection) -> bool {
+        self.foregrounds
+            .iter()
+            .find(|parent| parent.matches(selection))
+            .map_or_else(
+                || selection.0.strong_count() == 0,
+                |parent| {
+                    !parent.prepared.runtime.status().active
+                        && !parent.admission_waiting
+                        && parent.settlement.is_none()
+                        && parent.prepared.owner.execution_is_idle()
+                },
+            )
     }
 
     /// Retires this exact foreground only. Child FIFOs and sibling registrations
@@ -183,13 +230,7 @@ impl ManagedManager {
             if parent.closing && parent.settlement.is_none() {
                 // Do not retire the exact notice context before source ACK and
                 // outbox removal have settled in this same outer manager.
-                if parent
-                    .prepared
-                    .notice_context
-                    .as_ref()
-                    .is_none_or(|context| context.delivery().is_none())
-                    && parent.closed
-                {
+                if !parent.prepared.runtime.notice_cleanup_pending() && parent.closed {
                     self.foregrounds.remove(index);
                     self.retry.retry_capacity();
                     progress = true;
@@ -205,7 +246,7 @@ impl ManagedManager {
 pub(super) fn runtime_for_notice(
     foregrounds: &[Foreground],
     context: &Weak<super::super::prompt_context::ParentNoticeContext>,
-) -> Option<Arc<NativeConversationRuntime>> {
+) -> Option<super::delivery::ClearTarget> {
     foregrounds
         .iter()
         .find(|parent| {
@@ -216,5 +257,8 @@ pub(super) fn runtime_for_notice(
                     .as_ref()
                     .is_some_and(|selected| context.ptr_eq(&Arc::downgrade(selected)))
         })
-        .map(|parent| parent.prepared.runtime.clone())
+        .map(|parent| super::delivery::ClearTarget {
+            runtime: parent.prepared.runtime.clone(),
+            drain: parent.notice_drain.clone(),
+        })
 }

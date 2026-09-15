@@ -3,6 +3,7 @@ use crate::NativeManagedAgentsError;
 use crate::managed::store::{JournalLimits, ManagedJournal};
 use futures_util::future::poll_fn;
 use std::{os::unix::fs::DirBuilderExt, pin::Pin, task::Poll};
+mod interactive;
 
 fn directory(path: &std::path::Path) -> rustix::fd::OwnedFd {
     rustix::fs::open(
@@ -111,11 +112,21 @@ fn actual_foreground_model_call_reaches_shared_manager_and_retains_idle_child() 
         )
         .await
         .unwrap();
+        let reservation = agents.reserve_foreground().unwrap();
+        poll_fn(|cx| {
+            let progress = agents.poll_progress(cx, 1);
+            assert!(!matches!(progress, Poll::Ready(Err(_))));
+            agents.poll_foreground_reservation(&reservation, cx)
+        })
+        .await
+        .unwrap();
         let prepared = agents
             .prepare_foreground(conversation, workspace, policy, preferences)
             .await
             .unwrap();
-        let selected = agents.enroll_foreground(Box::new(prepared)).unwrap();
+        let selected = agents
+            .enroll_foreground(Box::new(prepared), &reservation)
+            .unwrap();
         let runtime = agents.foreground_runtime(&selected).unwrap().clone();
         runtime.enqueue("create a worker".into()).unwrap();
         let mut turn = runtime.start_next(2).await.unwrap().unwrap();

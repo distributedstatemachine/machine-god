@@ -51,7 +51,16 @@ fn enrolled_parent_shutdown_waits_for_its_admission_worker_not_unrelated_host_wo
         ManagerLimits::default(),
     )
     .unwrap();
-    let selected = manager.enroll_foreground(Box::new(prepared)).unwrap();
+    let reservation = manager.reserve_foreground().unwrap();
+    block_on(futures_util::future::poll_fn(|cx| {
+        let progress = manager.poll_progress(cx, 1);
+        assert!(!matches!(progress, Poll::Ready(Err(_))));
+        manager.poll_foreground_reservation(&reservation, cx)
+    }))
+    .unwrap();
+    let selected = manager
+        .enroll_foreground(Box::new(prepared), &reservation)
+        .unwrap();
     let runtime = manager.foreground_runtime(&selected).unwrap().clone();
     assert!(!runtime.status().active);
     let workers = f.factory.0.services.control_workers.as_ref().unwrap();

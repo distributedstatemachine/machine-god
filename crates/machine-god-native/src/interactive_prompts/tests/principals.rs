@@ -1,5 +1,51 @@
 use super::*;
 
+#[test]
+fn native_registrar_is_weak_and_cannot_reopen_a_dropped_inbox() {
+    let inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let registrar = inbox.registrar();
+    let observed = Arc::downgrade(&inbox.shared);
+    drop(inbox);
+    assert!(observed.upgrade().is_none());
+    assert_eq!(
+        registrar.register(owner()).unwrap_err(),
+        NativeInteractivePromptError::Closed
+    );
+}
+
+#[test]
+fn native_registrar_uses_same_aggregate_budget_and_exact_retirement_as_ui() {
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let registrar = inbox.registrar();
+    let parent = registrar.register(owner()).unwrap();
+    assert_eq!(
+        inbox.register(owner()).unwrap_err(),
+        NativeInteractivePromptError::Busy
+    );
+    let child = inbox.register(named_owner("child")).unwrap();
+    let router = inbox.router();
+    let parent_wait = pending(&router, parent.owner());
+    let child_wait = pending(&router, child.owner());
+    drop(parent);
+    assert!(block_on(parent_wait).is_err());
+    let prompt = view(&mut inbox);
+    assert_eq!(prompt.token().owner(), child.owner());
+    respond(&mut inbox, &prompt, PermissionPromptDecision::AllowOnce);
+    assert_eq!(
+        block_on(child_wait),
+        Ok(PermissionPromptDecision::AllowOnce)
+    );
+    drop(child);
+    let _replacement = registrar.register(owner()).unwrap();
+    drop(inbox);
+    assert_eq!(
+        registrar.register(named_owner("late")).unwrap_err(),
+        NativeInteractivePromptError::Closed
+    );
+}
+
 fn named_owner(name: &str) -> BackgroundOutputOwner {
     BackgroundOutputOwner::new(
         SessionId::new(name).unwrap(),

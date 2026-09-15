@@ -17,6 +17,7 @@ pub(super) struct Resources {
     admission: Option<BoxFuture<'static, ()>>,
     close_authority: CloseAuthority,
     closing: Close,
+    prompt: Option<crate::NativeInteractivePromptPrincipal>,
 }
 #[derive(Clone)]
 pub(super) struct CloseAuthority {
@@ -56,6 +57,7 @@ impl Resources {
         instance: ManagedMcpInstance,
         owner: Arc<NativePrincipalMcpOwner>,
         preparation: NativeOwnedWorkerCompletion,
+        prompt: Option<crate::NativeInteractivePromptPrincipal>,
         close_authority: CloseAuthority,
     ) -> Self {
         Self {
@@ -66,10 +68,20 @@ impl Resources {
             admission: None,
             close_authority,
             closing: Close::Open,
+            prompt,
         }
     }
 }
 impl ManagedRuntimeResources for Resources {
+    fn mcp_controls(&self) -> Option<crate::managed::manager::factory::ManagedMcpControls> {
+        if !matches!(self.closing, Close::Open) {
+            return None;
+        }
+        Some(crate::managed::manager::factory::ManagedMcpControls {
+            runtime: Some(self.mcp.instance.runtime.clone()),
+            controller: self.mcp.instance.controller.clone(),
+        })
+    }
     fn poll_turn_settled(
         &mut self,
         cx: &mut Context<'_>,
@@ -135,6 +147,9 @@ impl ManagedRuntimeResources for Resources {
         if !matches!(self.closing, Close::Open) {
             return;
         }
+        // Cut off exactly this principal's pending prompts and unconsumed
+        // answers before waiting for any permission/elicitation cleanup.
+        self.prompt.take();
         let Some(deadline) = self
             .mcp
             .instance

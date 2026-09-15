@@ -189,6 +189,7 @@ pub struct NativeConversation {
 
 enum McpReadiness {
     Profile(std::sync::Weak<crate::mcp::controller::NativeMcpController>),
+    ManagedProfile(std::sync::Weak<crate::mcp::controller::NativeMcpController>),
     Ephemeral(std::sync::Weak<crate::mcp::ephemeral::NativeMcpEphemeralOwner>),
 }
 
@@ -304,6 +305,12 @@ impl NativeConversation {
             })
             .transpose()
     }
+
+    pub(crate) fn workspace_authority(&self) -> Option<crate::NativeWorkspaceAuthority> {
+        self.workspace
+            .as_ref()
+            .map(|binding| binding.authority.clone())
+    }
     /// Adopts a validated live session without effects or inferred metadata.
     ///
     /// # Errors
@@ -405,6 +412,17 @@ impl NativeConversation {
             return Err(NativeConversationError::Busy);
         }
         self.mcp_readiness = Some(McpReadiness::Profile(Arc::downgrade(controller)));
+        Ok(self)
+    }
+
+    pub(crate) fn with_managed_mcp_readiness(
+        mut self,
+        controller: &Arc<crate::mcp::controller::NativeMcpController>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.mcp_readiness.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.mcp_readiness = Some(McpReadiness::ManagedProfile(Arc::downgrade(controller)));
         Ok(self)
     }
 
@@ -1184,10 +1202,21 @@ impl NativeConversation {
             })
             .transpose()?;
         match &self.mcp_readiness {
-            Some(McpReadiness::Profile(controller)) => {
+            Some(McpReadiness::Profile(controller) | McpReadiness::ManagedProfile(controller)) => {
                 let controller = controller
                     .upgrade()
                     .ok_or(NativeConversationError::McpRequiredUnavailable)?;
+                if matches!(&self.mcp_readiness, Some(McpReadiness::ManagedProfile(_)))
+                    && controller.needs_initial_startup()
+                {
+                    controller
+                        .start_configured(
+                            crate::mcp::startup::NativeMcpStartupPhase::All,
+                            cancellation.clone(),
+                        )
+                        .await
+                        .map_err(|_| NativeConversationError::McpRequiredUnavailable)?;
+                }
                 // Cancel only this admission's waiter. The controller retains
                 // the shared refresh for other observers and finalization.
                 controller

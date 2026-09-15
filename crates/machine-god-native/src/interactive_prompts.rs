@@ -7,7 +7,7 @@ mod state;
 mod tests;
 
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, Poll};
 
 use machine_god_core::{BackgroundOutputOwner, BoxFuture, PermissionRequest, ToolContext};
@@ -402,12 +402,35 @@ impl NativeInteractivePromptBridge {
 pub struct NativeInteractivePromptInbox {
     shared: Arc<Shared>,
 }
+
+/// Registration authority for native runtime construction, without retaining the
+/// inbox or any principal. Presentation still has exactly one owning endpoint.
+#[derive(Clone)]
+pub(crate) struct NativeInteractivePromptRegistrar(Weak<Shared>);
+
+impl NativeInteractivePromptRegistrar {
+    pub(crate) fn register(
+        &self,
+        owner: BackgroundOutputOwner,
+    ) -> Result<NativeInteractivePromptPrincipal, NativeInteractivePromptError> {
+        let shared = self
+            .0
+            .upgrade()
+            .ok_or(NativeInteractivePromptError::Closed)?;
+        let key = shared.register(owner)?;
+        Ok(NativeInteractivePromptPrincipal { shared, key })
+    }
+}
+
 impl fmt::Debug for NativeInteractivePromptInbox {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("NativeInteractivePromptInbox { .. }")
     }
 }
 impl NativeInteractivePromptInbox {
+    pub(crate) fn registrar(&self) -> NativeInteractivePromptRegistrar {
+        NativeInteractivePromptRegistrar(Arc::downgrade(&self.shared))
+    }
     /// Projects pending owners and kinds without retaining request payloads or
     /// marking any prompt displayed. Installs the sole UI wake for subsequent
     /// changes; this observer is shared with `poll_prompt` and `poll_pending`.
@@ -465,11 +488,7 @@ impl NativeInteractivePromptInbox {
         &mut self,
         owner: BackgroundOutputOwner,
     ) -> Result<NativeInteractivePromptPrincipal, NativeInteractivePromptError> {
-        let key = self.shared.register(owner)?;
-        Ok(NativeInteractivePromptPrincipal {
-            shared: Arc::clone(&self.shared),
-            key,
-        })
+        self.registrar().register(owner)
     }
     /// Proposes an exact saved change from the current unanswered native prompt.
     /// The returned token still requires a separate human confirmation.

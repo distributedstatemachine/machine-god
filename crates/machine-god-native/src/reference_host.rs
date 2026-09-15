@@ -8,6 +8,7 @@ use std::time::Instant;
 
 mod construction;
 mod managed_agents;
+pub(crate) use managed_agents::map_error as managed_error;
 mod managed_factory;
 pub use managed_agents::{
     NativeManagedAgentSelection, NativeManagedAgentView, NativeManagedAgents,

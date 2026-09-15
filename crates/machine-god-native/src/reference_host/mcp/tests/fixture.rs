@@ -1,7 +1,7 @@
 use super::*;
 use machine_god_core::{PermissionRequest, ProviderError};
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 pub(in crate::reference_host) struct Directory(pub PathBuf);
 impl Directory {
@@ -83,6 +83,7 @@ impl QuestionPrompter for Prompt {
 #[derive(Default)]
 pub(in crate::reference_host) struct Transport {
     pub responses: Mutex<VecDeque<Vec<u8>>>,
+    pub model_responses: Mutex<HashMap<String, VecDeque<Vec<u8>>>>,
     pub requests: Mutex<Vec<Value>>,
     pub reviews: AtomicUsize,
 }
@@ -93,6 +94,11 @@ impl AiGatewayTransport for Transport {
         _: CancellationToken,
     ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
         Box::pin(async move {
+            let model = request
+                .headers()
+                .iter()
+                .find(|header| header.name() == "ai-language-model-id")
+                .map(|header| header.value().to_owned());
             let request = machine_god_core::json::from_slice(request.body()).unwrap();
             let review = request["tools"]
                 .as_array()
@@ -108,10 +114,16 @@ impl AiGatewayTransport for Transport {
                     &json!({"risk":"low","authorization":"unknown","decision":"allow","rationale":"Requested development task."}),
                 )
             } else {
-                self.responses
-                    .lock()
-                    .unwrap()
-                    .pop_front()
+                model
+                    .as_ref()
+                    .and_then(|model| {
+                        self.model_responses
+                            .lock()
+                            .unwrap()
+                            .get_mut(model)
+                            .and_then(VecDeque::pop_front)
+                    })
+                    .or_else(|| self.responses.lock().unwrap().pop_front())
                     .unwrap_or_else(answer)
             };
             Ok(Box::pin(futures_util::stream::iter([Ok(bytes)])) as AiGatewayByteStream)
@@ -160,6 +172,19 @@ impl Fixture {
             Arc<Clock>,
         ) -> NativeReferenceHostConversationOptions,
     ) -> Self {
+        Self::with_options_and_bridge(mode, enabled, None, select)
+    }
+
+    pub fn with_options_and_bridge(
+        mode: &str,
+        enabled: bool,
+        bridge: Option<Arc<crate::NativeInteractivePromptBridge>>,
+        select: impl FnOnce(
+            NativeReferenceHostConversationOptions,
+            &Directory,
+            Arc<Clock>,
+        ) -> NativeReferenceHostConversationOptions,
+    ) -> Self {
         let directory = Directory::new();
         let workspace = directory.0.join("workspace");
         fs::create_dir(&workspace).unwrap();
@@ -188,10 +213,15 @@ impl Fixture {
         let options = select(options, &directory, clock.clone());
         let transport = Arc::new(Transport::default());
         let prompt = Arc::new(Prompt::default());
+        let (permission, question): (Arc<dyn PermissionPrompter>, Arc<dyn QuestionPrompter>) =
+            match bridge {
+                Some(bridge) => (bridge.clone(), bridge),
+                None => (prompt.clone(), prompt.clone()),
+            };
         let config = crate::config::parse_config_bytes(format!(r#"{{"schema_version":5,"permission_mode":"{mode}","sandbox_mode":"none","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","credential_source":"environment","model":"fixture/main","effort":"auto","fast_mode":false}}"#).as_bytes()).unwrap();
         let host = NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             LoadedNativeConfig::from_file(config), transport.clone(), machine_god_core::NetworkTarget { scheme: "https".into(), host: "ai-gateway.vercel.sh".into(), port: None },
-            roots, prompt.clone(), prompt.clone(), clock.clone(), options,
+            roots, permission, question, clock.clone(), options,
         ).unwrap();
         Self {
             host: Some(host),

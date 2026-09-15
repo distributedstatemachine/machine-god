@@ -1,0 +1,479 @@
+//! Managed preparation and cleanup stay with the native interactive owner.
+use super::{
+    Arc, BoxFuture, Context, NativeConversation, NativeConversationRuntime,
+    NativeConversationRuntimeError, NativeInteractiveError, NativeInteractiveInitialSession,
+    NativeInteractiveOutcome, NativeInteractiveSession, NativeInteractiveSessionOptions,
+    NativeModelCatalog, NativeReferenceHost, NativeRuntimeQuiescence, Poll, Transition,
+};
+use crate::managed::manager::{
+    ManagedForegroundReservation, ManagedForegroundSelection, factory::PreparedManagedRuntime,
+};
+
+pub(super) enum Prepared {
+    Ordinary(Arc<NativeConversationRuntime>),
+    Managed(Box<PreparedManagedRuntime>, ManagedForegroundReservation),
+}
+
+pub(super) struct Selection {
+    pub reservation: ManagedForegroundReservation,
+    pub workspace: Option<crate::NativeWorkspaceScopeSnapshot>,
+    pub policy: Option<crate::NativePermissionPolicySnapshot>,
+    pub catalog: Option<Arc<NativeModelCatalog>>,
+    pub initial: bool,
+    pub now_ms: i64,
+    pub cancellation: machine_god_core::CancellationToken,
+}
+
+type Enrolled = (
+    Arc<NativeConversationRuntime>,
+    Option<ManagedForegroundSelection>,
+);
+type EnrollmentError = (
+    NativeInteractiveError,
+    Box<PreparedManagedRuntime>,
+    ManagedForegroundReservation,
+);
+
+/// Allocated only for managed hosts, keeping ordinary hosts and ACP futures small.
+pub(super) struct Owner {
+    pub agents: crate::NativeManagedAgents,
+    pub foreground: Option<ManagedForegroundSelection>,
+    error: Option<crate::NativeManagedAgentsError>,
+    foreground_closed: bool,
+}
+impl Owner {
+    fn new(agents: crate::NativeManagedAgents) -> Box<Self> {
+        Box::new(Self {
+            agents,
+            foreground: None,
+            error: None,
+            foreground_closed: false,
+        })
+    }
+}
+
+impl NativeInteractiveSession {
+    pub(super) fn compose_candidate(
+        &self,
+        transition: &mut Transition,
+        conversation: NativeConversation,
+    ) -> Result<BoxFuture<'static, Result<Prepared, NativeInteractiveError>>, NativeInteractiveError>
+    {
+        let guard = transition
+            .guard
+            .as_ref()
+            .ok_or(NativeInteractiveError::Unavailable)?;
+        let snapshot = guard.selection_snapshot()?;
+        let host = self.host.clone();
+        let options = self.options.clone();
+        let policy = snapshot.permission_policy().cloned();
+        let catalog = snapshot.model_catalog().cloned();
+        let now_ms = transition.request.now_ms;
+        Ok(match &self.managed {
+            Some(owner) => prepare(
+                &owner.agents,
+                host,
+                &options,
+                conversation,
+                Selection {
+                    reservation: transition
+                        .managed_reservation
+                        .take()
+                        .ok_or(NativeInteractiveError::Unavailable)?,
+                    workspace: Some(
+                        guard
+                            .workspace_snapshot()?
+                            .ok_or(NativeInteractiveError::Configuration)?,
+                    ),
+                    policy,
+                    catalog,
+                    initial: false,
+                    now_ms,
+                    cancellation: transition.preparation_cancel.clone(),
+                },
+            ),
+            None => Box::pin(async move {
+                super::transition::compose(
+                    &host,
+                    &options,
+                    conversation,
+                    policy,
+                    catalog,
+                    false,
+                    now_ms,
+                )
+                .await
+                .map(Prepared::Ordinary)
+            }),
+        })
+    }
+
+    /// Opens a managed interactive owner from this exact host and an explicitly
+    /// opened private journal directory. No child is restored or started merely
+    /// by opening. The owner co-polls child work independently of presentation.
+    #[must_use]
+    pub fn open_managed(
+        mut host: NativeReferenceHost,
+        directory: rustix::fd::OwnedFd,
+        options: NativeInteractiveSessionOptions,
+        initial: NativeInteractiveInitialSession,
+        now_ms: i64,
+    ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
+        Box::pin(async move {
+            options.validate_for_host(&host)?;
+            let agents = host
+                .open_managed_agents(directory, options.defaults.clone(), options.origin)
+                .await
+                .map_err(NativeInteractiveError::Managed)?;
+            Self::open_with_agents(
+                Arc::new(host),
+                options,
+                initial,
+                now_ms,
+                Some(Owner::new(agents)),
+            )
+            .await
+        })
+    }
+
+    pub(super) fn quiesce_current(
+        &mut self,
+    ) -> Result<NativeRuntimeQuiescence, NativeConversationRuntimeError> {
+        match &mut self.managed {
+            Some(owner) => owner.agents.quiesce_foreground(
+                owner
+                    .foreground
+                    .as_ref()
+                    .ok_or(NativeConversationRuntimeError::Retired)?,
+            ),
+            None => self.current.begin_quiescence(),
+        }
+    }
+
+    pub(super) fn retire_candidate(&mut self, transition: &mut Transition) {
+        transition.managed_reservation.take();
+        if let Some(selected) = transition.managed_candidate.take()
+            && let Some(agents) = &mut self.managed
+        {
+            agents.agents.retire_foreground(&selected);
+        }
+    }
+
+    pub(super) fn poll_candidate_reservation(
+        &mut self,
+        transition: &mut Transition,
+        cx: &Context<'_>,
+    ) -> Poll<Result<(), NativeInteractiveError>> {
+        let Some(owner) = &mut self.managed else {
+            return Poll::Ready(Ok(()));
+        };
+        if transition.managed_reservation.is_none() {
+            transition.managed_reservation = Some(
+                owner
+                    .agents
+                    .reserve_foreground()
+                    .map_err(NativeInteractiveError::Managed)?,
+            );
+            cx.waker().wake_by_ref();
+        }
+        owner
+            .agents
+            .poll_foreground_reservation(
+                transition
+                    .managed_reservation
+                    .as_ref()
+                    .expect("retained reservation"),
+                cx,
+            )
+            .map_err(NativeInteractiveError::Managed)
+    }
+
+    pub(super) fn foreground_turn_settled(&self) -> bool {
+        match &self.managed {
+            Some(owner) => owner
+                .foreground
+                .as_ref()
+                .is_some_and(|selected| owner.agents.foreground_turn_settled(selected)),
+            None => true,
+        }
+    }
+
+    pub(super) fn finish_foreground_shutdown(&mut self) {
+        self.notify();
+        if let Some(owner) = &mut self.managed {
+            owner.foreground_closed = true;
+        } else {
+            self.closed = true;
+            if self.outcome.is_none() {
+                self.outcome = Some(NativeInteractiveOutcome::Shutdown);
+            }
+        }
+    }
+
+    pub(super) fn foreground_is_closed(&self) -> bool {
+        self.managed
+            .as_ref()
+            .is_some_and(|owner| owner.foreground_closed)
+    }
+
+    pub(super) fn begin_managed_shutdown(&mut self) {
+        if self.shutting_down
+            && let Some(owner) = &mut self.managed
+        {
+            owner.agents.request_shutdown();
+        }
+    }
+
+    pub(super) fn poll_managed(&mut self, cx: &mut Context<'_>, now_ms: i64) {
+        let Some(owner) = &mut self.managed else {
+            return;
+        };
+        if owner.foreground_closed {
+            match owner.agents.poll_shutdown(cx, now_ms) {
+                Poll::Ready(Ok(())) => {
+                    self.closed = true;
+                    if self.outcome.is_none() {
+                        self.outcome = Some(NativeInteractiveOutcome::Shutdown);
+                    }
+                }
+                Poll::Ready(Err(error)) => {
+                    self.shutdown_error = Some(NativeInteractiveError::Managed(error));
+                }
+                Poll::Pending => {}
+            }
+        } else if let Poll::Ready(Err(error)) = owner.agents.poll_progress(cx, now_ms) {
+            owner.error = Some(error);
+        }
+    }
+
+    /// Bounded native observations; navigation labels confer no control authority.
+    #[must_use]
+    pub fn managed_agents(&self) -> Vec<crate::NativeManagedAgentView> {
+        self.managed
+            .as_ref()
+            .map_or_else(Vec::new, |owner| owner.agents.agents())
+    }
+
+    #[must_use]
+    pub fn managed_error(&self) -> Option<crate::NativeManagedAgentsError> {
+        self.managed.as_ref().and_then(|owner| owner.error)
+    }
+
+    /// Last selected controller activation failure, cleared by a successful
+    /// explicit reload. A startup warning is not a failed interactive owner.
+    #[must_use]
+    pub fn mcp_startup_failure(&self) -> Option<crate::mcp::controller::NativeMcpControllerError> {
+        let controller = match &self.managed {
+            Some(owner) => {
+                owner
+                    .agents
+                    .foreground_mcp_controls(owner.foreground.as_ref()?)?
+                    .controller
+            }
+            None => self.host.mcp_controller(),
+        }?;
+        controller.activation_failure()
+    }
+
+    /// Explicit repair retry does not retry a model turn or allocate another child.
+    pub fn retry_managed_reconciliation(&mut self) {
+        if let Some(owner) = &mut self.managed {
+            owner.agents.retry_reconciliation();
+            owner.error = None;
+            self.notify();
+        }
+    }
+}
+
+pub(super) fn prepare(
+    agents: &crate::NativeManagedAgents,
+    host: Arc<NativeReferenceHost>,
+    options: &NativeInteractiveSessionOptions,
+    conversation: NativeConversation,
+    selection: Selection,
+) -> BoxFuture<'static, Result<Prepared, NativeInteractiveError>> {
+    let Selection {
+        reservation,
+        workspace,
+        policy,
+        catalog,
+        initial,
+        now_ms,
+        cancellation,
+    } = selection;
+    let preparation = host.prepare_managed_foreground(
+        agents,
+        conversation,
+        workspace,
+        policy,
+        options.defaults.clone(),
+    );
+    let process_model = initial.then(|| options.process_model.clone()).flatten();
+    Box::pin(async move {
+        let mut prepared = Box::new(preparation.await.map_err(NativeInteractiveError::Managed)?);
+        let startup = start_parent_mcp(&prepared, cancellation);
+        let runtime = prepared.runtime.clone();
+        let configure = async {
+            startup.await?;
+            if let Some(model) = process_model {
+                let mut preferences = runtime.model_preferences();
+                preferences
+                    .set_model(&model)
+                    .map_err(|_| NativeInteractiveError::Configuration)?;
+                runtime.set_model_preferences(preferences)?;
+            }
+            if let Some(catalog) = catalog {
+                runtime.set_model_catalog(catalog)?;
+            }
+            runtime.recover_notice_delivery().await?;
+            crate::session_resume::owned::flush_candidate(&host, &runtime, now_ms).await?;
+            Ok::<_, NativeInteractiveError>(())
+        }
+        .await;
+        if let Err(error) = configure {
+            close_prepared(&mut prepared).await?;
+            return Err(error);
+        }
+        Ok(Prepared::Managed(prepared, reservation))
+    })
+}
+
+fn start_parent_mcp(
+    prepared: &PreparedManagedRuntime,
+    cancellation: machine_god_core::CancellationToken,
+) -> BoxFuture<'static, Result<(), NativeInteractiveError>> {
+    let controller = prepared
+        .resources
+        .mcp_controls()
+        .and_then(|controls| controls.controller);
+    let binding = prepared.owner.binding();
+    Box::pin(async move {
+        let Some(controller) = controller else {
+            return Ok(());
+        };
+        let admission = binding.prepare_admission()?;
+        let completion = admission.cohort().map(|cohort| cohort.completion());
+        let result = admission
+            .wrap(controller.start_configured(
+                crate::mcp::startup::NativeMcpStartupPhase::All,
+                cancellation.clone(),
+            ))
+            .await;
+        drop(admission);
+        if let Err(failure) = result {
+            use crate::mcp::controller::NativeMcpControllerError;
+            let error = || {
+                NativeInteractiveError::Conversation(
+                    crate::NativeConversationError::McpRequiredUnavailable,
+                )
+            };
+            if cancellation.is_cancelled()
+                || matches!(
+                    failure.kind(),
+                    NativeMcpControllerError::Closed | NativeMcpControllerError::Cancelled
+                )
+            {
+                return Err(error());
+            }
+            let deadline = controller
+                .deadline_after(std::time::Duration::from_secs(30))
+                .map_err(|_| error())?;
+            // Co-poll retained failed-startup peers and the original admission,
+            // while leaving the controller available for explicit /mcp repair.
+            let cleanup = controller
+                .settle_failed_startup(deadline, cancellation, completion)
+                .await
+                .map_err(|_| error())?;
+            if !cleanup.complete {
+                return Err(error());
+            }
+            return Ok(());
+        }
+        if let Some(completion) = completion {
+            completion.wait().await;
+        }
+        Ok(())
+    })
+}
+
+pub(super) fn enroll(
+    agents: &mut Option<Box<Owner>>,
+    prepared: Prepared,
+) -> Result<Enrolled, EnrollmentError> {
+    match prepared {
+        Prepared::Ordinary(runtime) => Ok((runtime, None)),
+        Prepared::Managed(prepared, reservation) => {
+            let Some(agents) = agents else {
+                return Err((NativeInteractiveError::Configuration, prepared, reservation));
+            };
+            let runtime = prepared.runtime.clone();
+            match agents.agents.enroll_foreground(prepared, &reservation) {
+                Ok(selection) => Ok((runtime, Some(selection))),
+                Err((error, prepared)) => Err((
+                    NativeInteractiveError::Managed(crate::reference_host::managed_error(error)),
+                    prepared,
+                    reservation,
+                )),
+            }
+        }
+    }
+}
+
+pub(super) async fn reserve_initial(
+    agents: &mut crate::NativeManagedAgents,
+    now_ms: i64,
+) -> Result<ManagedForegroundReservation, NativeInteractiveError> {
+    let reservation = agents
+        .reserve_foreground()
+        .map_err(NativeInteractiveError::Managed)?;
+    futures_util::future::poll_fn(|cx| {
+        if let Poll::Ready(Err(error)) = agents.poll_progress(cx, now_ms) {
+            return Poll::Ready(Err(error));
+        }
+        agents.poll_foreground_reservation(&reservation, cx)
+    })
+    .await
+    .map_err(NativeInteractiveError::Managed)?;
+    Ok(reservation)
+}
+
+pub(super) async fn close_prepared(
+    prepared: &mut PreparedManagedRuntime,
+) -> Result<(), NativeInteractiveError> {
+    prepared.owner.retire();
+    prepared.resources.begin_close();
+    futures_util::future::poll_fn(|cx| prepared.resources.poll_closed(cx))
+        .await
+        .map_err(|error| {
+            NativeInteractiveError::Managed(crate::reference_host::managed_error(error))
+        })
+}
+
+pub(super) async fn activate_initial(
+    host: &NativeReferenceHost,
+    current: &NativeConversationRuntime,
+    agents: &mut Option<Box<Owner>>,
+    now_ms: i64,
+) -> Result<(), NativeInteractiveError> {
+    let result = async {
+        host.terminal_lifecycle_requester()
+            .ok_or(NativeInteractiveError::Configuration)?
+            .activate_session(
+                super::transition::principal(current),
+                machine_god_core::CancellationToken::new(),
+            )
+            .await
+            .map_err(NativeInteractiveError::Terminal)
+    }
+    .await;
+    if result.is_err()
+        && let Some(owner) = agents
+    {
+        // Enrollment already transferred original MCP/admission custody. A
+        // failed terminal activation must drive that owner, not just drop it.
+        futures_util::future::poll_fn(|cx| owner.agents.poll_shutdown(cx, now_ms))
+            .await
+            .map_err(NativeInteractiveError::Managed)?;
+    }
+    result
+}

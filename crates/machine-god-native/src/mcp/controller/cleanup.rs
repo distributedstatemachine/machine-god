@@ -9,6 +9,64 @@ use std::{
     time::Duration,
 };
 
+pub(super) fn settle_failed_startup(
+    inner: Weak<Inner>,
+    deadline: Instant,
+    cancellation: CancellationToken,
+    completion: Option<crate::NativeOwnedWorkerCompletion>,
+) -> BoxFuture<'static, Result<NativeMcpControllerCleanup>> {
+    Box::pin(async move {
+        let inner = inner
+            .upgrade()
+            .ok_or_else(|| failure(NativeMcpControllerError::Closed))?;
+        inner
+            .settling
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| failure(NativeMcpControllerError::Busy))?;
+        let _settlement = Settlement(inner.clone());
+        {
+            let state = lock(&inner.state);
+            if state.closed
+                || state.active.is_some()
+                || state.activation_failure.is_none()
+                || state
+                    .running
+                    .as_ref()
+                    .is_some_and(|job| job.future.peek().is_none())
+            {
+                return Err(failure(NativeMcpControllerError::Invalid));
+            }
+        }
+        // A failed activation already cancelled its exact generation. Do not
+        // close the runtime or authentication service: they own the repair UI.
+        let original = async {
+            if let Some(completion) = completion {
+                completion.wait().await;
+            }
+        };
+        let cleanup =
+            futures_util::future::join(run(&inner, deadline, cancellation.clone()), original);
+        let stopped = async {
+            select(
+                cancellation.cancelled(),
+                inner.options.startup.clock.sleep_until(deadline),
+            )
+            .await;
+        };
+        match select(Box::pin(cleanup), Box::pin(stopped)).await {
+            Either::Left(((result, ()), _)) => result.map_err(|data| NativeMcpControllerFailure {
+                data,
+                generation: None,
+            }),
+            Either::Right(_) => Err(failure(if cancellation.is_cancelled() {
+                NativeMcpControllerError::Cancelled
+            } else {
+                NativeMcpControllerError::Deadline
+            })),
+        }
+    })
+}
+
 pub(super) fn settle(
     inner: Weak<Inner>,
     deadline: Instant,

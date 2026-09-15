@@ -6,7 +6,7 @@ use crate::mcp::{
     store::NativeMcpConfigStore,
 };
 
-fn startup(clock: Arc<Clock>) -> NativeMcpControllerStartupOptions {
+pub(super) fn startup(clock: Arc<Clock>) -> NativeMcpControllerStartupOptions {
     let now = Instant::now();
     NativeMcpControllerStartupOptions {
         captured_environment: vec![],

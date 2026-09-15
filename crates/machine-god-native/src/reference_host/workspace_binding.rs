@@ -10,6 +10,18 @@ pub(crate) struct WorkspaceBinding {
 }
 
 impl super::NativeReferenceHost {
+    pub(crate) fn workspace_service_for_runtime(
+        &self,
+        runtime: &crate::NativeConversationRuntime,
+        store: Option<Arc<crate::NativeUserConfigStore>>,
+    ) -> Option<Arc<crate::NativeWorkspaceService>> {
+        let authority = runtime.workspace_authority()?;
+        let workers = self.services.control_workers.clone()?;
+        Some(Arc::new(match store {
+            Some(store) => crate::NativeWorkspaceService::new(authority, store, workers),
+            None => crate::NativeWorkspaceService::without_settings(authority, workers),
+        }))
+    }
     /// Pure validation against the exact scope used during host composition.
     pub(crate) fn has_workspace_primary(
         &self,

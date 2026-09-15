@@ -14,6 +14,18 @@ use machine_god_core::{
 use std::sync::Arc;
 
 impl NativeConversation {
+    pub(crate) fn notice_cleanup_pending(&self) -> bool {
+        self.session
+            .record_snapshot()
+            .metadata
+            .contains_key(NOTICE_OUTBOX_KEY)
+            || self
+                .notices
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .is_some_and(|owner| owner.has_pending_delivery())
+    }
+
     /// Explicit metadata-only durability repair; never starts a parent turn.
     pub(crate) fn recover_notice_delivery(
         &self,
@@ -40,17 +52,40 @@ impl NativeConversation {
     ) -> BoxFuture<'a, Result<SessionRevision, NativeConversationError>> {
         Box::pin(async move {
             let _lifecycle = self.acquire_lifecycle()?;
-            let _admission = self.acquire_workspace_control()?;
-            let owner = self
-                .notices
-                .as_ref()
-                .and_then(std::sync::Weak::upgrade)
-                .ok_or(NativeConversationError::ManagedAdmission)?;
-            owner
-                .clear_delivery(&self.session, delivery)
-                .await
-                .map_err(publication_error)
+            self.clear_notice_delivery_inner(delivery).await
         })
+    }
+
+    /// The runtime retains the exact continuation permit through this save.
+    pub(crate) async fn clear_notice_delivery_admitted(
+        &self,
+        delivery: &NoticeDelivery,
+        permit: &crate::conversation_lifecycle::LifecyclePermit,
+    ) -> Result<SessionRevision, NativeConversationError> {
+        if self
+            .lifecycle
+            .get()
+            .is_none_or(|gate| !permit.belongs_to(gate))
+        {
+            return Err(NativeConversationError::ManagedAdmission);
+        }
+        self.clear_notice_delivery_inner(delivery).await
+    }
+
+    async fn clear_notice_delivery_inner(
+        &self,
+        delivery: &NoticeDelivery,
+    ) -> Result<SessionRevision, NativeConversationError> {
+        let _admission = self.acquire_workspace_control()?;
+        let owner = self
+            .notices
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or(NativeConversationError::ManagedAdmission)?;
+        owner
+            .clear_delivery(&self.session, delivery)
+            .await
+            .map_err(publication_error)
     }
     pub(crate) fn with_notice_context(
         mut self,

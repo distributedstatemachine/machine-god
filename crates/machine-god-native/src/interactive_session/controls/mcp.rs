@@ -25,6 +25,7 @@ pub(super) fn prepare(
     host: &NativeReferenceHost,
     command: McpCommand,
     browser: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
+    selected: crate::managed::manager::factory::ManagedMcpControls,
 ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
     let token = CancellationToken::new();
     #[cfg(not(feature = "mcp-http"))]
@@ -35,7 +36,7 @@ pub(super) fn prepare(
             server,
             open_browser,
         } => {
-            let Some(controller) = host.mcp_controller() else {
+            let Some(controller) = selected.controller else {
                 return Ok((token, unavailable()));
             };
             return Ok((
@@ -52,7 +53,7 @@ pub(super) fn prepare(
         }
         #[cfg(feature = "mcp-http")]
         McpCommand::Logout { server } => {
-            let Some(controller) = host.mcp_controller() else {
+            let Some(controller) = selected.controller else {
                 return Ok((token, unavailable()));
             };
             return Ok((
@@ -61,7 +62,7 @@ pub(super) fn prepare(
             ));
         }
         McpCommand::Reload => {
-            let Some(controller) = host.mcp_controller() else {
+            let Some(controller) = selected.controller else {
                 return Ok((token, unavailable()));
             };
             return Ok((token.clone(), reload::run(runtime, controller, token)));
@@ -69,7 +70,7 @@ pub(super) fn prepare(
         McpCommand::Feature(command) => {
             let request = crate::McpFeatureRequest::try_from(command)
                 .map_err(|_| NativeInteractiveError::Configuration)?;
-            let Some(mcp) = host.mcp_runtime() else {
+            let Some(mcp) = selected.runtime else {
                 return Ok((token, unavailable()));
             };
             return Ok((token.clone(), feature::run(runtime, mcp, request, token)));

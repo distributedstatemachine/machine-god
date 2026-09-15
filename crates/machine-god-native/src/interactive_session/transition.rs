@@ -22,12 +22,16 @@ pub(super) struct Transition {
     pub phase: Phase,
     pub terminal: Option<EngineEvent>,
     pub prepared: Option<BackgroundOutputOwner>,
+    pub managed_candidate: Option<crate::managed::manager::ManagedForegroundSelection>,
+    pub managed_reservation: Option<crate::managed::manager::ManagedForegroundReservation>,
+    pub preparation_cancel: CancellationToken,
 }
 pub(super) enum Phase {
     Draining,
     Waiting(BoxFuture<'static, Result<NativeRuntimeQuiescence, NativeInteractiveError>>),
     Preparing(BoxFuture<'static, Result<NativeConversation, NativeInteractiveError>>),
-    Composing(BoxFuture<'static, Result<Arc<NativeConversationRuntime>, NativeInteractiveError>>),
+    Reserving(NativeConversation),
+    Composing(BoxFuture<'static, Result<super::managed::Prepared, NativeInteractiveError>>),
     Ready(Arc<NativeConversationRuntime>),
     Committing {
         candidate: Arc<NativeConversationRuntime>,
@@ -47,6 +51,11 @@ pub(super) struct CommitResult {
     pub affected: bool,
 }
 impl Transition {
+    pub fn cancel_preparation(&self) {
+        if !self.committed() {
+            self.preparation_cancel.cancel();
+        }
+    }
     pub fn committed(&self) -> bool {
         matches!(self.phase, Phase::Committing { .. } | Phase::Fenced { .. })
     }

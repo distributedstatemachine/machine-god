@@ -22,6 +22,20 @@ pub(super) struct Outcome {
     pub snapshots: Vec<JournalSnapshot>,
     pub result: Result<Vec<NoticeIdentity>, ManagedRuntimeError>,
 }
+
+pub(super) struct ClearTarget {
+    pub runtime: Arc<crate::NativeConversationRuntime>,
+    pub drain: Option<crate::conversation_runtime::NativeNoticeDrain>,
+}
+impl ClearTarget {
+    async fn clear(&self, delivery: &NoticeDelivery) -> Result<(), NativeConversationRuntimeError> {
+        match &self.drain {
+            Some(drain) => self.runtime.drain_notice_delivery(delivery, drain).await,
+            None => self.runtime.clear_notice_delivery(delivery).await,
+        }
+        .map(|_| ())
+    }
+}
 impl ManagedManager {
     /// Root supplies the context bound to an actual session witness. Weak
     /// registration never owns a parent runtime or creates a prompt.
@@ -148,7 +162,10 @@ impl ManagedManager {
                                         parent.context.ptr_eq(&Arc::downgrade(context))
                                     })
                             })
-                            .map(|child| child.prepared.runtime.clone())
+                            .map(|child| ClearTarget {
+                                runtime: child.prepared.runtime.clone(),
+                                drain: None,
+                            })
                             .or_else(|| {
                                 super::foreground::runtime_for_notice(
                                     &self.foregrounds,
@@ -159,8 +176,7 @@ impl ManagedManager {
                             let retry = self.retry.clone();
                             parent.clearing = Some(Box::pin(async move {
                                 retry.blocked(ManagerBlock::Journal).await;
-                                let result =
-                                    runtime.clear_notice_delivery(&delivery).await.map(|_| ());
+                                let result = runtime.clear(&delivery).await;
                                 (delivery, result)
                             }));
                         }
@@ -184,14 +200,17 @@ impl ManagedManager {
                                     parent.context.ptr_eq(&Arc::downgrade(context))
                                 })
                     })
-                    .map(|child| child.prepared.runtime.clone())
+                    .map(|child| ClearTarget {
+                        runtime: child.prepared.runtime.clone(),
+                        drain: None,
+                    })
                     .or_else(|| {
                         super::foreground::runtime_for_notice(&self.foregrounds, &parent.context)
                     })
             {
                 let delivery = parent.clear.take().unwrap();
                 parent.clearing = Some(Box::pin(async move {
-                    let result = runtime.clear_notice_delivery(&delivery).await.map(|_| ());
+                    let result = runtime.clear(&delivery).await;
                     (delivery, result)
                 }));
                 progress = true;

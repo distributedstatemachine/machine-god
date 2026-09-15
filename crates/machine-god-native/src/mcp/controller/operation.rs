@@ -190,6 +190,9 @@ fn start_job(
     cancellation: &CancellationToken,
     deadline: Option<Instant>,
 ) -> Result<Selected> {
+    if matches!(kind, Kind::Start(_) | Kind::Reload) {
+        state.activation_attempted = true;
+    }
     let generation = if let Some(generation) = deferred {
         generation
     } else {
@@ -341,6 +344,12 @@ fn run(
             generation.cancellation.cancel();
             #[cfg(feature = "mcp-http")]
             generation.release_authentication();
+        }
+        if matches!(kind, Kind::Start(_) | Kind::Reload)
+            && let Some(inner) = inner.upgrade()
+        {
+            lock(&inner.state).activation_failure =
+                result.as_ref().err().map(|failure| failure.kind);
         }
         result
     })

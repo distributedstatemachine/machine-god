@@ -16,6 +16,10 @@ const MAX_PROGRESS_STEPS: usize = 32;
 impl NativeInteractiveSession {
     pub(super) fn drive(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
         self.wake = Some(cx.waker().clone());
+        self.poll_managed(cx, now_ms);
+        if self.foreground_is_closed() {
+            return self.readiness();
+        }
         // Clipboard response/cleanup is independent of durable controls and
         // never prevents active provider, transition, or shutdown progress.
         self.poll_copy(cx);
@@ -27,13 +31,15 @@ impl NativeInteractiveSession {
         for _ in 0..MAX_PROGRESS_STEPS {
             if self.closed
                 || self.shutdown_error.is_some()
+                || self.foreground_is_closed()
                 || (self.outcome.is_some() && !self.shutting_down)
             {
-                return Poll::Ready(());
+                return self.readiness();
             }
             if !self.begin_requested_transition(now_ms) {
                 return Poll::Ready(());
             }
+            self.begin_managed_shutdown();
             let draining = self.transition.is_some() || self.shutting_down || self.cancel_requested;
             if draining {
                 self.presentation.take();
@@ -153,7 +159,7 @@ impl NativeInteractiveSession {
                 kind: NativeInteractiveTransition::New,
                 now_ms,
             });
-            match self.current.begin_quiescence() {
+            match self.quiesce_current() {
                 Ok(guard) => {
                     self.transition = Some(Transition {
                         request,
@@ -161,6 +167,9 @@ impl NativeInteractiveSession {
                         phase: Phase::Draining,
                         terminal: None,
                         prepared: None,
+                        managed_candidate: None,
+                        managed_reservation: None,
+                        preparation_cancel: machine_god_core::CancellationToken::new(),
                     });
                 }
                 Err(error) => {
@@ -197,6 +206,7 @@ impl NativeInteractiveSession {
             || self.presentation.is_some()
             || self.closed
             || self.shutdown_error.is_some()
+            || self.managed_error().is_some()
         {
             Poll::Ready(())
         } else {
@@ -206,6 +216,7 @@ impl NativeInteractiveSession {
     fn fail_turn(&mut self, error: NativeInteractiveError) {
         self.cancel_requested = false;
         if let Some(mut transition) = self.transition.take() {
+            self.retire_candidate(&mut transition);
             let request = self
                 .pending
                 .take()
@@ -221,6 +232,7 @@ impl NativeInteractiveSession {
         }
     }
     fn reject(&mut self, mut transition: Transition, error: NativeInteractiveError) {
+        self.retire_candidate(&mut transition);
         if self.shutting_down && self.outcome.is_some() {
             self.shutdown_error = Some(error);
             return;
@@ -238,6 +250,7 @@ impl NativeInteractiveSession {
         candidate: Option<BackgroundOutputOwner>,
         error: Option<NativeInteractiveError>,
     ) {
+        self.retire_candidate(&mut transition);
         let candidate = candidate.or_else(|| transition.prepared.take());
         transition.prepared.take();
         if self.shutting_down {
@@ -258,6 +271,7 @@ impl NativeInteractiveSession {
                 settled_turn: transition.terminal.take(),
             });
             transition.request = next;
+            transition.preparation_cancel = machine_god_core::CancellationToken::new();
             transition.phase = Phase::Draining;
             self.transition = Some(transition);
         }
@@ -277,6 +291,9 @@ impl NativeInteractiveSession {
             }
             Phase::Waiting(future) => return self.drive_waiting(transition, future, cx),
             Phase::Preparing(future) => return self.drive_preparing(transition, future, cx),
+            Phase::Reserving(conversation) => {
+                return self.drive_reserving(transition, conversation, cx);
+            }
             Phase::Composing(future) => return self.drive_composing(transition, future, cx),
             Phase::Ready(candidate) => return self.begin_commit(transition, candidate, cx),
             Phase::Committing {
@@ -305,12 +322,24 @@ impl NativeInteractiveSession {
                 handoff,
             } => {
                 if self.shutting_down {
+                    if transition
+                        .guard
+                        .as_ref()
+                        .is_some_and(NativeRuntimeQuiescence::notice_cleanup_pending)
+                        || candidate.notice_cleanup_pending()
+                    {
+                        transition.phase = Phase::Fenced {
+                            candidate,
+                            undo,
+                            reset,
+                            handoff,
+                        };
+                        self.transition = Some(transition);
+                        return Poll::Pending;
+                    }
                     match Self::retire_fenced(&mut transition, &candidate) {
                         Ok(()) => {
-                            self.closed = true;
-                            if self.outcome.is_none() {
-                                self.outcome = Some(NativeInteractiveOutcome::Shutdown);
-                            }
+                            self.finish_foreground_shutdown();
                         }
                         Err(error) => self.shutdown_error = Some(error),
                     }
@@ -345,7 +374,15 @@ impl NativeInteractiveSession {
                 self.reject(transition, error);
                 return Poll::Ready(());
             }
-            Poll::Ready(Ok(guard)) => {
+            Poll::Ready(Ok(mut guard)) => {
+                if guard.notice_cleanup_pending() || !self.foreground_turn_settled() {
+                    transition.phase = Phase::Waiting(Box::pin(async move {
+                        guard.wait_idle().await?;
+                        Ok(guard)
+                    }));
+                    self.transition = Some(transition);
+                    return Poll::Pending;
+                }
                 transition.guard = Some(guard);
                 if self.shutting_down {
                     match transition
@@ -355,10 +392,7 @@ impl NativeInteractiveSession {
                         .try_retire()
                     {
                         Ok(()) => {
-                            self.closed = true;
-                            if self.outcome.is_none() {
-                                self.outcome = Some(NativeInteractiveOutcome::Shutdown);
-                            }
+                            self.finish_foreground_shutdown();
                         }
                         Err(error) => {
                             self.shutdown_error = Some(error.into());
@@ -369,6 +403,7 @@ impl NativeInteractiveSession {
                 }
                 if let Some(next) = self.pending.take() {
                     transition.request = next;
+                    transition.preparation_cancel = machine_god_core::CancellationToken::new();
                 }
                 let host = Arc::clone(&self.host);
                 let options = self.options.clone();
@@ -428,35 +463,7 @@ impl NativeInteractiveSession {
                     ));
                     return Poll::Ready(());
                 }
-                let snapshot = match transition
-                    .guard
-                    .as_ref()
-                    .expect("waiting returns guard")
-                    .selection_snapshot()
-                {
-                    Ok(value) => value,
-                    Err(error) => {
-                        self.reject(transition, error.into());
-                        return Poll::Ready(());
-                    }
-                };
-                let host = Arc::clone(&self.host);
-                let options = self.options.clone();
-                let policy = snapshot.permission_policy().cloned();
-                let catalog = snapshot.model_catalog().cloned();
-                let now_ms = transition.request.now_ms;
-                transition.phase = Phase::Composing(Box::pin(async move {
-                    transition::compose(
-                        &host,
-                        &options,
-                        conversation,
-                        policy,
-                        catalog,
-                        false,
-                        now_ms,
-                    )
-                    .await
-                }));
+                transition.phase = Phase::Reserving(conversation);
             }
         }
         self.transition = Some(transition);
@@ -466,10 +473,7 @@ impl NativeInteractiveSession {
     fn drive_composing(
         &mut self,
         mut transition: Transition,
-        mut future: BoxFuture<
-            'static,
-            Result<Arc<NativeConversationRuntime>, NativeInteractiveError>,
-        >,
+        mut future: BoxFuture<'static, Result<super::managed::Prepared, NativeInteractiveError>>,
         cx: &mut Context<'_>,
     ) -> Poll<()> {
         match future.as_mut().poll(cx) {
@@ -479,6 +483,24 @@ impl NativeInteractiveSession {
                 return Poll::Pending;
             }
             Poll::Ready(result) => {
+                let result = match result {
+                    Ok(prepared) => match super::managed::enroll(&mut self.managed, prepared) {
+                        Ok((runtime, selection)) => {
+                            transition.managed_candidate = selection;
+                            Ok(runtime)
+                        }
+                        Err((error, mut prepared, reservation)) => {
+                            transition.phase = Phase::Composing(Box::pin(async move {
+                                let _reservation = reservation;
+                                super::managed::close_prepared(&mut prepared).await?;
+                                Err(error)
+                            }));
+                            self.transition = Some(transition);
+                            return Poll::Ready(());
+                        }
+                    },
+                    Err(error) => Err(error),
+                };
                 if self.pending.is_some() || self.shutting_down {
                     let (candidate, error) = match result {
                         Ok(runtime) => (Some(principal(&runtime)), None),
@@ -498,6 +520,43 @@ impl NativeInteractiveSession {
         }
         self.transition = Some(transition);
         Poll::Ready(())
+    }
+
+    fn drive_reserving(
+        &mut self,
+        mut transition: Transition,
+        conversation: NativeConversation,
+        cx: &Context<'_>,
+    ) -> Poll<()> {
+        if self.pending.is_some() || self.shutting_down {
+            self.supersede(
+                transition,
+                Some(conversation_principal(&conversation)),
+                None,
+            );
+            return Poll::Ready(());
+        }
+        match self.poll_candidate_reservation(&mut transition, cx) {
+            Poll::Pending => {
+                transition.phase = Phase::Reserving(conversation);
+                self.transition = Some(transition);
+                Poll::Pending
+            }
+            Poll::Ready(Err(error)) => {
+                self.reject(transition, error);
+                Poll::Ready(())
+            }
+            Poll::Ready(Ok(())) => {
+                match self.compose_candidate(&mut transition, conversation) {
+                    Ok(future) => {
+                        transition.phase = Phase::Composing(future);
+                        self.transition = Some(transition);
+                    }
+                    Err(error) => self.reject(transition, error),
+                }
+                Poll::Ready(())
+            }
+        }
     }
 
     fn begin_commit(
@@ -591,6 +650,12 @@ impl NativeInteractiveSession {
                 }
                 let source = principal(&self.current);
                 let destination = principal(&candidate);
+                if let Some(agents) = &mut self.managed {
+                    if let Some(selected) = agents.foreground.take() {
+                        agents.agents.retire_foreground(&selected);
+                    }
+                    agents.foreground = transition.managed_candidate.take();
+                }
                 self.current = candidate;
                 self.outcome = Some(NativeInteractiveOutcome::Transition(
                     NativeInteractiveTransitionReceipt {

@@ -26,6 +26,7 @@ pub use controls::{
     NativeInteractiveControlOutcome, NativeInteractiveControlReceipt, NativeMcpHumanFeatureReceipt,
 };
 mod driver;
+mod managed;
 #[cfg(test)]
 pub(crate) mod tests;
 mod transition;
@@ -184,6 +185,7 @@ pub enum NativeInteractiveError {
     Resume(NativeSessionResumeError),
     Terminal(NativeTerminalTransitionError),
     Undo(crate::FileUndoError),
+    Managed(crate::NativeManagedAgentsError),
 }
 impl fmt::Display for NativeInteractiveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -257,6 +259,7 @@ pub struct NativeInteractiveSession {
     host: Arc<NativeReferenceHost>,
     options: NativeInteractiveSessionOptions,
     current: Arc<NativeConversationRuntime>,
+    managed: Option<Box<managed::Owner>>,
     admission: Option<
         BoxFuture<
             'static,
@@ -295,9 +298,19 @@ impl NativeInteractiveSession {
     #[must_use]
     pub fn open(
         host: Arc<NativeReferenceHost>,
-        mut options: NativeInteractiveSessionOptions,
+        options: NativeInteractiveSessionOptions,
         initial: NativeInteractiveInitialSession,
         now_ms: i64,
+    ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
+        Self::open_with_agents(host, options, initial, now_ms, None)
+    }
+
+    fn open_with_agents(
+        host: Arc<NativeReferenceHost>,
+        options: NativeInteractiveSessionOptions,
+        initial: NativeInteractiveInitialSession,
+        now_ms: i64,
+        mut agents: Option<Box<managed::Owner>>,
     ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
         Box::pin(async move {
             options.validate_for_host(&host)?;
@@ -313,79 +326,118 @@ impl NativeInteractiveSession {
                 now_ms,
             )
             .await?;
-            let current = transition::compose(
-                &host,
-                &options,
-                conversation,
-                None,
-                options.catalog.clone(),
-                true,
-                now_ms,
-            )
-            .await?;
-            host.terminal_lifecycle_requester()
-                .ok_or(NativeInteractiveError::Configuration)?
-                .activate_session(
-                    transition::principal(&current),
-                    machine_god_core::CancellationToken::new(),
-                )
-                .await
-                .map_err(NativeInteractiveError::Terminal)?;
-            let clipboard = options.clipboard.take().map_or(
-                Err(crate::NativeClipboardError::Unavailable),
-                |(executable, environment)| {
-                    crate::NativeClipboard::new(
-                        executable,
-                        options.workspace.clone(),
-                        environment,
-                        host.control_workers()
-                            .ok_or(crate::NativeClipboardError::Unavailable)?,
+            let prepared = match &mut agents {
+                Some(agents) => {
+                    let reservation = managed::reserve_initial(&mut agents.agents, now_ms).await?;
+                    managed::prepare(
+                        &agents.agents,
+                        host.clone(),
+                        &options,
+                        conversation,
+                        managed::Selection {
+                            reservation,
+                            workspace: None,
+                            policy: None,
+                            catalog: options.catalog.clone(),
+                            initial: true,
+                            now_ms,
+                            cancellation: machine_god_core::CancellationToken::new(),
+                        },
                     )
-                },
-            );
-            let background_opener = host.background_url_opener().or_else(|| {
-                options
-                    .background_url
-                    .take()
-                    .and_then(|(executable, environment)| {
-                        crate::NativeBackgroundUrlOpener::from_executable(
-                            executable,
-                            environment,
-                            host.control_workers()?,
-                        )
-                        .ok()
-                    })
-            });
-            let mcp_browser_launcher = background_opener
-                .as_ref()
-                .map(crate::NativeBackgroundUrlOpener::mcp_launcher);
-            Ok(Self {
-                host,
-                options,
-                current,
-                admission: None,
-                turn: None,
-                transition: None,
-                pending: None,
-                next_request: 1,
-                presentation: None,
-                outcome: None,
-                control: None,
-                control_outcome: None,
-                next_control: 1,
-                clipboard,
-                background_opener,
-                mcp_browser_launcher,
-                copy: None,
-                copy_outcome: None,
-                next_copy: 1,
-                cancel_requested: false,
-                shutting_down: false,
-                closed: false,
-                shutdown_error: None,
-                wake: None,
-            })
+                    .await?
+                }
+                None => managed::Prepared::Ordinary(
+                    transition::compose(
+                        &host,
+                        &options,
+                        conversation,
+                        None,
+                        options.catalog.clone(),
+                        true,
+                        now_ms,
+                    )
+                    .await?,
+                ),
+            };
+            let (current, foreground) = match managed::enroll(&mut agents, prepared) {
+                Ok(value) => value,
+                Err((error, mut prepared, _reservation)) => {
+                    managed::close_prepared(&mut prepared).await?;
+                    return Err(error);
+                }
+            };
+            managed::activate_initial(&host, &current, &mut agents, now_ms).await?;
+            Ok(Self::from_runtime(
+                host, options, current, agents, foreground,
+            ))
         })
+    }
+
+    fn from_runtime(
+        host: Arc<NativeReferenceHost>,
+        mut options: NativeInteractiveSessionOptions,
+        current: Arc<NativeConversationRuntime>,
+        mut managed: Option<Box<managed::Owner>>,
+        foreground: Option<crate::managed::manager::ManagedForegroundSelection>,
+    ) -> Self {
+        if let Some(owner) = &mut managed {
+            owner.foreground = foreground;
+        }
+        let clipboard = options.clipboard.take().map_or(
+            Err(crate::NativeClipboardError::Unavailable),
+            |(executable, environment)| {
+                crate::NativeClipboard::new(
+                    executable,
+                    options.workspace.clone(),
+                    environment,
+                    host.control_workers()
+                        .ok_or(crate::NativeClipboardError::Unavailable)?,
+                )
+            },
+        );
+        let background_opener = host.background_url_opener().or_else(|| {
+            options
+                .background_url
+                .take()
+                .and_then(|(executable, environment)| {
+                    crate::NativeBackgroundUrlOpener::from_executable(
+                        executable,
+                        environment,
+                        host.control_workers()?,
+                    )
+                    .ok()
+                })
+        });
+        let mcp_browser_launcher = background_opener
+            .as_ref()
+            .map(crate::NativeBackgroundUrlOpener::mcp_launcher);
+        Self {
+            host,
+            options,
+            current,
+            managed,
+            admission: None,
+            turn: None,
+            transition: None,
+            pending: None,
+            next_request: 1,
+            presentation: None,
+            outcome: None,
+            control: None,
+            control_outcome: None,
+            next_control: 1,
+            clipboard,
+            background_opener,
+            mcp_browser_launcher,
+            copy: None,
+            copy_outcome: None,
+            next_copy: 1,
+            cancel_requested: false,
+            shutting_down: false,
+            closed: false,
+            shutdown_error: None,
+            wake: None,
+        }
     }
     #[must_use]
     pub fn runtime(&self) -> &Arc<NativeConversationRuntime> {
@@ -506,6 +558,9 @@ impl NativeInteractiveSession {
                 .map(|transition| transition.request.id)
         });
         self.pending = Some(Request { id, kind, now_ms });
+        if let Some(transition) = &self.transition {
+            transition.cancel_preparation();
+        }
         self.cancel_copy();
         self.presentation.take();
         self.notify();
@@ -515,6 +570,9 @@ impl NativeInteractiveSession {
         self.cancel_copy();
         self.cancel_background_control();
         self.shutting_down = true;
+        if let Some(transition) = &self.transition {
+            transition.cancel_preparation();
+        }
         self.pending.take();
         self.presentation.take();
         self.notify();

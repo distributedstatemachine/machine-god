@@ -252,11 +252,10 @@ impl NativeInteractiveSession {
                         return Err(NativeInteractiveError::Configuration);
                     }
                 }
-                let service = match store {
-                    Some(store) => self.host.workspace_service(store),
-                    None => self.host.workspace_service_without_settings(),
-                }
-                .ok_or(NativeInteractiveError::Configuration)?;
+                let service = self
+                    .host
+                    .workspace_service_for_runtime(&runtime, store)
+                    .ok_or(NativeInteractiveError::Configuration)?;
                 let future = service.execute_for_runtime(runtime, action);
                 Box::pin(async move {
                     future
@@ -318,11 +317,27 @@ impl NativeInteractiveSession {
         runtime: Arc<NativeConversationRuntime>,
         command: crate::mcp::commands::McpCommand,
     ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
+        let selected = match &self.managed {
+            Some(owner) => owner
+                .agents
+                .foreground_mcp_controls(
+                    owner
+                        .foreground
+                        .as_ref()
+                        .ok_or(NativeInteractiveError::Unavailable)?,
+                )
+                .ok_or(NativeInteractiveError::Unavailable)?,
+            None => crate::managed::manager::factory::ManagedMcpControls {
+                runtime: self.host.mcp_runtime(),
+                controller: self.host.mcp_controller(),
+            },
+        };
         mcp::prepare(
             runtime,
             &self.host,
             command,
             self.mcp_browser_launcher.clone(),
+            selected,
         )
     }
 

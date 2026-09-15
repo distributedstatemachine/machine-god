@@ -42,6 +42,7 @@ pub(super) struct SharedManagedRuntimeFactoryOptions {
     pub reserved_tool_names: Vec<ToolName>,
     pub origin: NativeSessionOrigin,
     pub cleanup_timeout: Duration,
+    pub prompts: Option<crate::interactive_prompts::NativeInteractivePromptRegistrar>,
 }
 pub(super) struct SharedManagedRuntimeFactory(Arc<SharedManagedRuntimeFactoryOptions>);
 struct RuntimeSelection {
@@ -339,27 +340,14 @@ impl SharedManagedRuntimeFactoryOptions {
         let conversation = bind_mcp(conversation, &mcp)?
             .with_notice_context(&notice_context)
             .map_err(|_| ManagedRuntimeError::Invalid)?;
-        let runtime = NativeConversationRuntime::new_with_model_routes(
-            conversation,
-            selected.preferences.clone(),
-            None,
-            self.services
-                .model_routes
-                .as_ref()
-                .ok_or(ManagedRuntimeError::Invalid)?,
-        )
-        .map_err(|_| ManagedRuntimeError::Capacity)?;
-        // Saved child metadata cannot override this work's explicitly captured selection.
-        if !foreground {
-            runtime
-                .set_model_preferences(selected.preferences)
-                .map_err(|_| ManagedRuntimeError::Invalid)?;
-        }
+        let runtime = self.runtime(conversation, selected.preferences, foreground)?;
+        let prompt = self.register_prompt(&runtime)?;
         let resources = resources::Resources::new(
             owner.binding(),
             mcp,
             mcp_owner,
             preparation,
+            prompt,
             resources::CloseAuthority {
                 workers: workers.clone(),
                 journal_owner: journal_owner.clone(),
@@ -372,6 +360,30 @@ impl SharedManagedRuntimeFactoryOptions {
             resources: Box::new(resources),
             notice_context: Some(notice_context),
         })
+    }
+
+    fn register_prompt(
+        &self,
+        runtime: &NativeConversationRuntime,
+    ) -> Result<Option<crate::NativeInteractivePromptPrincipal>, ManagedRuntimeError> {
+        self.prompts
+            .as_ref()
+            .map(|prompts| {
+                prompts
+                    .register(machine_god_core::BackgroundOutputOwner::new(
+                        runtime.id(),
+                        runtime.incarnation_id(),
+                    ))
+                    .map_err(|error| match error {
+                        crate::NativeInteractivePromptError::Busy
+                        | crate::NativeInteractivePromptError::Limit
+                        | crate::NativeInteractivePromptError::Exhausted => {
+                            ManagedRuntimeError::Capacity
+                        }
+                        _ => ManagedRuntimeError::Unavailable,
+                    })
+            })
+            .transpose()
     }
 
     fn compose_mcp(
@@ -392,6 +404,31 @@ impl SharedManagedRuntimeFactoryOptions {
             )
             .map_err(|_| ManagedRuntimeError::Invalid)
     }
+
+    fn runtime(
+        &self,
+        conversation: NativeConversation,
+        preferences: NativeModelPreferences,
+        foreground: bool,
+    ) -> Result<NativeConversationRuntime, ManagedRuntimeError> {
+        let runtime = NativeConversationRuntime::new_with_model_routes(
+            conversation,
+            preferences.clone(),
+            None,
+            self.services
+                .model_routes
+                .as_ref()
+                .ok_or(ManagedRuntimeError::Invalid)?,
+        )
+        .map_err(|_| ManagedRuntimeError::Capacity)?;
+        // A child keeps its captured work selection; a foreground honors saved metadata.
+        if !foreground {
+            runtime
+                .set_model_preferences(preferences)
+                .map_err(|_| ManagedRuntimeError::Invalid)?;
+        }
+        Ok(runtime)
+    }
 }
 fn bind_mcp(
     mut conversation: NativeConversation,
@@ -402,7 +439,7 @@ fn bind_mcp(
         .map_err(|_| ManagedRuntimeError::Capacity)?;
     if let Some(controller) = &mcp.controller {
         conversation = conversation
-            .with_mcp_readiness(controller)
+            .with_managed_mcp_readiness(controller)
             .map_err(|_| ManagedRuntimeError::Invalid)?;
     }
     if let Some(ephemeral) = &mcp.ephemeral {

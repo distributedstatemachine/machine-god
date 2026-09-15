@@ -144,3 +144,60 @@ fn admitted_permit_remembers_quiescence_after_reopen() {
     let next = gate.acquire().unwrap();
     assert!(!next.was_quiesced());
 }
+
+#[test]
+fn continuation_is_exact_generation_bounded_and_does_not_reopen_admission() {
+    let gate = LifecycleGate::new();
+    let foreign = LifecycleGate::new();
+    let mut guard = gate.begin_quiescence().unwrap();
+    let continuation = guard.continuation();
+    assert!(matches!(
+        continuation.acquire(&foreign),
+        Err(LifecycleError::Stale)
+    ));
+    let permits = (0..MAX_PERMITS)
+        .map(|_| continuation.acquire(&gate).unwrap())
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        continuation.acquire(&gate),
+        Err(LifecycleError::Busy)
+    ));
+    assert!(matches!(gate.acquire(), Err(LifecycleError::Quiescing)));
+    assert_eq!(guard.try_retire(), Err(LifecycleError::Busy));
+    drop(permits);
+    block_on(guard.wait_idle()).unwrap();
+    guard.try_retire().unwrap();
+    assert!(matches!(
+        continuation.acquire(&gate),
+        Err(LifecycleError::Stale)
+    ));
+}
+
+#[test]
+fn abandoned_continuation_cannot_enter_a_reopened_or_replacement_generation() {
+    let gate = LifecycleGate::new();
+    let guard = gate.begin_quiescence().unwrap();
+    let continuation = guard.continuation();
+    let permit = continuation.acquire(&gate).unwrap();
+    drop(guard);
+    assert!(matches!(
+        continuation.acquire(&gate),
+        Err(LifecycleError::Stale)
+    ));
+    let mut next = gate.begin_quiescence().unwrap();
+    assert!(matches!(
+        continuation.acquire(&gate),
+        Err(LifecycleError::Stale)
+    ));
+    assert_eq!(next.try_retire(), Err(LifecycleError::Busy));
+    drop(permit);
+    next.try_retire().unwrap();
+    let weak = Arc::downgrade(&gate);
+    drop(next);
+    drop(gate);
+    assert!(
+        weak.upgrade().is_none(),
+        "continuation must not own its lifecycle"
+    );
+    drop(continuation);
+}

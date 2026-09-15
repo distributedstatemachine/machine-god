@@ -510,6 +510,11 @@ impl NativeConversationRuntime {
         })
     }
 
+    /// Includes uncertain custody without a currently observable delivery receipt.
+    pub(crate) fn notice_cleanup_pending(&self) -> bool {
+        self.conversation.notice_cleanup_pending()
+    }
+
     /// Clear only the original acknowledged batch, never a newly selected one.
     pub(crate) fn clear_notice_delivery<'a>(
         &'a self,
@@ -519,6 +524,28 @@ impl NativeConversationRuntime {
             let _lease = self.acquire_idle(false)?;
             Ok(self.conversation.clear_notice_delivery(delivery).await?)
         })
+    }
+
+    /// Continues only exact original source-acknowledged notice cleanup under
+    /// the native transition's fence. This cannot admit a prompt or another save.
+    pub(crate) async fn drain_notice_delivery(
+        &self,
+        delivery: &crate::managed::prompt_context::NoticeDelivery,
+        drain: &NativeNoticeDrain,
+    ) -> Result<SessionRevision, NativeConversationRuntimeError> {
+        let permit = match drain.0.acquire(&self.lifecycle) {
+            Ok(permit) => permit,
+            // A reversibly abandoned transition restores ordinary cleanup.
+            Err(_) if self.lifecycle.phase() == LifecyclePhase::Open => {
+                return self.clear_notice_delivery(delivery).await;
+            }
+            Err(_) => return Err(NativeConversationRuntimeError::Busy),
+        };
+        let lease = self.acquire_idle_with_permit(false, permit)?;
+        Ok(self
+            .conversation
+            .clear_notice_delivery_admitted(delivery, &lease.permit)
+            .await?)
     }
 
     /// Persists manual context selection, never deleting history or queued input.
@@ -1125,6 +1152,14 @@ impl NativeConversationRuntime {
         require_empty: bool,
     ) -> Result<RuntimeLease, NativeConversationRuntimeError> {
         let permit = self.lifecycle.acquire()?;
+        self.acquire_idle_with_permit(require_empty, permit)
+    }
+
+    fn acquire_idle_with_permit(
+        &self,
+        require_empty: bool,
+        permit: LifecyclePermit,
+    ) -> Result<RuntimeLease, NativeConversationRuntimeError> {
         let mut state = self.state.lock().expect("runtime state poisoned");
         if state.active || (require_empty && !state.queue.is_empty()) {
             return Err(NativeConversationRuntimeError::Busy);
@@ -1151,6 +1186,10 @@ impl NativeConversationRuntime {
             _conversation: conversation,
             _lease: lease,
         })
+    }
+
+    pub(crate) fn workspace_authority(&self) -> Option<crate::NativeWorkspaceAuthority> {
+        self.conversation.workspace_authority()
     }
 }
 
@@ -1187,6 +1226,21 @@ impl fmt::Debug for NativeRuntimeQuiescence {
     }
 }
 impl NativeRuntimeQuiescence {
+    pub(crate) fn workspace_snapshot(
+        &self,
+    ) -> Result<Option<crate::NativeWorkspaceScopeSnapshot>, NativeConversationRuntimeError> {
+        self.inner.check_idle()?;
+        self.conversation
+            .capture_workspace_scope()
+            .map_err(Into::into)
+    }
+    pub(crate) fn notice_drain(&self) -> NativeNoticeDrain {
+        NativeNoticeDrain(self.inner.continuation())
+    }
+
+    pub(crate) fn notice_cleanup_pending(&self) -> bool {
+        self.conversation.notice_cleanup_pending()
+    }
     /// Copies actual settled selections while this exact guard keeps admission
     /// closed. Does not copy grants, saved rules, history or persistence receipts.
     /// # Errors
@@ -1240,6 +1294,9 @@ impl NativeRuntimeQuiescence {
     /// # Panics
     /// Panics if an earlier panic poisoned runtime or routing state.
     pub fn try_retire(&mut self) -> Result<(), NativeConversationRuntimeError> {
+        if self.notice_cleanup_pending() {
+            return Err(NativeConversationRuntimeError::Busy);
+        }
         self.inner.try_retire()?;
         self.conversation.retire_lifecycle_routes();
         if let Some(route) = &self.model_route {
@@ -1254,6 +1311,10 @@ impl NativeRuntimeQuiescence {
         Ok(())
     }
 }
+
+/// Weak finalization-only route, minted by the actual quiescence owner.
+#[derive(Clone)]
+pub(crate) struct NativeNoticeDrain(crate::conversation_lifecycle::LifecycleContinuation);
 
 /// Bounded settled selection values, not an admission or persistence receipt.
 pub struct NativeQuiescentSelectionSnapshot {

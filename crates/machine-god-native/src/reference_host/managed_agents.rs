@@ -9,7 +9,8 @@ use super::{
 };
 use crate::managed::{
     manager::{
-        ManagedForegroundSelection, ManagedManager, ManagedSelection, ManagerLimits,
+        ManagedForegroundReservation, ManagedForegroundSelection, ManagedManager, ManagedSelection,
+        ManagerLimits,
         factory::{ManagedRuntimeError, PreparedManagedRuntime},
     },
     notices::NoticePrincipal,
@@ -90,6 +91,41 @@ impl fmt::Debug for NativeManagedAgents {
 }
 
 impl NativeReferenceHost {
+    pub(crate) fn prepare_managed_foreground(
+        &self,
+        agents: &NativeManagedAgents,
+        conversation: NativeConversation,
+        workspace: Option<NativeWorkspaceScopeSnapshot>,
+        policy: Option<NativePermissionPolicySnapshot>,
+        preferences: NativeModelPreferences,
+    ) -> BoxFuture<'static, Result<PreparedManagedRuntime, NativeManagedAgentsError>> {
+        let selection = (|| {
+            let workspace = match workspace {
+                Some(workspace) => workspace,
+                None => self
+                    .workspace_binding
+                    .as_ref()
+                    .ok_or(NativeManagedAgentsError::Configuration)?
+                    .authority
+                    .snapshot()
+                    .map_err(|_| NativeManagedAgentsError::Configuration)?,
+            };
+            let policy = match policy {
+                Some(policy) => policy,
+                None => super::configured_permission_policy(
+                    self.loaded_config.config(),
+                    &self.workspace_root,
+                )
+                .map_err(|_| NativeManagedAgentsError::Configuration)?,
+            };
+            Ok((workspace, policy))
+        })();
+        let preparation = selection.map(|(workspace, policy)| {
+            agents.prepare_foreground(conversation, workspace, policy, preferences)
+        });
+        Box::pin(async move { preparation?.await.map_err(map_error) })
+    }
+
     /// Opens one manager using this host's existing engine, workers and weak routes.
     /// The directory descriptor must identify a private managed-journal directory.
     /// Construction is inert before poll. Failed validation or journal opening
@@ -119,6 +155,7 @@ impl NativeReferenceHost {
                 .ok_or(NativeManagedAgentsError::Configuration)?;
             let factory = Arc::new(
                 SharedManagedRuntimeFactory::new(SharedManagedRuntimeFactoryOptions {
+                    prompts: assembly.prompts.clone(),
                     services: self.services.clone(),
                     principals: assembly.principals.clone(),
                     scheduler: assembly.scheduler.clone(),
@@ -279,9 +316,26 @@ impl NativeManagedAgents {
     pub(crate) fn enroll_foreground(
         &mut self,
         prepared: Box<PreparedManagedRuntime>,
+        reservation: &ManagedForegroundReservation,
     ) -> Result<ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
     {
-        self.manager.enroll_foreground(prepared)
+        self.manager.enroll_foreground(prepared, reservation)
+    }
+
+    pub(crate) fn reserve_foreground(
+        &mut self,
+    ) -> Result<ManagedForegroundReservation, NativeManagedAgentsError> {
+        self.manager.reserve_foreground().map_err(map_error)
+    }
+
+    pub(crate) fn poll_foreground_reservation(
+        &self,
+        reservation: &ManagedForegroundReservation,
+        cx: &Context<'_>,
+    ) -> Poll<Result<(), NativeManagedAgentsError>> {
+        self.manager
+            .poll_foreground_reservation(reservation, cx)
+            .map_err(map_error)
     }
 
     pub(crate) fn foreground_runtime(
@@ -294,9 +348,27 @@ impl NativeManagedAgents {
     pub(crate) fn retire_foreground(&mut self, selected: &ManagedForegroundSelection) -> bool {
         self.manager.retire_foreground(selected)
     }
+
+    pub(crate) fn quiesce_foreground(
+        &mut self,
+        selected: &ManagedForegroundSelection,
+    ) -> Result<crate::NativeRuntimeQuiescence, crate::NativeConversationRuntimeError> {
+        self.manager.quiesce_foreground(selected)
+    }
+
+    pub(crate) fn foreground_mcp_controls(
+        &self,
+        selected: &ManagedForegroundSelection,
+    ) -> Option<crate::managed::manager::factory::ManagedMcpControls> {
+        self.manager.foreground_mcp_controls(selected)
+    }
+
+    pub(crate) fn foreground_turn_settled(&self, selected: &ManagedForegroundSelection) -> bool {
+        self.manager.foreground_turn_settled(selected)
+    }
 }
 
-fn map_error(error: ManagedRuntimeError) -> NativeManagedAgentsError {
+pub(crate) fn map_error(error: ManagedRuntimeError) -> NativeManagedAgentsError {
     match error {
         ManagedRuntimeError::Invalid => NativeManagedAgentsError::Configuration,
         ManagedRuntimeError::Capacity => NativeManagedAgentsError::Capacity,

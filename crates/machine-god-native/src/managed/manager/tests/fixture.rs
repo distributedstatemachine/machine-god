@@ -28,7 +28,6 @@ use std::{
         Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    task::Waker,
 };
 
 pub(super) struct Clock(pub Instant);
@@ -109,6 +108,13 @@ impl ManagedRuntimeFactory for Arc<Factory> {
                     .unwrap()
                     .unwrap(),
             };
+            if request.kind == ManagedRuntimePreparationKind::Create {
+                let record = session.record();
+                session
+                    .update_metadata(record.revision, record.metadata)
+                    .await
+                    .unwrap();
+            }
             let (conversation, owner) = NativeConversation::from_session(session)
                 .unwrap()
                 .with_permission_controller(
@@ -244,6 +250,16 @@ pub(super) fn preferences() -> NativeModelPreferences {
     NativeModelPreferences::new("model", NativeReasoningEffort::default(), false).unwrap()
 }
 impl Fixture {
+    pub fn child_session(&self, id: &str) -> Session {
+        block_on(
+            self.factory
+                .engine
+                .load_session(SessionId::new(id).unwrap()),
+        )
+        .unwrap()
+        .unwrap()
+    }
+
     pub fn notified_foreground(&self, session: Session) -> PreparedManagedRuntime {
         use crate::managed::{notices::NoticePrincipal, prompt_context::ParentNoticeContext};
         let context = Arc::new(ParentNoticeContext::new(
@@ -471,12 +487,6 @@ impl Fixture {
             },
             invocation,
         )
-    }
-    pub fn poll(&mut self) {
-        let result = self
-            .manager
-            .poll_progress(&mut Context::from_waker(Waker::noop()), 100);
-        assert!(!matches!(result, Poll::Ready(Err(_))), "{result:?}");
     }
     pub fn drive(&mut self, predicate: impl Fn(&Self) -> bool) {
         block_on(std::future::poll_fn(|cx| {

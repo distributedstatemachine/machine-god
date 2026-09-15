@@ -69,6 +69,11 @@ impl ManagedManager {
             });
             return Ok(true);
         }
+        // Candidate requests precede new resident allocations, but never block
+        // accepted child work, its durable writes, or notice cleanup below.
+        if !self.closing && self.waiting_foreground() && self.evict_idle_child(None) {
+            return Ok(true);
+        }
         let ready = if self.pending_job.is_none() {
             self.ready_jobs.pop_front()
         } else {
@@ -132,26 +137,12 @@ impl ManagedManager {
                     .iter()
                     .any(|child| &child.snapshot.head.id == target)
             });
-            if needs_resident && !self.has_capacity() && job.lease().is_live() {
+            if needs_resident
+                && (!self.has_capacity() || self.waiting_foreground())
+                && job.lease().is_live()
+            {
                 self.pending_job = Some((job, wait_finished, operation));
-                if let Some(index) = self.children.iter().position(|child| {
-                    !child.busy()
-                        && child.actual_settled
-                        && !child.control_requested
-                        && child
-                            .prepared
-                            .notice_context
-                            .as_ref()
-                            .is_none_or(|context| context.delivery().is_none())
-                        && target.as_ref() != Some(&child.snapshot.head.id)
-                }) {
-                    let mut child = self.children.remove(index);
-                    self.retire_child_notice(&mut child);
-                    child.prepared.resources.begin_close();
-                    self.retiring.push(Retiring {
-                        prepared: child.prepared,
-                        settlement: child.settlement,
-                    });
+                if !self.waiting_foreground() && self.evict_idle_child(target.as_deref()) {
                     return Ok(true);
                 }
                 // Accepted child FIFO work can continue while the original
@@ -198,18 +189,51 @@ impl ManagedManager {
         Ok(false)
     }
     pub(in crate::managed::manager) fn has_capacity(&self) -> bool {
-        let resident = self.children.len() + self.retiring.len() + self.foregrounds.len();
+        let reserved = self.reserved_foregrounds();
+        let resident =
+            self.children.len() + self.retiring.len() + self.foregrounds.len() + reserved;
         resident < self.limits.residents
             && self
                 .parents
                 .iter()
                 .filter(|parent| parent.context.strong_count() > 0)
                 .count()
+                + reserved
                 < 64
             && (resident + 1)
                 .checked_mul(self.journal.resident_reservation_bytes())
                 .and_then(|bytes| bytes.checked_add(1024 * 1024))
                 .is_some_and(|bytes| bytes <= self.limits.buffered_bytes)
+    }
+    fn evict_idle_child(&mut self, protected: Option<&str>) -> bool {
+        // One unsettled retiree can release the required slot. Do not evict the
+        // entire idle population while that original cleanup is still pending.
+        if !self.retiring.is_empty() || self.has_capacity() {
+            return false;
+        }
+        let Some(index) = self.children.iter().position(|child| {
+            !child.busy()
+                && child.actual_settled
+                && !child.control_requested
+                && !child
+                    .snapshot
+                    .head
+                    .queue
+                    .iter()
+                    .any(|work| work.status == ManagedQueueStatus::Pending)
+                && !child.prepared.runtime.notice_cleanup_pending()
+                && protected != Some(child.snapshot.head.id.as_str())
+        }) else {
+            return false;
+        };
+        let mut child = self.children.remove(index);
+        self.retire_child_notice(&mut child);
+        child.prepared.resources.begin_close();
+        self.retiring.push(Retiring {
+            prepared: child.prepared,
+            settlement: child.settlement,
+        });
+        true
     }
     pub(super) fn capture_mailbox(
         &mut self,

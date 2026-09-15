@@ -124,6 +124,7 @@ impl FactoryFixture {
         let notices =
             Arc::new(ManagedNotices::new(NoticeLimits::default(), host.clock.clone()).unwrap());
         let factory = SharedManagedRuntimeFactory::new(SharedManagedRuntimeFactoryOptions {
+            prompts: None,
             services,
             principals,
             scheduler: ManagedScheduler::new(SchedulerLimits::default()),

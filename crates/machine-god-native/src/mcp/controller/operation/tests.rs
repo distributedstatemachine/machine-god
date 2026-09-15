@@ -93,6 +93,62 @@ fn configured_startup_remains_inert_then_uses_current_housekeeping_windows() {
 }
 
 #[test]
+fn failed_initial_activation_is_not_forgotten_when_its_generation_is_pruned() {
+    let (fixture, _) = configured();
+    fixture.seed("invalid configuration");
+    let controller = fixture.controller();
+    let mut startup =
+        controller.start_configured(NativeMcpStartupPhase::All, CancellationToken::new());
+    assert!(controller.needs_initial_startup());
+    let cohort = fixture.options.workers.begin_run().unwrap();
+    assert!(
+        futures_executor::block_on(std::future::poll_fn(|cx| {
+            cohort.with_poll(|| startup.as_mut().poll(cx))
+        }))
+        .is_err()
+    );
+    drop(startup);
+    cohort.close();
+    cohort.completion().wait_on_worker().unwrap();
+    controller.inner.prune();
+    assert!(lock(&controller.inner.state).active.is_none());
+    assert!(!controller.needs_initial_startup());
+    assert!(lock(&controller.inner.state).generations.is_empty());
+    assert!(controller.activation_failure().is_some());
+    let cleanup = futures_executor::block_on(controller.settle_failed_startup(
+        controller.deadline_after(Duration::from_secs(5)).unwrap(),
+        CancellationToken::new(),
+        Some(cohort.completion()),
+    ))
+    .unwrap();
+    assert!(cleanup.complete);
+    assert!(!lock(&controller.inner.state).closed);
+    fixture.seed(r#"{"mcp":{}}"#);
+    // Recovery is an explicit reload, not another admission's automatic start.
+    let receipt =
+        futures_executor::block_on(controller.reload_configured(CancellationToken::new())).unwrap();
+    assert_eq!(
+        receipt.publication(),
+        NativeMcpControllerPublication::Published
+    );
+    assert!(!controller.needs_initial_startup());
+    assert!(controller.activation_failure().is_none());
+    assert_eq!(
+        futures_executor::block_on(controller.settle_failed_startup(
+            controller.deadline_after(Duration::from_secs(5)).unwrap(),
+            CancellationToken::new(),
+            None,
+        ))
+        .unwrap_err()
+        .kind(),
+        NativeMcpControllerError::Invalid
+    );
+    assert!(lock(&controller.inner.state).active.is_some());
+    assert!(!lock(&controller.inner.state).closed);
+    controller.close();
+}
+
+#[test]
 fn existing_outer_deadline_and_explicit_peer_expiry_still_reject_before_loading() {
     let (mut fixture, clock) = configured();
     let controller = fixture.controller();

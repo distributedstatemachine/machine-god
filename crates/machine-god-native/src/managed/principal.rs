@@ -116,14 +116,6 @@ impl NativePrincipalRegistry {
         self.0
             .claim(invocation.context(), |turn| invocation.claim(turn))
     }
-
-    pub(crate) fn claim_tool(
-        &self,
-        invocation: &AdmittedToolInvocation,
-    ) -> Result<NativeManagedCallLease> {
-        self.0
-            .claim(invocation.context(), |turn| invocation.claim(turn))
-    }
 }
 
 impl Registry {
@@ -421,9 +413,6 @@ impl NativePrincipalTurn {
     }
     pub(crate) fn witness(&self) -> &TurnWitness {
         &self.state.witness
-    }
-    pub(crate) fn policy(&self) -> &NativePermissionPolicySnapshot {
-        &self.state.policy
     }
 }
 impl Drop for NativePrincipalTurn {

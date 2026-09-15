@@ -794,7 +794,40 @@ MCP startup/close, source acknowledgements and notice-outbox removal. A pending
 cleanup receipt prevents successful shutdown even after presentation ends.
 Foregrounds, children and retiring owners count against the same manager
 residency budget. Pressure may evict an idle, actually settled child, but does
-not silently discard a retained foreground or its pending cleanup.
+not silently discard a retained foreground or its pending cleanup. Child eviction
+also waits for all notice custody, including uncertain publication and a saved
+outbox without a live delivery receipt; malformed evidence requires explicit
+repair rather than pressure-driven disposal.
+Foreground candidates acquire non-cloneable manager-bound reservations before
+runtime composition. Granted reservations count against shared residency,
+buffered-byte and parent-route bounds until enrollment or settled failure.
+Pending candidates precede new resident commands without stopping accepted child
+work or cleanup. Pressure retires at most one idle child at a time, never queued
+pending work; its real cleanup must settle before reusing the slot. Supersession
+can drop an unused reservation, while started preparation retains it through
+cleanup. Foreign, ungranted and consumed tickets cannot enroll a foreground, and
+shutdown waits for outstanding preparation custody rather than inferring it from
+the absence of enrolled runtimes.
+
+The interactive owner establishes foreground quiescence through this manager.
+An exact-generation, weak continuation allows only source-acknowledged outbox
+removal while ordinary admission remains closed. Its bounded permits participate
+in the original lifecycle's idle/retirement checks. Foreign or stale guards
+cannot continue cleanup in a replacement generation, and unfinished or uncertain
+notice custody prevents irreversible retirement even when no delivery receipt
+is currently observable. Session transitions wait for actual managed run and
+admission settlement; children continue independently while these waits or
+presentation/control backpressure are pending.
+Parent workspace controls edit the actual foreground selection; transition
+preparation forks the settled source descriptors rather than returning to the
+host's initial defaults. Candidate MCP startup has its own cancellation token.
+Supersession and shutdown signal it without abandoning its original cleanup;
+the next candidate never inherits that cancellation.
+When an interactive inbox is explicitly selected, factory preparation registers
+the actual session/incarnation through a weak registrar. Parent and child prompt
+leases share that inbox's aggregate limits and remain in native runtime custody.
+Runtime close retires its exact lease before awaiting permission or elicitation
+cleanup; navigation and another principal's replacement cannot invalidate it.
 
 Create and restore are explicit operations, never inferred from an origin or a
 file's existence. Creation allocates one session/incarnation pair and retains the

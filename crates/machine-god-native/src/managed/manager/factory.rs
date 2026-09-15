@@ -118,6 +118,9 @@ pub(crate) struct PreparedManagedRuntime {
 
 /// Per-principal/run cleanup custody, not a shared global completion observer.
 pub(crate) trait ManagedRuntimeResources: Send + 'static {
+    fn mcp_controls(&self) -> Option<ManagedMcpControls> {
+        None
+    }
     /// Confirm readiness/auth/checkpoint cleanup even when no `RunRef` was minted.
     fn poll_admission_settled(
         &mut self,
@@ -133,6 +136,12 @@ pub(crate) trait ManagedRuntimeResources: Send + 'static {
     /// Idempotently start retiring this principal's controls and resources only.
     fn begin_close(&mut self);
     fn poll_closed(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ManagedRuntimeError>>;
+}
+
+/// Exact principal selection for native human controls, never model admission.
+pub(crate) struct ManagedMcpControls {
+    pub runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
+    pub controller: Option<Arc<crate::mcp::controller::NativeMcpController>>,
 }
 
 macro_rules! redacted_debug {

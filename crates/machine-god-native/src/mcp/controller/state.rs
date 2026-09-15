@@ -134,6 +134,8 @@ pub(super) struct Running {
 pub(super) struct State {
     pub closed: bool,
     pub catalog_handoff: bool,
+    pub activation_attempted: bool,
+    pub activation_failure: Option<NativeMcpControllerError>,
     pub active: Option<Arc<Generation>>,
     /// Latest exact loaded source, including failed startup. Observation only;
     /// it never replaces active publication or revives cancelled authority.

@@ -18,12 +18,24 @@ use std::{fmt, sync::Arc};
 #[derive(Clone)]
 pub struct NativeReferenceHostManagedOptions {
     pub(super) clock: Arc<dyn NativeMcpRuntimeClock>,
+    pub(super) prompts: Option<crate::interactive_prompts::NativeInteractivePromptRegistrar>,
 }
 
 impl NativeReferenceHostManagedOptions {
     #[must_use]
     pub fn new(clock: Arc<dyn NativeMcpRuntimeClock>) -> Self {
-        Self { clock }
+        Self {
+            clock,
+            prompts: None,
+        }
+    }
+
+    /// Registers actual managed runtimes in this inbox before any execution.
+    /// The weak registration route creates no second inbox or input owner.
+    #[must_use]
+    pub fn with_prompt_inbox(mut self, inbox: &crate::NativeInteractivePromptInbox) -> Self {
+        self.prompts = Some(inbox.registrar());
+        self
     }
 }
 
@@ -50,6 +62,7 @@ pub(super) struct ManagedHostAssembly {
     pub clock: Arc<dyn NativeMcpRuntimeClock>,
     pub relationships: Arc<dyn crate::managed::manager::factory::ManagedRelationshipAuthorizer>,
     pub parent_mcp: Option<super::mcp::ManagedParentMcpSeed>,
+    pub prompts: Option<crate::interactive_prompts::NativeInteractivePromptRegistrar>,
 }
 
 impl ManagedHostAssembly {
@@ -92,6 +105,7 @@ impl ManagedHostAssembly {
             clock,
             relationships,
             parent_mcp: None,
+            prompts: selection.options.prompts,
         })
     }
 }
