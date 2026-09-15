@@ -142,6 +142,10 @@ impl ManagedScheduler {
     pub(crate) fn snapshot(&self) -> SchedulerSnapshot {
         self.inner.snapshot()
     }
+
+    pub(super) fn resident_is_idle(&self, resident: &ResidentLease) -> bool {
+        Arc::ptr_eq(&resident.inner, &self.inner) && self.inner.resident_is_idle(resident.id)
+    }
 }
 impl fmt::Debug for ManagedScheduler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -217,6 +221,13 @@ pub(crate) struct RunRef {
     identity: Weak<RunIdentity>,
 }
 impl RunRef {
+    /// Cancels this original run even if its execution owner is elsewhere.
+    pub(crate) fn cancel(&self) {
+        if let Ok((inner, identity)) = self.resolve() {
+            inner.stop(identity.id, None, true);
+        }
+    }
+
     pub(crate) fn work_generation(&self) -> Option<NonZeroU64> {
         self.identity
             .upgrade()

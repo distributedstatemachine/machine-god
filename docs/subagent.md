@@ -201,6 +201,23 @@ run after unlocking. This scheduler supplies admission and lifecycle primitives;
 native manager composition owns durable acceptance, deadlines, scheduling polls
 and actual finalizer custody.
 
+The native conversation binding registers its actual core session with a
+separately retained manager owner. It forks that principal's workspace selection
+and selects its owner-local undo tracker before runtime construction. Each
+checkpoint's increasing actual turn sequence supplies the scheduler work
+generation, independently of the principal lifetime generation. Admission
+requires the taken immutable permission and model snapshots; a missing snapshot,
+expired manager owner or unsettled previous run rejects before a new checkpoint
+publication. Turn registration precedes provider polling, and initial execution
+quota is acquired exactly once. Dependency waits retain their own fair
+reacquisition without a second admission from the outer conversation poll loop.
+
+Normal turn execution enters settlement before forwarding native finalization,
+but does not complete the separate worker/TLS/reap obligation. The manager can
+transfer that settlement owner without freeing the resident or admitting another
+turn. Manager-owner retirement cancels the original actual turn even after that
+transfer; a weak conversation binding cannot keep management authority alive.
+
 ## Durable journal
 
 The native managed control journal is separate from `FileSessionStore`, which

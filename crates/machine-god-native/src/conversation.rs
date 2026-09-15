@@ -53,6 +53,7 @@ pub enum NativeConversationError {
     McpContext(NativeMcpContextError),
     McpRequiredUnavailable,
     WorkspaceContext(crate::NativeWorkspaceContextError),
+    ManagedAdmission,
     InvalidContext(NativeContextError),
     InvalidSkillContext(crate::NativeSkillPromptContextError),
     InvalidResourceContext(crate::conversation_resource_context::NativeResourcePromptContextError),
@@ -77,6 +78,7 @@ impl fmt::Display for NativeConversationError {
             Self::McpContext(error) => error.fmt(f),
             Self::McpRequiredUnavailable => f.write_str("required MCP server unavailable; update the selected servers, then submit a new prompt"),
             Self::WorkspaceContext(error) => error.fmt(f),
+            Self::ManagedAdmission => f.write_str("managed conversation admission unavailable"),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidSkillContext(error) => error.fmt(f),
             Self::InvalidResourceContext(error) => error.fmt(f),
@@ -179,6 +181,7 @@ pub struct NativeConversation {
     mcp_readiness: Option<McpReadiness>,
     workspace: Option<ConversationWorkspaceBinding>,
     undo: Option<Arc<crate::FileUndoTracker>>,
+    managed: Option<crate::managed::conversation::ManagedConversationBinding>,
 }
 
 enum McpReadiness {
@@ -320,6 +323,7 @@ impl NativeConversation {
             mcp_readiness: None,
             workspace: None,
             undo: None,
+            managed: None,
         })
     }
 
@@ -452,6 +456,40 @@ impl NativeConversation {
 
     pub(crate) fn undo_tracker(&self) -> Option<Arc<crate::FileUndoTracker>> {
         self.undo.clone()
+    }
+
+    /// The native manager, not public IDs, registers this actual session. Its
+    /// owner is returned separately and must outlive the conversation's turns.
+    pub(crate) fn with_managed_execution(
+        self,
+        registry: &crate::managed::principal::NativePrincipalRegistry,
+        scheduler: crate::managed::scheduler::ManagedScheduler,
+        generation: u64,
+        workspace: &crate::NativeWorkspaceAuthority,
+        contexts: &Arc<crate::NativeWorkspaceContexts>,
+    ) -> Result<
+        (Self, crate::managed::conversation::ManagedConversationOwner),
+        NativeConversationError,
+    > {
+        if self.is_busy()
+            || self.managed.is_some()
+            || self.workspace.is_some()
+            || self.undo.is_some()
+        {
+            return Err(NativeConversationError::Busy);
+        }
+        let owner = crate::managed::conversation::ManagedConversationOwner::new(
+            registry,
+            &self.session,
+            scheduler,
+            generation,
+            workspace,
+        )?;
+        let mut conversation = self
+            .with_workspace_contexts(owner.principal().workspace().clone(), contexts)?
+            .with_undo_tracker(owner.principal().undo().clone())?;
+        conversation.managed = Some(owner.binding());
+        Ok((conversation, owner))
     }
 
     /// Connects this exact session to a native policy handler. The engine must
@@ -1060,6 +1098,23 @@ impl NativeConversation {
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
         }
+        let managed_selection = self
+            .managed
+            .as_ref()
+            .map(|binding| {
+                binding.validate()?;
+                Ok::<_, NativeConversationError>((
+                    policy
+                        .clone()
+                        .ok_or(NativeConversationError::ManagedAdmission)?,
+                    model
+                        .as_ref()
+                        .ok_or(NativeConversationError::ManagedAdmission)?
+                        .preferences()
+                        .clone(),
+                ))
+            })
+            .transpose()?;
         match &self.mcp_readiness {
             Some(McpReadiness::Profile(controller)) => {
                 let controller = controller
@@ -1228,6 +1283,20 @@ impl NativeConversation {
             }
         }
         .map_err(map_engine_error)?;
+        let managed_turn = self
+            .managed
+            .as_ref()
+            .zip(managed_selection)
+            .map(|(binding, (policy, preferences))| {
+                binding.begin(
+                    &turn,
+                    std::num::NonZeroU64::new(checkpoint.turn_sequence)
+                        .ok_or(NativeConversationError::ManagedAdmission)?,
+                    policy,
+                    preferences,
+                )
+            })
+            .transpose()?;
         let mcp_context = self
             .mcp_contexts
             .as_ref()
@@ -1293,6 +1362,7 @@ impl NativeConversation {
             permission_context,
             mcp_context,
             workspace_context,
+            managed_turn,
             done: false,
         })
     }
@@ -1606,6 +1676,7 @@ pub struct NativeConversationTurn {
     permission_context: Option<ContextRegistration>,
     mcp_context: Option<McpContextRegistration>,
     workspace_context: Option<WorkspaceContextRegistration>,
+    managed_turn: Option<crate::managed::conversation::ManagedConversationTurn>,
     done: bool,
 }
 
@@ -1624,6 +1695,7 @@ impl NativeConversationTurn {
     }
 
     fn finish(&mut self) {
+        self.managed_turn.take();
         self.mcp_context.take();
         self.workspace_context.take();
         self.permission_context.take();
@@ -1642,6 +1714,9 @@ impl NativeConversationTurn {
         &mut self,
         terminal: Result<EngineEvent, NativeConversationError>,
     ) -> Result<(), NativeConversationError> {
+        if let Some(managed) = &mut self.managed_turn {
+            managed.finish_execution();
+        }
         self.mcp_context.take();
         self.workspace_context.take();
         self.permission_context.take();
@@ -1772,6 +1847,19 @@ impl Stream for NativeConversationTurn {
                             Ok(_) => terminal,
                             Err(error) => Err(map_engine_error(error)),
                         }));
+                    }
+                }
+            }
+            if let Some(managed) = &mut self.managed_turn {
+                match managed.poll_admission(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Ok(())) => {}
+                    Poll::Ready(Err(error)) => {
+                        if let Err(error) = self.stage_finalization(Err(error)) {
+                            self.finish();
+                            return Poll::Ready(Some(Err(error)));
+                        }
+                        continue;
                     }
                 }
             }

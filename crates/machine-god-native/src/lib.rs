@@ -147,6 +147,8 @@ mod conversation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod managed;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace_authority;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use workspace_authority::{

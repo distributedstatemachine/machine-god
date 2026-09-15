@@ -182,6 +182,14 @@ impl Inner {
             }
         }
     }
+    pub(super) fn resident_is_idle(&self, id: u64) -> bool {
+        self.state.lock().is_ok_and(|state| {
+            state
+                .residents
+                .get(&id)
+                .is_some_and(|resident| !resident.retired && resident.run.is_none())
+        })
+    }
     pub(super) fn register_run(
         &self,
         resident: u64,
