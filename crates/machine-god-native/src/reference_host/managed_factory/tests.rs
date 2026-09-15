@@ -1,4 +1,6 @@
 use super::*;
+mod foreground;
+mod relationship;
 use crate::managed::{
     notices::NoticeLimits,
     scheduler::SchedulerLimits,
@@ -97,9 +99,14 @@ impl FactoryFixture {
             JournalLimits::default(),
         ))
         .unwrap();
+        let archive_path = host.state.join("factory-archive");
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&archive_path)
+            .unwrap();
         let archive = Arc::new(
             NativeToolResultArchiveAdapter::new(Arc::new(ToolResultArchive::from_root_descriptor(
-                directory(&host.state),
+                directory(&archive_path),
             )))
             .with_worker_scope(services.control_workers.as_ref().unwrap().clone()),
         );

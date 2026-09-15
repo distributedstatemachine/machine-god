@@ -1671,6 +1671,7 @@ impl NativeReferenceHost {
                         .archive
                         .clone()
                         .ok_or_else(managed_host::error)?,
+                    permission_prompter.clone(),
                 )
             })
             .transpose()?;

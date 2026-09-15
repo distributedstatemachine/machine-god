@@ -12,10 +12,10 @@ pub(crate) use checkpoint::{
     NOTICE_CONTEXT_KEY, NoticeCheckpoint, SavedNoticeContext, compose_user_context, saved_context,
 };
 use machine_god_core::{Session, SessionRecord, SessionUserContext, SessionWitness};
+#[cfg(test)]
+pub(crate) use outbox::NoticeDeliveryProvenance;
 use outbox::{DeliveryRecord, SavedNoticeOutbox};
-pub(crate) use outbox::{
-    NOTICE_OUTBOX_KEY, NoticeDelivery, NoticeDeliveryProvenance, saved_outbox,
-};
+pub(crate) use outbox::{NOTICE_OUTBOX_KEY, NoticeDelivery, saved_outbox};
 pub(crate) use publication::NoticePublicationError;
 use std::{
     fmt,

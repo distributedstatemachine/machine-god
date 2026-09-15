@@ -162,7 +162,7 @@ fn poll_until_pending(turn: &mut NativeConversationTurn) {
         match Pin::new(&mut *turn).poll_next(&mut Context::from_waker(Waker::noop())) {
             Poll::Pending => return,
             Poll::Ready(Some(Ok(_))) => {}
-            other => panic!("expected live pending turn: {other:?}"),
+            other @ Poll::Ready(_) => panic!("expected live pending turn: {other:?}"),
         }
     }
     panic!("bounded scripted poll exhausted");

@@ -1,6 +1,7 @@
 use super::*;
 use crate::managed::{
     mailbox::{MailboxLimits, ManagedMailboxRequester},
+    notices::NoticeLimits,
     principal::{NativePrincipalRegistry, NativePrincipalTurn},
     scheduler::{ManagedScheduler, SchedulerLimits},
 };
@@ -243,6 +244,47 @@ pub(super) fn preferences() -> NativeModelPreferences {
     NativeModelPreferences::new("model", NativeReasoningEffort::default(), false).unwrap()
 }
 impl Fixture {
+    pub fn notified_foreground(&self, session: Session) -> PreparedManagedRuntime {
+        use crate::managed::{notices::NoticePrincipal, prompt_context::ParentNoticeContext};
+        let context = Arc::new(ParentNoticeContext::new(
+            &session,
+            NoticePrincipal {
+                id: session.id().to_string(),
+                generation: std::num::NonZeroU64::new(1).unwrap(),
+            },
+            &self.manager.notices,
+        ));
+        let (conversation, owner) = NativeConversation::from_session(session)
+            .unwrap()
+            .with_permission_controller(
+                &self.factory.permissions,
+                NativePermissionPolicySnapshot::new(
+                    PermissionMode::Ask,
+                    Arc::new(NativeConfiguredPermissionRules::default()),
+                ),
+            )
+            .unwrap()
+            .with_managed_execution(
+                &self.factory.registry,
+                self.factory.scheduler.clone(),
+                1,
+                &self.factory.workspace,
+                &self.factory.contexts,
+            )
+            .unwrap();
+        let conversation = conversation.with_notice_context(&context).unwrap();
+        PreparedManagedRuntime {
+            runtime: Arc::new(
+                NativeConversationRuntime::new(conversation, preferences(), None).unwrap(),
+            ),
+            owner,
+            resources: Box::new(Resources {
+                ready: self.factory.cleanup.clone(),
+                _owner: self.journal.owner_lease(),
+            }),
+            notice_context: Some(context),
+        }
+    }
     pub fn notice_session(&self) -> Session {
         self.factory
             .engine
@@ -262,7 +304,7 @@ impl Fixture {
         std::fs::create_dir(&path).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = std::fs::canonicalize(path).unwrap();
-        for name in ["workspace", "state", "journal"] {
+        for name in ["workspace", "state", "journal", "archive"] {
             std::fs::create_dir(path.join(name)).unwrap();
             std::fs::set_permissions(path.join(name), std::fs::Permissions::from_mode(0o700))
                 .unwrap();
@@ -314,8 +356,11 @@ impl Fixture {
         let requester = mailbox.requester();
         let clock = Arc::new(Clock(Instant::now()));
         let notices = Arc::new(
-            super::super::super::notices::ManagedNotices::new(Default::default(), clock.clone())
-                .unwrap(),
+            super::super::super::notices::ManagedNotices::new(
+                NoticeLimits::default(),
+                clock.clone(),
+            )
+            .unwrap(),
         );
         let manager = ManagedManager::new(
             journal.clone(),
@@ -332,7 +377,7 @@ impl Fixture {
             archive: Arc::new(
                 crate::NativeToolResultArchiveAdapter::new(Arc::new(
                     crate::ToolResultArchive::from_root_descriptor(
-                        std::fs::File::open(&path).unwrap().into(),
+                        std::fs::File::open(path.join("archive")).unwrap().into(),
                     ),
                 ))
                 .with_worker_scope(workers.clone()),
@@ -346,8 +391,9 @@ impl Fixture {
         }
     }
     pub fn invocation(&self, command: serde_json::Value) -> (Admission, ManagedSubagentInvocation) {
-        ManagedSubagentCommand::decode(serde_json::json!({"command":command.clone()}))
-            .expect("valid fixture command");
+        let arguments =
+            serde_json::Value::Object(serde_json::Map::from_iter([("command".into(), command)]));
+        ManagedSubagentCommand::decode(arguments.clone()).expect("valid fixture command");
         let captured = Arc::new(Mutex::new(None));
         #[cfg(feature = "ai-gateway-http")]
         let tool = crate::reference_host::subagent::NativeManagedSubagentTool::new(
@@ -375,7 +421,7 @@ impl Fixture {
                         call: ToolCall {
                             id: ToolCallId::new("operation").unwrap(),
                             name: ToolName::new("subagent").unwrap(),
-                            arguments: serde_json::json!({"command": command}),
+                            arguments,
                         },
                     },
                     ModelEvent::Stop {
@@ -415,20 +461,7 @@ impl Fixture {
                 None,
             )
             .unwrap();
-        let invocation = block_on(std::future::poll_fn(|cx| {
-            let event = Pin::new(&mut turn).poll_next(cx);
-            if let Some(invocation) = captured.lock().unwrap().take() {
-                return Poll::Ready(invocation);
-            }
-            assert!(
-                !matches!(event, Poll::Ready(None | Some(Err(_)))),
-                "fixture turn ended before actual managed invocation"
-            );
-            if event.is_ready() {
-                cx.waker().wake_by_ref();
-            }
-            Poll::Pending
-        }));
+        let invocation = capture_invocation(&mut turn, &captured);
         (
             Admission {
                 _guard: guard,
@@ -486,8 +519,11 @@ impl Fixture {
         self.requester = mailbox.requester();
         let clock = self.manager.clock.clone();
         let notices = Arc::new(
-            super::super::super::notices::ManagedNotices::new(Default::default(), clock.clone())
-                .unwrap(),
+            super::super::super::notices::ManagedNotices::new(
+                NoticeLimits::default(),
+                clock.clone(),
+            )
+            .unwrap(),
         );
         self.manager = ManagedManager::new(
             self.journal.clone(),
@@ -500,6 +536,42 @@ impl Fixture {
         )
         .unwrap();
     }
+}
+
+fn capture_invocation(
+    turn: &mut Turn,
+    captured: &Mutex<Option<ManagedSubagentInvocation>>,
+) -> ManagedSubagentInvocation {
+    block_on(std::future::poll_fn(|cx| {
+        let event = Pin::new(&mut *turn).poll_next(cx);
+        if let Poll::Ready(Some(Ok(EngineEvent {
+            payload:
+                TurnEvent::Failed {
+                    component,
+                    code,
+                    message,
+                    ..
+                },
+            ..
+        }))) = &event
+        {
+            panic!("fixture invocation failed in {component}: {code}: {message}");
+        }
+        if let Poll::Ready(Some(Err(error))) = &event {
+            panic!("fixture invocation stream failed: {error}");
+        }
+        if let Some(invocation) = captured.lock().unwrap().take() {
+            return Poll::Ready(invocation);
+        }
+        assert!(
+            !matches!(event, Poll::Ready(None)),
+            "fixture turn ended before actual managed invocation"
+        );
+        if event.is_ready() {
+            cx.waker().wake_by_ref();
+        }
+        Poll::Pending
+    }))
 }
 impl Drop for Fixture {
     fn drop(&mut self) {

@@ -8,7 +8,8 @@ use crate::mcp::runtime::NativeMcpRuntimeClock;
 use futures_executor::block_on;
 use machine_god_core::Session;
 use machine_god_core::{
-    BoxFuture, Engine, ManagedNotifications, Prompt, SessionId, SessionIncarnationId,
+    BoxFuture, Engine, InferenceOptions, ManagedNotifications, Prompt, SessionId,
+    SessionIncarnationId,
 };
 use machine_god_testkit::{InMemorySessionStore, ScriptedModelProvider, ScriptedPermissionHandler};
 use std::{num::NonZeroU64, sync::Arc, time::Instant};
@@ -167,7 +168,7 @@ fn actual_native_prompt_acknowledges_only_its_checkpoint_and_continuation_is_ine
     let future = conversation.prompt(
         Prompt {
             text: "standalone parent input".into(),
-            options: Default::default(),
+            options: InferenceOptions::default(),
         },
         1,
     );
@@ -186,7 +187,7 @@ fn actual_native_prompt_acknowledges_only_its_checkpoint_and_continuation_is_ine
     assert_eq!(pending(&notices), 1);
     drop(turn);
     assert!(conversation.paused_turn().unwrap().is_some());
-    let continued = block_on(conversation.continue_turn(Default::default(), 2)).unwrap();
+    let continued = block_on(conversation.continue_turn(InferenceOptions::default(), 2)).unwrap();
     let checkpoint = {
         let record = session.record();
         (record.next_turn_sequence - 1, 0)
@@ -229,7 +230,7 @@ fn foreign_binding_and_dropped_owner_fail_before_native_prompt_publication() {
         block_on(conversation.prompt(
             Prompt {
                 text: "not published".into(),
-                options: Default::default()
+                options: InferenceOptions::default()
             },
             1
         ))

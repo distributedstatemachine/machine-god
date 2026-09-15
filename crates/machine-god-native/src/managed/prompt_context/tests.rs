@@ -387,8 +387,12 @@ fn ambiguous_recovery(error: bool) {
         )
         .unwrap();
     let prep = preparation(&recovery, &record);
-    let turn =
-        block_on(recovery.publish_continuation(&f.session, Default::default(), prep)).unwrap();
+    let turn = block_on(recovery.publish_continuation(
+        &f.session,
+        machine_god_core::InferenceOptions::default(),
+        prep,
+    ))
+    .unwrap();
     assert_eq!(f.pending(), 0);
     let saved = saved_context(&f.record(), Some((2, 0))).unwrap().unwrap();
     assert_eq!(saved.originals().len(), 1);

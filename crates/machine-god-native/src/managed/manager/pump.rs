@@ -27,6 +27,7 @@ impl ManagedManager {
         for _ in 0..self.limits.work_per_poll {
             self.capture_mailbox(cx)?;
             let mut progress = self.poll_active(cx, now_ms)?;
+            progress |= self.poll_foregrounds(cx)?;
             progress |= self.poll_retiring(cx)?;
             progress |= self.pump_waiters(cx);
             progress |= self.poll_delivery_clears(cx);

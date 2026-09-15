@@ -41,6 +41,9 @@ cursor, without treating ordinary cursor staleness as ambiguous publication.
 Replay and source acknowledgements validate the parent transcript incarnation
 against the historical control record at the original relationship revision,
 not the current parent or a reused display ID/generation.
+Only one live parent context may register a notice ID/generation pair: a
+different session incarnation cannot share its inbox. Registering the same
+actual context again is inert; replacement requires retiring the old context.
 
 The root is `{"command":{...}}`, selecting exactly one of these branches.
 Every object rejects unknown fields. Optional fields are omitted, not null.
@@ -395,6 +398,11 @@ or previous run reference as proof that this newer admission has settled.
 Attach/reparent authorization uses an injected human endpoint carrying the exact
 actor, target generation/revision and old/new parent proposal. Supplied labels
 or permission mode alone never authorize that relationship change.
+The shared-host consent endpoint checks the original live principal/turn before
+presenting the exact child generation/revision and old/new parent incarnations,
+then checks it again after the answer. Cancellation drops the pending prompt.
+Every positive answer applies only to that frozen proposal; turn/session choices
+never install a reusable relationship grant or bypass later human consent.
 
 The manager polls its mailbox, child streams, actual cleanup and notice delivery
 independently of terminal output. A captured control head pauses only its target's
@@ -765,6 +773,18 @@ parent's request-scoped servers.
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted
 authority. It never reloads, replaces, starts, or republishes that transcript.
+The outer manager retains these foreground resources independently of the UI,
+using weak allocation-bound selections. Enrollment failure returns the original
+prepared owner for explicit settlement. Retiring a foreground immediately ends
+only its own new principal authority and cancels its active turn; sibling and
+child owners remain live. The foreground stream is co-polled by its native host,
+while the manager completes exact run cleanup before admitting another turn.
+Shutdown and retirement retain the original resource owner through admission,
+MCP startup/close, source acknowledgements and notice-outbox removal. A pending
+cleanup receipt prevents successful shutdown even after presentation ends.
+Foregrounds, children and retiring owners count against the same manager
+residency budget. Pressure may evict an idle, actually settled child, but does
+not silently discard a retained foreground or its pending cleanup.
 
 Create and restore are explicit operations, never inferred from an origin or a
 file's existence. Creation allocates one session/incarnation pair and retains the

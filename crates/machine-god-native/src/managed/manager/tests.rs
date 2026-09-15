@@ -1,6 +1,8 @@
 use super::super::store;
 use super::*;
+mod delivery;
 mod fixture;
+mod foreground;
 use fixture::Fixture;
 use futures_executor::block_on;
 use machine_god_core::{ManagedFailureCode, ManagedRequested, ManagedSubagentAuthority};
@@ -132,6 +134,11 @@ fn journal_replay_preserves_originals_and_excludes_confirmed_source_acks() {
         target.clone(),
         &fixture.manager.notices,
     ));
+    assert!(matches!(
+        fixture.manager.register_parent_context(&context),
+        Err(ManagedRuntimeError::Invalid)
+    ));
+    foreign.retire();
     fixture.manager.register_parent_context(&context).unwrap();
     fixture.drive(|f| {
         f.manager
@@ -512,6 +519,9 @@ fn configured_future_work_does_not_rewrite_accepted_configuration() {
             .command(serde_json::json!({"message":{"send":{"id":"child-1","content":"next"}}}))
             .ok
     );
+    // A delivered tool reply can precede the manager's next replay/read poll.
+    // Wait for that owned journal operation before independent fixture reads.
+    fixture.drive(|f| f.manager.active.is_none());
     let head = &fixture.manager.children[0].snapshot.head;
     let first = block_on(fixture.journal.read_work(head.queue[0].page.clone())).unwrap();
     let next = block_on(fixture.journal.read_work(head.queue[1].page.clone())).unwrap();
@@ -533,7 +543,7 @@ fn permission_escalation_fails_before_runtime_preparation() {
 #[test]
 fn native_selection_is_allocation_bound_and_idle_residency_is_reusable() {
     let mut fixture = Fixture::new(vec![]);
-    fixture.manager.limits.children = 1;
+    fixture.manager.limits.residents = 1;
     assert!(
         fixture
             .command(serde_json::json!({"create":{"name":"first","mode":"persistent"}}))

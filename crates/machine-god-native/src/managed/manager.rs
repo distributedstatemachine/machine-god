@@ -4,6 +4,7 @@ mod command;
 mod delivery;
 mod durability;
 pub(crate) mod factory;
+mod foreground;
 mod notification;
 mod projection;
 mod pump;
@@ -28,6 +29,7 @@ use factory::{
     ManagedRelationshipAuthorizer, ManagedRuntimeError, ManagedRuntimeFactory,
     PreparedManagedRuntime,
 };
+pub(crate) use foreground::ManagedForegroundSelection;
 use machine_god_core::{
     BoxFuture, CancellationToken, ManagedAgentState, ManagedQueueStatus, ToolCallId,
 };
@@ -42,7 +44,7 @@ use std::{
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagerLimits {
-    pub children: usize,
+    pub residents: usize,
     pub waiters: usize,
     pub buffered_bytes: usize,
     pub work_per_poll: usize,
@@ -50,7 +52,7 @@ pub(crate) struct ManagerLimits {
 impl Default for ManagerLimits {
     fn default() -> Self {
         Self {
-            children: 64,
+            residents: 64,
             waiters: 64,
             buffered_bytes: 64 * 1024 * 1024,
             work_per_poll: 64,
@@ -164,6 +166,7 @@ pub(crate) struct ManagedManager {
     limits: ManagerLimits,
     children: Vec<Child>,
     retiring: Vec<Retiring>,
+    foregrounds: Vec<foreground::Foreground>,
     active: Option<Active>,
     waiters: Vec<waiting::Waiter>,
     approvals: Vec<waiting::Approval>,
@@ -195,7 +198,7 @@ impl ManagedManager {
         clock: Arc<dyn NativeMcpRuntimeClock>,
         limits: ManagerLimits,
     ) -> Result<Self, ManagedRuntimeError> {
-        if !(1..=64).contains(&limits.children)
+        if !(1..=64).contains(&limits.residents)
             || !(1..=256).contains(&limits.waiters)
             || !(1024 * 1024..=256 * 1024 * 1024).contains(&limits.buffered_bytes)
             || !(1..=256).contains(&limits.work_per_poll)
@@ -214,6 +217,7 @@ impl ManagedManager {
             limits,
             children: Vec::new(),
             retiring: Vec::new(),
+            foregrounds: Vec::new(),
             active: None,
             waiters: Vec::new(),
             approvals: Vec::new(),
@@ -249,6 +253,9 @@ impl ManagedManager {
         self.cancellation.cancel();
         self.deadline.take();
         self.wait_sleep.take();
+        for foreground in &mut self.foregrounds {
+            foreground.close();
+        }
         for child in &self.children {
             let _ = child.prepared.runtime.request_active_cancel();
             let _ = child.prepared.runtime.clear_queued();
@@ -272,6 +279,7 @@ impl ManagedManager {
         }
         if self.children.is_empty()
             && self.retiring.is_empty()
+            && self.foregrounds.is_empty()
             && self.active.is_none()
             && self.waiters.is_empty()
             && self.approvals.is_empty()
@@ -285,7 +293,7 @@ impl ManagedManager {
     }
     fn progress(&self) -> ManagerProgress {
         ManagerProgress {
-            residents: self.children.len() + self.retiring.len(),
+            residents: self.children.len() + self.retiring.len() + self.foregrounds.len(),
             executing: self
                 .children
                 .iter()
@@ -296,12 +304,21 @@ impl ManagedManager {
                         .run()
                         .is_some_and(|run| run.is_executing())
                 })
-                .count(),
+                .count()
+                + self
+                    .foregrounds
+                    .iter()
+                    .filter(|parent| parent.executing())
+                    .count(),
             waiters: self.waiters.len(),
             closing: self.closing,
             blocked: self.retry.issue().or_else(|| {
                 if self.children.iter().any(|child| child.settlement.is_some())
                     || !self.retiring.is_empty()
+                    || self
+                        .foregrounds
+                        .iter()
+                        .any(foreground::Foreground::settling)
                 {
                     Some(ManagerBlock::Cleanup)
                 } else if self.pending_job.is_some() {

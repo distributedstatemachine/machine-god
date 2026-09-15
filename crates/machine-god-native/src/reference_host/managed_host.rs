@@ -1,4 +1,5 @@
 //! Pre-engine managed routes; actual queue ownership stays outside shared services.
+pub(super) mod relationship;
 
 use super::{NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind};
 use crate::managed::{
@@ -38,7 +39,7 @@ pub(super) struct Selection {
     pub budget: Arc<NativeUndoBudget>,
 }
 
-/// Never put this owner in NativeHostServices: its mailbox routes are retained
+/// Never put this owner in `NativeHostServices`: its mailbox routes are retained
 /// weakly by the shared engine, and the eventual manager owns the actual queue.
 pub(super) struct ManagedHostAssembly {
     pub principals: Arc<NativePrincipalRegistry>,
@@ -47,6 +48,7 @@ pub(super) struct ManagedHostAssembly {
     pub notices: Arc<ManagedNotices>,
     pub mailbox: Option<ManagedMailbox>,
     pub clock: Arc<dyn NativeMcpRuntimeClock>,
+    pub relationships: Arc<dyn crate::managed::manager::factory::ManagedRelationshipAuthorizer>,
 }
 
 impl ManagedHostAssembly {
@@ -62,6 +64,7 @@ impl ManagedHostAssembly {
     pub(super) fn new(
         selection: Selection,
         archive: Arc<NativeToolResultArchiveAdapter>,
+        prompter: Arc<dyn crate::PermissionPrompter>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let principals =
             Arc::new(NativePrincipalRegistry::new(64, selection.budget).map_err(|_| error())?);
@@ -75,6 +78,10 @@ impl ManagedHostAssembly {
         let notices = Arc::new(
             ManagedNotices::new(NoticeLimits::default(), clock.clone()).map_err(|_| error())?,
         );
+        let relationships = Arc::new(relationship::RelationshipConsent::new(
+            principals.requester(),
+            prompter,
+        ));
         Ok(Self {
             principals,
             scheduler: ManagedScheduler::new(SchedulerLimits::default()),
@@ -82,6 +89,7 @@ impl ManagedHostAssembly {
             notices,
             mailbox: Some(mailbox),
             clock,
+            relationships,
         })
     }
 }

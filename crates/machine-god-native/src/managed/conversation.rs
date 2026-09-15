@@ -165,6 +165,22 @@ impl ManagedConversationOwner {
             .take()
             .map(|settlement| (reference, settlement))
     }
+
+    /// End new principal authority while retaining original cleanup custody.
+    pub(crate) fn retire(&self) {
+        self.0.closed.store(true, Ordering::Release);
+        self.0.principal.retire();
+        let run = self
+            .0
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .run
+            .clone();
+        if let Some(run) = run {
+            run.cancel();
+        }
+    }
 }
 
 impl ManagedConversationBinding {
@@ -186,18 +202,7 @@ impl ManagedConversationBinding {
 
 impl Drop for ManagedConversationOwner {
     fn drop(&mut self) {
-        self.0.closed.store(true, Ordering::Release);
-        self.0.principal.retire();
-        let run = self
-            .0
-            .active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .run
-            .clone();
-        if let Some(run) = run {
-            run.cancel();
-        }
+        self.retire();
         // Last-owner destruction retires the resident after cancelling the turn.
         // An abandoned settlement remains quarantined, never falsely completed.
     }

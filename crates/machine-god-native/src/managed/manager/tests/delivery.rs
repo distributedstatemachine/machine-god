@@ -1,0 +1,190 @@
+use super::{Fixture, completed};
+use crate::NativeConversation;
+use crate::managed::{
+    manager::{ManagedRuntimeError, delivery, durability},
+    notices::{
+        ManagedNotice, NoticePrincipal, NoticeRelationship, NoticeTerminal, PreparedNotice,
+        WorkNoticeIdentity,
+    },
+    prompt_context::ParentNoticeContext,
+    store::{
+        JournalMutation, JournalPublication, JournalRecord, JournalSnapshot, JournalTranscript,
+    },
+};
+use futures_executor::block_on;
+use futures_util::StreamExt;
+use machine_god_core::{ManagedNotifications, Session, SessionIncarnationId};
+use std::{num::NonZeroU64, sync::Arc};
+
+fn confirmed(publication: JournalPublication) -> JournalSnapshot {
+    let JournalPublication::Confirmed(snapshot) = publication else {
+        panic!("fixture publication must confirm");
+    };
+    *snapshot
+}
+
+pub(super) fn original(fixture: &mut Fixture, parent: &Session) -> ManagedNotice {
+    assert!(
+        fixture
+            .command(serde_json::json!({
+                "create": {"name": "source", "mode": "persistent"}
+            }))
+            .ok
+    );
+    fixture.drive(|f| f.manager.active.is_none());
+    let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    let snapshot = confirmed(
+        block_on(fixture.journal.mutate(
+            snapshot,
+            JournalMutation::Relationship {
+                parent_id: Some(parent.id().to_string()),
+                parent_owner: Some(JournalTranscript {
+                    session_id: parent.id(),
+                    incarnation: parent.incarnation_id(),
+                }),
+            },
+        ))
+        .unwrap(),
+    );
+    let work = fixture
+        .manager
+        .notices
+        .register_work(
+            &WorkNoticeIdentity {
+                source: NoticePrincipal {
+                    id: "child-1".into(),
+                    generation: NonZeroU64::new(1).unwrap(),
+                },
+                work_id: "original-work".into(),
+                work_generation: NonZeroU64::new(1).unwrap(),
+            },
+            ManagedNotifications::default(),
+            &NoticeRelationship {
+                generation: NonZeroU64::new(snapshot.head.revision).unwrap(),
+                parent: Some(NoticePrincipal {
+                    id: parent.id().to_string(),
+                    generation: NonZeroU64::new(1).unwrap(),
+                }),
+            },
+            snapshot.head.notice_cursor,
+        )
+        .unwrap();
+    let PreparedNotice::Staged(stage) = fixture
+        .manager
+        .notices
+        .prepare_terminal(
+            &work,
+            NonZeroU64::new(snapshot.head.next_sequence).unwrap(),
+            NoticeTerminal::Completed,
+            None,
+        )
+        .unwrap()
+    else {
+        panic!("original terminal notice");
+    };
+    let original = stage.notice().clone();
+    let snapshot = confirmed(
+        block_on(fixture.journal.mutate(
+            snapshot,
+            JournalMutation::AppendHistory(vec![JournalRecord::Notice(original.clone())]),
+        ))
+        .unwrap(),
+    );
+    fixture.manager.children[0].snapshot = snapshot;
+    fixture.manager.notices.confirm_durable(&stage).unwrap();
+    original
+}
+
+fn deliver(fixture: &Fixture, session: &Session) -> (Arc<ParentNoticeContext>, NativeConversation) {
+    let context = Arc::new(ParentNoticeContext::new(
+        session,
+        NoticePrincipal {
+            id: session.id().to_string(),
+            generation: NonZeroU64::new(1).unwrap(),
+        },
+        &fixture.manager.notices,
+    ));
+    let conversation = NativeConversation::from_session(session.clone())
+        .unwrap()
+        .with_notice_context(&context)
+        .unwrap();
+    let turn = block_on(conversation.prompt("explicit next parent input".into(), 102)).unwrap();
+    assert!(block_on(turn.collect::<Vec<_>>()).iter().all(Result::is_ok));
+    assert!(context.delivery().is_some());
+    (context, conversation)
+}
+
+#[test]
+fn actual_parent_checkpoint_is_source_acknowledged_before_outbox_clear() {
+    let mut fixture = Fixture::new(vec![completed()]);
+    let parent = fixture.notice_session();
+    let original = original(&mut fixture, &parent);
+    let (context, conversation) = deliver(&fixture, &parent);
+    let delivered = context.delivery().unwrap();
+    assert_eq!(delivered.originals(), std::slice::from_ref(&original));
+    assert!(block_on(conversation.clear_notice_delivery(&delivered)).is_err());
+    fixture.manager.register_parent_context(&context).unwrap();
+    fixture.drive(|f| {
+        f.manager.active.is_none()
+            && f.manager
+                .parents
+                .iter()
+                .any(|parent| parent.completed.is_some())
+    });
+    let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    let history = block_on(fixture.journal.history(snapshot, None, 100)).unwrap();
+    assert!(
+        history
+            .records
+            .contains(&JournalRecord::NoticeAcknowledged {
+                identity: original.identity(),
+                target: original.target,
+                checkpoint: delivered.checkpoint().clone(),
+            })
+    );
+    block_on(conversation.clear_notice_delivery(&delivered)).unwrap();
+    assert!(context.delivery().is_none());
+    assert_eq!(fixture.factory.provider.requests().len(), 1);
+}
+
+#[test]
+fn actual_checkpoint_from_another_incarnation_cannot_acknowledge_the_original() {
+    let mut fixture = Fixture::new(vec![completed()]);
+    let parent = fixture.notice_session();
+    let original = original(&mut fixture, &parent);
+    // An actual foreign checkpoint is still not the original recipient's checkpoint.
+    let engine = machine_god_core::Engine::builder()
+        .provider(machine_god_testkit::ScriptedModelProvider::new(
+            "foreign",
+            [completed()],
+        ))
+        .permission_handler(machine_god_testkit::ScriptedPermissionHandler::new([]))
+        .session_store(machine_god_testkit::InMemorySessionStore::default())
+        .build()
+        .unwrap();
+    let foreign = engine
+        .create_session(
+            parent.id(),
+            SessionIncarnationId::new("foreign-life").unwrap(),
+        )
+        .unwrap();
+    let (context, conversation) = deliver(&fixture, &foreign);
+    let delivered = context.delivery().unwrap();
+    assert_eq!(delivered.originals(), &[original]);
+    let before = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    let mut snapshots = Vec::new();
+    assert!(matches!(
+        block_on(delivery::reconcile_sources(
+            &fixture.journal,
+            &Arc::new(durability::RetryGate::default()),
+            &delivered,
+            &mut snapshots,
+        )),
+        Err(ManagedRuntimeError::Invalid)
+    ));
+    assert!(snapshots.is_empty());
+    let after = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    assert_eq!(before.head, after.head);
+    assert!(block_on(conversation.clear_notice_delivery(&delivered)).is_err());
+    assert!(fixture.factory.provider.requests().is_empty());
+}

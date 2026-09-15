@@ -197,9 +197,9 @@ impl ManagedManager {
         }
         Ok(false)
     }
-    fn has_capacity(&self) -> bool {
-        let resident = self.children.len() + self.retiring.len();
-        resident < self.limits.children
+    pub(in crate::managed::manager) fn has_capacity(&self) -> bool {
+        let resident = self.children.len() + self.retiring.len() + self.foregrounds.len();
+        resident < self.limits.residents
             && self
                 .parents
                 .iter()

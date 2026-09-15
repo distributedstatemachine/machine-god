@@ -190,20 +190,18 @@ async fn step(
             .filter_map(Weak::upgrade)
             .any(|context| context.principal() == &original.target.parent && !context.is_retired())
         && !acknowledged(journal, snapshot, original).await?
-    {
-        if let Some(transcript) = historical_parent(
+        && let Some(transcript) = historical_parent(
             journal,
             snapshot,
             original.target.relationship_generation.get(),
         )
         .await?
-            && targets.iter().filter_map(Weak::upgrade).any(|context| {
-                context.principal() == &original.target.parent
-                    && context.matches_transcript(&transcript)
-            })
-        {
-            replay.pending = Some((original.clone(), transcript));
-        }
+        && targets.iter().filter_map(Weak::upgrade).any(|context| {
+            context.principal() == &original.target.parent
+                && context.matches_transcript(&transcript)
+        })
+    {
+        replay.pending = Some((original.clone(), transcript));
     }
     if let Some(next) = page.next {
         replay.source.as_mut().unwrap().1 = Some(next);
