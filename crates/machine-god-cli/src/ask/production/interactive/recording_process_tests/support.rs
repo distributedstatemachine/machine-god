@@ -5,7 +5,10 @@ use rustix::{
 use std::{
     fs::{self, File},
     io::{self, Read, Write},
-    os::unix::{fs::PermissionsExt, process::CommandExt},
+    os::unix::{
+        fs::{MetadataExt, PermissionsExt},
+        process::CommandExt,
+    },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -21,6 +24,7 @@ pub(super) struct Fixture {
     pub workspace: PathBuf,
     pub state: PathBuf,
     configuration: PathBuf,
+    executable: PathBuf,
 }
 
 impl Fixture {
@@ -39,16 +43,33 @@ impl Fixture {
             fs::create_dir(path).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        Self {
+        // CoreFoundation discovers the executable's bundle while production
+        // MCP captures system DNS on macOS. Cargo's deps directory can contain
+        // an unbounded build history; never make that scan part of this fixture.
+        // Keep the exact test executable, not a symlink back into Cargo's tree.
+        let bin = root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).unwrap();
+        let executable = bin.join("recording-process-child");
+        let fixture = Self {
             root,
             workspace,
             state,
             configuration,
-        }
+            executable,
+        };
+        // Install cleanup ownership before staging can fail.
+        stage_executable(
+            &std::env::current_exe().unwrap(),
+            &fixture.executable,
+            |source, destination| fs::hard_link(source, destination),
+        )
+        .unwrap();
+        fixture
     }
 
     pub fn command(&self) -> Command {
-        let mut command = Command::new(std::env::current_exe().unwrap());
+        let mut command = Command::new(&self.executable);
         command.args([
             "--exact",
             "ask::production::interactive::recording_process_tests::recording_process_child",
@@ -82,8 +103,42 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        // Scenario owners are declared after this fixture and settle their
+        // children before it drops, including unwinding through OwnedChild.
         fs::remove_dir_all(&self.root).unwrap();
     }
+}
+
+fn stage_executable(
+    source: &Path,
+    destination: &Path,
+    link: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let original = fs::symlink_metadata(source)?;
+    if !original.is_file() || original.permissions().mode() & 0o111 == 0 {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let linked = match link(source, destination) {
+        Ok(()) => true,
+        // A private temp root may be on another filesystem. Copy only in that
+        // explicit case; other staging failures must remain test failures.
+        Err(error) if error.raw_os_error() == Some(rustix::io::Errno::XDEV.raw_os_error()) => {
+            if fs::copy(source, destination)? != original.len() {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+            false
+        }
+        Err(error) => return Err(error),
+    };
+    let staged = fs::symlink_metadata(destination)?;
+    if !staged.is_file()
+        || staged.len() != original.len()
+        || staged.permissions().mode() != original.permissions().mode()
+        || (linked && (staged.dev() != original.dev() || staged.ino() != original.ino()))
+    {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    Ok(())
 }
 
 pub(super) struct OwnedChild {
@@ -353,4 +408,94 @@ pub(super) fn bounded_file(path: &Path) -> Vec<u8> {
         .unwrap();
     assert!(bytes.len() <= LIMIT);
     bytes
+}
+
+#[test]
+fn recording_child_uses_only_the_private_staged_executable_directory() {
+    let fixture = Fixture::new();
+    assert_eq!(
+        fixture.command().get_program(),
+        fixture.executable.as_os_str()
+    );
+    let bin = fixture.executable.parent().unwrap();
+    assert_eq!(bin, fixture.root.join("bin"));
+    for selected in [&fixture.workspace, &fixture.state, &fixture.configuration] {
+        assert!(!bin.starts_with(selected));
+    }
+    assert_eq!(fs::read_dir(bin).unwrap().count(), 1);
+    assert!(fs::symlink_metadata(&fixture.executable).unwrap().is_file());
+    let original = fs::metadata(std::env::current_exe().unwrap()).unwrap();
+    let staged = fs::metadata(&fixture.executable).unwrap();
+    assert_eq!(staged.len(), original.len());
+    assert_eq!(staged.permissions().mode(), original.permissions().mode());
+}
+
+#[test]
+fn executable_staging_links_exact_identity_and_copies_only_across_filesystems() {
+    let fixture = Fixture::new();
+    let source = fixture.path("source");
+    fs::write(&source, b"exact executable fixture bytes\0\xff").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o751)).unwrap();
+    let linked = fixture.path("linked");
+    stage_executable(&source, &linked, |source, destination| {
+        fs::hard_link(source, destination)
+    })
+    .unwrap();
+    let original = fs::metadata(&source).unwrap();
+    let staged = fs::metadata(&linked).unwrap();
+    assert_eq!(
+        (staged.dev(), staged.ino()),
+        (original.dev(), original.ino())
+    );
+    assert_eq!(fs::read(&linked).unwrap(), fs::read(&source).unwrap());
+
+    let copied = fixture.path("copied");
+    stage_executable(&source, &copied, |_, _| Err(rustix::io::Errno::XDEV.into())).unwrap();
+    let staged = fs::metadata(&copied).unwrap();
+    assert_ne!(staged.ino(), original.ino());
+    assert_eq!(staged.permissions().mode(), original.permissions().mode());
+    assert_eq!(fs::read(&copied).unwrap(), fs::read(&source).unwrap());
+
+    let rejected = fixture.path("rejected");
+    assert_eq!(
+        stage_executable(&source, &rejected, |_, _| Err(
+            io::ErrorKind::PermissionDenied.into()
+        ))
+        .unwrap_err()
+        .kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    assert!(!rejected.exists());
+}
+
+#[test]
+fn executable_staging_rejects_symlinks_nonregular_and_nonexecutable_sources() {
+    let fixture = Fixture::new();
+    let source = fixture.path("source");
+    fs::write(&source, b"executable fixture").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
+    let symlink = fixture.path("source-link");
+    std::os::unix::fs::symlink(&source, &symlink).unwrap();
+    let destination = fixture.path("destination");
+    for invalid in [&symlink, &fixture.workspace] {
+        assert_eq!(
+            stage_executable(invalid, &destination, |_, _| panic!(
+                "invalid source must not link"
+            ))
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert!(!destination.exists());
+    }
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        stage_executable(&source, &destination, |_, _| panic!(
+            "nonexecutable source must not link"
+        ))
+        .unwrap_err()
+        .kind(),
+        io::ErrorKind::InvalidInput
+    );
+    assert!(!destination.exists());
 }

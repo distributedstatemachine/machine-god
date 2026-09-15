@@ -704,3 +704,61 @@ publication callback with reentrant lock observations, panicking wake and
 successor/shutdown combinations. The original exact-owner, cancellation and
 EOF assertions are unchanged. Component Rust 1.94.1 formatting and diff checks
 passed; no runtime or replacement acceptance is asserted by this component record.
+
+## Candidate 992fbd75: partial gate and macOS recording startup rejection
+
+Candidate `992fbd756389536f88b6519ab02bd3ac19c927bb` integrates the blocking-slot
+repair with its contract and history. Both platforms passed formatting and
+warnings-denied workspace Clippy; required FreeBSD/WASI lint, dependency
+policy/audit, pinned drift, Unicode and documentation checks passed. Fresh locked
+release helpers and all required test builds completed before process-heavy
+runtime validation. Linux and macOS runtime runs did not overlap.
+
+Linux passed the complete runtime gate: all 52 background-supervisor tests,
+23 PTY tests, 157 native ACP tests, full workspace integrations and doctests,
+and all 269 Python tests (159.570 seconds). Workspace native units passed
+3,581 with 11 existing ignores in 52.88 seconds; CLI units passed 549 with
+six existing ignores in 2.62 seconds. There were zero failures. The original
+EOF-only failure and both new publication regressions passed.
+
+macOS focused background-supervisor (52), PTY (27) and native ACP (157) tests
+passed, including the original EOF case and both new publication regressions.
+Its serial workspace CLI suite then failed two tests: 547 passed, two failed
+and six existing ignores in 58.64 seconds. The failures were
+`mcp_commands_cancel_and_session_switch_record_observations_without_replay` and
+`mcp_pending_human_sigint_settles_real_helpers_and_recording_without_resume`
+under `ask::production::interactive::recording_process_tests::mcp`.
+Both panicked at recording support line 221 while waiting for the initial
+`stdin excluded]` output. Captured output contained only the child test-harness
+startup. This establishes the observed deadline failure, not its cause.
+Remaining macOS workspace tests, explicit doctests and fresh-release smoke did
+not complete; no fresh review or remote acceptance followed this rejected gate.
+
+A bounded diagnostic rerun of the unchanged cached CLI test executable passed
+all three MCP recording scenarios in 14.91 seconds; that passing retry is not
+acceptance or a source fix. A sample of its exact child before the initial banner
+captured all 88 samples in CoreFoundation bundle-directory enumeration, reached
+through host MCP preparation, `McpResolverConfig::capture_system`, Hickory's
+Apple system-configuration reader and `SCDynamicStoreCreateWithOptions`.
+The child held the Cargo `target/debug/deps` directory open (directory size
+22,444,576 bytes); host composition and MCP activation had not started.
+These stacks establish the diagnostic child's mechanism, not retrospective
+stack evidence from the two original timed-out children.
+
+A controlled comparison hard-linked the same 91,534,592-byte executable into
+a private directory. Its inode, executable mode and SHA-256 were unchanged:
+`f737585850a8c4347176a628fcf601975761d2acbd57b22f6f26f02f67148006`.
+With the same environment, helper, three-scenario filter and original deadlines,
+the run passed in 0.69 seconds. This isolates executable-directory scanning
+without bypassing production DNS configuration or weakening output assertions.
+
+Component `2907e94059c0a586b61f64897776f56823cfca32` stages the exact child test
+executable in each fixture's private `bin` directory, outside its workspace,
+state and configuration roots. A verified hard link preserves identity; only
+cross-filesystem failure permits a copy, with exact length and executable-mode
+checks. Existing child settlement precedes fixture-directory cleanup. Three
+regressions cover directory isolation, hard-link/copy behavior and invalid
+sources. Production resolver capture, release helper selection, test deadlines
+and original assertions are unchanged. Component Rust 1.94.1 formatting and
+diff checks passed; source builds and replacement runtime acceptance remained
+pending when this component was integrated.

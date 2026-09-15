@@ -35,8 +35,8 @@ functionality merely because it shares an implementation with an older mode.
 - Main CI: `34770898541` (`GREEN`)
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
-- Active phase: `M05 ACP replacement after Linux ARM background-input regression`
-- Next gate: `validate blocking-slot retirement before result publication; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
+- Active phase: `M05 ACP replacement after macOS recording startup failure`
+- Next gate: `validate fixture-local recording executable staging; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -364,14 +364,12 @@ Do not deliver codec, session or interaction fragments separately.
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) compose
 native session ownership, request dispatch, bounded projections and CLI stdio.
-Candidate `91a94859057d6f965f57bf2a8976261afc6da290` includes deterministic
-PTY EOF fixtures following the earlier main failure. Its complete replacement
-Linux/macOS local gate and three fresh whole-feature R7 reviews passed.
-Exact feature CI and Benchmark passed with both unexpired artifacts verified.
-Main was fast-forwarded to the same candidate. Its Benchmark passed with both
-artifacts verified, but Linux ARM CI rejected an EOF-only background write with
-`Busy`. The replacement retires operation capacity before publishing its result;
-validate the replacement before counting delivery. Failure, remediation,
+The blocking-slot replacement passed Linux's full gate and macOS focused
+regressions, but two macOS workspace MCP recording scenarios timed out at startup.
+Diagnostic stacks and unchanged-executable relocation isolate CoreFoundation's
+scan of Cargo's large dependency directory. Fixture-local executable staging
+retains real resolver behavior and existing deadlines. Validate the complete
+replacement before counting delivery. Failure, remediation,
 acceptance and independent review provenance belong in the
 [review history](reviews/m05-acp-cli-review-01.md).
 
