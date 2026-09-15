@@ -218,6 +218,37 @@ transfer that settlement owner without freeing the resident or admitting another
 turn. Manager-owner retirement cancels the original actual turn even after that
 transfer; a weak conversation binding cannot keep management authority alive.
 
+## Managed command mailbox
+
+The shared engine retains only a weak native mailbox requester and weak principal
+registry route. Constructing its request future is inert. First poll checks
+submission cancellation and claims the actual invocation exactly once through
+the registered principal/turn; public IDs cannot supply this admission.
+The outer manager polls one FIFO and owns each dequeued command, admitted lease,
+original context, cancellation token and reply. A queue entry is not durable
+acceptance or authorization to execute after its original admission retires.
+The manager retains a Busy/Limit head job without bypassing it; only confirmed
+journal acceptance may schedule effects.
+
+One aggregate mailbox budget covers queued commands, dequeued in-flight jobs and
+completed replies with slow observers. Defaults are 64 requests and 256 MiB of
+reserved capacity; configurable bounds allow 1–256 requests and 4 MiB–1 GiB.
+Each request reserves 4 MiB before publication, covering the admitted JSON,
+typed command, bounded response, normalization scratch and bookkeeping without
+eagerly allocating that amount. Completion validates the full core result bounds
+without truncation and normalizes caller-controlled spare allocation capacity.
+Command and response custody overlap under the same reservation. Charges survive
+observer loss until actual mailbox-owned payloads drop; on successful reply poll,
+ownership transfers to core's separately bounded result codec and archive path.
+
+Dropping a reply or cancelling its submission token does not discard an admitted
+mutation job or imply durable child cancellation. The manager decides whether a
+read-only request may be withdrawn. Closing/dropping the mailbox rejects queued
+and outstanding observers, but already dequeued mutations retain manager-owned
+settlement custody and resource charges. Requesters, budget progress handles and
+reply registries use weak reverse links, with no queue/engine ownership cycle.
+Callbacks and payload destruction run outside queue, reply and budget locks.
+
 ## Durable journal
 
 The native managed control journal is separate from `FileSessionStore`, which
