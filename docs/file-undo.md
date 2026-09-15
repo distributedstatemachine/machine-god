@@ -1,5 +1,51 @@
 # Native process-local file undo
 
+## Principal isolation and shared capacity
+
+`NativeUndoBudget` is an inert aggregate allocation shared by independent
+`FileUndoTracker::for_principal` histories. Each tracker permanently binds its
+admitted native owner and nonzero generation; `check_principal` rejects a foreign
+owner or stale generation. Those labels are not execution authority: the native
+host must select the tracker from its actual admitted turn, never from current
+UI selection. Standalone `FileUndoTracker::new` uses this same implementation
+with a private default budget, not a second tracking path.
+
+Validated `NativeUndoLimits` bound combined retained and in-flight entries,
+bytes, and descriptors. Defaults allow 101 entries, 101 times (10 MiB plus
+128 KiB) of byte reservations, and 3,232 descriptor reservations across the whole
+domain, not per child. This preserves one principal's 100 maximum preimages
+plus forward-operation headroom. Constructors reserve no file descriptors or
+preimages. `usage` is a momentary accounting observation, not an admission lease.
+
+Before locating paths, opening snapshot descriptors or reading a preimage, a
+forward transaction reserves one entry, 10 MiB plus 128 KiB of allocation
+capacity, and 32 descriptors. Inverse operations and explicit replacement-copy
+source inspection separately reserve 64 KiB and 16 descriptors of scratch
+headroom before their effects. Retained charges include actual preimage vector
+capacity, path labels, snapshot storage and retained descriptors. Allocation
+growth is explicitly capped at the existing 10 MiB preimage limit. Ordinary
+unavailable/oversized-preimage markers retain their existing forward behavior;
+aggregate budget exhaustion instead returns `ResourceLimit` before capture or
+dispatch (tool error code `file_undo_resource_limit`). It never silently disables
+accounting or evicts a sibling's history.
+
+The nonclone reservation stays with the synchronous transaction on its actual
+worker, not a caller response wrapper. Commit transfers retained charges to the
+original tracker's entry; transaction scratch is released afterward. Each entry
+drops its descriptors/preimages before releasing its reservation. Ambiguous
+forward publication retains a separately fenced, unconfirmed entry and its
+charges until explicit clear; it is not reported as a committed inverse. An
+ambiguous inverse retains its original entry. Failed or cancelled pre-dispatch
+transactions release their temporary resources and reservations. Tracker drop
+and owner-local clear discharge only that tracker's retained allocations.
+
+The aggregate accounting mutex is held only while updating counters, never
+across descriptor operations, capture, mutation, callbacks or asynchronous
+waits. Existing per-tracker exclusion remains independent: one busy principal
+does not lock another principal's history. Clear, capacity eviction and undo
+affect only the selected owner; the manager still owns retirement, execution
+witness validation and overall principal residency bounds.
+
 ## Workspace endpoint ownership
 
 Each retained undo location owns its own root descriptor, canonical private

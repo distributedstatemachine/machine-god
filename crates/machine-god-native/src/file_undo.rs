@@ -7,7 +7,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use machine_god_core::BackgroundOutputOwner;
 use machine_god_core::CancellationToken;
+mod budget;
+pub use budget::{NativeUndoBudget, NativeUndoLimits, NativeUndoUsage};
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod budget_tests;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_core::{ToolError, ToolErrorKind};
 
@@ -940,6 +945,14 @@ impl std::error::Error for FileUndoError {}
 impl FileUndoError {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn tool(self) -> ToolError {
+        if self == Self::ResourceLimit {
+            return ToolError::new(
+                ToolErrorKind::Execution,
+                "file_undo_resource_limit",
+                "file undo resource capacity exhausted",
+                false,
+            );
+        }
         let kind = if self == Self::Cancelled {
             ToolErrorKind::Cancelled
         } else {
@@ -968,13 +981,27 @@ pub enum FileUndoOutcome {
 
 /// Optional shared tracker. Construction is inert; injection grants bounded
 /// preimage reads and undo authority in addition to ordinary tool authority.
-#[derive(Default)]
 pub struct FileUndoTracker {
+    budget: Arc<NativeUndoBudget>,
+    principal: Option<(BackgroundOutputOwner, u64)>,
     clear_reserved: AtomicBool,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     state: Mutex<native::State>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     state: Mutex<()>,
+}
+
+impl Default for FileUndoTracker {
+    fn default() -> Self {
+        Self {
+            budget: Arc::new(
+                NativeUndoBudget::new(NativeUndoLimits::default()).expect("valid undo limits"),
+            ),
+            principal: None,
+            clear_reserved: AtomicBool::new(false),
+            state: Mutex::default(),
+        }
+    }
 }
 
 impl fmt::Debug for FileUndoTracker {
@@ -1036,6 +1063,51 @@ impl Drop for FileUndoClearReservation {
 }
 
 impl FileUndoTracker {
+    /// Observes this history's shared domain, including sibling reservations.
+    #[must_use]
+    pub fn budget_usage(&self) -> NativeUndoUsage {
+        self.budget.usage()
+    }
+
+    /// Binds an independent history to an admitted principal and shared budget.
+    /// Identity labels do not themselves grant tool or workspace authority.
+    /// # Errors
+    /// Rejects an invalid (zero) principal generation.
+    pub fn for_principal(
+        budget: Arc<NativeUndoBudget>,
+        owner: BackgroundOutputOwner,
+        generation: u64,
+    ) -> Result<Self, FileUndoError> {
+        if generation == 0 {
+            return Err(FileUndoError::Rejected);
+        }
+        Ok(Self {
+            budget,
+            principal: Some((owner, generation)),
+            clear_reserved: AtomicBool::new(false),
+            state: Mutex::default(),
+        })
+    }
+
+    /// Checks a previously admitted exact principal, never the current UI route.
+    /// # Errors
+    /// Rejects standalone trackers, other principals and stale generations.
+    pub fn check_principal(
+        &self,
+        owner: &BackgroundOutputOwner,
+        generation: u64,
+    ) -> Result<(), FileUndoError> {
+        if self
+            .principal
+            .as_ref()
+            .is_some_and(|(selected, epoch)| selected == owner && *epoch == generation)
+        {
+            Ok(())
+        } else {
+            Err(FileUndoError::Rejected)
+        }
+    }
+
     /// Reserves exclusive clear admission without forgetting history or touching
     /// files. The returned owned, nonclone reservation is `Send`.
     ///
@@ -1204,6 +1276,9 @@ mod native {
         entries: VecDeque<Entry>,
         bytes: usize,
         pub(super) ambiguous: bool,
+        // Ambiguous publication is not a committed history entry. Preserve its
+        // resource custody independently until explicit owner-local clear.
+        unconfirmed: Option<Entry>,
     }
     impl State {
         pub(super) fn latest_unavailable_reason(&self) -> Option<FileUndoUnavailableReason> {
@@ -1229,6 +1304,8 @@ mod native {
         after: Vec<Snapshot>,
         rename: bool,
         blocked: bool,
+        // Last: all descriptors and preimages drop before aggregate refund.
+        reservation: Option<super::budget::Reservation>,
     }
     struct Location {
         root: OwnedFd,
@@ -1269,11 +1346,57 @@ mod native {
         fn bytes(&self) -> usize {
             self.before.iter().map(Snapshot::bytes).sum()
         }
+        fn charge(&self) -> super::NativeUndoUsage {
+            let bytes = self
+                .before
+                .iter()
+                .chain(&self.after)
+                .map(|snapshot| match snapshot {
+                    Snapshot::File { bytes, .. } => bytes.capacity(),
+                    _ => 0,
+                })
+                .sum::<usize>()
+                + self
+                    .paths
+                    .iter()
+                    .map(|path| {
+                        path.path.capacity() + path.logical_path.capacity() + path.name.capacity()
+                    })
+                    .sum::<usize>()
+                + self.paths.capacity() * std::mem::size_of::<Location>()
+                + (self.before.capacity() + self.after.capacity())
+                    * std::mem::size_of::<Snapshot>()
+                // Covers the entry and its share of geometric history storage.
+                + 4 * std::mem::size_of::<Entry>();
+            super::NativeUndoUsage {
+                entries: 1,
+                bytes,
+                descriptors: self.paths.len() * 2
+                    + self
+                        .before
+                        .iter()
+                        .chain(&self.after)
+                        .filter(|snapshot| snapshot.fd().is_some())
+                        .count(),
+            }
+        }
     }
 
     pub(crate) struct Transaction<'a> {
         state: MutexGuard<'a, State>,
         entry: Option<Entry>,
+        reservation: super::budget::Reservation,
+    }
+
+    impl Drop for Transaction<'_> {
+        fn drop(&mut self) {
+            // Failed admission must not leave an uncharged empty history buffer.
+            // Entry fields precede the reservation and drop while it is held.
+            drop(self.entry.take());
+            if self.state.entries.is_empty() {
+                self.state.entries = VecDeque::new();
+            }
+        }
     }
 
     impl FileUndoTracker {
@@ -1363,10 +1486,8 @@ mod native {
             if state.ambiguous {
                 return Err(FileUndoError::Ambiguous);
             }
-            state
-                .entries
-                .try_reserve(1)
-                .map_err(|_| FileUndoError::ResourceLimit)?;
+            // Reserve before locate opens roots/parents or capture allocates.
+            let reservation = self.budget.reserve(true)?;
             let (mut paths, rename) = match operation {
                 Operation::Replace(path) | Operation::Delete(path) => {
                     (vec![locate(root, path)?], false)
@@ -1429,6 +1550,10 @@ mod native {
             {
                 return Err(FileUndoError::Rejected);
             }
+            state
+                .entries
+                .try_reserve(1)
+                .map_err(|_| FileUndoError::ResourceLimit)?;
             Ok(Transaction {
                 state,
                 entry: Some(Entry {
@@ -1437,7 +1562,9 @@ mod native {
                     after: Vec::new(),
                     rename,
                     blocked: false,
+                    reservation: None,
                 }),
+                reservation,
             })
         }
     }
@@ -1445,6 +1572,11 @@ mod native {
     impl Transaction<'_> {
         pub(crate) fn uncertain(&mut self) {
             self.state.ambiguous = true;
+            if let Some(mut entry) = self.entry.take() {
+                entry.blocked = true;
+                entry.reservation = Some(self.reservation.split(entry.charge()));
+                self.state.unconfirmed = Some(entry);
+            }
         }
         pub(crate) fn revalidate(
             &self,
@@ -1505,7 +1637,8 @@ mod native {
             self.push(entry);
         }
 
-        fn push(&mut self, entry: Entry) {
+        fn push(&mut self, mut entry: Entry) {
+            entry.reservation = Some(self.reservation.split(entry.charge()));
             let bytes = entry.bytes();
             while self.state.entries.len() >= MAX_FILE_UNDO_ENTRIES {
                 if let Some(old) = self.state.entries.pop_front() {
@@ -1701,10 +1834,18 @@ mod native {
                         return Err(FileUndoError::ResourceLimit);
                     }
                     hash.update(&buffer[..n]);
-                    if retain {
+                    if retain && bytes.len() + n > bytes.capacity() {
+                        let capacity = bytes
+                            .capacity()
+                            .max(8192)
+                            .saturating_mul(2)
+                            .max(bytes.len() + n)
+                            .min(MAX_FILE_UNDO_PREIMAGE_BYTES);
                         bytes
-                            .try_reserve(n)
+                            .try_reserve_exact(capacity - bytes.len())
                             .map_err(|_| FileUndoError::ResourceLimit)?;
+                    }
+                    if retain {
                         bytes.extend_from_slice(&buffer[..n]);
                     }
                 }
@@ -2137,6 +2278,9 @@ mod native {
         let Some(entry) = state.entries.back_mut() else {
             return Ok(FileUndoOutcome::Empty);
         };
+        // Separate scratch ticket precedes every inverse open/read. The entry
+        // retains its original reservation on failure or ambiguous publication.
+        let _scratch = tracker.budget.reserve(false)?;
         if entry.blocked {
             return Err(FileUndoError::Ambiguous);
         }
@@ -2268,6 +2412,9 @@ mod native {
         };
         let removed = state.entries.pop_back().ok_or(FileUndoError::Ambiguous)?;
         state.bytes -= removed.bytes();
+        // Keep the charged per-entry history-storage allowance valid as undo
+        // reduces the population; zero entries retain no allocation.
+        state.entries.shrink_to_fit();
         // Undo itself changes inode identity. Rebase exact older predecessor
         // observations on the same paths, whose pinned objects and bytes match.
         for previous in &mut state.entries {
@@ -2401,6 +2548,8 @@ mod native {
         if source == destination {
             return Err(FileUndoError::Rejected);
         }
+        check(cancellation)?;
+        let _source_scratch = tracker.budget.reserve(false)?;
         let source = locate(root.as_fd(), source)?;
         let source_snapshot = capture(&source, false, cancellation)?;
         if !matches!(source_snapshot, Snapshot::File { .. }) {
@@ -2719,6 +2868,11 @@ mod native {
             let location = locate(root.as_fd(), "a").unwrap();
             let snapshot = capture(&location, true, &CancellationToken::new()).unwrap();
             assert_eq!(snapshot.bytes(), MAX_FILE_UNDO_PREIMAGE_BYTES);
+            assert!(matches!(
+                &snapshot,
+                Snapshot::File { bytes, .. }
+                    if bytes.capacity() == MAX_FILE_UNDO_PREIMAGE_BYTES
+            ));
             drop(snapshot);
             for name in ["a", "b"] {
                 let file = fs::File::create(temp.0.join(name)).unwrap();
