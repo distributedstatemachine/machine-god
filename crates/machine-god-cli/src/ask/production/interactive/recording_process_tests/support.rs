@@ -43,14 +43,14 @@ impl Fixture {
             fs::create_dir(path).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        // CoreFoundation discovers the executable's bundle while production
-        // MCP captures system DNS on macOS. Cargo's deps directory can contain
-        // an unbounded build history; never make that scan part of this fixture.
-        // Keep the exact test executable, not a symlink back into Cargo's tree.
-        let bin = root.join("bin");
-        fs::create_dir(&bin).unwrap();
-        fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).unwrap();
-        let executable = bin.join("recording-process-child");
+        #[cfg(target_os = "macos")]
+        let executable = root.join("bin/recording-process-child");
+        // Relocation is a macOS-only workaround. On Linux a cross-filesystem
+        // copy opens a new executable for writing; concurrent spawned children
+        // can inherit that descriptor until exec and cause ETXTBSY even after
+        // fs::copy returns. Reuse the already-running executable instead.
+        #[cfg(not(target_os = "macos"))]
+        let executable = std::env::current_exe().unwrap();
         let fixture = Self {
             root,
             workspace,
@@ -58,13 +58,23 @@ impl Fixture {
             configuration,
             executable,
         };
-        // Install cleanup ownership before staging can fail.
-        stage_executable(
-            &std::env::current_exe().unwrap(),
-            &fixture.executable,
-            |source, destination| fs::hard_link(source, destination),
-        )
-        .unwrap();
+        #[cfg(target_os = "macos")]
+        {
+            // CoreFoundation discovers the executable's bundle while production
+            // MCP captures system DNS. Cargo's deps directory can contain an
+            // unbounded build history; never make that scan part of this fixture.
+            // Keep the exact executable, not a symlink back into Cargo's tree.
+            // Install cleanup ownership before staging can fail.
+            let bin = fixture.executable.parent().unwrap();
+            fs::create_dir(bin).unwrap();
+            fs::set_permissions(bin, fs::Permissions::from_mode(0o700)).unwrap();
+            stage_executable(
+                &std::env::current_exe().unwrap(),
+                &fixture.executable,
+                |source, destination| fs::hard_link(source, destination),
+            )
+            .unwrap();
+        }
         fixture
     }
 
@@ -109,6 +119,7 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn stage_executable(
     source: &Path,
     destination: &Path,
@@ -411,6 +422,32 @@ pub(super) fn bounded_file(path: &Path) -> Vec<u8> {
 }
 
 #[test]
+#[cfg(not(target_os = "macos"))]
+fn recording_child_reuses_current_executable_without_staging() {
+    let fixture = Fixture::new();
+    let executable = std::env::current_exe().unwrap();
+    assert_eq!(fixture.executable, executable);
+    assert_eq!(fixture.command().get_program(), executable.as_os_str());
+    let original = fs::metadata(&executable).unwrap();
+    let selected = fs::metadata(fixture.command().get_program()).unwrap();
+    assert_eq!(
+        (selected.dev(), selected.ino()),
+        (original.dev(), original.ino())
+    );
+    assert!(!executable.starts_with(&fixture.root));
+    let mut entries = fs::read_dir(&fixture.root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    entries.sort();
+    assert_eq!(
+        entries,
+        ["configuration", "state", "workspace"].map(std::ffi::OsString::from)
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
 fn recording_child_uses_only_the_private_staged_executable_directory() {
     let fixture = Fixture::new();
     assert_eq!(
@@ -431,6 +468,7 @@ fn recording_child_uses_only_the_private_staged_executable_directory() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn executable_staging_links_exact_identity_and_copies_only_across_filesystems() {
     let fixture = Fixture::new();
     let source = fixture.path("source");
@@ -469,6 +507,7 @@ fn executable_staging_links_exact_identity_and_copies_only_across_filesystems() 
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn executable_staging_rejects_symlinks_nonregular_and_nonexecutable_sources() {
     let fixture = Fixture::new();
     let source = fixture.path("source");

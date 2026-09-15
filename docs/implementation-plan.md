@@ -35,8 +35,8 @@ functionality merely because it shares an implementation with an older mode.
 - Main CI: `34770898541` (`GREEN`)
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
-- Active phase: `M05 ACP replacement after macOS recording startup failure`
-- Next gate: `validate fixture-local recording executable staging; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
+- Active phase: `M05 ACP replacement after recording executable-busy failure`
+- Next gate: `validate macOS-only recording staging and Linux no-copy launch; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -367,8 +367,10 @@ native session ownership, request dispatch, bounded projections and CLI stdio.
 The blocking-slot replacement passed Linux's full gate and macOS focused
 regressions, but two macOS workspace MCP recording scenarios timed out at startup.
 Diagnostic stacks and unchanged-executable relocation isolate CoreFoundation's
-scan of Cargo's large dependency directory. Fixture-local executable staging
-retains real resolver behavior and existing deadlines. Validate the complete
+scan of Cargo's large dependency directory. The first fixture-local staging
+candidate then hit Linux child-spawn `ETXTBSY`; staging is now macOS-only,
+while Linux reuses its running executable without a writable copy.
+Preserve real resolver behavior and existing deadlines. Validate the complete
 replacement before counting delivery. Failure, remediation,
 acceptance and independent review provenance belong in the
 [review history](reviews/m05-acp-cli-review-01.md).

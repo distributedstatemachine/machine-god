@@ -762,3 +762,40 @@ sources. Production resolver capture, release helper selection, test deadlines
 and original assertions are unchanged. Component Rust 1.94.1 formatting and
 diff checks passed; source builds and replacement runtime acceptance remained
 pending when this component was integrated.
+
+## Candidate 45adb8d5: Linux executable-busy rejection
+
+Candidate `45adb8d5cd66ca329fe930640e7bbae1d1ccb20c` integrates recording-child
+staging and its diagnostic history. Both platforms passed fast preflights,
+policy checks and complete build stages. Linux focused recording tests passed
+19 with one existing ignore, including all three new staging regressions;
+all 52 focused background-supervisor tests also passed.
+
+Linux's default-concurrency workspace CLI suite then failed
+`ask::production::interactive::recording_process_tests::skills::skills_add_and_install_require_explicit_replacement_and_preserve_source`.
+`OwnedChild::spawn` at recording support line 151 received OS error 26,
+`ExecutableFileBusy` (`Text file busy`). The suite reported 551 passed, one
+failed and six existing ignores in 3.47 seconds. The local gate stopped before
+remaining Linux workspace/Python checks and before macOS runtime validation.
+No review or remote acceptance followed. Investigate executable publication and
+concurrent spawning rather than weakening deadlines or masking the error with
+a retry.
+
+The new Linux staging path crossed filesystems from the cached executable to
+the fixture directory and therefore opened a copied executable for writing.
+Closing that descriptor in the parent does not revoke a copy inherited by a
+concurrently spawned child before exec. A bounded Linux probe with an exactly
+owned, gated child reproduced `ETXTBSY` after the parent writer closed; the
+original executable succeeded under the same custody, and the copied executable
+succeeded after the child joined. No sleeps or retries were used. This proves
+the descriptor-custody mechanism, not the identity of the historical inheriting
+child in the failed suite.
+
+Component `7a422b7029ba43b7e0681e964d03b95c56ff8f1e` limits executable staging
+to macOS, where CoreFoundation directory isolation is needed. Non-macOS fixtures
+again launch their already-running executable without creating a writable copy.
+An explicit non-macOS regression checks the command path, inode identity and
+absence of staging artifacts. The three staging regressions remain on macOS;
+all original recording scenarios, deadlines and assertions remain unchanged.
+Component Rust 1.94.1 formatting and diff checks passed. No source build or
+replacement runtime acceptance is asserted by this component record.
