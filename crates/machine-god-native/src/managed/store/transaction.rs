@@ -187,7 +187,7 @@ pub(super) fn create(
     } else {
         Vec::new()
     };
-    publish(shared, reservation, None, &None, head, records)
+    publish(shared, reservation, None, None, head, records)
 }
 pub(super) fn mutate(
     shared: &Arc<Shared>,
@@ -212,7 +212,7 @@ pub(super) fn mutate(
         shared,
         reservation,
         Some(expected),
-        &Some(source),
+        Some(&source),
         head,
         records,
     )
@@ -222,7 +222,7 @@ fn publish(
     shared: &Arc<Shared>,
     mut reservation: Reservation,
     expected: Option<[u8; 32]>,
-    source: &Option<Arc<fs::Source>>,
+    source: Option<&Arc<fs::Source>>,
     mut head: JournalHead,
     mut records: Vec<JournalRecord>,
 ) -> Result<JournalPublication, Error> {
@@ -278,7 +278,7 @@ fn publish(
         receipt: receipt.clone(),
         id: head.id.clone(),
         expected,
-        source: source.clone(),
+        source: source.cloned(),
         candidate: candidate.clone(),
     });
     reservation.retained = true;
@@ -304,7 +304,7 @@ fn publish(
             &fs::head_name(&head.id),
             &candidate,
             false,
-            source.as_deref(),
+            source.map(Arc::as_ref),
         )?;
         reservation.refresh()
     })();
