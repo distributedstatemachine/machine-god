@@ -1,6 +1,29 @@
 use super::*;
 use std::sync::Mutex;
 
+#[test]
+fn launch_future_rejects_closed_original_run_before_native_effects() {
+    let host = NativeOwnedWorkerScope::new();
+    let original = host.begin_run().unwrap();
+    let later = host.begin_run().unwrap();
+    let future = original.with_poll(|| {
+        observed_launch().connect(
+            host.clone(),
+            Instant::now() + Duration::from_secs(5),
+            CancellationToken::new(),
+            Box::new(()),
+        )
+    });
+    original.close();
+    assert!(matches!(
+        later.with_poll(|| futures_executor::block_on(future)),
+        Err(McpStdioError::Capacity)
+    ));
+    later.close();
+    host.close();
+    assert!(host.completion().is_complete());
+}
+
 fn observed_launch() -> McpStdioLaunch {
     McpStdioLaunch::new(
         PathBuf::from("/unavailable-explicit-helper"),

@@ -13,6 +13,18 @@ pub(crate) struct Write {
 }
 
 impl Pipe {
+    pub(crate) fn register_handoff_owner(&self) {
+        self.shared.handoff.register_owner();
+    }
+
+    pub(crate) fn register_handoff_child(&self) {
+        self.shared.handoff.register_child();
+    }
+
+    pub(crate) fn promote_service(&self) -> bool {
+        self.shared.handoff.promote()
+    }
+
     pub(crate) fn new(connection: &McpStdioConnection) -> Self {
         Self {
             shared: connection.shared.clone(),

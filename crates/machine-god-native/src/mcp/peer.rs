@@ -108,6 +108,10 @@ pub(crate) struct McpStdioPeerReadiness {
     timer: Arc<dyn McpPeerTimer>,
 }
 impl McpStdioPeerReadiness {
+    pub(crate) fn retain_service(&self) {
+        self.connection.retain_service();
+    }
+
     pub(crate) fn is_ready(&self) -> bool {
         !self.cancellation.is_cancelled()
             && !self.lifetime.is_expired(self.timer.now())
@@ -123,6 +127,14 @@ impl fmt::Debug for McpStdioPeer {
     }
 }
 impl McpStdioPeer {
+    #[cfg(test)]
+    pub(crate) fn inert_for_test(
+        connection: McpStdioConnection,
+        timer: Arc<dyn McpPeerTimer>,
+    ) -> Self {
+        startup::unnegotiated(connection, timer, CancellationToken::new())
+    }
+
     pub(crate) fn readiness(&self) -> McpStdioPeerReadiness {
         McpStdioPeerReadiness {
             connection: self.connection.readiness(),

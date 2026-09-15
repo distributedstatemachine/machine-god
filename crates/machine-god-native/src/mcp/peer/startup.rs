@@ -192,7 +192,7 @@ async fn connect_inner(
     }
 }
 
-fn unnegotiated(
+pub(super) fn unnegotiated(
     connection: crate::mcp::stdio::McpStdioConnection,
     timer: Arc<dyn McpPeerTimer>,
     cancellation: CancellationToken,

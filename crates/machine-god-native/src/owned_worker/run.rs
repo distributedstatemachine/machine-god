@@ -312,6 +312,15 @@ pub(crate) fn promote_current_worker_to_service() {
 /// Losing a startup receipt or dropping this token never promotes anything.
 #[derive(Debug)]
 pub(crate) struct NativeOwnedWorkerServiceHandoff(Weak<RunEnrollment>);
+#[cfg(target_os = "macos")]
+impl NativeOwnedWorkerCleanup {
+    /// Freezes only this resource's original enrollment; later replacement of
+    /// a containing service cannot retarget the weak handoff receipt.
+    pub(crate) fn service_handoff(&self) -> NativeOwnedWorkerServiceHandoff {
+        NativeOwnedWorkerServiceHandoff(Arc::downgrade(&self.ticket.1))
+    }
+}
+
 impl NativeOwnedWorkerServiceHandoff {
     pub(crate) fn promote(self) {
         if let Some(enrollment) = self.0.upgrade() {
@@ -334,6 +343,19 @@ struct FrozenTicketWitness {
     run: Option<Weak<ScopeTicket>>,
 }
 impl NativeOwnedWorkerAttribution {
+    /// Runs first-poll admission under the exact construction context, including
+    /// an explicitly unbound caller. The admitted cleanup keeps journal custody
+    /// while the closure transfers effects to their actual owned workers.
+    pub(crate) fn with_admission<T>(
+        &self,
+        operation: impl FnOnce() -> T,
+    ) -> Result<T, NativeOwnedWorkerSpawnError> {
+        match self.admit()? {
+            Some(cleanup) => Ok(cleanup.run_on_cleanup_worker(operation)),
+            None => Ok(RunAttribution::with(None, operation)),
+        }
+    }
+
     pub(crate) fn current() -> Self {
         let run = RunAttribution::current();
         // An embedded driver may explicitly poll run A on a worker belonging

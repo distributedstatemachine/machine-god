@@ -3,6 +3,7 @@
 use super::{ProcessInventoryHelper, failure};
 use crate::NativeOwnedWorkerScopeIdentity;
 use crate::background_process::InventoryChild;
+use crate::owned_worker::NativeOwnedWorkerServiceHandoff;
 use crate::process_inventory_protocol as wire;
 use crate::terminal_helper::{
     TerminalHelperError, TerminalHelperErrorKind, check_deadline, encode_helper_deadline,
@@ -14,6 +15,10 @@ use std::process::{ChildStdin, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+#[path = "process_inventory_handoff_tests.rs"]
+mod handoff_tests;
 
 type Result<T> = std::result::Result<T, TerminalHelperError>;
 
@@ -59,7 +64,44 @@ impl std::fmt::Debug for ServiceRegistration {
 }
 
 #[derive(Clone)]
-pub(crate) struct InventoryLease(Arc<Service>);
+pub(crate) struct InventoryLease {
+    service: Arc<Service>,
+    handoff: Arc<LeaseHandoff>,
+}
+
+struct LeaseHandoff {
+    original: Mutex<Option<NativeOwnedWorkerServiceHandoff>>,
+    retained: AtomicBool,
+}
+impl LeaseHandoff {
+    fn new(original: Option<NativeOwnedWorkerServiceHandoff>) -> Self {
+        Self {
+            original: Mutex::new(original),
+            retained: AtomicBool::new(false),
+        }
+    }
+
+    fn promote(&self) {
+        self.retained.store(true, Ordering::Release);
+        let original = self
+            .original
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(original) = original {
+            original.promote();
+        }
+    }
+
+    fn query_completed(&self, succeeded: bool, child: Option<NativeOwnedWorkerServiceHandoff>) {
+        if succeeded
+            && self.retained.load(Ordering::Acquire)
+            && let Some(child) = child
+        {
+            child.promote();
+        }
+    }
+}
 
 impl std::fmt::Debug for InventoryLease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -135,14 +177,18 @@ impl ServiceRegistration {
             service
         };
         drop(slot);
-        let lease = InventoryLease(service);
-        {
-            let mut state = lock_until(&lease.0.state, deadline, cancellation, stop)?;
-            lease
-                .0
-                .ensure_ready(&mut state, deadline, cancellation, stop)?;
-        }
-        Ok(lease)
+        let handoff = {
+            let mut state = lock_until(&service.state, deadline, cancellation, stop)?;
+            service.ensure_ready(&mut state, deadline, cancellation, stop)?;
+            state
+                .ready
+                .as_ref()
+                .and_then(|ready| ready.child.service_handoff())
+        };
+        Ok(InventoryLease {
+            service,
+            handoff: Arc::new(LeaseHandoff::new(handoff)),
+        })
     }
 }
 
@@ -275,9 +321,19 @@ fn read_startup_ready(
 }
 
 impl InventoryLease {
+    pub(crate) fn promote_to_service(&self) {
+        if self
+            .service
+            .scope
+            .matches(&NativeOwnedWorkerScopeIdentity::current())
+        {
+            self.handoff.promote();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn set_next_sequence_for_test(&self, sequence: u64) {
-        self.0.state.lock().unwrap().next_sequence = sequence;
+        self.service.state.lock().unwrap().next_sequence = sequence;
     }
     pub(crate) fn query(&self, deadline: Instant) -> Result<Vec<u8>> {
         #[cfg(test)]
@@ -298,7 +354,7 @@ impl InventoryLease {
             );
         }
         if !self
-            .0
+            .service
             .scope
             .matches(&NativeOwnedWorkerScopeIdentity::current())
         {
@@ -311,7 +367,7 @@ impl InventoryLease {
         let mut state = query_stage!(
             (query_started, deadline),
             "lock",
-            lock_until(&self.0.state, deadline, &cancellation, &[])
+            lock_until(&self.service.state, deadline, &cancellation, &[])
         )?;
         // A previous failed request may restart here, under this request's own
         // original deadline, only after the previous exact child has reaped.
@@ -319,13 +375,19 @@ impl InventoryLease {
         let result = query_stage!(
             (query_started, deadline),
             "ensure_ready",
-            self.0
+            self.service
                 .ensure_ready(&mut state, deadline, &cancellation, &[])
         )
         .and_then(|()| query_ready(&mut state, deadline, &cancellation));
+        let handoff = state
+            .ready
+            .as_ref()
+            .and_then(|ready| ready.child.service_handoff());
         if result.is_err() {
             state.ready.take();
         }
+        drop(state);
+        self.handoff.query_completed(result.is_ok(), handoff);
         result
     }
 }

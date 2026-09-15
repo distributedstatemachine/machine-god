@@ -221,6 +221,7 @@ impl McpStdioLaunch {
         keepalive: Box<dyn Send>,
         observer: Option<Arc<dyn Fn(crate::NativeOwnedWorkerCompletion) -> bool + Send + Sync>>,
     ) -> BoxFuture<'static, Result<McpStdioConnection>> {
+        let attribution = crate::owned_worker::NativeOwnedWorkerAttribution::current();
         Box::pin(async move {
             check_start(deadline, &cancellation)?;
             let maximum = if observer.is_some() {
@@ -244,48 +245,62 @@ impl McpStdioLaunch {
             check_start(deadline, &cancellation)?;
             let worker_shared = shared.clone();
             let worker_startup = startup.clone();
-            host.spawn(move || {
-                let owner = OwnerWait {
-                    scope: child_scope,
-                    shared: worker_shared.clone(),
-                    startup: worker_startup.clone(),
-                };
-                let admission = check_start(deadline, &cancellation)
-                    .and_then(|()| worker_shared.check())
-                    .and_then(|()| {
-                        owner
-                            .scope
-                            .spawn(move || {
-                                let _finish = Finish {
-                                    shared: worker_shared.clone(),
-                                    startup: worker_startup.clone(),
-                                };
-                                match self.launch(
-                                    deadline,
-                                    &cancellation,
-                                    &worker_shared,
-                                    keepalive,
-                                ) {
-                                    Ok(process) => {
-                                        worker_startup.complete(Ok(()));
-                                        worker::run(process, &worker_shared, &cancellation);
-                                    }
-                                    Err(error) => {
-                                        worker_shared.finish(error);
-                                        worker_startup.complete(Err(error));
-                                    }
-                                }
-                            })
-                            .map_err(|_| McpStdioError::Capacity)
-                    });
-                if let Err(error) = admission {
-                    owner.shared.finish(error);
-                    owner.startup.complete(Err(error));
-                }
-                // OwnerWait keeps this host worker enrolled until all nested
-                // child-scope cleanup settles, even when admission unwinds.
-            })
-            .map_err(|_| McpStdioError::Capacity)?;
+            let source_host = host.clone();
+            attribution
+                .with_admission(|| {
+                    host.spawn(move || {
+                        worker_shared.handoff.register_owner();
+                        let owner = OwnerWait {
+                            scope: child_scope,
+                            shared: worker_shared.clone(),
+                            startup: worker_startup.clone(),
+                        };
+                        let admission = check_start(deadline, &cancellation)
+                            .and_then(|()| worker_shared.check())
+                            .and_then(|()| {
+                                owner
+                                    .scope
+                                    .with_inherited_run_from(&source_host, || {
+                                        owner.scope.spawn(move || {
+                                            worker_shared.handoff.register_child();
+                                            let _finish = Finish {
+                                                shared: worker_shared.clone(),
+                                                startup: worker_startup.clone(),
+                                            };
+                                            match self.launch(
+                                                deadline,
+                                                &cancellation,
+                                                &worker_shared,
+                                                keepalive,
+                                            ) {
+                                                Ok(process) => {
+                                                    worker_startup.complete(Ok(()));
+                                                    worker::run(
+                                                        process,
+                                                        &worker_shared,
+                                                        &cancellation,
+                                                    );
+                                                }
+                                                Err(error) => {
+                                                    worker_shared.finish(error);
+                                                    worker_startup.complete(Err(error));
+                                                }
+                                            }
+                                        })
+                                    })
+                                    .map_err(|_| McpStdioError::Capacity)?
+                                    .map_err(|_| McpStdioError::Capacity)
+                            });
+                        if let Err(error) = admission {
+                            owner.shared.finish(error);
+                            owner.startup.complete(Err(error));
+                        }
+                        // OwnerWait keeps this host worker enrolled until all nested
+                        // child-scope cleanup settles, even when admission unwinds.
+                    })
+                })
+                .map_err(|_| McpStdioError::Capacity)?
+                .map_err(|_| McpStdioError::Capacity)?;
             unadmitted.0 = None;
             startup.wait().await?;
             // A server can send a final response and close immediately after

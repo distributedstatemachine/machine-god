@@ -6,6 +6,54 @@ use std::task::{Context, Waker};
 use std::time::Duration;
 
 #[test]
+fn captured_admission_restores_original_unbound_and_unwinding_contexts() {
+    let host = NativeOwnedWorkerScope::new();
+    let first = host.begin_run().unwrap();
+    let later = host.begin_run().unwrap();
+    let original = first.with_poll(NativeOwnedWorkerAttribution::current);
+    let unbound = NativeOwnedWorkerAttribution::current();
+    later.with_poll(|| {
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                original.with_admission(|| {
+                    assert!(
+                        RunAttribution::current()
+                            .unwrap()
+                            .matches(&first.scope.state)
+                    );
+                    panic!("admission unwind");
+                })
+            }))
+            .is_err()
+        );
+        assert!(
+            RunAttribution::current()
+                .unwrap()
+                .matches(&later.scope.state)
+        );
+        unbound
+            .with_admission(|| assert!(RunAttribution::current().is_none()))
+            .unwrap();
+        assert!(
+            RunAttribution::current()
+                .unwrap()
+                .matches(&later.scope.state)
+        );
+    });
+    first.close();
+    later.with_poll(|| {
+        assert!(
+            original
+                .with_admission(|| panic!("stale admission"))
+                .is_err()
+        );
+    });
+    later.close();
+    host.close();
+    host.completion().wait_on_worker().unwrap();
+}
+
+#[test]
 fn overlapping_runs_close_independently_and_reuse_resident_capacity() {
     let scope = NativeOwnedWorkerScope::new();
     let left = scope.begin_run().unwrap();

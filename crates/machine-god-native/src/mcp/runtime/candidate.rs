@@ -90,6 +90,16 @@ pub(super) struct Publication {
     pub retained_bytes: usize,
 }
 impl Publication {
+    pub(super) fn retain_services(&self) {
+        // Called only after successful retained publication, outside its lock.
+        // A concurrently retired candidate must never retarget its replacement.
+        if !self.retired.load(Ordering::Acquire) {
+            for server in &self.servers {
+                server.readiness.retain_service();
+            }
+        }
+    }
+
     pub fn check(&self) -> Result<()> {
         if self.retired.load(Ordering::Acquire) {
             Err(Error::Unavailable)

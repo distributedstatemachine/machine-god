@@ -1,6 +1,7 @@
 use super::*;
 
 mod idle;
+mod service_handoff;
 
 #[test]
 fn required_readiness_observes_only_selected_stdio_lifetime_and_connection() {

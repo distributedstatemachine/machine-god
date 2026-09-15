@@ -300,8 +300,23 @@ never its host ticket or another cleanup snapshot. Terminal processes cross this
 boundary after the final startup acknowledgement and successful artifact cleanup;
 background processes cross after successful retention activation immediately
 before transfer to the preadmitted retainer. The lazy terminal owner crosses after
-successful initialization, before its long-lived loop. Healthy retained processes
-therefore do not block a child's next FIFO item. Failed initialization, startup,
+successful initialization, before its long-lived loop. MCP stdio crosses only
+after the exact native executable catalog publication,
+not raw process launch, protocol initialization or private candidate preparation.
+The original owner/child worker enrollments and process-reap cleanup transfer
+together on that child's I/O worker; the existing bounded poll loop observes the
+success receipt without another worker. Rejected, stale, abandoned or failed
+publication leaves startup cleanup attributed to its original run. Launch futures
+capture weak construction-time attribution, including an unbound caller, and
+cannot adopt a later polling run.
+On macOS, handoff includes the exact inventory child prepared for that process,
+without changing the shared inventory's host-scope identity or dropping its reap
+custody. A delayed receipt cannot promote a replacement inventory child. Once a
+lease is retained, a successful later query can transfer the exact child selected
+for that query; failed queries keep their original run cleanup. These transfers
+and completion callbacks occur outside inventory locks.
+Healthy retained processes therefore do not block a child's next FIFO item.
+Failed initialization, startup,
 acknowledgement or cleanup keeps the original run obligation. Reusable pool
 threads remain service-lifetime resources; their individual operations settle
 after execution and result publication, while dedicated worker tickets still

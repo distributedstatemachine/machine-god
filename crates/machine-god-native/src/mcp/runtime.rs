@@ -280,8 +280,11 @@ impl NativeMcpRuntime {
         if let Some(retirement) = retirement {
             state.retired_catalogs.push(retirement);
         }
-        state.active = Some(candidate);
+        state.active = Some(candidate.clone());
         drop(state);
+        // Only the successfully retained executable allocation may transfer
+        // startup cleanup to service lifetime. Never retarget a newer runtime.
+        candidate.retain_services();
         for retirement in deferred {
             retirement.complete();
         }

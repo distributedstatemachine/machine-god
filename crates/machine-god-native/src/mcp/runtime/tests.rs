@@ -24,6 +24,7 @@ mod publication;
 mod readiness;
 mod refresh;
 pub(super) mod script;
+mod service_handoff;
 use fixture::*;
 
 #[test]

@@ -23,6 +23,7 @@ use super::submission::{McpSubmission, McpSubmissionRuntime};
 use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
 
 mod control;
+mod handoff;
 mod launch;
 mod runtime_set;
 #[cfg(test)]
@@ -130,6 +131,12 @@ pub struct McpStdioConnection {
 /// Observation only; does not retain a connection or its worker ownership.
 pub(crate) struct McpStdioConnectionReadiness(std::sync::Weak<Shared>);
 impl McpStdioConnectionReadiness {
+    pub(crate) fn retain_service(&self) {
+        if let Some(shared) = self.0.upgrade() {
+            shared.handoff.publish();
+        }
+    }
+
     pub(crate) fn is_ready(&self) -> bool {
         self.0
             .upgrade()
@@ -357,6 +364,7 @@ impl McpStdioConnection {
 }
 
 struct Shared {
+    handoff: handoff::ServiceHandoff,
     state: Mutex<State>,
     runtimes: Mutex<Box<[Arc<McpSubmissionRuntime>]>>,
     reader: AtomicWaker,
@@ -367,6 +375,7 @@ struct Shared {
 impl Shared {
     fn new(limits: WireLimits, stop: CancellationToken) -> Self {
         Self {
+            handoff: handoff::ServiceHandoff::default(),
             state: Mutex::new(State {
                 queue: VecDeque::new(),
                 frames: VecDeque::new(),

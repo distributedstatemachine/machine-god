@@ -185,7 +185,8 @@ fn partial_cancel_closes_before_any_next_frame_and_preserves_evidence() {
             &output,
             &shared,
             &CancellationToken::new(),
-            &mut active
+            &mut active,
+            || {},
         ),
         McpStdioError::Cancelled
     );
@@ -232,6 +233,7 @@ fn bounded_framing_eof_and_overflow_fan_out_without_processes() {
             &shared,
             &CancellationToken::new(),
             &mut active,
+            || {},
         );
         assert_eq!(error, expected);
         shared.finish(error);
@@ -373,4 +375,30 @@ fn partial_buffer_on_cancellation_is_not_clean_eof_or_timeout_evidence() {
     let state = shared.state.lock().unwrap();
     assert_eq!(state.read_end, Some(McpStdioReadEnd::Unclassified));
     assert!(state.buffered_partial_frame);
+}
+#[test]
+fn process_handoff_occurs_only_after_publication_and_before_cancel_cleanup() {
+    for published in [false, true] {
+        let shared = Shared::new(WireLimits::default(), CancellationToken::new());
+        if published {
+            shared.handoff.publish();
+        }
+        shared.stop.cancel();
+        let (input, _peer) = UnixStream::pair().unwrap();
+        let (output, _writer) = std::io::pipe().unwrap();
+        let mut active = None;
+        let mut transfers = 0;
+        assert_eq!(
+            run_io(
+                &Arc::new(input),
+                &output,
+                &shared,
+                &CancellationToken::new(),
+                &mut active,
+                || transfers += 1,
+            ),
+            McpStdioError::Cancelled
+        );
+        assert_eq!(transfers, usize::from(published));
+    }
 }

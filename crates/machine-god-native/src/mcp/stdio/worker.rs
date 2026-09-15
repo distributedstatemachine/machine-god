@@ -178,7 +178,14 @@ impl Drop for Active {
 pub(super) fn run(mut process: GatedProcess, shared: &Shared, cancellation: &CancellationToken) {
     let input = Arc::new(process.input);
     let mut active = None;
-    let error = run_io(&input, &process.output, shared, cancellation, &mut active);
+    let error = run_io(
+        &input,
+        &process.output,
+        shared,
+        cancellation,
+        &mut active,
+        || process.process.process.promote_to_service(),
+    );
     if let Some(active) = active.take() {
         active.response.complete(Ok(active.receipt(Err(error))));
     }
@@ -194,6 +201,9 @@ pub(super) fn run(mut process: GatedProcess, shared: &Shared, cancellation: &Can
     }
     drop(input);
     drop(process.output);
+    if shared.handoff.promote() {
+        process.process.process.promote_to_service();
+    }
     let _ = process.process.close(true);
 }
 
@@ -203,6 +213,7 @@ fn run_io(
     shared: &Shared,
     cancellation: &CancellationToken,
     active: &mut Option<Active>,
+    mut promote_service: impl FnMut(),
 ) -> McpStdioError {
     let Ok(decoder) = NdjsonDecoder::new(shared.limits) else {
         return McpStdioError::Invalid;
@@ -215,7 +226,12 @@ fn run_io(
         end: 0,
     };
     let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+    let mut promoted = false;
     loop {
+        if !promoted && shared.handoff.promote() {
+            promote_service();
+            promoted = true;
+        }
         let mut progressed = false;
         if cancellation.is_cancelled() || shared.stop.is_cancelled() {
             return McpStdioError::Cancelled;

@@ -53,6 +53,14 @@ pub(crate) enum PreparedProcessInventory {
     Service(InventoryLease),
 }
 
+impl PreparedProcessInventory {
+    pub(crate) fn promote_to_service(&self) {
+        if let Self::Service(lease) = self {
+            lease.promote_to_service();
+        }
+    }
+}
+
 impl ProcessInventoryHelper {
     #[cfg(test)]
     pub(crate) fn service_spawn_count_for_test(&self) -> usize {

@@ -131,8 +131,9 @@ impl NativeMcpRuntime {
         {
             return Err(Error::Limit);
         }
-        let previous = state.active.replace(candidate);
+        let previous = state.active.replace(candidate.clone());
         drop(state);
+        candidate.retain_services();
         drop(previous);
         Ok(())
     }

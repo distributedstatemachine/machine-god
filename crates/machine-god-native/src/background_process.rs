@@ -3139,6 +3139,14 @@ impl LinuxTerminalPinCapture<'_> {
 impl OwnedBackgroundProcess {
     /// Successful handoff changes only run attribution, never native/host custody.
     pub(crate) fn promote_to_service(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(inventory) = self
+            .snapshot_authority
+            .as_ref()
+            .and_then(|authority| authority.inventory.as_ref())
+        {
+            inventory.promote_to_service();
+        }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(cleanup) = self
             .reap_permit
@@ -5065,6 +5073,23 @@ pub(crate) struct InventoryChild {
 
 #[cfg(target_os = "macos")]
 impl InventoryChild {
+    pub(crate) fn service_handoff(
+        &self,
+    ) -> Option<crate::owned_worker::NativeOwnedWorkerServiceHandoff> {
+        self.permit
+            .as_ref()
+            .and_then(|permit| permit.shutdown.as_ref())
+            .map(crate::NativeOwnedWorkerCleanup::service_handoff)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inert_for_handoff_test() -> Self {
+        Self {
+            child: None,
+            permit: Some(reserve_child_reap_authority_for(true).unwrap()),
+        }
+    }
+
     pub(crate) fn spawn(
         command: &mut Command,
         reaped: &Arc<AtomicBool>,

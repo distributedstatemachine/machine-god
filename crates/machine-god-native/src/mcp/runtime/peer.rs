@@ -268,6 +268,16 @@ pub(super) enum NativeMcpPeerReadiness {
     Http(crate::mcp::http_peer::McpHttpPeerReadiness),
 }
 impl NativeMcpPeerReadiness {
+    pub(super) fn retain_service(&self) {
+        match self {
+            Self::Stdio(peer) => peer.retain_service(),
+            #[cfg(test)]
+            Self::Script(_) => {}
+            #[cfg(feature = "mcp-http")]
+            Self::Http(_) => {}
+        }
+    }
+
     pub(super) fn is_ready(&self) -> bool {
         match self {
             #[cfg(test)]
