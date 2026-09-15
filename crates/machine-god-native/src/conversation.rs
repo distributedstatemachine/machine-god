@@ -1709,7 +1709,9 @@ impl NativeConversationTurn {
     }
 
     fn finish(&mut self) {
-        self.managed_turn.take();
+        if let Some(managed) = &mut self.managed_turn {
+            managed.finish_execution();
+        }
         self.mcp_context.take();
         self.workspace_context.take();
         self.permission_context.take();
@@ -1721,6 +1723,9 @@ impl NativeConversationTurn {
         self.finalization.take();
         self.observation_batch.take();
         self.lease.take();
+        // Core/tool/context destruction above still belongs to the original
+        // run. Close its cohort only after every normal finalizer is dropped.
+        self.managed_turn.take();
         self.done = true;
     }
 
@@ -1844,6 +1849,19 @@ impl Stream for NativeConversationTurn {
     type Item = Result<EngineEvent, NativeConversationError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let cleanup = self.managed_turn.as_ref().and_then(|turn| turn.cleanup());
+        match cleanup {
+            Some(cleanup) => cleanup.with_poll(|| self.poll_next_inner(cx)),
+            None => self.poll_next_inner(cx),
+        }
+    }
+}
+
+impl NativeConversationTurn {
+    fn poll_next_inner(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<EngineEvent, NativeConversationError>>> {
         loop {
             if self.done {
                 return Poll::Ready(None);
@@ -1912,7 +1930,10 @@ impl Stream for NativeConversationTurn {
 
 impl Drop for NativeConversationTurn {
     fn drop(&mut self) {
-        self.finish();
+        match self.managed_turn.as_ref().and_then(|turn| turn.cleanup()) {
+            Some(cleanup) => cleanup.with_poll(|| self.finish()),
+            None => self.finish(),
+        }
     }
 }
 

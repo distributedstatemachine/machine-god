@@ -1634,7 +1634,7 @@ impl NativeReferenceHost {
         construction.observe(selected_terminal.resource.as_ref());
         let web_fetch = compose_web_fetch(selected_terminal.resource.as_ref())?;
         let background_opener = background_url.map(|selected| selected.bind(&selected_terminal));
-        let (mcp, mcp_catalog) = mcp::select(
+        let (mcp, mcp_catalog, managed_mcp_seed) = mcp::select(
             mcp_options,
             &selected_terminal,
             permission_setup.as_ref(),
@@ -1679,7 +1679,13 @@ impl NativeReferenceHost {
             .limits(engine_limits)
             .provider(provider)
             .shared_session_store(engine_session_store);
-        let builder = catalog.into_builder(builder, permissions.clone(), permission_prompter);
+        let builder = catalog.into_builder(
+            builder,
+            permissions
+                .as_ref()
+                .map(|permissions| permissions.controller.clone()),
+            permission_prompter,
+        );
         Self::from_composed_builder(
             builder,
             workspace_root,
@@ -1690,6 +1696,7 @@ impl NativeReferenceHost {
             permissions,
             permission_contexts,
             mcp,
+            managed_mcp_seed,
             model_routes,
             observations,
         )
@@ -1709,9 +1716,10 @@ impl NativeReferenceHost {
         loaded_config: LoadedNativeConfig,
         credential_source: Option<AiGatewayCredentialSource>,
         host_resource: Option<NativeTerminalHostResource>,
-        permissions: Option<Arc<crate::NativePermissionController>>,
+        permissions: Option<permissions::ComposedPermissions>,
         permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
         mcp: Option<mcp::Composition>,
+        managed_mcp_seed: Option<Arc<mcp::ManagedMcpSeed>>,
         model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
         observations: Option<Arc<crate::NativeConversationObservations>>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
@@ -1762,7 +1770,11 @@ impl NativeReferenceHost {
                 terminal_background,
                 model_routes,
                 observations,
-                permissions,
+                permission_preparation: permissions
+                    .as_ref()
+                    .map(|permissions| permissions.preparation.clone()),
+                managed_mcp_seed,
+                permissions: permissions.map(|permissions| permissions.controller),
                 permission_contexts,
             }),
             background_opener: None,

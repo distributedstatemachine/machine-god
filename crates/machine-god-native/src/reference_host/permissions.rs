@@ -81,6 +81,41 @@ pub(super) struct PermissionComposition {
     pub(super) contexts: Arc<NativePermissionContexts>,
     clock: Arc<dyn NativePermissionReviewClock>,
 }
+
+/// Shared immutable builtin preparation inputs, not a principal's MCP runtime,
+/// permissions, grants or live turn routes. Child composition reuses the exact
+/// helper-bearing preparer already bound to the shared controller.
+pub(super) struct SharedPermissionPreparation {
+    targets: Arc<NativePermissionTargetAuthority>,
+    preparer: Arc<NativeToolPermissionPreparer>,
+    contexts: Arc<NativePermissionContexts>,
+    reviewer: Arc<AiGatewayPermissionReviewer>,
+    workspace: Arc<str>,
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
+}
+
+impl SharedPermissionPreparation {
+    pub(super) fn mcp_inputs(
+        &self,
+        contexts: Arc<crate::mcp::context::NativeMcpContexts>,
+    ) -> crate::managed::mcp::NativePrincipalMcpPermissionInputs {
+        crate::managed::mcp::NativePrincipalMcpPermissionInputs {
+            builtins: self.targets.clone(),
+            builtin_preparer: self.preparer.clone(),
+            contexts,
+            review_contexts: self.contexts.clone(),
+            reviewer: self.reviewer.clone(),
+            workspace: self.workspace.clone(),
+            workspace_contexts: self.workspace_contexts.clone(),
+        }
+    }
+}
+
+pub(super) struct ComposedPermissions {
+    pub controller: Arc<NativePermissionController>,
+    pub preparation: Arc<SharedPermissionPreparation>,
+}
+
 impl PermissionComposition {
     pub(super) fn install_files(&self, mut tools: WorkspaceTools) -> WorkspaceTools {
         tools.write_file = tools
@@ -154,7 +189,7 @@ impl PermissionComposition {
         transport: Arc<dyn AiGatewayTransport>,
         prompter: Arc<dyn PermissionPrompter>,
         mcp: Option<&super::mcp::Composition>,
-    ) -> Result<Arc<NativePermissionController>, NativeReferenceHostBuildError> {
+    ) -> Result<ComposedPermissions, NativeReferenceHostBuildError> {
         let targets =
             NativePermissionTargetAuthority::new(self.root, self.workspace.clone(), registrations)
                 .map_err(|_| error())?;
@@ -171,6 +206,14 @@ impl PermissionComposition {
             reviewer.clone(),
             workers,
         ));
+        let preparation = Arc::new(SharedPermissionPreparation {
+            targets: targets.clone(),
+            preparer: preparer.clone(),
+            contexts: self.contexts.clone(),
+            reviewer: reviewer.clone(),
+            workspace: self.workspace.clone().into(),
+            workspace_contexts: self.workspace_contexts.clone(),
+        });
         let selected: Arc<dyn crate::NativePermissionActionPreparer> = match mcp {
             Some(mcp) => {
                 let mcp = crate::mcp::permission::NativeMcpPermissionPreparer::new(
@@ -195,7 +238,10 @@ impl PermissionComposition {
         self.sandbox
             .bind_controller(&controller)
             .map_err(|_| error())?;
-        Ok(controller)
+        Ok(ComposedPermissions {
+            controller,
+            preparation,
+        })
     }
 }
 
@@ -305,7 +351,7 @@ impl ReferenceHostToolCatalog {
         transport: Arc<dyn AiGatewayTransport>,
         prompter: Arc<dyn PermissionPrompter>,
         mcp: Option<&super::mcp::Composition>,
-    ) -> Result<Option<Arc<NativePermissionController>>, NativeReferenceHostBuildError> {
+    ) -> Result<Option<ComposedPermissions>, NativeReferenceHostBuildError> {
         setup
             .map(|setup| {
                 let workers = resource.ok_or_else(error)?.worker_scope();

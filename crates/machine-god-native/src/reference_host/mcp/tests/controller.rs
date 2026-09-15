@@ -112,6 +112,72 @@ fn actual_host_controller_is_inert_and_publishes_only_when_polled() {
 }
 
 #[test]
+fn managed_children_reuse_host_preparation_but_isolate_runtime_contexts_and_closure() {
+    let fixture = fixture();
+    let host = fixture.host();
+    let seed = host.services.managed_mcp_seed.as_ref().unwrap();
+    let permissions = host.services.permission_preparation.as_ref().unwrap();
+    let workers = host.services.control_workers.as_ref().unwrap();
+    let first = seed
+        .compose(workers, &host.reserved_tool_names, permissions)
+        .unwrap();
+    let second = seed
+        .compose(workers, &host.reserved_tool_names, permissions)
+        .unwrap();
+    assert!(!Arc::ptr_eq(&first.runtime, &second.runtime));
+    assert!(!Arc::ptr_eq(&first.contexts, &second.contexts));
+    assert!(!Arc::ptr_eq(&first.contexts, &fixture.contexts));
+    assert!(first.runtime.uses_contexts(&first.contexts));
+    assert!(second.runtime.uses_contexts(&second.contexts));
+    assert!(fixture.transport.requests.lock().unwrap().is_empty());
+    assert_eq!(fixture.clock.0.load(Ordering::Relaxed), 0);
+    first.controller.as_ref().unwrap().close();
+    assert!(first.runtime.publication_checkpoint().is_err());
+    assert!(second.runtime.publication_checkpoint().is_ok());
+    assert!(host.mcp_runtime().unwrap().publication_checkpoint().is_ok());
+    run(async {
+        second
+            .controller
+            .as_ref()
+            .unwrap()
+            .start(
+                NativeMcpStartupPhase::AskStartup,
+                CancellationToken::new(),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        // A child close must not have cancelled either the sibling's startup
+        // token or the original parent controller's token.
+        host.mcp_controller()
+            .unwrap()
+            .start(
+                NativeMcpStartupPhase::AskStartup,
+                CancellationToken::new(),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        for controller in [
+            first.controller.as_ref().unwrap(),
+            second.controller.as_ref().unwrap(),
+        ] {
+            assert!(
+                controller
+                    .settle(
+                        Instant::now() + Duration::from_secs(5),
+                        CancellationToken::new(),
+                    )
+                    .await
+                    .unwrap()
+                    .complete
+            );
+        }
+    });
+    drop((first, second));
+}
+
+#[test]
 fn retained_controller_does_not_extend_engine_resource_lifetime() {
     let mut fixture = fixture();
     let host = fixture.host.take().unwrap();

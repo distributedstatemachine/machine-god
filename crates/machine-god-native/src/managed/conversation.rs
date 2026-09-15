@@ -3,6 +3,8 @@
 use super::mcp::{NativePrincipalMcpOwner, NativePrincipalMcpTurn};
 use super::principal::{NativePrincipal, NativePrincipalRegistry, NativePrincipalTurn};
 use super::scheduler::{Acquire, ManagedScheduler, ResidentLease, RunLease, RunRef, RunSettlement};
+use super::store::JournalOwner;
+use crate::owned_worker::NativeOwnedWorkerRun;
 use crate::{
     NativeConversationError, NativeModelPreferences, NativePermissionPolicySnapshot,
     NativeWorkspaceAuthority,
@@ -29,12 +31,35 @@ struct Owner {
     active: Mutex<Active>,
     closed: AtomicBool,
     mcp: OnceLock<Weak<NativePrincipalMcpOwner>>,
+    workers: OnceLock<WorkerBinding>,
+}
+
+struct WorkerBinding {
+    scope: crate::NativeOwnedWorkerScope,
+    keepalive: Arc<dyn Send + Sync>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ManagedRunCleanup {
+    run: RunRef,
+    cohort: Arc<NativeOwnedWorkerRun>,
+}
+
+impl ManagedRunCleanup {
+    pub(crate) fn with_poll<T>(&self, operation: impl FnOnce() -> T) -> T {
+        self.cohort.with_poll(operation)
+    }
+
+    pub(crate) fn completion(&self) -> crate::NativeOwnedWorkerCompletion {
+        self.cohort.completion()
+    }
 }
 
 #[derive(Default)]
 struct Active {
     run: Option<RunRef>,
     settlement: Option<RunSettlement>,
+    cleanup: Option<ManagedRunCleanup>,
 }
 
 /// The outer manager keeps this owner independently of the creating tool/turn.
@@ -62,6 +87,7 @@ impl ManagedConversationOwner {
             active: Mutex::new(Active::default()),
             closed: AtomicBool::new(false),
             mcp: OnceLock::new(),
+            workers: OnceLock::new(),
         })))
     }
 
@@ -88,6 +114,36 @@ impl ManagedConversationOwner {
             .map_err(|_| NativeConversationError::ManagedAdmission)
     }
 
+    /// Actual collector tickets retain the journal lease independently of the
+    /// manager and of service promotion's execution-quota refund.
+    pub(crate) fn configure_workers(
+        &self,
+        scope: crate::NativeOwnedWorkerScope,
+        owner: JournalOwner,
+    ) -> Result<()> {
+        self.configure_worker_binding(scope, Arc::new(owner))
+    }
+
+    fn configure_worker_binding(
+        &self,
+        scope: crate::NativeOwnedWorkerScope,
+        keepalive: Arc<dyn Send + Sync>,
+    ) -> Result<()> {
+        if self.0.closed.load(Ordering::Acquire)
+            || !self.0.scheduler.resident_is_idle(&self.0.resident)
+        {
+            return Err(NativeConversationError::ManagedAdmission);
+        }
+        self.0
+            .workers
+            .set(WorkerBinding { scope, keepalive })
+            .map_err(|_| NativeConversationError::ManagedAdmission)
+    }
+
+    pub(crate) fn cleanup_for(&self, run: &RunRef) -> Result<ManagedRunCleanup> {
+        self.binding().cleanup_for(run)
+    }
+
     /// Metadata-only target for authenticated dependency waits.
     pub(crate) fn run(&self) -> Option<RunRef> {
         self.0.active.lock().ok()?.run.clone()
@@ -103,6 +159,23 @@ impl ManagedConversationOwner {
             .settlement
             .take()
             .map(|settlement| (reference, settlement))
+    }
+}
+
+impl ManagedConversationBinding {
+    /// Weak lookup only; retaining the binding cannot prolong a principal.
+    pub(crate) fn cleanup_for(&self, run: &RunRef) -> Result<ManagedRunCleanup> {
+        self.0
+            .upgrade()
+            .ok_or(NativeConversationError::ManagedAdmission)?
+            .active
+            .lock()
+            .map_err(|_| NativeConversationError::ManagedAdmission)?
+            .cleanup
+            .as_ref()
+            .filter(|cleanup| cleanup.run.same_run(run))
+            .cloned()
+            .ok_or(NativeConversationError::ManagedAdmission)
     }
 }
 
@@ -165,6 +238,20 @@ impl ManagedConversationBinding {
             .map_err(|_| NativeConversationError::ManagedAdmission)?;
         let reference = run.reference();
         let registration = (|| {
+            let cleanup = owner
+                .workers
+                .get()
+                .map(|workers| {
+                    workers
+                        .scope
+                        .begin_run_with_keepalive(workers.keepalive.clone())
+                        .map(|cohort| ManagedRunCleanup {
+                            run: reference.clone(),
+                            cohort: Arc::new(cohort),
+                        })
+                        .map_err(|_| NativeConversationError::ManagedAdmission)
+                })
+                .transpose()?;
             let principal = owner
                 .principal
                 .begin_turn(turn, policy, preferences, Some(reference.clone()))
@@ -179,30 +266,29 @@ impl ManagedConversationBinding {
                         .map_err(|_| NativeConversationError::ManagedAdmission)
                 })
                 .transpose()?;
-            Ok::<_, NativeConversationError>((principal, mcp))
+            Ok::<_, NativeConversationError>((principal, mcp, cleanup))
         })();
-        let (principal, mcp) = match registration {
-            Ok(registration) => registration,
-            Err(_) => {
-                drop(slot);
-                // No core/provider poll has occurred, so this rejected reservation
-                // has no native execution or cleanup obligation to transfer.
-                run.finish();
-                settlement
-                    .complete()
-                    .map_err(|_| NativeConversationError::ManagedAdmission)?;
-                return Err(NativeConversationError::ManagedAdmission);
-            }
+        let Ok((principal, mcp, cleanup)) = registration else {
+            drop(slot);
+            // No core/provider poll has occurred, so this rejected reservation
+            // has no native execution or cleanup obligation to transfer.
+            run.finish();
+            settlement
+                .complete()
+                .map_err(|_| NativeConversationError::ManagedAdmission)?;
+            return Err(NativeConversationError::ManagedAdmission);
         };
         let acquisition = run.acquire();
         slot.run = Some(reference);
         slot.settlement = Some(settlement);
+        slot.cleanup = cleanup.clone();
         drop(slot);
         Ok(ManagedConversationTurn {
             principal: Some(principal),
             mcp,
             acquisition: Some(acquisition),
             run: Some(run),
+            cleanup,
         })
     }
 }
@@ -213,9 +299,13 @@ pub(crate) struct ManagedConversationTurn {
     mcp: Option<NativePrincipalMcpTurn>,
     acquisition: Option<Acquire>,
     run: Option<RunLease>,
+    cleanup: Option<ManagedRunCleanup>,
 }
 
 impl ManagedConversationTurn {
+    pub(crate) fn cleanup(&self) -> Option<ManagedRunCleanup> {
+        self.cleanup.clone()
+    }
     /// Acquire only once before the first core poll. Later dependency waits own
     /// their fair reacquisition; polling them must not create another grant.
     pub(crate) fn poll_admission(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
@@ -248,6 +338,9 @@ impl Drop for ManagedConversationTurn {
         self.acquisition.take();
         // RunLease drop cancels the actual turn. Never manufacture settlement.
         self.run.take();
+        if let Some(cleanup) = self.cleanup.take() {
+            cleanup.cohort.close();
+        }
     }
 }
 

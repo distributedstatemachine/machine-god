@@ -26,5 +26,7 @@ pub(super) struct NativeHostServices {
     pub model_routes: Option<Arc<NativeConversationModelRoutes>>,
     pub observations: Option<Arc<NativeConversationObservations>>,
     pub permissions: Option<Arc<NativePermissionController>>,
+    pub permission_preparation: Option<Arc<super::permissions::SharedPermissionPreparation>>,
+    pub managed_mcp_seed: Option<Arc<super::mcp::ManagedMcpSeed>>,
     pub permission_contexts: Option<Arc<NativePermissionContexts>>,
 }

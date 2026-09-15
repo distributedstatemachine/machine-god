@@ -260,6 +260,13 @@ Completion observation uses the existing wake-driven primitive, without a new
 thread, pool, timer or worker admission per child. The manager binds the cohort
 to the exact scheduler run and checks runtime settlement separately.
 
+The actual native turn restores this attribution for every stream poll and for
+destruction. Core/provider/tool and native finalizer destruction happens before
+the cohort closes, so cleanup admitted while a stream is being dropped remains
+charged to the original run. Cleanup lookup requires that exact opaque run
+allocation; a sibling or superseded run cannot borrow another run's receipt.
+An empty unpolled turn closes its cohort without starting provider work.
+
 The manager may bind its journal-owner lease as one bounded cohort keepalive,
 never a runtime, session or manager reference. Every admitted host worker ticket
 retains that lease independently, and transferred cleanup retains the exact host
@@ -544,6 +551,13 @@ resource custody after retirement, but cannot obtain new authority. Reverse
 requesters and unpolled operations do not retain a session or runtime. Future
 construction captures only weak turn-route and publication identity; first poll
 rejects a replaced route/publication rather than resolving public IDs again.
+
+Shared host composition retains the original helper-bearing builtin preparer and
+reviewer as immutable factory inputs; descendants do not rebuild those authorities.
+A child MCP construction receives fresh contexts, runtime, controller lifetime
+cancellation and permission bundle. The configuration seed retains no parent's
+runtime or request-scoped ephemeral server selection; closing a child cannot
+cancel a sibling's controller token.
 
 Permission preparation uses a factory-owned typed bundle. Construction validates
 the exact runtime/context allocation pair and builds the existing concrete MCP

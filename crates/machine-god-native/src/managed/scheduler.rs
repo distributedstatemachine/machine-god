@@ -221,6 +221,10 @@ pub(crate) struct RunRef {
     identity: Weak<RunIdentity>,
 }
 impl RunRef {
+    pub(crate) fn same_run(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.inner, &other.inner) && Weak::ptr_eq(&self.identity, &other.identity)
+    }
+
     /// Cancels this original run even if its execution owner is elsewhere.
     pub(crate) fn cancel(&self) {
         if let Ok((inner, identity)) = self.resolve() {

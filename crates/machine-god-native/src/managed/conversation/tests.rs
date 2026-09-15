@@ -51,6 +51,13 @@ struct Fixture {
 }
 impl Fixture {
     fn new(steps: Vec<ModelProviderStep>) -> Self {
+        Self::with_provider(steps, |provider| provider)
+    }
+
+    fn with_provider<P: machine_god_core::ModelProvider>(
+        steps: Vec<ModelProviderStep>,
+        wrap: impl FnOnce(ScriptedModelProvider) -> P,
+    ) -> Self {
         let path = std::env::temp_dir().join(format!(
             "mg-managed-conversation-{}-{}",
             std::process::id(),
@@ -77,7 +84,7 @@ impl Fixture {
             Arc::new(NoEffects),
         ));
         let engine = Engine::builder()
-            .provider(provider.clone())
+            .provider(wrap(provider.clone()))
             .shared_permission_handler(permissions.clone())
             .session_store(InMemorySessionStore::default())
             .build()
@@ -251,3 +258,6 @@ fn missing_model_snapshot_and_expired_owner_fail_before_prompt_publication() {
     assert_eq!(conversation.record(), before);
     assert!(fixture.provider.requests().is_empty());
 }
+
+#[path = "cleanup_tests.rs"]
+mod cleanup;

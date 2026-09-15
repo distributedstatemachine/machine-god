@@ -492,6 +492,35 @@ impl NativeConversationRuntime {
         })
     }
 
+    /// Explicit original-outbox repair under this runtime's idle admission.
+    /// The inner conversation retains actual-session and persistence custody;
+    /// observing a saved record alone never produces a delivery receipt.
+    pub(crate) fn recover_notice_delivery(
+        &self,
+    ) -> BoxFuture<
+        '_,
+        Result<
+            Option<crate::managed::prompt_context::NoticeDelivery>,
+            NativeConversationRuntimeError,
+        >,
+    > {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self.conversation.recover_notice_delivery().await?)
+        })
+    }
+
+    /// Clear only the original acknowledged batch, never a newly selected one.
+    pub(crate) fn clear_notice_delivery<'a>(
+        &'a self,
+        delivery: &'a crate::managed::prompt_context::NoticeDelivery,
+    ) -> BoxFuture<'a, Result<SessionRevision, NativeConversationRuntimeError>> {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self.conversation.clear_notice_delivery(delivery).await?)
+        })
+    }
+
     /// Persists manual context selection, never deleting history or queued input.
     /// This borrowed future is inert until polled. A pending publication owns
     /// runtime admission; failure/drop retains native reconciliation semantics.
