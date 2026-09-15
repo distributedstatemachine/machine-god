@@ -1210,7 +1210,8 @@ fn publish_lazy_background_initialization(
     }
 }
 
-type BlockingJob = Box<dyn FnOnce() + Send + 'static>;
+type BlockingPublication = Box<dyn FnOnce() + Send + 'static>;
+type BlockingJob = Box<dyn FnOnce() -> BlockingPublication + Send + 'static>;
 
 const WORKER_OWNERSHIP_CAPACITY: usize = 256;
 
@@ -1947,18 +1948,23 @@ where
             drop(superseded);
             let task = this.task.take().expect("blocking task is submitted once");
             let result = Arc::clone(&this.result);
-            let job = Box::new(move || {
+            let job: BlockingJob = Box::new(move || {
                 let value = task();
-                let wake = {
-                    let mut result = result
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    result.value = Some(value);
-                    result.waker.take()
-                };
-                if let Some(waker) = wake {
-                    waker.wake();
-                }
+                // Retain the result privately until the worker retires its
+                // operation token and returns this fixed-pool slot. Merely
+                // delaying wake is insufficient: another poll can read value.
+                Box::new(move || {
+                    let wake = {
+                        let mut result = result
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        result.value = Some(value);
+                        result.waker.take()
+                    };
+                    if let Some(waker) = wake {
+                        waker.wake();
+                    }
+                })
             });
             if this
                 .pool
@@ -2026,15 +2032,31 @@ fn blocking_worker_loop(
     while let Ok(message) = receiver.recv() {
         match message {
             BlockingMessage::Run(job) => {
-                let _ = catch_unwind(AssertUnwindSafe(job));
+                let publication = catch_unwind(AssertUnwindSafe(job));
                 cancellations[index]
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .take();
-                if closing.load(Ordering::Acquire) {
+                let stopping = closing.load(Ordering::Acquire);
+                if !stopping {
+                    return_slot(available, index);
+                }
+                // Native work and its admission lease have finished; only
+                // response delivery remains. Returning this operation slot is
+                // not thread/TLS/reap completion: the collector still owns the
+                // actual worker and its cohort until shutdown and join.
+                let published =
+                    publication.and_then(|publish| catch_unwind(AssertUnwindSafe(publish)));
+                if let Err(payload) = published {
+                    // Opaque panic destructors must not kill this reusable
+                    // worker after a task or caller wake has panicked.
+                    std::mem::forget(payload);
+                }
+                // Once the slot is exposed another Run may already be queued;
+                // honor that admitted message even if shutdown races delivery.
+                if stopping {
                     break;
                 }
-                return_slot(available, index);
             }
             BlockingMessage::Shutdown => break,
         }
@@ -4831,7 +4853,10 @@ mod tests {
             let (reported, reported_receiver) = mpsc::sync_channel(1);
             let registrar = thread::spawn(move || {
                 let result = pool.try_submit_after_reservation(
-                    Box::new(move || worker_executed.store(true, Ordering::Release)),
+                    Box::new(move || {
+                        worker_executed.store(true, Ordering::Release);
+                        Box::new(|| {})
+                    }),
                     Some(operation_cancellation),
                     || {
                         reserved.send(()).expect("report reserved worker");
@@ -5267,6 +5292,125 @@ mod tests {
         );
         assert!(!sibling_caller.is_cancelled());
         assert!(!sibling_operation.is_cancelled());
+    }
+
+    #[test]
+    fn one_slot_completed_operations_allow_immediate_sequential_submission() {
+        let executor = BlockingExecutor::new(1).expect("one-slot executor");
+        let cohort = Arc::clone(&executor.pool.worker_cohort);
+        for value in 1..=64_u8 {
+            let caller = CancellationToken::new();
+            let operation = CancellationToken::new();
+            assert_eq!(
+                futures_executor::block_on(executor.run_cancellable(
+                    move || value,
+                    caller.cancelled(),
+                    operation.clone(),
+                )),
+                Ok(value),
+                "a completed result must not retain its operation slot"
+            );
+            assert!(!operation.is_cancelled());
+        }
+        drop(executor);
+        wait_for_zero(&cohort, "sequential worker collection");
+    }
+
+    struct PublicationGateWake {
+        pool: Arc<super::BlockingPool>,
+        result: Weak<Mutex<BlockingResult<Result<u8, BlockingTaskFailure>>>>,
+        observed: mpsc::SyncSender<(Option<usize>, bool, bool)>,
+        release: Mutex<mpsc::Receiver<()>>,
+        panic: bool,
+    }
+
+    impl Wake for PublicationGateWake {
+        fn wake(self: Arc<Self>) {
+            // Reenter both publication and admission observations. No result,
+            // cancellation or available-slot mutex may span this callback.
+            let slots = self.pool.available.try_lock().ok().map(|slots| slots.len());
+            let retired = self.pool.cancellations[0]
+                .try_lock()
+                .is_ok_and(|registered| registered.is_none());
+            let result_unlocked = self
+                .result
+                .upgrade()
+                .is_some_and(|result| result.try_lock().is_ok());
+            self.observed
+                .send((slots, retired, result_unlocked))
+                .expect("report publication observations");
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release publication callback");
+            assert!(!self.panic, "injected publication waker panic");
+        }
+    }
+
+    #[test]
+    fn result_publication_retires_slot_before_reentrant_or_panicking_wake() {
+        for panic in [false, true] {
+            for shutdown in [false, true] {
+                publication_handoff(panic, shutdown);
+            }
+        }
+    }
+
+    fn publication_handoff(panic: bool, shutdown: bool) {
+        let executor = BlockingExecutor::new(1).expect("one-slot executor");
+        let cohort = Arc::clone(&executor.pool.worker_cohort);
+        let caller = CancellationToken::new();
+        let operation = CancellationToken::new();
+        let mut first =
+            Box::pin(executor.run_cancellable(|| 7_u8, caller.cancelled(), operation.clone()));
+        let (observed, observations) = mpsc::sync_channel(1);
+        let (release, resumed) = mpsc::sync_channel(1);
+        let waker = Waker::from(Arc::new(PublicationGateWake {
+            pool: Arc::clone(&executor.pool),
+            result: Arc::downgrade(&first.result),
+            observed,
+            release: Mutex::new(resumed),
+            panic,
+        }));
+        assert!(
+            first
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        let observation = observations
+            .recv_timeout(Duration::from_secs(2))
+            .expect("publication wake");
+        let result = first.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        let next_caller = CancellationToken::new();
+        let next_operation = CancellationToken::new();
+        let mut next = Box::pin(executor.run_cancellable(
+            || 9_u8,
+            next_caller.cancelled(),
+            next_operation.clone(),
+        ));
+        let admission = next.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        if shutdown {
+            executor.shutdown();
+        }
+        // Unblock even the old implementation before reporting its failed
+        // assertions. A parked callback makes the pre-fix race deterministic.
+        release.send(()).expect("release publication wake");
+        assert_eq!(observation, (Some(1), true, true));
+        assert_eq!(result, Poll::Ready(Ok(7)));
+        assert!(
+            admission.is_pending(),
+            "completed predecessor must permit its successor"
+        );
+        assert_eq!(futures_executor::block_on(next), Ok(9));
+        assert!(
+            !operation.is_cancelled(),
+            "old operation token was retired before shutdown"
+        );
+        assert_eq!(next_operation.is_cancelled(), shutdown);
+        drop(executor);
+        wait_for_zero(&cohort, "publication worker collection");
     }
 
     #[test]

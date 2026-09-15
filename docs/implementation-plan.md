@@ -35,8 +35,8 @@ functionality merely because it shares an implementation with an older mode.
 - Main CI: `34770898541` (`GREEN`)
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
-- Active phase: `M05 ACP replacement after Linux PTY close regression`
-- Next gate: `validate deterministic PTY EOF fixtures; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
+- Active phase: `M05 ACP replacement after Linux ARM background-input regression`
+- Next gate: `validate blocking-slot retirement before result publication; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -364,16 +364,15 @@ Do not deliver codec, session or interaction fragments separately.
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) compose
 native session ownership, request dispatch, bounded projections and CLI stdio.
-Candidate `a7f3a1184b9851a27f06c0253db818c0c4dbd6d7` includes observer-free
-shutdown completion and the joined malformed-head catalog fixture repair.
-The full replacement Linux/macOS local gate passed; three fresh full-feature
-R6 reviewers reported zero findings. Exact feature CI and Benchmark evidence
-passed with both unexpired artifacts verified. Main was fast-forwarded to the
-same candidate. Main Benchmark `34926807311` passed with both artifacts verified.
-Main CI `34926807286` failed its Linux x86-64 PTY close regression. Explicit
-slave lifetime repairs the fixture race; repeat gates before counting delivery.
-Failures, remediation, acceptance and
-independent review provenance belong in the
+Candidate `91a94859057d6f965f57bf2a8976261afc6da290` includes deterministic
+PTY EOF fixtures following the earlier main failure. Its complete replacement
+Linux/macOS local gate and three fresh whole-feature R7 reviews passed.
+Exact feature CI and Benchmark passed with both unexpired artifacts verified.
+Main was fast-forwarded to the same candidate. Its Benchmark passed with both
+artifacts verified, but Linux ARM CI rejected an EOF-only background write with
+`Busy`. The replacement retires operation capacity before publishing its result;
+validate the replacement before counting delivery. Failure, remediation,
+acceptance and independent review provenance belong in the
 [review history](reviews/m05-acp-cli-review-01.md).
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,

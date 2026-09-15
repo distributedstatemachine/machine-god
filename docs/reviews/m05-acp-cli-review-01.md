@@ -624,3 +624,83 @@ on Linux; macOS retains its documented ioctl signal-flush uncertainty. All
 original timing, incomplete-output and SIGKILL assertions remain. Only existing
 tests changed; production behavior and its 800 ms budget are unchanged. Component
 formatting and diff checks passed, without runtime or replacement acceptance.
+
+## Candidate 91a94859: replacement gate, R7 and feature acceptance
+
+Candidate `91a94859057d6f965f57bf2a8976261afc6da290` integrates the deterministic
+PTY EOF fixture repair and its failure history. The complete Rust 1.94.1 local
+replacement gate passed on Linux and macOS with freshly built locked release
+helpers and separate process-heavy runtime runs. Focused PTY tests passed 23
+on Linux and 27 on macOS; native ACP passed 157 on each platform, and the
+model-catalog HTTP suite passed all 20 on each. The twelve completion tests
+and composed cleanup regression also passed on both platforms.
+
+Full workspace native units passed 3,579 on Linux (55.19 seconds, 11 existing
+ignores) and 3,581 on macOS (883.65 seconds, 12 existing ignores), with zero
+failures. CLI units passed 549 on each platform with six existing ignores.
+Workspace integrations, explicit doctests, formatting, warnings-denied workspace
+Clippy, required FreeBSD/WASI lint, dependency policy/audit, pinned drift and
+Unicode checks, documentation policy and fresh-release smoke passed. All 269
+repository Python tests passed in 170.810 seconds. Supplemental standalone
+web-fetch compilation does not establish warnings-denied lint.
+
+Three fresh independent reviewers inspected the entire ACP feature at the exact
+candidate against original base `658f3366258cf1207904f9c2a274f32db2bb981b`:
+
+| Track | Fresh reviewer | Established actionable findings |
+| --- | --- | ---: |
+| Correctness/API | `acp_r7_correctness` | 0 |
+| Lifecycle/platform | `acp_r7_lifecycle` | 0 |
+| Performance/resources | `acp_r7_resources` | 0 |
+
+The reviews included related contracts, callers and tests, worker completion,
+deferred resolver custody, mixed-input ACKs and both fixture repairs. These
+were independent static local reviews, not Bugbot or independent runtime,
+benchmark or interoperability evidence. No repair author reviewed their own
+changes. All review worktrees were verified clean at the candidate and removed.
+
+Exact feature CI `34934219670` passed all nine applicable jobs, including four
+Linux/macOS architecture jobs and the aggregate; the unchanged dependency-audit
+job correctly skipped. Benchmark `34934219710` passed all four jobs. Its
+bootstrap artifact `10382957124` (630 bytes) and pinned-upstream artifact
+`10383187032` (110,209 bytes) were nonempty, unexpired and matched the full SHA,
+branch and run. Both expire on 2026-12-14; metadata was revalidated before main
+advanced from `a7f3a1184b9851a27f06c0253db818c0c4dbd6d7` by fast-forward
+without force. This records local, review and feature acceptance, not subsequent
+main delivery or an M07 performance claim.
+
+## Exact-main Linux ARM background-input failure
+
+Main CI `34936559788` rejected candidate
+`91a94859057d6f965f57bf2a8976261afc6da290` in Linux ARM job `104275661184`.
+`background_supervisor::tests::production_supervisor_input_rejects_other_incarnation_and_cancelled_submission`
+failed at `crates/machine-god-native/src/background_supervisor.rs:3685`:
+the EOF-only write expected to close stdin returned
+`TerminalBackgroundWriteError { kind: Busy }`. Native units reported 3,578
+passed, one failed and 11 existing ignores in 108.19 seconds. Linux x86-64
+passed; this failure alone rejects delivery regardless of other pending jobs.
+The observed error does not establish its cause; investigate before repair,
+without a blind retry, relaxed deadline or weakened assertion.
+
+Main Benchmark `34936559410` passed all four jobs. Bootstrap artifact
+`10384165645` (634 bytes) and pinned-upstream artifact `10383976480`
+(110,153 bytes) were nonempty, unexpired and matched the exact main SHA,
+branch and run. Both expire on 2026-12-14. Benchmark acceptance does not
+override failed CI.
+
+Source inspection established a production ordering race: `BlockingTaskFuture`
+published its result and woke its caller inside the submitted closure, before
+`blocking_worker_loop` retired the cancellation registration and returned its
+pool slot. Sequential operations could therefore observe completed predecessors
+still occupying capacity. The pre-cancelled submission does not enter the pool.
+Component `142a0664b1e5b376fa3e803b2933187645835f1d` splits operation execution
+from private result publication. Cancellation registration and operation
+capacity retire first; polling visibility and wake follow outside the locks.
+Actual worker/TLS/reap collector ownership remains separate and unchanged.
+The worker preserves a successor admitted before shutdown races publication.
+
+New regressions exercise immediate one-slot sequential submissions and a parked
+publication callback with reentrant lock observations, panicking wake and
+successor/shutdown combinations. The original exact-owner, cancellation and
+EOF assertions are unchanged. Component Rust 1.94.1 formatting and diff checks
+passed; no runtime or replacement acceptance is asserted by this component record.

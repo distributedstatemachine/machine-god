@@ -134,7 +134,15 @@ therefore never dequeue `Shutdown` and then accept a successful `Run` send.
 Workers unregister only after the submitted operation returns. Pool shutdown
 never runs cleanup inline and never waits for user work; the registered worker
 continues to own cleanup and result publication within the fixed worker and
-collector bounds. Helper readiness observes the same private operation
+collector bounds. An operation's result stays private until its cancellation
+registration is retired and its blocking-pool slot is returned, unless shutdown
+has already closed admission. Only then can polling observe the result or its
+waker run; no pool or result lock spans that wake. Thus a completed operation
+does not itself consume capacity needed by its sequential successor. A successor
+admitted before shutdown still settles, even when shutdown races predecessor
+publication. Returning an operation slot is not worker completion: the collector
+retains the actual thread, TLS cleanup and cohort authority until joining.
+Helper readiness observes the same private operation
 cancellation token through a registered thread wakeup. Cancellation therefore
 interrupts a stalled readiness wait promptly, closes the private gate, signals
 and reaps the helper group, and releases blocking capacity without waiting for
