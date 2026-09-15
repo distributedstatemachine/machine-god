@@ -210,10 +210,34 @@ pub(crate) enum NoticeEmission {
     Suppressed,
     AlreadyRecorded,
 }
+/// A notice is not a parent-context projection until its exact journal append confirms.
+#[derive(Debug)]
+pub(crate) enum PreparedNotice {
+    Staged(StagedNotice),
+    Suppressed,
+    AlreadyRecorded,
+}
+/// Opaque observer of charged manager-owned staging custody. Dropping it neither
+/// publishes nor discards the candidate; it retains no runtime or principal.
+pub(crate) struct StagedNotice {
+    inner: Weak<Inner>,
+    record: Arc<NoticeRecord>,
+}
+impl StagedNotice {
+    pub(crate) fn notice(&self) -> &ManagedNotice {
+        &self.record.notice
+    }
+}
+impl fmt::Debug for StagedNotice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("StagedNotice(..)")
+    }
+}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct NoticeUsage {
     pub(crate) trackers: usize,
     pub(crate) pending: usize,
+    pub(crate) staged: usize,
     pub(crate) retained_records: usize,
     pub(crate) retained_bytes: usize,
 }
@@ -294,37 +318,56 @@ impl ManagedNotices {
             inner: Arc::downgrade(&self.inner),
         })
     }
-    pub(crate) fn start_work(
+    pub(crate) fn prepare_start(
         &self,
         work: &WorkNoticeRef,
         sequence: NonZeroU64,
         history: Option<&NoticeHistoryRef>,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         self.inner.start(work, sequence, history)
     }
-    pub(crate) fn milestone(
+    pub(crate) fn prepare_milestone(
         &self,
         work: &WorkNoticeRef,
         sequence: NonZeroU64,
         name: &str,
         history: Option<&NoticeHistoryRef>,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         self.inner.milestone(work, sequence, name, history)
     }
-    pub(crate) fn terminal(
+    pub(crate) fn prepare_terminal(
         &self,
         work: &WorkNoticeRef,
         sequence: NonZeroU64,
         outcome: NoticeTerminal,
         history: Option<&NoticeHistoryRef>,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         self.inner.terminal(work, sequence, outcome, history)
     }
-    pub(crate) fn observe_due(
+    pub(crate) fn prepare_due(
         &self,
         observation: &NoticeObservation,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         self.inner.observe(observation)
+    }
+    /// Recovers the same pending original after observer loss; never regenerates an event.
+    pub(crate) fn pending_notice(
+        &self,
+        work: &WorkNoticeRef,
+    ) -> Result<Option<StagedNotice>, NoticeError> {
+        self.inner.pending(work)
+    }
+    /// Manager-only boundary: call only for this exact `JournalRecord::Notice` after
+    /// actual durable confirmation, including durability-repair confirmation.
+    pub(super) fn confirm_durable(
+        &self,
+        notice: &StagedNotice,
+    ) -> Result<NoticeEmission, NoticeError> {
+        self.inner.confirm(notice)
+    }
+    /// Manager-only explicit `NotApplied` receipt. Ambiguity and token drop are not receipts.
+    pub(super) fn discard_not_applied(&self, notice: &StagedNotice) -> Result<(), NoticeError> {
+        self.inner.discard(notice)
     }
     /// Explicit journal replay of unacknowledged originals; no inferred events,
     /// relationships, timers or execution are created by loading a notice.

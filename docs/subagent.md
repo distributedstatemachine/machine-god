@@ -368,6 +368,28 @@ An explicit stop prevents new emissions. Close also invalidates pending context
 snapshots; durable history custody must already exist before removing those
 pending projections.
 
+Preparation reserves one charged, immutable staged notice and proposed cursor
+transition per work item. Staged records are absent from snapshots and cannot
+be acknowledged. The manager appends that exact original as a journal notice
+record; only confirmed page/head durability exposes it to parent context.
+Dropping the staged observer neither publishes nor discards it. Ambiguity keeps
+the original envelope, relationship, history reference, tick range and proposed
+deadline transition; recovery retrieves that same candidate, not a regenerated
+observation. Conflicting preparation is Busy until the original resolves.
+Only an explicit journal NotApplied result may discard the candidate without
+advancing its cursor. Confirmation and discard reject foreign or stale tokens.
+
+Staged payloads and transition storage count against aggregate retained notice
+bounds, including after token loss or source close. Work release remains Busy
+while staging custody is unresolved. A pending staged transition suspends that
+work's deadline eligibility, avoiding a repeated due wake during journal
+ambiguity; resolution restores the original schedule without inventing elapsed
+observations. Reparent changes only future targets. Stop, close or target
+retirement prevents a later confirmation from exposing that staged candidate
+and never revives a stopped timer; its confirmed journal history remains intact.
+Already-visible notices keep the existing stop/close behavior. Exact restored
+durable originals use a distinct replay path that starts no timers or execution.
+
 Every interval is one actual observed state with an exact first/last tick range,
 coalesced interval count and explicit gap flag. Late observation never synthesizes
 missed state transitions or individual reports. All duration conversion,

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tests/staging.rs"]
+mod staging;
 use futures_util::task::noop_waker_ref;
 use machine_god_core::{BoxFuture, ManagedStopCondition};
 use std::{
@@ -168,6 +170,47 @@ fn ack_all(manager: &ManagedNotices, batch: &NoticeBatch) {
         .map(NoticeBatchEntry::token)
         .collect();
     assert_eq!(manager.acknowledge(batch, &tokens), Ok(tokens.len()));
+}
+
+// Existing projection/timer fixtures model a synchronous confirmed journal. No
+// immediate-publication entrypoint exists outside this test-only adapter.
+impl ManagedNotices {
+    fn fixture_confirm(&self, prepared: PreparedNotice) -> Result<NoticeEmission, NoticeError> {
+        match prepared {
+            PreparedNotice::Staged(stage) => self.confirm_durable(&stage),
+            PreparedNotice::Suppressed => Ok(NoticeEmission::Suppressed),
+            PreparedNotice::AlreadyRecorded => Ok(NoticeEmission::AlreadyRecorded),
+        }
+    }
+    fn start_work(
+        &self,
+        work: &WorkNoticeRef,
+        sequence: NonZeroU64,
+        history: Option<&NoticeHistoryRef>,
+    ) -> Result<NoticeEmission, NoticeError> {
+        self.fixture_confirm(self.prepare_start(work, sequence, history)?)
+    }
+    fn milestone(
+        &self,
+        work: &WorkNoticeRef,
+        sequence: NonZeroU64,
+        name: &str,
+        history: Option<&NoticeHistoryRef>,
+    ) -> Result<NoticeEmission, NoticeError> {
+        self.fixture_confirm(self.prepare_milestone(work, sequence, name, history)?)
+    }
+    fn terminal(
+        &self,
+        work: &WorkNoticeRef,
+        sequence: NonZeroU64,
+        outcome: NoticeTerminal,
+        history: Option<&NoticeHistoryRef>,
+    ) -> Result<NoticeEmission, NoticeError> {
+        self.fixture_confirm(self.prepare_terminal(work, sequence, outcome, history)?)
+    }
+    fn observe_due(&self, observation: &NoticeObservation) -> Result<NoticeEmission, NoticeError> {
+        self.fixture_confirm(self.prepare_due(observation)?)
+    }
 }
 
 #[test]

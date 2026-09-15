@@ -2,7 +2,8 @@ use super::{
     Arc, ManagedAgentState, ManagedNotice, ManagedNotifications, NativeMcpRuntimeClock, NonZeroU64,
     NoticeAckToken, NoticeBatch, NoticeBatchEntry, NoticeEmission, NoticeError, NoticeEvent,
     NoticeHistoryRef, NoticeLimits, NoticeObservation, NoticePrincipal, NoticeRelationship,
-    NoticeTarget, NoticeTerminal, NoticeUsage, WorkNoticeIdentity, WorkNoticeRef,
+    NoticeTarget, NoticeTerminal, NoticeUsage, PreparedNotice, StagedNotice, WorkNoticeIdentity,
+    WorkNoticeRef,
 };
 use machine_god_core::ManagedStopCondition;
 use std::{
@@ -58,6 +59,49 @@ struct Tracker {
     duration_end: Option<Instant>,
     stopped: bool,
     closed: bool,
+    pending: Option<PendingNotice>,
+}
+struct PendingNotice {
+    record: Arc<NoticeRecord>,
+    transition: Cursor,
+    eligible: bool,
+}
+#[derive(Clone, Copy)]
+struct Cursor {
+    sequence: u64,
+    observed_sequence: u64,
+    started: bool,
+    terminal: Option<NoticeTerminal>,
+    milestones: u32,
+    ticks: u64,
+    next_due: Option<Instant>,
+    duration_end: Option<Instant>,
+}
+impl Cursor {
+    fn capture(work: &Tracker) -> Self {
+        Self {
+            sequence: work.sequence,
+            observed_sequence: work.observed_sequence,
+            started: work.started,
+            terminal: work.terminal,
+            milestones: work.milestones,
+            ticks: work.ticks,
+            next_due: work.next_due,
+            duration_end: work.duration_end,
+        }
+    }
+    fn apply(self, work: &mut Tracker) {
+        work.sequence = self.sequence;
+        work.observed_sequence = self.observed_sequence;
+        work.started = self.started;
+        work.terminal = self.terminal;
+        work.milestones = self.milestones;
+        work.ticks = self.ticks;
+        if !work.stopped && !work.closed {
+            work.next_due = self.next_due;
+            work.duration_end = self.duration_end;
+        }
+    }
 }
 #[derive(Default)]
 pub(super) struct State {
@@ -82,6 +126,9 @@ impl State {
         self.trackers
             .values()
             .filter_map(|work| {
+                if work.pending.is_some() {
+                    return None;
+                }
                 let next = work.next_due?;
                 Some(work.duration_end.map_or(next, |end| end.min(next)))
             })
@@ -191,6 +238,7 @@ impl Inner {
                     duration_end: None,
                     stopped: false,
                     closed: false,
+                    pending: None,
                 },
             );
             state.next = id;
@@ -198,20 +246,20 @@ impl Inner {
         })
     }
     fn emit(
-        &self,
+        self: &Arc<Self>,
         state: &mut State,
         id: u64,
         sequence: NonZeroU64,
         event: NoticeEvent,
         history: Option<&NoticeHistoryRef>,
         enabled: bool,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         let work = state.trackers.get(&id).ok_or(NoticeError::Stale)?;
         if !enabled {
-            return Ok(NoticeEmission::Suppressed);
+            return Ok(PreparedNotice::Suppressed);
         }
         let Some(parent) = &work.relationship.parent else {
-            return Ok(NoticeEmission::Suppressed);
+            return Ok(PreparedNotice::Suppressed);
         };
         let notice = ManagedNotice {
             source: work.identity.source.clone(),
@@ -223,20 +271,32 @@ impl Inner {
             event,
             history: history.cloned(),
         };
-        self.insert(state, id, notice)
+        let transition = Cursor::capture(work);
+        let record = self.reserve_record(state, id, notice)?;
+        let token = StagedNotice {
+            inner: Arc::downgrade(self),
+            record: Arc::clone(&record),
+        };
+        state.trackers.get_mut(&id).unwrap().pending = Some(PendingNotice {
+            record,
+            transition,
+            eligible: true,
+        });
+        Ok(PreparedNotice::Staged(token))
     }
-    fn insert(
+    fn reserve_record(
         &self,
         state: &mut State,
         work: u64,
         notice: ManagedNotice,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<Arc<NoticeRecord>, NoticeError> {
         let next = state.next_id()?;
         let encoded_bytes = serde_json::to_vec(&notice)
             .map_err(|_| NoticeError::InvalidInput)?
             .len();
         let charge = encoded_bytes
             .checked_add(std::mem::size_of::<NoticeRecord>())
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<PendingNotice>()))
             .ok_or(NoticeError::Capacity)?;
         if encoded_bytes > self.limits.notice_bytes
             || self.budget.count.load(Ordering::Acquire) >= self.limits.records
@@ -249,19 +309,30 @@ impl Inner {
         {
             return Err(NoticeError::Capacity);
         }
+        // Reserve queue storage for all currently staged candidates as well as
+        // visible records, so confirmation cannot discover a new queue bound.
+        let staged = state
+            .trackers
+            .values()
+            .filter(|work| work.pending.is_some())
+            .count();
+        state
+            .queue
+            .try_reserve(staged + 1)
+            .map_err(|_| NoticeError::Capacity)?;
         // Insertions are serialized; concurrent final snapshot drops only refund.
         self.budget.count.fetch_add(1, Ordering::AcqRel);
         self.budget.bytes.fetch_add(charge, Ordering::AcqRel);
-        state.queue.push_back(Arc::new(NoticeRecord {
+        let record = Arc::new(NoticeRecord {
             id: next,
             notice,
             work,
             encoded_bytes,
             charge,
             budget: self.budget.clone(),
-        }));
+        });
         state.next = next;
-        Ok(NoticeEmission::Queued)
+        Ok(record)
     }
     pub(super) fn restore(
         &self,
@@ -299,6 +370,7 @@ impl Inner {
         self.mutate(|state| {
             let work = state.trackers.get(&identity.id).ok_or(NoticeError::Stale)?;
             if work.closed
+                || work.pending.is_some()
                 || work.started
                 || work.identity.source != notice.source
                 || notice.source_sequence.get() > work.sequence
@@ -314,26 +386,27 @@ impl Inner {
                     Err(NoticeError::InvalidInput)
                 };
             }
-            let emission = self.insert(state, identity.id, notice.clone())?;
+            let record = self.reserve_record(state, identity.id, notice.clone())?;
+            state.queue.push_back(record);
             // Replay admission is explicitly inert, never a running-work resume.
             state.trackers.get_mut(&identity.id).unwrap().stopped = true;
-            Ok(emission)
+            Ok(NoticeEmission::Queued)
         })
     }
     pub(super) fn start(
-        &self,
+        self: &Arc<Self>,
         reference: &WorkNoticeRef,
         sequence: NonZeroU64,
         history: Option<&NoticeHistoryRef>,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         valid_history(history, sequence)?;
         let identity = self.resolve(reference)?;
         let now = self.clock.now();
         self.mutate(|state| {
             state.now(now)?;
-            let work = live(state, identity.id)?;
+            let work = emitting(state, identity.id)?;
             if work.started {
-                return Ok(NoticeEmission::AlreadyRecorded);
+                return Ok(PreparedNotice::AlreadyRecorded);
             }
             if work.terminal.is_some() {
                 return Err(NoticeError::Closed);
@@ -341,6 +414,7 @@ impl Inner {
             fresh_sequence(work, sequence, false)?;
             let (next_due, duration_end) = deadlines(&work.policy, now)?;
             let enabled = work.policy.started;
+            let before = Cursor::capture(work);
             let outcome = self.emit(
                 state,
                 identity.id,
@@ -354,23 +428,24 @@ impl Inner {
             work.sequence = sequence.get();
             work.next_due = next_due;
             work.duration_end = duration_end;
+            retain_transition(work, before);
             Ok(outcome)
         })
     }
     pub(super) fn milestone(
-        &self,
+        self: &Arc<Self>,
         reference: &WorkNoticeRef,
         sequence: NonZeroU64,
         name: &str,
         history: Option<&NoticeHistoryRef>,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         valid_history(history, sequence)?;
         if name.is_empty() || name.len() > 128 || name.contains('\0') {
             return Err(NoticeError::InvalidInput);
         }
         let identity = self.resolve(reference)?;
         self.mutate(|state| {
-            let work = live(state, identity.id)?;
+            let work = emitting(state, identity.id)?;
             if !work.started || work.terminal.is_some() {
                 return Err(NoticeError::Closed);
             }
@@ -382,9 +457,10 @@ impl Inner {
                 .ok_or(NoticeError::UndeclaredMilestone)?;
             let bit = 1u32 << index;
             if work.milestones & bit != 0 {
-                return Ok(NoticeEmission::AlreadyRecorded);
+                return Ok(PreparedNotice::AlreadyRecorded);
             }
             fresh_sequence(work, sequence, false)?;
+            let before = Cursor::capture(work);
             let outcome = self.emit(
                 state,
                 identity.id,
@@ -398,23 +474,24 @@ impl Inner {
             let work = state.trackers.get_mut(&identity.id).unwrap();
             work.milestones |= bit;
             work.sequence = sequence.get();
+            retain_transition(work, before);
             Ok(outcome)
         })
     }
     pub(super) fn terminal(
-        &self,
+        self: &Arc<Self>,
         reference: &WorkNoticeRef,
         sequence: NonZeroU64,
         outcome: NoticeTerminal,
         history: Option<&NoticeHistoryRef>,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         valid_history(history, sequence)?;
         let identity = self.resolve(reference)?;
         self.mutate(|state| {
-            let work = live(state, identity.id)?;
+            let work = emitting(state, identity.id)?;
             if let Some(original) = work.terminal {
                 return if original == outcome {
-                    Ok(NoticeEmission::AlreadyRecorded)
+                    Ok(PreparedNotice::AlreadyRecorded)
                 } else {
                     Err(NoticeError::InvalidInput)
                 };
@@ -429,6 +506,7 @@ impl Inner {
                 .policy
                 .stop_conditions
                 .contains(&ManagedStopCondition::Terminal);
+            let before = Cursor::capture(work);
             let emission = self.emit(
                 state,
                 identity.id,
@@ -444,25 +522,26 @@ impl Inner {
                 work.next_due = None;
                 work.duration_end = None;
             }
+            retain_transition(work, before);
             Ok(emission)
         })
     }
     pub(super) fn observe(
-        &self,
+        self: &Arc<Self>,
         observation: &NoticeObservation,
-    ) -> Result<NoticeEmission, NoticeError> {
+    ) -> Result<PreparedNotice, NoticeError> {
         valid_history(observation.history.as_ref(), observation.source_sequence)?;
         let identity = self.resolve(&observation.work)?;
         let now = self.clock.now();
         self.mutate(|state| {
             state.now(now)?;
-            let work = live(state, identity.id)?;
+            let work = emitting(state, identity.id)?;
             fresh_sequence(work, observation.source_sequence, true)?;
             if observation.source_sequence.get() < work.observed_sequence {
                 return Err(NoticeError::StaleSource);
             }
             let Some(due) = work.next_due else {
-                return Ok(NoticeEmission::Suppressed);
+                return Ok(PreparedNotice::Suppressed);
             };
             let observed_terminal = matches!(
                 observation.state,
@@ -478,10 +557,10 @@ impl Inner {
                 work.next_due = None;
                 work.duration_end = None;
                 work.observed_sequence = observation.source_sequence.get();
-                return Ok(NoticeEmission::Suppressed);
+                return Ok(PreparedNotice::Suppressed);
             }
             if now < due {
-                return Ok(NoticeEmission::Suppressed);
+                return Ok(PreparedNotice::Suppressed);
             }
             let interval = work
                 .policy
@@ -517,6 +596,7 @@ impl Inner {
                 coalesced_intervals: ticks,
                 gap: ticks.get() > 1,
             };
+            let before = Cursor::capture(work);
             let emission = self.emit(
                 state,
                 identity.id,
@@ -529,8 +609,61 @@ impl Inner {
             work.next_due = Some(next);
             work.ticks = last_tick.get();
             work.observed_sequence = observation.source_sequence.get();
+            retain_transition(work, before);
             Ok(emission)
         })
+    }
+    pub(super) fn pending(
+        self: &Arc<Self>,
+        reference: &WorkNoticeRef,
+    ) -> Result<Option<StagedNotice>, NoticeError> {
+        let identity = self.resolve(reference)?;
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let work = state.trackers.get(&identity.id).ok_or(NoticeError::Stale)?;
+        Ok(work.pending.as_ref().map(|pending| StagedNotice {
+            inner: Arc::downgrade(self),
+            record: Arc::clone(&pending.record),
+        }))
+    }
+    fn validate_stage(&self, candidate: &StagedNotice, state: &State) -> Result<u64, NoticeError> {
+        if !std::ptr::eq(self, candidate.inner.as_ptr()) {
+            return Err(NoticeError::Stale);
+        }
+        let id = candidate.record.work;
+        let work = state.trackers.get(&id).ok_or(NoticeError::Stale)?;
+        if !work
+            .pending
+            .as_ref()
+            .is_some_and(|pending| Arc::ptr_eq(&pending.record, &candidate.record))
+        {
+            return Err(NoticeError::Stale);
+        }
+        Ok(id)
+    }
+    pub(super) fn confirm(&self, stage: &StagedNotice) -> Result<NoticeEmission, NoticeError> {
+        self.mutate(|state| {
+            let id = self.validate_stage(stage, state)?;
+            let work = state.trackers.get_mut(&id).unwrap();
+            let pending = work.pending.take().unwrap();
+            pending.transition.apply(work);
+            if pending.eligible && !work.closed && !work.stopped {
+                state.queue.push_back(pending.record);
+                Ok(NoticeEmission::Queued)
+            } else {
+                Ok(NoticeEmission::Suppressed)
+            }
+        })
+    }
+    pub(super) fn discard(&self, stage: &StagedNotice) -> Result<(), NoticeError> {
+        let removed = self.mutate(|state| {
+            let id = self.validate_stage(stage, state)?;
+            Ok(state.trackers.get_mut(&id).unwrap().pending.take())
+        })?;
+        drop(removed);
+        Ok(())
     }
     pub(super) fn set_relationship(
         &self,
@@ -569,6 +702,11 @@ impl Inner {
         valid_principal(target)?;
         self.mutate(|state| {
             for work in state.trackers.values_mut() {
+                if let Some(pending) = &mut work.pending
+                    && pending.record.notice.target.parent == *target
+                {
+                    pending.eligible = false;
+                }
                 if work.relationship.parent.as_ref() == Some(target) {
                     work.relationship.parent = None;
                 }
@@ -584,6 +722,7 @@ impl Inner {
         self.mutate(|state| {
             let work = state.trackers.get(&identity.id).ok_or(NoticeError::Stale)?;
             if (!work.stopped && (work.terminal.is_none() || work.next_due.is_some()))
+                || work.pending.is_some()
                 || state.queue.iter().any(|record| record.work == identity.id)
             {
                 return Err(NoticeError::Busy);
@@ -720,6 +859,11 @@ impl Inner {
         NoticeUsage {
             trackers: state.trackers.len(),
             pending: state.queue.len(),
+            staged: state
+                .trackers
+                .values()
+                .filter(|work| work.pending.is_some())
+                .count(),
             retained_records: self.budget.count.load(Ordering::Acquire),
             retained_bytes: self.budget.bytes.load(Ordering::Acquire),
         }
@@ -751,6 +895,20 @@ fn live(state: &State, id: u64) -> Result<&Tracker, NoticeError> {
         return Err(NoticeError::Closed);
     }
     Ok(work)
+}
+fn emitting(state: &State, id: u64) -> Result<&Tracker, NoticeError> {
+    let work = live(state, id)?;
+    if work.pending.is_some() {
+        return Err(NoticeError::Busy);
+    }
+    Ok(work)
+}
+fn retain_transition(work: &mut Tracker, before: Cursor) {
+    let transition = Cursor::capture(work);
+    if let Some(pending) = &mut work.pending {
+        pending.transition = transition;
+        before.apply(work);
+    }
 }
 fn fresh_sequence(work: &Tracker, sequence: NonZeroU64, equal: bool) -> Result<(), NoticeError> {
     if sequence.get() < work.sequence || (!equal && sequence.get() == work.sequence) {
