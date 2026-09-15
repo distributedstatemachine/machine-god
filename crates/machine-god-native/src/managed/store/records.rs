@@ -96,6 +96,11 @@ pub(crate) struct JournalCreate {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum JournalRecord {
     Notice(crate::managed::notices::ManagedNotice),
+    NoticeAcknowledged {
+        identity: crate::managed::notices::NoticeIdentity,
+        target: crate::managed::notices::NoticeTarget,
+        checkpoint: crate::managed::prompt_context::NoticeCheckpoint,
+    },
     WorkAccepted(JournalWork),
     Event(ManagedEvent),
     History(ManagedHistoryItem),

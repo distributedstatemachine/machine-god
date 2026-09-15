@@ -123,6 +123,29 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
     }
     for record in records {
         match record {
+            JournalRecord::NoticeAcknowledged {
+                identity,
+                target,
+                checkpoint,
+            } => {
+                use crate::managed::notices::NoticeKind;
+                id(&identity.source.source.id)?;
+                id(&identity.source.work_id)?;
+                id(&target.parent.id)?;
+                if checkpoint.session_id.as_str() != target.parent.id
+                    || checkpoint.turn_sequence == 0
+                {
+                    return Err(Error::Invalid);
+                }
+                match &identity.kind {
+                    NoticeKind::Milestone { name } => text(name, 128, false)?,
+                    NoticeKind::Interval {
+                        first_tick,
+                        last_tick,
+                    } if first_tick > last_tick => return Err(Error::Invalid),
+                    _ => {}
+                }
+            }
             JournalRecord::Notice(value) => {
                 use crate::managed::notices::NoticeEvent;
                 id(&value.source.source.id)?;
@@ -179,7 +202,11 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
                     id(work)?;
                 }
                 for value in [&value.user, &value.assistant].into_iter().flatten() {
-                    text(value, 16 * 1024, true)?;
+                    // Model text is data; unlike input labels, NUL is valid
+                    // inside a bounded serialized assistant/history field.
+                    if value.len() > 16 * 1024 {
+                        return Err(Error::Invalid);
+                    }
                 }
             }
             JournalRecord::Tool(value) => {

@@ -24,6 +24,14 @@ Exact typed notice envelopes are immutable pageable journal records, preserving
 source/work generations, target relationship, source sequence and interval gaps.
 Their journal confirmation precedes visibility in the parent notice inbox.
 
+Source journals also retain exact acknowledgement identity, original target and
+parent prompt-checkpoint evidence. This maintenance can append to an archived
+source without reopening it or executing work. The manager must first establish
+the original immutable notice and confirmed parent checkpoint; an arbitrary
+label, ordinary record readback or current child status cannot establish delivery.
+One notice publication occupies its own source sequence and advances the durable
+publication cursor; acknowledgements do not synthesize notices or timers.
+
 The root is `{"command":{...}}`, selecting exactly one of these branches.
 Every object rejects unknown fields. Optional fields are omitted, not null.
 

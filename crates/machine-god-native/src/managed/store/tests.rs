@@ -223,6 +223,66 @@ fn exact_notice_envelope_is_pageable_and_validated() {
         Err(JournalError::Invalid)
     ));
 }
+
+#[test]
+fn archived_source_accepts_exact_delivery_ack_without_reopening() {
+    use crate::managed::{notices::*, prompt_context::NoticeCheckpoint};
+    use machine_god_core::SessionRevision;
+    use std::num::NonZeroU64;
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let mut record = create("ack-source");
+    record.initial_work = None;
+    let snapshot = confirmed(block_on(journal.create(record)).unwrap());
+    let snapshot = confirmed(
+        block_on(journal.mutate(snapshot, JournalMutation::Intent(JournalIntent::Archive)))
+            .unwrap(),
+    );
+    let snapshot = confirmed(block_on(journal.mutate(snapshot, JournalMutation::Archive)).unwrap());
+    let acknowledgement = JournalRecord::NoticeAcknowledged {
+        identity: NoticeIdentity {
+            source: WorkNoticeIdentity {
+                source: NoticePrincipal {
+                    id: "ack-source".into(),
+                    generation: NonZeroU64::new(1).unwrap(),
+                },
+                work_id: "work-1".into(),
+                work_generation: NonZeroU64::new(1).unwrap(),
+            },
+            source_sequence: NonZeroU64::new(1).unwrap(),
+            kind: NoticeKind::Started,
+        },
+        target: NoticeTarget {
+            parent: NoticePrincipal {
+                id: "parent".into(),
+                generation: NonZeroU64::new(1).unwrap(),
+            },
+            relationship_generation: NonZeroU64::new(1).unwrap(),
+        },
+        checkpoint: NoticeCheckpoint {
+            session_id: transcript("parent").session_id,
+            incarnation_id: transcript("parent").incarnation,
+            expected_revision: SessionRevision(2),
+            turn_sequence: 1,
+            first_user_message: 0,
+        },
+    };
+    let snapshot = confirmed(
+        block_on(journal.mutate(
+            snapshot,
+            JournalMutation::AppendHistory(vec![acknowledgement.clone()]),
+        ))
+        .unwrap(),
+    );
+    assert_eq!(snapshot.head.status, ManagedAgentState::Archived);
+    assert_eq!(snapshot.head.generation, 1);
+    assert!(
+        block_on(journal.history(snapshot, None, 100))
+            .unwrap()
+            .records
+            .contains(&acknowledgement)
+    );
+}
 fn mutate(
     journal: &ManagedJournal,
     snapshot: JournalSnapshot,

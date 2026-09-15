@@ -57,6 +57,7 @@ pub(super) fn apply(
             mutation,
             JournalMutation::Reopen(_) | JournalMutation::Recover
         )
+        && !matches!(&mutation, JournalMutation::AppendHistory(records) if records.iter().all(|record| matches!(record, JournalRecord::NoticeAcknowledged { .. })))
     {
         return Err(Error::Conflict);
     }
@@ -124,6 +125,18 @@ pub(super) fn apply(
         }
         JournalMutation::AppendHistory(records) => {
             validate_history(&records)?;
+            for record in &records {
+                if let JournalRecord::Notice(notice) = record {
+                    if notice.source.source.id != head.id
+                        || notice.source.source.generation.get() != head.generation
+                        || notice.source_sequence.get() != head.next_sequence
+                        || notice.source_sequence.get() <= head.notice_cursor
+                    {
+                        return Err(Error::Conflict);
+                    }
+                    head.notice_cursor = notice.source_sequence.get();
+                }
+            }
             return Ok(records);
         }
         JournalMutation::Archive => {
@@ -193,6 +206,7 @@ fn validate_history(records: &[JournalRecord]) -> Result<(), Error> {
                 | JournalRecord::Event(_)
                 | JournalRecord::Tool(_)
                 | JournalRecord::Notice(_)
+                | JournalRecord::NoticeAcknowledged { .. }
         )
     }) {
         return Err(Error::Invalid);
