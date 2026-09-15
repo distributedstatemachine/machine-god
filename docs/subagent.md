@@ -138,6 +138,21 @@ around a managed tool. Native privately constructs its admitted principal/run
 lease only after checking the witness and authority. Core identity alone is
 never a native permission or resource grant.
 
+Explicit human management uses a separate native entry point, not a fabricated
+tool context or model-call witness. The interactive owner resolves its actual
+foreground allocation in the same outer manager and captures that runtime's
+workspace, permission policy and model preferences under an ordinary lifecycle
+permit. It does not cancel an active parent turn. A retiring or transitioning
+foreground rejects new commands; quiescence invalidates unpublished commands
+and inspection waits, releasing their original permits before replacement.
+
+The human endpoint may address retained children in that manager's journal even
+after parent replacement. Model callers retain their controller/child/parent
+relationship checks. Both paths enforce the captured same-or-stricter permission
+policy. Explicit human attach/reparent commands need no second model-tool
+approval, but retain the same target, graph, generation and publication checks.
+Neither a child label nor a navigation projection constructs human admission.
+
 ## Principal isolation
 
 Native registers each principal from an actual session's weak allocation witness,
@@ -372,6 +387,16 @@ Already dequeued mutations retain manager-owned
 settlement custody and resource charges. Requesters, budget progress handles and
 reply registries use weak reverse links, with no queue/engine ownership cycle.
 Callbacks and payload destruction run outside queue, reply and budget locks.
+
+Human submissions share this exact mailbox and result budget. They reserve
+capacity before normalizing the complete core command and capturing workspace
+descriptors. Synchronous queue admission is not a durable receipt: the host
+co-polls its outer manager and awaits the original response. The manager drops
+the admitted lifecycle/resource snapshot before completing the reply; a retained
+response cannot keep the original runtime or host services alive. Submission
+cancellation wakes human inspection waits without a model run or deadline tick.
+For mutations it remains distinct from durable lifecycle cancellation, and
+publication/reconciliation retains its original settlement custody.
 
 ## Native manager and runtime factory
 

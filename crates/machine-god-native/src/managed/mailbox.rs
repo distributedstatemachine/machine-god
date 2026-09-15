@@ -4,7 +4,10 @@ mod response;
 #[cfg(test)]
 mod tests;
 
-use super::principal::{NativeManagedCallLease, NativePrincipalRequester};
+use super::{
+    actor::ManagedCommandActor,
+    principal::{NativeManagedCallLease, NativePrincipalRequester},
+};
 use machine_god_core::{
     BoxFuture, CancellationToken, ManagedSubagentAuthority, ManagedSubagentCommand,
     ManagedSubagentError as Error, ManagedSubagentInvocation, ManagedSubagentResult, ToolContext,
@@ -21,6 +24,8 @@ use std::{
 // response normalization scratch + bounded typed response and bookkeeping.
 const OPERATION_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REQUESTS: usize = 256;
+
+pub(crate) type ManagedCommandResponse = BoxFuture<'static, Result<ManagedSubagentResult, Error>>;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct MailboxLimits {
@@ -125,6 +130,34 @@ impl ManagedMailbox {
             principals: self.principals.clone(),
         }
     }
+    /// An explicit native-host command, never a structural model invocation.
+    /// Reserve shared queue/result capacity before cloning or normalizing input.
+    pub(crate) fn request_human(
+        &self,
+        command: ManagedSubagentCommand,
+        capture: impl FnOnce() -> Result<ManagedCommandActor, Error>,
+        cancellation: CancellationToken,
+    ) -> Result<ManagedCommandResponse, Error> {
+        if cancellation.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let reservation = self.shared.budget.reserve()?;
+        let normalized = ManagedSubagentCommand::decode(command.to_arguments()?)?;
+        // Release the caller's spare allocations before capturing native
+        // resources; only the normalized payload enters queue custody.
+        drop(command);
+        let actor = capture()?;
+        if !actor.is_human() || !actor.is_live() {
+            return Err(Error::Unavailable);
+        }
+        let response = self.shared.submit_admitted(
+            JobRequest::Human(Box::new(normalized)),
+            actor,
+            cancellation,
+            reservation,
+        )?;
+        Ok(Box::pin(response))
+    }
     pub(crate) fn wake_handle(&self) -> ManagedMailboxWake {
         ManagedMailboxWake(Arc::downgrade(&self.shared))
     }
@@ -223,13 +256,28 @@ impl Shared {
         cancellation: CancellationToken,
     ) -> Result<Response, Error> {
         let reservation = self.budget.reserve()?;
+        self.submit_admitted(
+            JobRequest::Model(Box::new(invocation)),
+            ManagedCommandActor::Model(lease),
+            cancellation,
+            reservation,
+        )
+    }
+
+    fn submit_admitted(
+        self: &Arc<Self>,
+        request: JobRequest,
+        actor: ManagedCommandActor,
+        cancellation: CancellationToken,
+        reservation: Arc<Reservation>,
+    ) -> Result<Response, Error> {
         let reply = Arc::new(Reply::new(
             reservation.clone(),
             ManagedMailboxWake(Arc::downgrade(self)),
         ));
         let job = ManagedMailboxJob {
-            invocation: Some(invocation),
-            lease: Some(lease),
+            request: Some(request),
+            actor: Some(actor),
             cancellation,
             reply: reply.clone(),
             reservation,
@@ -271,21 +319,31 @@ impl ManagedMailboxWake {
 
 /// Admitted request custody, not journal acceptance or permission to execute later.
 pub(crate) struct ManagedMailboxJob {
-    invocation: Option<ManagedSubagentInvocation>,
-    lease: Option<NativeManagedCallLease>,
+    request: Option<JobRequest>,
+    actor: Option<ManagedCommandActor>,
     cancellation: CancellationToken,
     reply: Arc<Reply>,
     reservation: Arc<Reservation>,
 }
+enum JobRequest {
+    Model(Box<ManagedSubagentInvocation>),
+    Human(Box<ManagedSubagentCommand>),
+}
 impl ManagedMailboxJob {
     pub(crate) fn command(&self) -> &ManagedSubagentCommand {
-        self.invocation.as_ref().expect("live job").command()
+        match self.request.as_ref().expect("live job") {
+            JobRequest::Model(invocation) => invocation.command(),
+            JobRequest::Human(command) => command,
+        }
     }
-    pub(crate) fn context(&self) -> &ToolContext {
-        self.invocation.as_ref().expect("live job").context()
+    pub(crate) fn context(&self) -> Option<&ToolContext> {
+        match self.request.as_ref().expect("live job") {
+            JobRequest::Model(invocation) => Some(invocation.context()),
+            JobRequest::Human(_) => None,
+        }
     }
-    pub(crate) fn lease(&self) -> &NativeManagedCallLease {
-        self.lease.as_ref().expect("live job")
+    pub(crate) fn lease(&self) -> &ManagedCommandActor {
+        self.actor.as_ref().expect("live job")
     }
     pub(crate) fn cancellation(&self) -> &CancellationToken {
         &self.cancellation
@@ -297,8 +355,8 @@ impl ManagedMailboxJob {
     pub(crate) fn complete(mut self, result: Result<ManagedSubagentResult, Error>) {
         let result = response::bounded_result(result);
         // The reservation covers both payloads while result normalization runs.
-        drop(self.invocation.take());
-        drop(self.lease.take());
+        drop(self.request.take());
+        drop(self.actor.take());
         self.reply.finish(result);
     }
 }

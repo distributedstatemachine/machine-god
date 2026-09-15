@@ -291,6 +291,15 @@ impl NativeConversation {
         Ok(lease)
     }
 
+    pub(crate) fn managed_principal_matches(
+        &self,
+        principal: &Arc<crate::managed::principal::NativePrincipal>,
+    ) -> bool {
+        self.managed
+            .as_ref()
+            .is_some_and(|binding| binding.matches_principal(principal))
+    }
+
     pub(crate) fn capture_workspace_scope(
         &self,
     ) -> Result<Option<crate::NativeWorkspaceScopeSnapshot>, NativeConversationError> {

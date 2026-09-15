@@ -30,8 +30,10 @@ use crate::{
     NativePermissionPolicySnapshot, NativeUserConfigError, NativeUserConfigStore,
 };
 
+mod managed_commands;
 #[path = "acp/resource_queue.rs"]
 mod resource_queue;
+pub(crate) use managed_commands::NativeManagedCommandSnapshot;
 
 /// Independent native queue bounds; core still applies its configured turn limits.
 pub const MAX_NATIVE_QUEUED_JOBS: usize = 64;

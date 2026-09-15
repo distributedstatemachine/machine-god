@@ -60,6 +60,17 @@ a managed host-global fallback. Child progress is polled before presentation or
 control backpressure, and interactive shutdown is not complete until the outer
 manager has settled all child and foreground custody.
 
+`NativeInteractiveSession::request_managed_command` admits explicit human
+management through that same manager and bounded mailbox, with the actual
+foreground's lifecycle, workspace, policy and preferences captured before
+queue publication. It does not construct a model-call witness or launch a
+parent turn. The host must co-poll the session and await the original bounded
+response; admission alone is not durable acceptance. Retained response observers
+do not retain conversation or host-service ownership. Read-only
+`managed_progress` counts are observations, not capacity reservations. Detailed
+human/model distinctions and cancellation rules belong in the
+[subagent contract](subagent.md#actual-invocation-and-native-authority).
+
 `NativeManagedInteractiveStartup` owns that manager before selection, without
 allocating a provisional conversation. Opening is caller-polled and transfers
 the interactive owner once; failed selection retains the manager for explicit

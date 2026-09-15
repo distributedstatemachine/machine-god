@@ -303,7 +303,7 @@ impl ManagedManager {
             Poll::Pending
         }
     }
-    fn progress(&self) -> ManagerProgress {
+    pub(crate) fn progress(&self) -> ManagerProgress {
         ManagerProgress {
             residents: self.children.len()
                 + self.retiring.len()

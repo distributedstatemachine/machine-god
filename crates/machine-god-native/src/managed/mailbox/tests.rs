@@ -186,16 +186,83 @@ fn construction_is_inert_and_first_poll_claims_actual_invocation_once() {
     assert!(poll(future.as_mut()).is_pending());
     let job = next(&mailbox);
     assert!(job.lease().is_live());
-    assert_eq!(job.context().session_id.as_str(), "principal");
-    assert!(
-        fixture
-            .registry
-            .claim(job.invocation.as_ref().unwrap())
-            .is_err()
-    );
+    assert_eq!(job.context().unwrap().session_id.as_str(), "principal");
+    let Some(JobRequest::Model(invocation)) = job.request.as_ref() else {
+        panic!("actual model invocation");
+    };
+    assert!(fixture.registry.claim(invocation).is_err());
     assert!(matches!(job.command(), ManagedSubagentCommand::Create(_)));
     job.complete(Ok(result()));
     assert!(matches!(poll(future.as_mut()), Poll::Ready(Ok(_))));
+    assert_eq!(mailbox.usage(), MailboxUsage::default());
+}
+
+fn human_command() -> ManagedSubagentCommand {
+    ManagedSubagentCommand::decode(serde_json::json!({
+        "command":{"create":{"name":"human","mode":"persistent"}}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn human_capacity_is_shared_with_models_and_reserved_before_actor_capture() {
+    let fixture = Fixture::new();
+    let mailbox = fixture.mailbox(1);
+    let requester = mailbox.requester();
+    let (_admission, invocation) = fixture.invocation("principal");
+    let mut model = requester.execute(invocation, CancellationToken::new());
+    assert!(poll(model.as_mut()).is_pending());
+    assert!(matches!(
+        mailbox.request_human(
+            human_command(),
+            || panic!("capture over capacity"),
+            CancellationToken::new()
+        ),
+        Err(Error::ResourceLimit)
+    ));
+    next(&mailbox).complete(Ok(result()));
+    assert!(poll(model.as_mut()).is_ready());
+    let captured = std::cell::Cell::new(false);
+    assert!(matches!(
+        mailbox.request_human(
+            human_command(),
+            || {
+                captured.set(true);
+                assert_eq!(mailbox.usage().requests, 1);
+                Err(Error::Unavailable)
+            },
+            CancellationToken::new()
+        ),
+        Err(Error::Unavailable)
+    ));
+    assert!(captured.get());
+    assert_eq!(mailbox.usage(), MailboxUsage::default());
+}
+
+#[test]
+fn cancelled_and_invalid_human_commands_do_not_capture_authority_or_leak_capacity() {
+    let fixture = Fixture::new();
+    let mailbox = fixture.mailbox(1);
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert!(matches!(
+        mailbox.request_human(human_command(), || panic!("cancelled capture"), cancelled),
+        Err(Error::Cancelled)
+    ));
+    let mut invalid = human_command();
+    let ManagedSubagentCommand::Create(ref mut create) = invalid else {
+        unreachable!()
+    };
+    create.name = "x".repeat(129);
+    assert!(
+        mailbox
+            .request_human(
+                invalid,
+                || panic!("invalid capture"),
+                CancellationToken::new()
+            )
+            .is_err()
+    );
     assert_eq!(mailbox.usage(), MailboxUsage::default());
 }
 
@@ -239,10 +306,10 @@ fn fifo_jobs_and_slow_responses_share_count_and_byte_pressure() {
     assert!(poll(a.as_mut()).is_pending());
     assert!(poll(b.as_mut()).is_pending());
     let first = next(&mailbox);
-    assert_eq!(first.context().session_id.as_str(), "first");
+    assert_eq!(first.context().unwrap().session_id.as_str(), "first");
     first.complete(Ok(result()));
     let second = next(&mailbox);
-    assert_eq!(second.context().session_id.as_str(), "second");
+    assert_eq!(second.context().unwrap().session_id.as_str(), "second");
     assert_eq!(mailbox.usage().requests, 2);
     assert_eq!(
         block_on(requester.execute(third, CancellationToken::new())).unwrap_err(),

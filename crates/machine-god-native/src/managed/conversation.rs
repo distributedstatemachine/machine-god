@@ -189,6 +189,15 @@ impl ManagedConversationOwner {
 
 impl ManagedConversationBinding {
     /// Weak lookup only; retaining the binding cannot prolong a principal.
+    pub(crate) fn matches_principal(&self, principal: &Arc<NativePrincipal>) -> bool {
+        self.0.upgrade().is_some_and(|owner| {
+            !owner.closed.load(Ordering::Acquire)
+                && owner.principal.is_live()
+                && Arc::ptr_eq(&owner.principal, principal)
+        })
+    }
+
+    /// Weak lookup only; retaining the binding cannot prolong a principal.
     pub(crate) fn cleanup_for(&self, run: &RunRef) -> Result<ManagedRunCleanup> {
         self.0
             .upgrade()

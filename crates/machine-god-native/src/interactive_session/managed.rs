@@ -53,6 +53,39 @@ impl Owner {
 }
 
 impl NativeInteractiveSession {
+    /// Queues an explicitly requested human management command against this
+    /// actual foreground's captured policy/workspace. This is not model admission
+    /// and cannot produce or substitute a tool-call witness. Queueing is not a
+    /// durability receipt: co-poll this owner and await the returned response.
+    /// Dropping the response alone is not durable cancellation of accepted work.
+    /// # Errors
+    /// Rejects unavailable/transitioning ownership, cancelled requests, invalid
+    /// commands and exhausted shared queue or payload capacity before submission.
+    pub fn request_managed_command(
+        &mut self,
+        command: machine_god_core::ManagedSubagentCommand,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<crate::NativeManagedCommandResponse, machine_god_core::ManagedSubagentError> {
+        use machine_god_core::ManagedSubagentError;
+        if self.shutting_down || self.closed || self.transition.is_some() || self.pending.is_some()
+        {
+            return Err(ManagedSubagentError::Unavailable);
+        }
+        let owner = self
+            .managed
+            .as_mut()
+            .ok_or(ManagedSubagentError::Unavailable)?;
+        let selected = owner
+            .foreground
+            .as_ref()
+            .ok_or(ManagedSubagentError::Unavailable)?;
+        let response = owner
+            .agents
+            .request_human_command(selected, command, cancellation)?;
+        self.notify();
+        Ok(response)
+    }
+
     /// Reports whether native runtimes own registration in this exact inbox.
     /// Presentation must not register or retire a second lease in managed mode.
     /// # Errors
@@ -155,7 +188,7 @@ impl NativeInteractiveSession {
     pub(super) fn quiesce_current(
         &mut self,
     ) -> Result<NativeRuntimeQuiescence, NativeConversationRuntimeError> {
-        match &mut self.managed {
+        let guard = match &mut self.managed {
             Some(owner) => owner.agents.quiesce_foreground(
                 owner
                     .foreground
@@ -163,7 +196,14 @@ impl NativeInteractiveSession {
                     .ok_or(NativeConversationRuntimeError::Retired)?,
             ),
             None => self.current.begin_quiescence(),
+        }?;
+        // The manager was already polled before this fence. Schedule one more
+        // pass so invalidated human waits release their lifecycle permits even
+        // when no model, I/O or deadline can otherwise wake the driver.
+        if self.managed.is_some() {
+            self.notify();
         }
+        Ok(guard)
     }
 
     pub(super) fn retire_candidate(&mut self, transition: &mut Transition) {
@@ -260,6 +300,14 @@ impl NativeInteractiveSession {
         } else if let Poll::Ready(Err(error)) = owner.agents.poll_progress(cx, now_ms) {
             owner.error = Some(error);
         }
+    }
+
+    /// Bounded native observations; navigation labels confer no control authority.
+    #[must_use]
+    pub fn managed_progress(&self) -> Option<crate::NativeManagedAgentsProgress> {
+        self.managed
+            .as_ref()
+            .map(|owner| owner.agents.progress_snapshot())
     }
 
     /// Bounded native observations; navigation labels confer no control authority.

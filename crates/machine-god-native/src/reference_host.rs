@@ -12,7 +12,7 @@ pub(crate) use managed_agents::map_error as managed_error;
 mod managed_factory;
 pub use managed_agents::{
     NativeManagedAgentSelection, NativeManagedAgentView, NativeManagedAgents,
-    NativeManagedAgentsError, NativeManagedAgentsProgress,
+    NativeManagedAgentsError, NativeManagedAgentsProgress, NativeManagedCommandResponse,
 };
 mod managed_host;
 mod mcp;

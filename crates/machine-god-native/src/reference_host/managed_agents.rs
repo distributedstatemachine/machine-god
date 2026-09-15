@@ -53,6 +53,13 @@ impl fmt::Display for NativeManagedAgentsError {
 }
 impl std::error::Error for NativeManagedAgentsError {}
 
+/// Bounded result observation only. The outer native manager retains accepted
+/// command custody; callers must co-poll it and retain cancellation explicitly.
+pub type NativeManagedCommandResponse = BoxFuture<
+    'static,
+    Result<machine_god_core::ManagedSubagentResult, machine_god_core::ManagedSubagentError>,
+>;
+
 /// Weak native navigation identity. Labels alone cannot construct this value.
 #[derive(Clone, Debug)]
 pub struct NativeManagedAgentSelection(ManagedSelection);
@@ -74,6 +81,17 @@ pub struct NativeManagedAgentsProgress {
     pub waiters: usize,
     pub closing: bool,
     pub blocked: bool,
+}
+impl From<crate::managed::manager::ManagerProgress> for NativeManagedAgentsProgress {
+    fn from(progress: crate::managed::manager::ManagerProgress) -> Self {
+        Self {
+            residents: progress.residents,
+            executing: progress.executing,
+            waiters: progress.waiters,
+            closing: progress.closing,
+            blocked: progress.blocked.is_some(),
+        }
+    }
 }
 
 /// Owns children and foreground resources independently of selected presentation.
@@ -280,6 +298,16 @@ impl NativeReferenceHost {
 }
 
 impl NativeManagedAgents {
+    pub(crate) fn request_human_command(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+        command: machine_god_core::ManagedSubagentCommand,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<NativeManagedCommandResponse, machine_god_core::ManagedSubagentError> {
+        self.manager
+            .request_human_command(selection, command, cancellation)
+    }
+
     pub(crate) fn manages_prompt_inbox(
         &self,
         inbox: &crate::NativeInteractivePromptInbox,
@@ -311,6 +339,12 @@ impl NativeManagedAgents {
             .collect()
     }
 
+    /// Read-only counters, not admission capacity or a command receipt.
+    #[must_use]
+    pub fn progress_snapshot(&self) -> NativeManagedAgentsProgress {
+        self.manager.progress().into()
+    }
+
     /// Progress does not depend on terminal output or a selected agent page.
     /// # Errors
     /// Reports fixed resource/persistence categories without discarding owned work.
@@ -319,17 +353,9 @@ impl NativeManagedAgents {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Poll<Result<NativeManagedAgentsProgress, NativeManagedAgentsError>> {
-        self.manager.poll_progress(cx, now_ms).map(|result| {
-            result
-                .map(|progress| NativeManagedAgentsProgress {
-                    residents: progress.residents,
-                    executing: progress.executing,
-                    waiters: progress.waiters,
-                    closing: progress.closing,
-                    blocked: progress.blocked.is_some(),
-                })
-                .map_err(map_error)
-        })
+        self.manager
+            .poll_progress(cx, now_ms)
+            .map(|result| result.map(Into::into).map_err(map_error))
     }
 
     /// Explicitly retry retained reconciliation receipts, never blind creation.

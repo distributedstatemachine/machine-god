@@ -58,6 +58,37 @@ impl Drop for Foreground {
 }
 
 impl ManagedManager {
+    /// The unique manager resolves its own allocation-bound foreground before
+    /// capturing a native-human actor. Labels and caller-supplied IDs do not bind it.
+    pub(crate) fn request_human_command(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+        command: machine_god_core::ManagedSubagentCommand,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<super::super::mailbox::ManagedCommandResponse, machine_god_core::ManagedSubagentError>
+    {
+        if self.closing {
+            return Err(machine_god_core::ManagedSubagentError::Unavailable);
+        }
+        let parent = self
+            .foregrounds
+            .iter()
+            .find(|parent| !parent.closing && !parent.closed && parent.matches(selection))
+            .ok_or(machine_god_core::ManagedSubagentError::Unavailable)?;
+        let selected_cancel = cancellation.clone();
+        self.mailbox.request_human(
+            command,
+            || {
+                super::super::actor::ManagedCommandActor::human(
+                    &parent.prepared.runtime,
+                    parent.prepared.owner.principal().clone(),
+                    selected_cancel,
+                )
+            },
+            cancellation,
+        )
+    }
+
     /// Transfer an actually prepared foreground into outer custody. Failure
     /// returns its original owner so the caller can settle it without leaking it.
     pub(crate) fn enroll_foreground(

@@ -102,7 +102,7 @@ pub(super) async fn create(
     journal: &ManagedJournal,
     gate: &RetryGate,
     record: JournalCreate,
-    lease: &super::super::principal::NativeManagedCallLease,
+    lease: &super::super::actor::ManagedCommandActor,
 ) -> Result<JournalSnapshot, Failure> {
     confirm(journal, gate, Some(lease), || {
         journal.create(record.clone())
@@ -115,7 +115,7 @@ pub(super) async fn mutate_admitted(
     gate: &RetryGate,
     snapshot: JournalSnapshot,
     mutation: JournalMutation,
-    lease: &super::super::principal::NativeManagedCallLease,
+    lease: &super::super::actor::ManagedCommandActor,
 ) -> Result<JournalSnapshot, Failure> {
     confirm(journal, gate, Some(lease), || {
         journal.mutate(snapshot.clone(), mutation.clone())
@@ -126,7 +126,7 @@ pub(super) async fn mutate_admitted(
 async fn confirm(
     journal: &ManagedJournal,
     gate: &RetryGate,
-    lease: Option<&super::super::principal::NativeManagedCallLease>,
+    lease: Option<&super::super::actor::ManagedCommandActor>,
     mut operation: impl FnMut() -> BoxFuture<'static, Result<JournalPublication, JournalError>>,
 ) -> Result<JournalSnapshot, Failure> {
     let receipt = loop {

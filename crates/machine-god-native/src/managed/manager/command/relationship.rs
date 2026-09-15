@@ -43,9 +43,26 @@ pub(super) async fn execute(
         if let Err(code) = check_graph(&env, &snapshot.head.id, &id).await {
             return Outcome::reject(job, &env.operation, code);
         }
+        if job.lease().is_human() {
+            return publish(
+                job,
+                env,
+                snapshot,
+                None,
+                JournalMutation::Relationship {
+                    parent_id: Some(id),
+                    parent_owner: Some(owner),
+                },
+                ManagedOutcome::RelationshipChanged,
+            )
+            .await;
+        }
+        let Some(context) = job.context().cloned() else {
+            return Outcome::reject(job, &env.operation, ManagedFailureCode::CallerUnavailable);
+        };
         let proposal = ManagedRelationshipProposal {
             origin: origin(job.lease()),
-            context: job.context().clone(),
+            context,
             child_id: snapshot.head.id.clone(),
             generation: snapshot.head.generation,
             revision: snapshot.head.revision,

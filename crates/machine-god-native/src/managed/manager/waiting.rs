@@ -137,8 +137,9 @@ impl ManagedManager {
             });
             if self.closing
                 || job.observer_gone()
+                || job.cancellation().is_cancelled()
                 || !job.lease().principal().is_live()
-                || (waiter.future.is_none() && !job.lease().is_live())
+                || ((waiter.future.is_none() || job.lease().is_human()) && !job.lease().is_live())
             {
                 let mut waiter = self.waiters.remove(index);
                 waiter.job.take().unwrap().complete(Ok(command::rejected(
@@ -164,7 +165,17 @@ impl ManagedManager {
                         waiter.future = Some(Box::pin(async move { Ok(signal.wait().await) }));
                     }
                 } else {
-                    waiter.future = Some(Box::pin(async move { Ok(signal.wait().await) }));
+                    let cancellation = job.cancellation().clone();
+                    waiter.future = Some(Box::pin(async move {
+                        let observed = std::pin::pin!(signal.wait());
+                        let cancelled = std::pin::pin!(cancellation.cancelled());
+                        match futures_util::future::select(observed, cancelled).await {
+                            futures_util::future::Either::Left((value, _)) => Ok(value),
+                            futures_util::future::Either::Right(_) => {
+                                Err(SchedulerError::Cancelled)
+                            }
+                        }
+                    }));
                 }
             }
             let result = waiter

@@ -4,7 +4,7 @@ mod lifecycle;
 mod relationship;
 
 use super::super::{
-    principal::NativeManagedCallLease,
+    actor::ManagedCommandActor,
     store::{
         JournalCreate, JournalError, JournalIntent, JournalMutation, JournalOwner, JournalSnapshot,
         JournalTranscript, JournalWork, ManagedJournal,
@@ -254,21 +254,22 @@ async fn load(env: &Environment, id: &str) -> Result<JournalSnapshot, ManagedFai
         }
     }
 }
-pub(super) fn principal_owner(lease: &NativeManagedCallLease) -> JournalTranscript {
+pub(super) fn principal_owner(lease: &ManagedCommandActor) -> JournalTranscript {
     let owner = lease.principal().owner();
     JournalTranscript {
         session_id: owner.session_id().clone(),
         incarnation: owner.session_incarnation_id().clone(),
     }
 }
-fn authorized(lease: &NativeManagedCallLease, snapshot: &JournalSnapshot) -> bool {
+fn authorized(lease: &ManagedCommandActor, snapshot: &JournalSnapshot) -> bool {
     let caller = principal_owner(lease);
     lease.is_live()
-        && (caller == snapshot.head.controller
+        && (lease.is_human()
+            || caller == snapshot.head.controller
             || caller == snapshot.head.transcript
             || snapshot.head.parent_owner.as_ref() == Some(&caller))
 }
-fn origin(lease: &NativeManagedCallLease) -> ManagedRuntimeOrigin {
+fn origin(lease: &ManagedCommandActor) -> ManagedRuntimeOrigin {
     ManagedRuntimeOrigin {
         principal: lease.principal().clone(),
         workspace: lease.workspace().clone(),
@@ -276,14 +277,14 @@ fn origin(lease: &NativeManagedCallLease) -> ManagedRuntimeOrigin {
         preferences: lease.preferences().clone(),
     }
 }
-fn inherited_mode(lease: &NativeManagedCallLease) -> ManagedPermissionMode {
+fn inherited_mode(lease: &ManagedCommandActor) -> ManagedPermissionMode {
     match lease.policy().mode() {
         crate::PermissionMode::Ask => ManagedPermissionMode::Ask,
         crate::PermissionMode::Auto => ManagedPermissionMode::Auto,
         crate::PermissionMode::Yolo => ManagedPermissionMode::Yolo,
     }
 }
-fn permitted(lease: &NativeManagedCallLease, requested: ManagedPermissionMode) -> bool {
+fn permitted(lease: &ManagedCommandActor, requested: ManagedPermissionMode) -> bool {
     let rank = |mode| match mode {
         ManagedPermissionMode::Ask => 0,
         ManagedPermissionMode::Auto => 1,
