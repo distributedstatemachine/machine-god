@@ -84,7 +84,11 @@ impl Fixture {
                     name: ToolName::new("subagent").unwrap(), arguments: serde_json::json!({"command":{"create":{"name":id,"mode":"persistent"}}}) } },
                 ModelEvent::Stop { reason: StopReason::ToolCalls },
             ])]))
-            .permission_handler(ScriptedPermissionHandler::new([]))
+            .permission_handler(ScriptedPermissionHandler::new([
+                machine_god_testkit::PermissionStep::Decision(machine_god_core::PermissionDecision::Allow {
+                    scope: machine_god_core::PermissionGrantScope::Once,
+                }),
+            ]))
             .session_store(InMemorySessionStore::default())
             .tool(SubagentTool::new(Capture(captured.clone())))
             .build().unwrap();
