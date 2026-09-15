@@ -12,15 +12,21 @@ impl NativeAcpSelectionOwner {
     pub(super) fn drive(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
         self.wake = Some(cx.waker().clone());
         let mut ready = false;
-        if self.turn_outcome.is_none()
-            && let Some(current) = &mut self.current
-        {
-            ready = current.session.poll_progress(cx, now_ms).is_ready();
-            if let Some(NativeInteractiveOutcome::Turn(outcome)) = current.session.take_outcome() {
-                self.turn_outcome = Some(NativeAcpSelectionTurnOutcome {
-                    owner: current.session.principal(),
-                    outcome,
-                });
+        if let Some(current) = &mut self.current {
+            if self.turn_outcome.is_some() {
+                // Retaining the parent's response applies presentation backpressure,
+                // not backpressure to independently owned child work or cleanup.
+                current.session.poll_background(cx, now_ms);
+            } else {
+                ready = current.session.poll_progress(cx, now_ms).is_ready();
+                if let Some(NativeInteractiveOutcome::Turn(outcome)) =
+                    current.session.take_outcome()
+                {
+                    self.turn_outcome = Some(NativeAcpSelectionTurnOutcome {
+                        owner: current.session.principal(),
+                        outcome,
+                    });
+                }
             }
         }
         for _ in 0..16 {
@@ -268,8 +274,8 @@ impl NativeAcpSelectionOwner {
                     pending.phase = Phase::Draining(host);
                     self.pending = Some(pending);
                     return false;
-                } else if let Some(current) = &self.current {
-                    match current.session.runtime().begin_quiescence() {
+                } else if let Some(current) = &mut self.current {
+                    match current.session.begin_quiescence() {
                         Ok(mut guard) => {
                             pending.phase = Phase::Quiescing {
                                 host,
@@ -322,7 +328,26 @@ impl NativeAcpSelectionOwner {
                         },
                     }
                 }
-                Poll::Ready(Ok(guard)) => {
+                Poll::Ready(Ok(mut guard)) => {
+                    if guard.notice_cleanup_pending()
+                        || self
+                            .current
+                            .as_ref()
+                            .is_some_and(|current| !current.session.foreground_settled())
+                    {
+                        pending.phase = Phase::Quiescing {
+                            host,
+                            future: Box::pin(async move {
+                                guard
+                                    .wait_idle()
+                                    .await
+                                    .map_err(|_| AcpSessionError::Unavailable)?;
+                                Ok(guard)
+                            }),
+                        };
+                        self.pending = Some(pending);
+                        return false;
+                    }
                     if let Some(host) = host {
                         if pending.request.cancellation.is_cancelled() {
                             drop(guard);

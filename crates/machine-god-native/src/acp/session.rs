@@ -119,7 +119,6 @@ impl NativeAcpSession {
         now_ms: i64,
     ) -> BoxFuture<'static, Result<Self, AcpSessionError>> {
         Box::pin(async move {
-            let command_services = super::commands::Services::from_host(&host);
             let replay = matches!(selection, NativeAcpSessionSelection::Load(_));
             let initial = match selection {
                 NativeAcpSessionSelection::New => NativeInteractiveInitialSession::Fresh,
@@ -134,19 +133,48 @@ impl NativeAcpSession {
                 now_ms,
             )
             .await?;
-            let history = replay.then(|| NativeAcpHistory::new(inner.runtime().record_snapshot()));
-            Ok(Self {
-                inner,
-                history,
-                prompt: None,
-                model_save: None,
-                command_control: None,
-                command_configuration: Arc::new(AtomicBool::new(false)),
-                command_services,
-                cancelling: false,
-                closing: false,
-            })
+            Ok(Self::from_interactive(inner, replay))
         })
+    }
+
+    /// Transfers the native owner intact; command services derive from its
+    /// actual foreground, never a separately supplied host or display identity.
+    pub(crate) fn from_interactive(inner: NativeInteractiveSession, replay: bool) -> Self {
+        let command_services = super::commands::Services::from_session(&inner);
+        let history = replay.then(|| NativeAcpHistory::new(inner.runtime().record_snapshot()));
+        Self {
+            inner,
+            history,
+            prompt: None,
+            model_save: None,
+            command_control: None,
+            command_configuration: Arc::new(AtomicBool::new(false)),
+            command_services,
+            cancelling: false,
+            closing: false,
+        }
+    }
+
+    pub(crate) fn poll_background(&mut self, cx: &mut Context<'_>, now_ms: i64) {
+        self.inner.poll_managed(cx, now_ms);
+    }
+
+    pub(crate) fn begin_quiescence(
+        &mut self,
+    ) -> Result<crate::NativeRuntimeQuiescence, AcpSessionError> {
+        self.inner
+            .quiesce_current()
+            .map_err(|_| AcpSessionError::Unavailable)
+    }
+
+    pub(crate) fn foreground_settled(&self) -> bool {
+        self.inner.foreground_turn_settled()
+    }
+
+    pub(crate) fn close_retired(&mut self) -> Result<(), AcpSessionError> {
+        self.inner.request_retired_shutdown()?;
+        self.closing = true;
+        Ok(())
     }
 
     #[must_use]

@@ -91,9 +91,14 @@ completed rich-model catalog observation before acquiring the complete terminal
 host. It reuses that same acquired credential for inference. The catalog's
 failed-observation fallback, setup-signal behavior, and bounded authority are
 the same as [`ask`](ask-cli.md#native-composition).
-It resumes `<id>` through `NativeConversation` over the host's retained
-`NativeSessionLifecycle`, then enqueues exactly one new prompt through
-`NativeConversationRuntime` on the engine-canonical session.
+It selects `<id>` through the native managed session owner's exact validated
+resume, then enqueues exactly one new prompt on the engine-canonical runtime.
+Current workspace association is explicitly rebound through the native
+exact-revision preparation contract below; this metadata does not grant authority.
+Like `ask`, it opens the workspace/CLI-origin managed journal, retains distinct
+parent and child resources, progresses hidden children under stdout backpressure,
+and settles the native owner before returning. Restored queued child work never
+automatically executes merely because the parent was resumed.
 
 Resume accepts only a valid current-schema record under the state root selected
 for this invocation. Missing, corrupt, future-schema, incompatible-incarnation,
@@ -172,7 +177,10 @@ failure. Such a failure does not roll back the durable user turn or any
 earlier committed transcript prefix. The next explicit inspection or resume
 observes whatever current record successfully committed.
 
-The command makes no cross-process serialization claim. Process-local engine
+The managed journal excludes another cooperating managed host for the same
+workspace/CLI-origin domain while this invocation owns it. That journal lock is
+not a universal session lock: direct store/library writers and other domains
+retain their separate contracts. Process-local engine
 state converges same-incarnation resumes only within one composed host, while
 the file store's advisory lock and compare-and-swap fence individual durable
 operations. Another cooperating process may load the same revision and begin
@@ -194,8 +202,9 @@ loads at most one current-schema record within the file-store cap. Subsequent
 prompt reservation, checkpoint finalization, and assistant persistence use the
 native/core store contracts; compare-and-swap validation may reread the bounded
 record, but prepared reservation does not retry conflicts. The command may
-create the record's permanent lock sidecar. It adds no directory enumeration or
-ID-generation retry. It reuses `ask`'s bounded scoped worker and owned signal
+create the record's permanent lock sidecar. Exact session selection adds no
+session-directory enumeration or ID-generation retry; managed-journal restoration
+has its own bounded retained-history reads. It reuses `ask`'s bounded scoped worker and owned signal
 guardian, so no thread or task remains detached. Provider work retains its
 existing bounds, but the inherited file store has no attempt or wall-clock
 ceiling for advisory-lock acquisition, filesystem latency, or retries after

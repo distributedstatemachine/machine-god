@@ -24,6 +24,26 @@ impl NativeAcpHostFactory for RejectFactory {
 fn empty() -> NativeMcpEphemeralConfiguration {
     NativeMcpEphemeralConfiguration::decode(None).unwrap()
 }
+
+/// Composition fixtures supply an actual already-opened native owner. No
+/// factory effect or public ID can manufacture its principal or service routes.
+pub(crate) fn preopened(
+    session: NativeAcpSession,
+    host: Arc<NativeReferenceHost>,
+) -> NativeAcpSelectionOwner {
+    let permission_contexts = host.permission_contexts().unwrap();
+    let mut owner = NativeAcpSelectionOwner::new(Arc::new(RejectFactory(AtomicUsize::new(0))));
+    owner.current = Some(Current {
+        session,
+        host,
+        permission_contexts,
+    });
+    owner
+}
+
+pub(crate) fn retains_turn_outcome(owner: &NativeAcpSelectionOwner) -> bool {
+    owner.turn_outcome.is_some()
+}
 fn run(future: impl std::future::Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

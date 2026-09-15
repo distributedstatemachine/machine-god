@@ -181,12 +181,16 @@ impl Fixture {
             NativeReferenceHostConversationOptions,
         ) -> NativeReferenceHostConversationOptions,
     ) -> Self {
-        Self::configured_with_options(
-            true,
-            FixtureExtension::None,
-            Arc::new(AllowPrompter),
-            select,
-        )
+        Self::with_workspace_options_and_prompter(select, Arc::new(AllowPrompter))
+    }
+
+    pub fn with_workspace_options_and_prompter(
+        select: impl FnOnce(
+            NativeReferenceHostConversationOptions,
+        ) -> NativeReferenceHostConversationOptions,
+        prompter: Arc<dyn PermissionPrompter>,
+    ) -> Self {
+        Self::configured_with_options(true, FixtureExtension::None, prompter, select)
     }
 
     pub fn new_with_skills() -> Self {

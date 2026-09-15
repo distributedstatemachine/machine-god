@@ -258,6 +258,15 @@ fn initial_configured_http_peer_does_not_pin_startup_admission_until_shutdown() 
 
 #[test]
 fn failed_initial_http_discovery_is_settled_without_disabling_management() {
+    failed_initial_http_discovery(false);
+}
+
+#[test]
+fn required_only_initial_http_discovery_fails_selection_after_cleanup() {
+    failed_initial_http_discovery(true);
+}
+
+fn failed_initial_http_discovery(required_only: bool) {
     run(async {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let (mut fixture, profile) = network_fixture();
@@ -276,6 +285,11 @@ fn failed_initial_http_discovery_is_settled_without_disabling_management() {
             host.loaded_config().config().model_preferences(),
         )
         .unwrap();
+        let options = if required_only {
+            options.with_required_mcp_startup()
+        } else {
+            options
+        };
         let opening = NativeInteractiveSession::open_managed(
             host,
             directory(&path),
@@ -288,6 +302,16 @@ fn failed_initial_http_discovery_is_settled_without_disabling_management() {
             b"invalid discovery response",
         );
         let (result, _) = futures_util::future::join(opening, response).await;
+        if required_only {
+            assert!(
+                result.is_err(),
+                "one-shot selection must not retain a repair UI"
+            );
+            drop(result);
+            completion.wait().await;
+            assert!(fixture.transport.requests.lock().unwrap().is_empty());
+            return;
+        }
         let mut owner = result.unwrap();
         assert!(owner.mcp_startup_failure().is_some());
         seed(&profile, r#"{"mcp":{}}"#);
@@ -316,5 +340,60 @@ fn failed_initial_http_discovery_is_settled_without_disabling_management() {
         drop(owner);
         completion.wait().await;
         assert!(fixture.transport.requests.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn required_only_initial_startup_does_not_connect_optional_peers() {
+    run(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let (mut fixture, profile) = network_fixture();
+        seed(
+            &profile,
+            &format!(
+                r#"{{"mcp":{{"optional":{{"type":"http","url":"http://127.0.0.1:{}/mcp","required":false}}}}}}"#,
+                listener.local_addr().unwrap().port()
+            ),
+        );
+        let path = journal_path(&fixture);
+        let host = fixture.host.take().unwrap();
+        let completion = host.terminal_shutdown_completion().unwrap();
+        let options = NativeInteractiveSessionOptions::new(
+            fixture.workspace.clone(),
+            host.loaded_config().config().model_preferences(),
+        )
+        .unwrap()
+        .with_required_mcp_startup();
+        let mut owner = NativeInteractiveSession::open_managed(
+            host,
+            directory(&path),
+            options,
+            NativeInteractiveInitialSession::Fresh,
+            1,
+        )
+        .await
+        .unwrap();
+        assert!(owner.mcp_startup_failure().is_none());
+        owner.enqueue("required-only startup".into()).unwrap();
+        assert!(matches!(
+            outcome(&mut owner).await,
+            NativeInteractiveOutcome::Turn(Ok(_))
+        ));
+        owner.request_shutdown();
+        assert!(matches!(
+            outcome(&mut owner).await,
+            NativeInteractiveOutcome::Shutdown
+        ));
+        drop(owner);
+        completion.wait().await;
+        poll_fn(|cx| {
+            assert!(
+                listener.poll_accept(cx).is_pending(),
+                "optional startup opened a socket"
+            );
+            Poll::Ready(())
+        })
+        .await;
+        assert_eq!(fixture.transport.requests.lock().unwrap().len(), 1);
     });
 }

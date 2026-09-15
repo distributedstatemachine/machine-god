@@ -342,6 +342,8 @@ mod production {
     mod acp;
     mod acp_startup;
     mod interactive;
+    mod managed_startup;
+    mod managed_turn;
     mod mcp_startup;
     mod output;
     mod piped_prompt;
@@ -357,18 +359,21 @@ mod production {
 
     use futures_core::Stream;
     use machine_god_core::{CancellationToken, ModelEvent, TurnEvent};
-    use machine_god_native::mcp::startup::NativeMcpStartupPhase;
     use machine_god_native::{
         AiGatewayModelCatalogAccessMode, AiGatewayModelCatalogProvider, FileUndoTracker,
-        NativeConversation, NativeConversationModelRoutes, NativeConversationObservations,
-        NativeConversationRuntime, NativeConversationRuntimeTurn, NativeModelCatalog,
+        NativeConversationModelRoutes, NativeConversationObservations, NativeModelCatalog,
         NativeModelCatalogCache, NativeModelCatalogCacheState, NativePermissionContexts,
         NativeReferenceHost, NativeReferenceHostConversationOptions,
         NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,
-        NativeRootSelection, NativeSessionMetadata, NativeSessionOrigin, PermissionPromptDecision,
-        PermissionPromptError, PermissionPrompter, PreparedNativeRoots, QuestionPromptError,
-        QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, TokioPermissionReviewClock,
-        TokioWebSearchDeadline, discover_ai_gateway_credential, load_native_config,
+        NativeRootSelection, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
+        PreparedNativeRoots, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
+        QuestionPrompter, TokioPermissionReviewClock, TokioWebSearchDeadline,
+        discover_ai_gateway_credential, load_native_config,
+    };
+    #[cfg(test)]
+    use machine_god_native::{
+        NativeConversation, NativeConversationRuntime, NativeConversationRuntimeTurn,
+        NativeSessionMetadata, NativeSessionOrigin,
     };
 
     use super::{
@@ -852,10 +857,12 @@ mod production {
         }
     }
 
+    #[cfg(test)]
     struct TurnEventStream<'a> {
         turn: &'a mut NativeConversationRuntimeTurn,
     }
 
+    #[cfg(test)]
     impl Stream for TurnEventStream<'_> {
         type Item = Result<TurnEvent, ()>;
 
@@ -1137,9 +1144,9 @@ mod production {
                             acp_workspace: _,
                             runtime,
                             workspace,
-                            state_path: _state_path,
-                            model_routes,
-                            observations,
+                            state_path,
+                            model_routes: _model_routes,
+                            observations: _observations,
                             catalog,
                             catalog_cache: _catalog_cache,
                             user_config: _user_config,
@@ -1153,33 +1160,27 @@ mod production {
                             || control.activate_turn(),
                             ConversationFeatures {
                                 discover_skills: false,
-                                managed: None,
+                                managed: Some(managed_startup::base_options()),
                             },
                         )
                         else {
                             return finish_setup_failure(signals, &control);
                         };
+                        let (host, agents) = managed_startup::prepare(host, &state_path, &runtime);
                         with_settled_terminal_turn(
                             host,
                             &runtime,
                             signals,
                             &control,
                             |host, signals| {
-                                runtime.block_on(mcp_startup::activate(
-                                    host,
-                                    NativeMcpStartupPhase::AskStartup,
-                                    signals,
-                                ))?;
-                                runtime.block_on(execute_turn(
-                                    host,
-                                    selection,
-                                    prompt,
-                                    ConversationSetup {
+                                runtime.block_on(managed_turn::execute(
+                                    host.clone(),
+                                    agents?.ok_or(())?,
+                                    managed_turn::Setup {
+                                        selection,
+                                        prompt,
                                         workspace,
-                                        model_routes,
-                                        observations,
                                         catalog,
-                                        now_ms: wall_clock_ms()?,
                                     },
                                     OutputBridge {
                                         work: work_sender,
@@ -1465,8 +1466,9 @@ mod production {
     fn with_settled_terminal_host<T>(
         host: NativeReferenceHost,
         runtime: &machine_god_native::TokioWebSearchRuntime,
-        operation: impl FnOnce(&NativeReferenceHost) -> Result<T, ()>,
+        operation: impl FnOnce(&Arc<NativeReferenceHost>) -> Result<T, ()>,
     ) -> Result<T, ()> {
+        let host = Arc::new(host);
         let shutdown = host.terminal_shutdown_completion().ok_or(())?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(&host)))
             .map_err(std::mem::forget);
@@ -1485,7 +1487,10 @@ mod production {
         runtime: &machine_god_native::TokioWebSearchRuntime,
         mut signals: AskSignals,
         control: &AskSignalControlSender,
-        operation: impl FnOnce(&NativeReferenceHost, &mut AskSignals) -> Result<TurnDriveResult, ()>,
+        operation: impl FnOnce(
+            &Arc<NativeReferenceHost>,
+            &mut AskSignals,
+        ) -> Result<TurnDriveResult, ()>,
     ) -> Result<AskCommandOutcome, ()> {
         // Keep the receiver outside the unwind boundary: the guardian must be
         // able to latch a first late signal throughout native cleanup, including
@@ -1574,6 +1579,9 @@ mod production {
         options
     }
 
+    // Direct-runtime fixture for codec/persistence tests; production uses the
+    // native managed owner through managed_turn::execute.
+    #[cfg(test)]
     async fn execute_turn(
         host: &NativeReferenceHost,
         selection: SessionSelection,
@@ -1631,6 +1639,7 @@ mod production {
         Ok(drive_turn(turn, signals, output).await)
     }
 
+    #[cfg(test)]
     struct ConversationSetup {
         workspace: std::path::PathBuf,
         model_routes: Arc<NativeConversationModelRoutes>,
@@ -1668,6 +1677,7 @@ mod production {
         }
     }
 
+    #[cfg(test)]
     async fn drive_turn(
         mut turn: NativeConversationRuntimeTurn,
         signals: &mut AskSignals,

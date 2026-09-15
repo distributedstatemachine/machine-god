@@ -185,7 +185,7 @@ impl NativeInteractiveSession {
         })
     }
 
-    pub(super) fn quiesce_current(
+    pub(crate) fn quiesce_current(
         &mut self,
     ) -> Result<NativeRuntimeQuiescence, NativeConversationRuntimeError> {
         let guard = match &mut self.managed {
@@ -244,7 +244,7 @@ impl NativeInteractiveSession {
             .map_err(NativeInteractiveError::Managed)
     }
 
-    pub(super) fn foreground_turn_settled(&self) -> bool {
+    pub(crate) fn foreground_turn_settled(&self) -> bool {
         match &self.managed {
             Some(owner) => owner
                 .foreground
@@ -280,7 +280,7 @@ impl NativeInteractiveSession {
         }
     }
 
-    pub(super) fn poll_managed(&mut self, cx: &mut Context<'_>, now_ms: i64) {
+    pub(crate) fn poll_managed(&mut self, cx: &mut Context<'_>, now_ms: i64) {
         let Some(owner) = &mut self.managed else {
             return;
         };
@@ -299,6 +299,41 @@ impl NativeInteractiveSession {
             }
         } else if let Poll::Ready(Err(error)) = owner.agents.poll_progress(cx, now_ms) {
             owner.error = Some(error);
+        }
+    }
+
+    /// ACP's outer selection has already consumed the original quiescence
+    /// guard. Do not attempt to acquire another guard on a retired runtime.
+    pub(crate) fn request_retired_shutdown(&mut self) -> Result<(), NativeInteractiveError> {
+        if self.current.status().phase != crate::NativeConversationRuntimePhase::Retired
+            || self.admission.is_some()
+            || self.turn.is_some()
+            || self.control.is_some()
+            || self.transition.is_some()
+        {
+            return Err(NativeInteractiveError::Busy);
+        }
+        self.request_shutdown();
+        self.begin_managed_shutdown();
+        self.finish_foreground_shutdown();
+        Ok(())
+    }
+
+    /// ACP controls follow this foreground's ephemeral instance, never the
+    /// host-global seed or a sibling's runtime.
+    pub(crate) fn acp_mcp_runtime(&self) -> Option<Arc<crate::mcp::runtime::NativeMcpRuntime>> {
+        match &self.managed {
+            Some(owner) => {
+                let controls = owner
+                    .agents
+                    .foreground_mcp_controls(owner.foreground.as_ref()?)?;
+                controls.ephemeral?;
+                controls.runtime
+            }
+            None => self
+                .host
+                .mcp_ephemeral_owner()
+                .and_then(|_| self.host.mcp_runtime()),
         }
     }
 
@@ -373,9 +408,10 @@ pub(super) fn prepare(
         options.defaults.clone(),
     );
     let process_model = initial.then(|| options.process_model.clone()).flatten();
+    let phase = options.mcp_startup_phase;
     Box::pin(async move {
         let mut prepared = Box::new(preparation.await.map_err(NativeInteractiveError::Managed)?);
-        let startup = start_parent_mcp(&prepared, cancellation.clone());
+        let startup = start_parent_mcp(&prepared, phase, cancellation.clone());
         let runtime = prepared.runtime.clone();
         let configure = async {
             startup.await?;
@@ -407,6 +443,7 @@ pub(super) fn prepare(
 
 fn start_parent_mcp(
     prepared: &PreparedManagedRuntime,
+    phase: crate::mcp::startup::NativeMcpStartupPhase,
     cancellation: machine_god_core::CancellationToken,
 ) -> BoxFuture<'static, Result<(), NativeInteractiveError>> {
     let controller = prepared
@@ -421,10 +458,7 @@ fn start_parent_mcp(
         let admission = binding.prepare_admission()?;
         let completion = admission.cohort().map(|cohort| cohort.completion());
         let result = admission
-            .wrap(controller.start_configured(
-                crate::mcp::startup::NativeMcpStartupPhase::All,
-                cancellation.clone(),
-            ))
+            .wrap(controller.start_configured(phase, cancellation.clone()))
             .await;
         drop(admission);
         if let Err(failure) = result {
@@ -454,7 +488,11 @@ fn start_parent_mcp(
             if !cleanup.complete {
                 return Err(error());
             }
-            return Ok(());
+            return if phase == crate::mcp::startup::NativeMcpStartupPhase::All {
+                Ok(())
+            } else {
+                Err(error())
+            };
         }
         if let Some(completion) = completion {
             completion.wait().await;

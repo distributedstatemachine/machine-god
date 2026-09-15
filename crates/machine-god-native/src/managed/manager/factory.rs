@@ -142,6 +142,7 @@ pub(crate) trait ManagedRuntimeResources: Send + 'static {
 pub(crate) struct ManagedMcpControls {
     pub runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
     pub controller: Option<Arc<crate::mcp::controller::NativeMcpController>>,
+    pub ephemeral: Option<Arc<crate::mcp::ephemeral::NativeMcpEphemeralOwner>>,
 }
 
 macro_rules! redacted_debug {

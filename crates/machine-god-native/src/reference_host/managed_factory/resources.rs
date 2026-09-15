@@ -80,6 +80,7 @@ impl ManagedRuntimeResources for Resources {
         Some(crate::managed::manager::factory::ManagedMcpControls {
             runtime: Some(self.mcp.instance.runtime.clone()),
             controller: self.mcp.instance.controller.clone(),
+            ephemeral: self.mcp.instance.ephemeral.clone(),
         })
     }
     fn poll_turn_settled(

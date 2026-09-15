@@ -330,6 +330,7 @@ impl NativeInteractiveSession {
             None => crate::managed::manager::factory::ManagedMcpControls {
                 runtime: self.host.mcp_runtime(),
                 controller: self.host.mcp_controller(),
+                ephemeral: self.host.mcp_ephemeral_owner(),
             },
         };
         mcp::prepare(

@@ -86,6 +86,16 @@ Close validates the selected session ID and reports completed live-resource
 retirement, not merely acceptance of a close request. Dropping the owner is only a
 last-resort cutoff; it manufactures no successful cleanup receipt.
 
+The facade transfers a prepared native interactive owner intact and derives its
+command services from that owner's actual foreground. Where that owner includes
+managed agents, retaining the parent's prompt response does not suspend child
+execution, approval completion or cleanup. This background poll does not admit
+another foreground prompt or consume the retained parent response.
+Selection quiescence uses the native managed foreground's original notice-drain
+route and waits for its actual run/admission cleanup as well as idle permits.
+After the outer selection has retired that exact runtime, final shutdown settles
+its remaining owned resources without trying to quiesce it a second time.
+
 ## Prompt resource context
 
 Typed prompt decoding preserves the order of text and embedded text resources,

@@ -16,35 +16,39 @@ pub(super) fn retire(
     Box::pin(async move {
         let mut failed = false;
         if let Some(mut session) = session {
-            if !already_retired {
-                failed = session.request_close(&session.id()).is_err();
-                if !failed {
-                    failed = futures_util::future::poll_fn(|cx| {
-                        let _ = session.poll_progress(cx, now_ms);
-                        let _ = session.take_presentation();
-                        let _ = session.take_outcome();
-                        if session.shutdown_error().is_some() {
-                            Poll::Ready(true)
-                        } else if session.is_closed() {
-                            Poll::Ready(false)
-                        } else {
-                            Poll::Pending
-                        }
-                    })
-                    .await;
-                }
+            failed = if already_retired {
+                session.close_retired().is_err()
+            } else {
+                session.request_close(&session.id()).is_err()
+            };
+            if !failed {
+                failed = futures_util::future::poll_fn(|cx| {
+                    let _ = session.poll_progress(cx, now_ms);
+                    let _ = session.take_presentation();
+                    let _ = session.take_outcome();
+                    if session.shutdown_error().is_some() {
+                        Poll::Ready(true)
+                    } else if session.is_closed() {
+                        Poll::Ready(false)
+                    } else {
+                        Poll::Pending
+                    }
+                })
+                .await;
             }
             drop(session);
         }
         host.close_mcp();
-        match host.mcp_deadline_after(Duration::from_secs(30)) {
-            Ok(deadline) => {
-                failed |= host
-                    .settle_mcp_ephemeral(deadline, CancellationToken::new())
-                    .await
-                    .is_err();
+        if !host.managed_agents_selected() {
+            match host.mcp_deadline_after(Duration::from_secs(30)) {
+                Ok(deadline) => {
+                    failed |= host
+                        .settle_mcp_ephemeral(deadline, CancellationToken::new())
+                        .await
+                        .is_err();
+                }
+                Err(_) => failed = true,
             }
-            Err(_) => failed = true,
         }
         let completion = host.terminal_shutdown_completion();
         drop(host);

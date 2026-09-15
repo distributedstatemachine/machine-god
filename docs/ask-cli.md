@@ -70,15 +70,21 @@ then:
    catalog over a host-owned current-thread Tokio runtime with I/O and time
    enabled, awaiting a completed cache observation;
 5. consumes that same credential into the production reference host with
-   complete terminal, shared undo, conversation-model routing, and native file
-   observation and native permission allocations;
-6. activates required MCP servers from the explicitly selected native profile,
-   through the composed host's caller-polled `AskStartup` controller;
+   complete terminal, aggregate-budgeted principal-local undo, conversation-model
+   routing, and native file observation and permission allocations;
+6. opens the workspace/CLI-origin managed journal under the retained state
+   descriptor, with shared native execution and resource budgets;
 7. creates one fresh durable native conversation using a bounded random-identity
    operation, with the verified selected workspace, explicit current Unix time
-   in milliseconds, and `Cli` origin in its initial metadata; and
-8. enqueues exactly one prompt in `NativeConversationRuntime` and drives its
-   admitted turn through native checkpoint finalization.
+   in milliseconds, and `Cli` origin in its initial metadata, then activates its
+   own required MCP peers through caller-polled `AskStartup`; and
+8. enqueues exactly one prompt through the native managed session owner and
+   drives its admitted runtime turn through native checkpoint finalization.
+
+The same native owner retains managed child sessions and their distinct policy,
+workspace, undo and MCP state. The CLI is only a one-shot presentation adapter;
+it neither owns an agent scheduler nor installs an interactive prompt inbox.
+Journal restoration marks interrupted work without automatically executing it.
 
 Root preparation may create only the private fixed state suffix described by
 [native root selection](native-root-selection.md), and it occurs before
@@ -110,14 +116,14 @@ omit those wire controls without rewriting the requested preferences. Ordinary
 checkpoints belong to the [native conversation](native-conversation.md), not
 CLI-owned product state.
 
-The host's nine file-history adapters and each created or resumed conversation
-share one `NativeConversationObservations` allocation. Attachment happens before
-runtime admission and an attachment failure stops setup. Native code correlates
-observations and publishes durable history; the CLI neither copies observation
-state nor writes history metadata itself.
+The host's file-history adapters resolve the actual admitted principal's
+observation and undo routes. Attachment happens before runtime admission and an
+attachment failure stops setup. Parent and child history remain isolated under
+shared budgets. Native code correlates observations and publishes durable
+history; the CLI neither copies observation state nor writes history metadata.
 
-Before admission, the CLI attaches the host's exact permission controller and
-review context to the conversation. The controller enforces configured mode,
+Before admission, native preparation attaches the principal's exact permission
+controller and review context to the conversation. The controller enforces configured mode,
 patterns, saved rules and final file approvals. The owned Tokio runtime also
 drives the dedicated automatic reviewer. On macOS the constructor worker
 explicitly attempts to retain the fixed system sandbox executable. Missing
@@ -135,7 +141,8 @@ archives; ordinary transcript limits remain unchanged.
 Library embeddings are not assumed to implement the CLI's private helper modes.
 MCP capture reuses that exact environment, helper and retained workspace, with
 explicit native DNS/TLS selection; see [reference-host capture](native-reference-host.md).
-Required startup precedes session creation and provider inference. Optional
+Required startup precedes prompt admission and provider inference; a failed
+startup can leave the newly created empty session durable. Optional
 servers are not activated by this initial phase. Each selected startup attempt
 uses its configured timeout; there is no competing global startup timeout or
 absolute CLI-session expiry. An initial signal cancels the actual startup token
@@ -146,9 +153,11 @@ host and waits for its terminal worker scope to settle before returning the
 command outcome. Settlement includes collected worker joins and transferred
 child reaping, not consumption of tool-result futures. Other hosts' workers do
 not delay this wait; the async poll thread performs no blocking join.
-Before dropping the host, the CLI closes its MCP controller and drives bounded
-local settlement on the existing runtime with a fresh cleanup token and a
-separate 30-second deadline. Startup failure and unwind use the same path.
+Before dropping the host, the native session owner closes its parent and children
+and drives their exact MCP, admission and worker cleanup on the existing runtime.
+Each principal retains its independent cleanup token and bounded settlement;
+startup failure retains the original preparation through cleanup. Host teardown
+is not a durable user cancellation command and does not erase accepted child work.
 An MCP settlement failure remains an operational failure, but the final host
 worker join is still attempted; closing alone never proves peer cleanup or
 remote session revocation.
@@ -216,7 +225,11 @@ an apparently recoverable output failure.
 
 Synchronous standard-output work stays on the calling thread. The host runtime
 and turn run on one scoped worker and exchange one owned output item at a time
-over capacity-one work and acknowledgement channels. A separately owned
+over capacity-one work and acknowledgement channels. During write and flush
+acknowledgement waits, the adapter continues polling the native owner. Its one
+bounded parent presentation slot can fill, but hidden child execution, denial of
+unavailable human prompts, cancellation and cleanup keep progressing. Child text
+is not emitted as parent output. A separately owned
 current-thread signal runtime registers before valid-request effects and uses
 capacity-one signal and control channels. It switches from setup handling to
 turn forwarding when owned cancellable stdin acquisition or a concrete

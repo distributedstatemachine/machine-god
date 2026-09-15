@@ -73,10 +73,10 @@ pub(crate) struct Services {
     pub(crate) mcp: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
 }
 impl Services {
-    pub(crate) fn from_host(host: &crate::NativeReferenceHost) -> Self {
+    pub(crate) fn from_session(session: &crate::NativeInteractiveSession) -> Self {
         Self {
-            skills: host.skills().is_some(),
-            mcp: host.mcp_ephemeral_owner().and_then(|_| host.mcp_runtime()),
+            skills: session.skills_catalog().is_some(),
+            mcp: session.acp_mcp_runtime(),
         }
     }
 }

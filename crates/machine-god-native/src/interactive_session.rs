@@ -43,6 +43,7 @@ pub struct NativeInteractiveSessionOptions {
     defaults: NativeModelPreferences,
     process_model: Option<String>,
     catalog: Option<Arc<NativeModelCatalog>>,
+    mcp_startup_phase: crate::mcp::startup::NativeMcpStartupPhase,
     clipboard: Option<(
         crate::NativeClipboardExecutable,
         Vec<(std::ffi::OsString, std::ffi::OsString)>,
@@ -88,10 +89,20 @@ impl NativeInteractiveSessionOptions {
             defaults: workspace_defaults,
             process_model: None,
             catalog: None,
+            mcp_startup_phase: crate::mcp::startup::NativeMcpStartupPhase::All,
             clipboard: None,
             background_url: None,
         })
     }
+    /// Activates only required configured parent MCP peers and fails selection
+    /// on startup failure. The interactive default retains the owner for explicit
+    /// management repair. Children retain independent startup.
+    #[must_use]
+    pub fn with_required_mcp_startup(mut self) -> Self {
+        self.mcp_startup_phase = crate::mcp::startup::NativeMcpStartupPhase::AskStartup;
+        self
+    }
+
     /// Selects provenance for newly created sessions. Resume retains saved origin.
     #[must_use]
     pub fn with_origin(mut self, origin: crate::NativeSessionOrigin) -> Self {

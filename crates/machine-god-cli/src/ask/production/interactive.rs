@@ -16,7 +16,6 @@ mod driver;
 mod framing;
 mod history_view;
 mod input_lines;
-mod managed_startup;
 mod mcp_elicitation;
 mod mcp_feature_pages;
 mod mcp_receipts;
@@ -45,13 +44,13 @@ use machine_god_native::NativeInteractivePromptBridge;
 mod mcp_test_support;
 #[cfg(test)]
 #[path = "../../../../machine-god-native/tests/interactive_session/support.rs"]
-mod support;
+pub(super) mod support;
 
 use super::{
     AskCommandOutcome, AskSignal, AskSignalControlSender, AskSignalController, AskSignals,
     OutputAcknowledgement, OutputBridge, OutputWork, PreparedConversationHost, SIGNAL_OUTPUT_GRACE,
-    TurnDriveResult, map_thread_spawn, prepare_conversation_host_with_activation, serve_output,
-    wall_clock_ms,
+    TurnDriveResult, managed_startup, map_thread_spawn, prepare_conversation_host_with_activation,
+    serve_output, wall_clock_ms,
 };
 use crate::ask::InteractiveSessionSelection;
 use driver::FinalPresentation;

@@ -9,8 +9,11 @@ use machine_god_native::{
 use std::{future::poll_fn, path::Path, sync::Arc};
 
 pub(super) fn options(inbox: &NativeInteractivePromptInbox) -> NativeReferenceHostManagedOptions {
+    base_options().with_prompt_inbox(inbox)
+}
+
+pub(super) fn base_options() -> NativeReferenceHostManagedOptions {
     NativeReferenceHostManagedOptions::new(Arc::new(machine_god_native::mcp::clock::TokioMcpClock))
-        .with_prompt_inbox(inbox)
 }
 
 /// Runs on the existing constructor worker. Always returns the original host so

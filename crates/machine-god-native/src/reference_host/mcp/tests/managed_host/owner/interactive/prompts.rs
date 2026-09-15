@@ -56,7 +56,7 @@ async fn child_approval(
     .await
 }
 
-fn fixture(inbox: &NativeInteractivePromptInbox) -> Fixture {
+pub(super) fn fixture(inbox: &NativeInteractivePromptInbox) -> Fixture {
     let bridge = inbox.router();
     let fixture = Fixture::with_options_and_bridge(
         "ask",

@@ -48,6 +48,7 @@ pub(super) fn prepare_runtime(
 
 /// First signals cancel the actual startup owner. Continue polling the native
 /// operation so its publication/cleanup receipt is not abandoned by a select.
+#[cfg(test)]
 pub(super) async fn activate(
     host: &machine_god_native::NativeReferenceHost,
     phase: machine_god_native::mcp::startup::NativeMcpStartupPhase,
