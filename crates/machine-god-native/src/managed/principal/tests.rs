@@ -82,6 +82,39 @@ fn engine() -> Engine {
 }
 
 #[test]
+fn nonconsuming_turn_stamps_are_weak_exact_and_retire_with_original_guard() {
+    let fixture = Fixture::new();
+    let registry = registry(2);
+    let engine = engine();
+    let session = session(&engine);
+    let principal = registry.register(&session, 1, &fixture.workspace).unwrap();
+    let turn = block_on(session.prompt("work")).unwrap();
+    let guard = principal
+        .begin_turn(&turn, policy(), preferences(), None)
+        .unwrap();
+    let context = ToolContext {
+        session_id: session.id(),
+        session_incarnation_id: session.incarnation_id(),
+        turn_id: turn.id().clone(),
+        call_id: ToolCallId::new("lookup-only").unwrap(),
+    };
+    let stamp = registry.requester().stamp(&context).unwrap();
+    assert!(stamp.same_turn(&guard.stamp()));
+    assert!(stamp.matches_turn(&turn.witness()));
+    assert!(stamp.matches_principal(&principal));
+    drop(guard);
+    assert!(!stamp.is_live());
+    assert!(registry.requester().stamp(&context).is_err());
+    assert!(
+        stamp.state.upgrade().is_none(),
+        "a metadata stamp retains no turn resources"
+    );
+    principal.retire();
+    let replacement = registry.register(&session, 2, &fixture.workspace).unwrap();
+    assert!(!stamp.matches_principal(&replacement));
+}
+
+#[test]
 fn actual_session_identity_not_public_ids_and_registration_is_before_provider_poll() {
     let fixture = Fixture::new();
     let registry = registry(2);
@@ -282,7 +315,13 @@ impl Tool for Probe {
         _: CancellationToken,
     ) -> BoxFuture<'_, std::result::Result<ToolExecution, ToolError>> {
         Box::pin(async move {
+            let stamp = self.requester.stamp(invocation.context());
             let lease = self.requester.claim_tool(&invocation).unwrap();
+            // Candidate lookup is non-consuming; even ambiguous public IDs
+            // cannot steal an actual admitted invocation's one-shot claim.
+            if let Ok(stamp) = stamp {
+                assert!(stamp.matches_turn(lease.witness()));
+            }
             assert!(lease.is_live());
             assert!(self.requester.claim_tool(&invocation).is_err());
             self.seen.lock().unwrap().push(lease);

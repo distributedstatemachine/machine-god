@@ -350,6 +350,38 @@ the notice registry lock; the deadline observer is weak and performs no notice
 emission itself. Root composition supplies actual state observations and owns
 journal publication, wake-driven polling and lifecycle integration.
 
+## Per-principal MCP routing
+
+The shared engine installs authenticated wrappers for MCP search, selection and
+native features. Before provider polling, the host registers each actual
+principal turn and its independently composed MCP runtime/context selection.
+Bounded resident routes contain weak principal, runtime and turn references;
+public context IDs only find a candidate. Non-consuming metadata stamps bind
+the exact live turn allocation and principal generation, but do not authorize
+execution. Execution consumes the core invocation once and retains the native
+principal lease through the original operation. Structural execution fails closed.
+
+A runtime allocation cannot belong to two live principal owners. The factory
+constructs each concrete native feature tool from the exact registered runtime
+and shared result archive, preserving full output, durable projection,
+next-round executable and finish-turn receipts without a portable-payload
+conversion. An optional portable feature authority is a separately explicit
+trusted injection, not the production feature path. Children inherit only
+explicit factory configuration, never another principal's live connections,
+grants, elicitation or ephemeral runtime owner.
+
+Snapshots and executable registrations keep the existing MCP generation and
+submission custody; reload never retargets an old selection. Dropping a turn
+route prevents new use. Retiring a principal MCP owner, or dropping the registry,
+synchronously invalidates its exact runtime before releasing the resident
+route, without closing siblings. This is not cleanup completion: the outer
+manager still retains and drains that runtime's controller, ephemeral owners
+and actual worker/reap obligations. In-flight operations may retain original
+resource custody after retirement, but cannot obtain new authority. Reverse
+requesters and unpolled operations do not retain a session or runtime. Future
+construction captures only weak turn-route and publication identity; first poll
+rejects a replaced route/publication rather than resolving public IDs again.
+
 ## Source evidence
 
 The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and

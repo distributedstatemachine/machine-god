@@ -127,6 +127,42 @@ impl NativePrincipalRegistry {
 }
 
 impl Registry {
+    fn stamp(&self, context: &ToolContext) -> Result<NativePrincipalTurnStamp> {
+        let candidates: Vec<_> = self
+            .routes
+            .lock()
+            .map_err(|_| PrincipalError::Unavailable)?
+            .iter()
+            .filter_map(|route| route.principal.upgrade())
+            .collect();
+        let mut selected = None;
+        for principal in candidates {
+            if principal.owner.session_id() != &context.session_id
+                || principal.owner.session_incarnation_id() != &context.session_incarnation_id
+            {
+                continue;
+            }
+            let state = principal
+                .active
+                .lock()
+                .map_err(|_| PrincipalError::Unavailable)?
+                .as_ref()
+                .and_then(Weak::upgrade);
+            let Some(state) =
+                state.filter(|state| state.turn_id == context.turn_id && state.live())
+            else {
+                continue;
+            };
+            if selected.is_some() {
+                return Err(PrincipalError::Stale);
+            }
+            selected = Some(NativePrincipalTurnStamp {
+                state: Arc::downgrade(&state),
+                generation: principal.generation,
+            });
+        }
+        selected.ok_or(PrincipalError::Stale)
+    }
     fn claim(
         &self,
         context: &ToolContext,
@@ -175,6 +211,12 @@ impl Registry {
 #[derive(Clone)]
 pub(crate) struct NativePrincipalRequester(Weak<Registry>);
 impl NativePrincipalRequester {
+    pub(crate) fn stamp(&self, context: &ToolContext) -> Result<NativePrincipalTurnStamp> {
+        self.0
+            .upgrade()
+            .ok_or(PrincipalError::Unavailable)?
+            .stamp(context)
+    }
     pub(crate) fn claim(
         &self,
         invocation: &ManagedSubagentInvocation,
@@ -206,6 +248,9 @@ pub(crate) struct NativePrincipal {
     undo: Arc<FileUndoTracker>,
 }
 impl NativePrincipal {
+    pub(crate) fn is_live(&self) -> bool {
+        self.live()
+    }
     pub(crate) fn owner(&self) -> &BackgroundOutputOwner {
         &self.owner
     }
@@ -344,6 +389,12 @@ pub(crate) struct NativePrincipalTurn {
     state: Arc<TurnState>,
 }
 impl NativePrincipalTurn {
+    pub(crate) fn stamp(&self) -> NativePrincipalTurnStamp {
+        NativePrincipalTurnStamp {
+            state: Arc::downgrade(&self.state),
+            generation: self.state.principal.generation,
+        }
+    }
     pub(crate) fn witness(&self) -> &TurnWitness {
         &self.state.witness
     }
@@ -373,6 +424,43 @@ impl Drop for NativePrincipalTurn {
 /// retirement; it never restores authority after the turn/registry retires.
 pub(crate) struct NativeManagedCallLease {
     state: Arc<TurnState>,
+}
+
+/// Non-consuming weak preparation/routing identity, never execution authority.
+#[derive(Clone)]
+pub(crate) struct NativePrincipalTurnStamp {
+    state: Weak<TurnState>,
+    generation: u64,
+}
+impl NativePrincipalTurnStamp {
+    pub(crate) fn is_live(&self) -> bool {
+        self.state.upgrade().is_some_and(|state| {
+            state.live()
+                && state.principal.generation == self.generation
+                && state.principal.session.owns_turn(&state.witness)
+                && state.principal.active.lock().is_ok_and(|active| {
+                    active
+                        .as_ref()
+                        .is_some_and(|active| active.ptr_eq(&self.state))
+                })
+        })
+    }
+    pub(crate) fn matches_principal(&self, principal: &Arc<NativePrincipal>) -> bool {
+        self.is_live()
+            && self.state.upgrade().is_some_and(|state| {
+                Arc::ptr_eq(&state.principal, principal) && self.generation == principal.generation
+            })
+    }
+    pub(crate) fn matches_turn(&self, witness: &TurnWitness) -> bool {
+        self.is_live()
+            && self
+                .state
+                .upgrade()
+                .is_some_and(|state| state.witness.same_turn(witness))
+    }
+    pub(crate) fn same_turn(&self, other: &Self) -> bool {
+        self.generation == other.generation && self.state.ptr_eq(&other.state)
+    }
 }
 impl NativeManagedCallLease {
     pub(crate) fn is_live(&self) -> bool {
@@ -422,5 +510,6 @@ redacted_debug!(
     NativePrincipal,
     NativePrincipalWeak,
     NativePrincipalTurn,
+    NativePrincipalTurnStamp,
     NativeManagedCallLease
 );
