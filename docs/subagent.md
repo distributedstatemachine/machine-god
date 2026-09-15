@@ -11,6 +11,9 @@ captured caller authority never chooses between them. Create cannot reuse an
 existing transcript; restore cannot publish an empty replacement. Explicit
 resume, reopen and nonresident message preparation carry the exact admitted
 actor's captured workspace, policy and preferences independently of this kind.
+Prepared production children also return their actual session-bound notice
+context; the outer manager registers it weakly for source acknowledgement and
+outbox cleanup. It creates neither an additional runtime owner nor an idle turn.
 
 ## Commands
 
