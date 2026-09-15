@@ -22,7 +22,7 @@ mod authentication;
 mod browser_composition;
 mod controller;
 mod ephemeral;
-mod fixture;
+pub(in crate::reference_host) mod fixture;
 #[cfg(feature = "mcp-http")]
 mod http;
 mod managed_host;

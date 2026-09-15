@@ -3,7 +3,7 @@ use machine_god_core::{PermissionRequest, ProviderError};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 
-pub(super) struct Directory(pub PathBuf);
+pub(in crate::reference_host) struct Directory(pub PathBuf);
 impl Directory {
     pub fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -22,7 +22,7 @@ impl Drop for Directory {
     }
 }
 #[derive(Default)]
-pub(super) struct Clock(pub AtomicUsize);
+pub(in crate::reference_host) struct Clock(pub AtomicUsize);
 impl NativeMcpRuntimeClock for Clock {
     fn now(&self) -> Instant {
         self.0.fetch_add(1, Ordering::Relaxed);
@@ -53,7 +53,7 @@ impl WebSearchDeadline for Clock {
     }
 }
 #[derive(Default)]
-pub(super) struct Prompt {
+pub(in crate::reference_host) struct Prompt {
     pub calls: AtomicUsize,
     pub deny: std::sync::atomic::AtomicBool,
 }
@@ -81,7 +81,7 @@ impl QuestionPrompter for Prompt {
     }
 }
 #[derive(Default)]
-pub(super) struct Transport {
+pub(in crate::reference_host) struct Transport {
     pub responses: Mutex<VecDeque<Vec<u8>>>,
     pub requests: Mutex<Vec<Value>>,
     pub reviews: AtomicUsize,
@@ -136,7 +136,7 @@ pub(super) fn terminal() -> NativeReferenceHostTerminalOptions {
 pub(super) fn permission(clock: Arc<Clock>) -> NativeReferenceHostPermissionOptions {
     NativeReferenceHostPermissionOptions::new(Arc::new(NativePermissionContexts::new()), clock)
 }
-pub(super) struct Fixture {
+pub(in crate::reference_host) struct Fixture {
     pub host: Option<NativeReferenceHost>,
     pub transport: Arc<Transport>,
     pub prompt: Arc<Prompt>,

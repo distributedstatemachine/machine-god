@@ -467,4 +467,4 @@ impl NativeReferenceHost {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::reference_host) mod tests;

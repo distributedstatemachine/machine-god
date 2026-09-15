@@ -752,6 +752,46 @@ silently settles it. A committed-but-unconfirmed clear may be repaired explicitl
 with another confirmed save even when readback already shows the key absent.
 Receipts hold weak parent/session authority, not a runtime ownership edge.
 
+## Shared-host runtime factory
+
+The concrete native factory receives one existing host-service/engine allocation,
+principal and MCP registries, shared scheduler/notice/workspace routes, and
+explicit restoration authority. It constructs distinct child conversation,
+permission-session, undo, model-route, MCP and notice owners, without rebuilding
+the engine or its worker pool. Child MCP composition retains configured authority
+only; it creates fresh contexts and owner cancellation and never inherits a
+parent's request-scoped servers.
+
+Foreground enrollment uses the same assembly and cleanup resources with the
+caller's actual already-created or loaded session and explicit admitted
+authority. It never reloads, replaces, starts, or republishes that transcript.
+
+Create and restore are explicit operations, never inferred from an origin or a
+file's existence. Creation allocates one session/incarnation pair and retains the
+exact initial-publication receipt on uncertainty; reconciliation confirms only
+that candidate and never retries creation or allocates a replacement identity.
+Restore loads the exact saved identity without creating a missing transcript,
+polling a provider/tool, replaying history, or recovering a notice delivery on its
+own. The manager separately owns explicit delivery recovery before resumed work.
+
+Workspace construction forks the descriptors captured at original admission, not
+the parent's later selection. The child permission mode must be the same or
+stricter, using configured patterns without parent grants or saved rules. Explicit
+model/effort settings override the captured preferences; saved child selection
+does not silently override this work's selection. Parent transcript and undo
+history are never copied.
+
+Session preparation has its own bounded journal-bound worker cohort, including
+actual future destruction; a ready runtime is handed off only after this exact
+cohort settles, including an explicitly reconciled creation. Pre-turn readiness/checkpoint work and actual turns
+use their exact existing admission/run cohorts. Resource settlement observes those
+actual worker/TLS/reap receipts, not the global host scope or a completed stream.
+MCP close owns independent cancellation and a separately bounded cleanup cohort.
+It drives retained startup/peer settlement concurrently with original admission
+completion, so retained startup cannot wait on its own undriven receipt. Exact
+cleanup-capacity notifications preserve one checked deadline of at most five
+minutes, with no automatic timeout reset, quota borrowing or per-child idle worker.
+
 ## Source evidence
 
 The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and

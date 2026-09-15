@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod construction;
+mod managed_factory;
 mod managed_host;
 mod mcp;
 mod permissions;
