@@ -182,7 +182,7 @@ impl Driver {
                 {
                     // Superseded is deliberately excluded: its replacement
                     // transition still owns the quiescing session.
-                    if self.inbox.activate(principal(&self.owner)).is_err() {
+                    if self.register_prompt_principal().is_err() {
                         self.native_failed = true;
                         self.shutdown();
                     } else {
@@ -191,8 +191,7 @@ impl Driver {
                     }
                 }
                 NativeInteractiveOutcome::Indeterminate { .. } => {
-                    self.inbox.deactivate();
-                    self.scope_active = false;
+                    self.retire_prompt_principal();
                     self.modal.take();
                 }
                 NativeInteractiveOutcome::Shutdown => self.shutdown(),

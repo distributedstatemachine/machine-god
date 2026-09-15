@@ -34,9 +34,9 @@ functionality merely because it shares an implementation with an older mode.
 - Delivered main: `1ca9eae2c74745d812242876dea1720815873476`
 - Main CI: `34954002810` (`GREEN`)
 - Main Benchmark evidence: `34954002729` (`GREEN`)
-- Active branch: `agent/m64-acp-cli`
-- Active phase: `M05 ACP documentation seal`
-- Next gate: `pass exact lightweight documentation feature/main gates, then start the complete managed-agent tool and CLI on agent/m65-managed-subagents`
+- Active branch: `agent/m65-managed-subagents`
+- Active phase: `M05 complete managed-agent tool and CLI implementation`
+- Next gate: `integrate authenticated managed tools, principal isolation, durable manager and thin CLI; then run the complete feature gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills, MCP and ACP are delivered.

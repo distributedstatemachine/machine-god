@@ -159,9 +159,9 @@ fn run_interactive(
     ) -> Result<PreparedConversationHost, ()>,
     capture: impl FnOnce() -> Result<CapturedInput, ()>,
 ) -> Result<AskCommandOutcome, ()> {
-    let (bridge, inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default())
-            .map_err(|_| ())?;
+    let inbox = NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default())
+        .map_err(|_| ())?;
+    let bridge = inbox.router();
     let (source, terminal) = capture()?;
     let size_reader = capture_output_size()?;
     let input = NativeInteractiveInput::new(source, machine_god_core::CancellationToken::new());
@@ -547,6 +547,7 @@ struct Driver {
     owner: NativeInteractiveSession,
     input: InputLines,
     inbox: NativeInteractivePromptInbox,
+    prompt_principal: Option<machine_god_native::NativeInteractivePromptPrincipal>,
     output: OutputBridge,
     modal: Option<Modal>,
     saved_rule: Option<saved_rules::Confirmation>,
@@ -587,6 +588,22 @@ struct Frontend {
 }
 
 impl Driver {
+    fn retire_prompt_principal(&mut self) {
+        self.prompt_principal.take();
+        self.scope_active = false;
+    }
+
+    fn register_prompt_principal(&mut self) -> Result<(), ()> {
+        self.retire_prompt_principal();
+        self.prompt_principal = Some(
+            self.inbox
+                .register(principal(&self.owner))
+                .map_err(|_| ())?,
+        );
+        self.scope_active = true;
+        Ok(())
+    }
+
     fn new(
         owner: NativeInteractiveSession,
         input: NativeInteractiveInput,
@@ -602,7 +619,7 @@ impl Driver {
         mut inbox: NativeInteractivePromptInbox,
         output: OutputBridge,
     ) -> Result<Self, ()> {
-        inbox.activate(principal(&owner)).map_err(|_| ())?;
+        let prompt_principal = inbox.register(principal(&owner)).map_err(|_| ())?;
         let skills = owner
             .skills_catalog()
             .map(|_| skills_driver::SkillsUi::new(None));
@@ -610,6 +627,7 @@ impl Driver {
             owner,
             input,
             inbox,
+            prompt_principal: Some(prompt_principal),
             output,
             modal: None,
             saved_rule: None,

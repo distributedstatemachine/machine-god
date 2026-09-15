@@ -189,8 +189,8 @@ fn workspace_slash_uses_actual_native_authority_and_reports_independent_receipts
     });
 }
 async fn driver(fixture: &support::Fixture) -> Driver {
-    let (_, inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    let inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
     driver_with_inbox(fixture, inbox).await
 }
 

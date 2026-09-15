@@ -241,8 +241,7 @@ impl Driver {
         }
         // Request acceptance is synchronous/inert. Invalidate unresolved UI
         // authority before the next native poll, never an already confirmed save.
-        self.inbox.deactivate();
-        self.scope_active = false;
+        self.retire_prompt_principal();
         self.revoke_pending_picker_selection();
         self.modal.take();
         self.input.reset_raw_draft();
@@ -280,7 +279,7 @@ impl Driver {
             return;
         }
         if payload.eq_ignore_ascii_case("reset") {
-            if self.inbox.activate(super::principal(&self.owner)).is_err() {
+            if self.register_prompt_principal().is_err() {
                 self.native_failed = true;
                 self.shutdown();
                 return;

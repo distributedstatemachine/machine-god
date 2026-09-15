@@ -34,8 +34,9 @@ struct Harness {
 }
 
 async fn harness(fixture: &support::Fixture) -> Harness {
-    let (bridge, inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    let inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
     harness_with_prompts(fixture, bridge, inbox).await
 }
 

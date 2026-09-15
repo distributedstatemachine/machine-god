@@ -475,6 +475,21 @@ impl NativeWorkspaceAuthority {
             .map_err(|_| NativeWorkspaceAuthorityError::Unavailable)
     }
 
+    /// Creates an independent selection manager from this exact admitted scope.
+    ///
+    /// Immutable descriptors and source evidence are retained, not reopened or
+    /// rediscovered. Subsequent installs affect only their respective managers.
+    /// In contrast, [`Clone`] intentionally shares a selection manager.
+    /// This does not grant permission, copy session policy, or copy undo history.
+    ///
+    /// # Errors
+    /// Returns `Unavailable` if the source publication lock was poisoned.
+    pub fn fork_selection(&self) -> Result<Self> {
+        Ok(Self(Arc::new(Manager {
+            current: RwLock::new(self.snapshot()?),
+        })))
+    }
+
     /// Prepares a replacement without changing the current scope.
     ///
     /// # Errors

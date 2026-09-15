@@ -9,10 +9,12 @@ use std::time::Instant;
 mod construction;
 mod mcp;
 mod permissions;
+mod services;
 pub(crate) mod workspace_binding;
 pub use mcp::{NativeReferenceHostMcpEphemeralStartupOptions, NativeReferenceHostMcpOptions};
 pub use permissions::NativeReferenceHostPermissionOptions;
 use permissions::{PermissionComposition, ReferenceHostToolCatalog};
+use services::NativeHostServices;
 use workspace_binding::WorkspaceBinding;
 
 use machine_god_core::{
@@ -506,6 +508,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
+    services: Arc<NativeHostServices>,
     background_opener:
         Option<Result<crate::NativeBackgroundUrlOpener, crate::NativeBackgroundOpenError>>,
     mcp_runtime: Option<Arc<crate::mcp::runtime::NativeMcpRuntime>>,
@@ -517,21 +520,10 @@ pub struct NativeReferenceHost {
     mcp_contexts: Option<Arc<crate::mcp::context::NativeMcpContexts>>,
     skills: Option<Arc<crate::NativeSkillsService>>,
     workspace_binding: Option<WorkspaceBinding>,
-    engine: Engine,
     workspace_root: PathBuf,
-    session_store: Arc<FileSessionStore>,
-    session_lifecycle: NativeSessionLifecycle,
     loaded_config: LoadedNativeConfig,
     credential_source: Option<AiGatewayCredentialSource>,
-    terminal_shutdown: Option<crate::NativeOwnedWorkerCompletion>,
-    control_workers: Option<crate::NativeOwnedWorkerScope>,
-    terminal_lifecycle: Option<crate::NativeTerminalLifecycleRequester>,
-    terminal_background: Option<crate::NativeTerminalBackgroundRequester>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
-    model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
-    observations: Option<Arc<crate::NativeConversationObservations>>,
-    permissions: Option<Arc<crate::NativePermissionController>>,
-    permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
 }
 
 impl NativeReferenceHost {
@@ -869,8 +861,6 @@ impl NativeReferenceHost {
             host.mcp_contexts = mcp_contexts;
             host.skills = skills;
             host.undo_tracker = undo_tracker;
-            host.model_routes = model_routes;
-            host.observations = observations;
             host
         })
     }
@@ -1300,16 +1290,14 @@ impl NativeReferenceHost {
             host.mcp_contexts = mcp_contexts;
             host.skills = skills;
             host.undo_tracker = undo_tracker;
-            host.model_routes = model_routes;
-            host.observations = observations;
             host
         })
     }
 
     /// Returns the composed provider-neutral engine.
     #[must_use]
-    pub const fn engine(&self) -> &Engine {
-        &self.engine
+    pub fn engine(&self) -> &Engine {
+        &self.services.engine
     }
 
     /// Returns the canonical workspace association captured during composition.
@@ -1372,7 +1360,7 @@ impl NativeReferenceHost {
         &self,
         conversation: crate::NativeConversation,
     ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
-        if self.permissions.is_none() {
+        if self.services.permissions.is_none() {
             return Ok(conversation);
         }
         let policy =
@@ -1393,10 +1381,12 @@ impl NativeReferenceHost {
         policy: crate::NativePermissionPolicySnapshot,
     ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
         let controller = self
+            .services
             .permissions
             .as_ref()
             .ok_or(crate::NativeConversationError::Engine)?;
         let contexts = self
+            .services
             .permission_contexts
             .as_ref()
             .ok_or(crate::NativeConversationError::Engine)?;
@@ -1410,7 +1400,7 @@ impl NativeReferenceHost {
     /// client presentation to the selected host, never a connection-global route.
     #[must_use]
     pub fn permission_contexts(&self) -> Option<Arc<crate::NativePermissionContexts>> {
-        self.permission_contexts.as_ref().map(Arc::clone)
+        self.services.permission_contexts.as_ref().map(Arc::clone)
     }
 
     /// Observes settlement of this host's complete terminal workers, including
@@ -1420,7 +1410,7 @@ impl NativeReferenceHost {
     /// Waiting while a real host handle remains alive cannot complete.
     #[must_use]
     pub fn terminal_shutdown_completion(&self) -> Option<crate::NativeOwnedWorkerCompletion> {
-        self.terminal_shutdown.clone()
+        self.services.terminal_shutdown.clone()
     }
 
     /// Returns this complete terminal host's explicit session-lifecycle authority.
@@ -1428,7 +1418,7 @@ impl NativeReferenceHost {
     /// composition returns `None`; this does not initialize a fallback supervisor.
     #[must_use]
     pub fn terminal_lifecycle_requester(&self) -> Option<crate::NativeTerminalLifecycleRequester> {
-        self.terminal_lifecycle.clone()
+        self.services.terminal_lifecycle.clone()
     }
 
     /// Owner-scoped background observation/control over this complete terminal
@@ -1437,7 +1427,7 @@ impl NativeReferenceHost {
     pub fn terminal_background_requester(
         &self,
     ) -> Option<crate::NativeTerminalBackgroundRequester> {
-        self.terminal_background.clone()
+        self.services.terminal_background.clone()
     }
 
     /// Returns the exact tracker injected into all five file mutation tools.
@@ -1450,7 +1440,7 @@ impl NativeReferenceHost {
 
     /// Shares the actual terminal/archive completion owner; never creates a scope.
     pub(crate) fn control_workers(&self) -> Option<crate::NativeOwnedWorkerScope> {
-        self.control_workers.clone()
+        self.services.control_workers.clone()
     }
 
     /// Parses explicit slash arguments using this host's actual tool registry.
@@ -1465,7 +1455,7 @@ impl NativeReferenceHost {
     }
 
     pub(crate) fn allowlist_tool_registered(&self, name: &str) -> bool {
-        ToolName::new(name).is_ok_and(|name| self.engine.tool(&name).is_some())
+        ToolName::new(name).is_ok_and(|name| self.services.engine.tool(&name).is_some())
     }
 
     /// Creates an inert catalog reader over this exact store and canonical
@@ -1480,7 +1470,7 @@ impl NativeReferenceHost {
             .control_workers()
             .ok_or(crate::NativeSessionCatalogReadError::Unavailable)?;
         Ok(crate::NativeSessionCatalogReader::new(
-            Arc::clone(&self.session_store),
+            Arc::clone(&self.services.session_store),
             self.workspace_root.clone(),
             workers,
         ))
@@ -1490,28 +1480,28 @@ impl NativeReferenceHost {
     /// No registry or conversation registration is created by this accessor.
     #[must_use]
     pub fn model_routes(&self) -> Option<Arc<crate::NativeConversationModelRoutes>> {
-        self.model_routes.clone()
+        self.services.model_routes.clone()
     }
 
     /// Returns the exact optional observation registry injected into file tools.
     /// This does not inspect files, attach a conversation, or publish history.
     #[must_use]
     pub fn observations(&self) -> Option<Arc<crate::NativeConversationObservations>> {
-        self.observations.clone()
+        self.services.observations.clone()
     }
 
     /// Returns the concrete store shared exactly with the engine, result reader,
     /// and session lifecycle.
     #[must_use]
-    pub const fn session_store(&self) -> &Arc<FileSessionStore> {
-        &self.session_store
+    pub fn session_store(&self) -> &Arc<FileSessionStore> {
+        &self.services.session_store
     }
 
     /// Returns by-ID durable lifecycle operations over this host's engine and
     /// exact concrete store.
     #[must_use]
-    pub const fn session_lifecycle(&self) -> &NativeSessionLifecycle {
-        &self.session_lifecycle
+    pub fn session_lifecycle(&self) -> &NativeSessionLifecycle {
+        &self.services.session_lifecycle
     }
 
     /// Returns the exact loaded native configuration retained by this host.
@@ -1529,7 +1519,7 @@ impl NativeReferenceHost {
     /// Consumes this host and returns its provider-neutral engine.
     #[must_use]
     pub fn into_engine(self) -> Engine {
-        self.engine
+        self.services.engine.clone()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1602,8 +1592,11 @@ impl NativeReferenceHost {
             Arc::clone(&transport),
             terminal_selection.is_some(),
         )?;
-        let mut catalog =
-            ReferenceHostToolCatalog::new(observations, engine_limits, permission_setup.is_some());
+        let mut catalog = ReferenceHostToolCatalog::new(
+            observations.clone(),
+            engine_limits,
+            permission_setup.is_some(),
+        );
         let authority = catalog.workspace(
             workspace_tools,
             permission_setup.as_ref().map(|setup| &setup.registry),
@@ -1619,7 +1612,7 @@ impl NativeReferenceHost {
             &transport,
             network_target,
             web_search_deadline,
-            model_routes,
+            model_routes.clone(),
         )?;
         // Declare before the resource: failed/unwound assembly drops every
         // actual owner before this observer joins the newly created scope.
@@ -1685,6 +1678,8 @@ impl NativeReferenceHost {
             permissions,
             permission_contexts,
             mcp,
+            model_routes,
+            observations,
         )
         .map(|mut host| {
             host.workspace_binding = workspace_binding;
@@ -1705,6 +1700,8 @@ impl NativeReferenceHost {
         permissions: Option<Arc<crate::NativePermissionController>>,
         permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
         mcp: Option<mcp::Composition>,
+        model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
+        observations: Option<Arc<crate::NativeConversationObservations>>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let terminal_shutdown = host_resource
             .as_ref()
@@ -1743,9 +1740,21 @@ impl NativeReferenceHost {
             )?;
 
         Ok(Self {
+            services: Arc::new(NativeHostServices {
+                engine,
+                session_store,
+                session_lifecycle,
+                terminal_shutdown,
+                control_workers,
+                terminal_lifecycle,
+                terminal_background,
+                model_routes,
+                observations,
+                permissions,
+                permission_contexts,
+            }),
             background_opener: None,
             reserved_tool_names,
-            engine,
             mcp_runtime,
             mcp_controller,
             mcp_ephemeral,
@@ -1754,20 +1763,10 @@ impl NativeReferenceHost {
             mcp_contexts: None,
             skills: None,
             workspace_binding: None,
-            control_workers,
             workspace_root,
-            session_store,
-            session_lifecycle,
             loaded_config,
             credential_source,
-            terminal_shutdown,
-            terminal_lifecycle,
-            terminal_background,
             undo_tracker: None,
-            model_routes: None,
-            observations: None,
-            permissions,
-            permission_contexts,
         })
     }
 }

@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{
     NativeInteractivePromptBridge, NativeInteractivePromptInbox, NativeInteractivePromptLimits,
-    NativeInteractivePromptView, NativePermissionContexts,
+    NativeInteractivePromptPrincipal, NativeInteractivePromptView, NativePermissionContexts,
 };
 
 use super::{
@@ -52,6 +52,7 @@ struct Pending {
 pub struct NativeAcpClientRequests {
     bridge: Arc<NativeInteractivePromptBridge>,
     inbox: NativeInteractivePromptInbox,
+    principal: Option<NativeInteractivePromptPrincipal>,
     presenter: Arc<NativeAcpElicitationPresenter>,
     contexts: Option<Arc<NativePermissionContexts>>,
     ids: AcpPendingRequests,
@@ -70,13 +71,14 @@ impl NativeAcpClientRequests {
     /// # Errors
     /// Rejects unavailable native inbox construction.
     pub fn new() -> Result<Self, NativeAcpClientRequestError> {
-        let (bridge, inbox) =
-            NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default())
-                .map_err(|_| NativeAcpClientRequestError::Unavailable)?;
+        let inbox = NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default())
+            .map_err(|_| NativeAcpClientRequestError::Unavailable)?;
+        let bridge = inbox.router();
         let presenter = Arc::new(NativeAcpElicitationPresenter::new(Arc::clone(&bridge)));
         Ok(Self {
             bridge,
             inbox,
+            principal: None,
             presenter,
             contexts: None,
             ids: AcpPendingRequests::new(),
@@ -115,9 +117,12 @@ impl NativeAcpClientRequests {
             .epoch
             .checked_add(1)
             .ok_or(NativeAcpClientRequestError::Limit)?;
-        self.inbox
-            .activate(owner.clone())
-            .map_err(|_| NativeAcpClientRequestError::Unavailable)?;
+        self.deactivate();
+        self.principal = Some(
+            self.inbox
+                .register(owner.clone())
+                .map_err(|_| NativeAcpClientRequestError::Unavailable)?,
+        );
         self.presenter.activate(owner.clone());
         self.pending = None;
         let _ = self.ids.clear();
@@ -130,7 +135,7 @@ impl NativeAcpClientRequests {
     /// Invalidates pending and already accepted replies without claiming native
     /// turn, checkpoint, process or socket completion.
     pub fn deactivate(&mut self) {
-        self.inbox.deactivate();
+        self.principal.take();
         self.presenter.deactivate();
         self.pending = None;
         let _ = self.ids.clear();

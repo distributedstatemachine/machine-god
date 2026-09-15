@@ -30,7 +30,7 @@ fn human(action: McpFeatureAction, form: bool) -> McpElicitationPromptRequest {
 
 #[test]
 fn human_form_and_url_label_real_action_and_require_each_flush_acknowledgement() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for action in [McpFeatureAction::ResourceRead, McpFeatureAction::PromptGet] {
         for form in [false, true] {
             let mut future = bridge.present(human(action, form), CancellationToken::new());
@@ -64,7 +64,7 @@ fn human_form_and_url_label_real_action_and_require_each_flush_acknowledgement()
 
 #[test]
 fn human_recovery_retains_action_without_url_and_obsolete_ui_has_no_answer_authority() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for action in [McpFeatureAction::ResourceRead, McpFeatureAction::PromptGet] {
         for (line, expected) in [
             ("m", McpUrlRecoveryAnswer::ContinueManually),

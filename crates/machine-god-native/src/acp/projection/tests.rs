@@ -53,11 +53,13 @@ fn event(payload: TurnEvent) -> EngineEvent {
 fn bridge() -> (
     Arc<NativeInteractivePromptBridge>,
     NativeInteractivePromptInbox,
+    crate::NativeInteractivePromptPrincipal,
 ) {
-    let (bridge, mut inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
-    inbox.activate(owner()).unwrap();
-    (bridge, inbox)
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
+    let principal = inbox.register(owner()).unwrap();
+    (bridge, inbox, principal)
 }
 fn view(inbox: &mut NativeInteractivePromptInbox) -> NativeInteractivePromptView {
     let Poll::Ready(Some(view)) = inbox.poll_prompt(&mut Context::from_waker(Waker::noop())) else {
@@ -257,7 +259,7 @@ fn projection_rejects_deep_or_wide_constructed_values_before_clone() {
 
 #[test]
 fn permissions_require_actual_call_and_map_always_to_volatile_session() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut pending = bridge.prompt(permission());
     assert!(poll(&mut pending).is_pending());
     let view = view(&mut inbox);
@@ -282,7 +284,7 @@ fn permissions_require_actual_call_and_map_always_to_volatile_session() {
 
 #[test]
 fn malformed_permission_replies_do_not_settle_the_native_request() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut pending = bridge.prompt(permission());
     assert!(poll(&mut pending).is_pending());
     let prompt = view(&mut inbox);
@@ -310,12 +312,13 @@ fn malformed_permission_replies_do_not_settle_the_native_request() {
 
 #[test]
 fn typed_reply_validation_never_replaces_native_freshness_checks() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut pending = bridge.prompt(permission());
     assert!(poll(&mut pending).is_pending());
     let prompt = view(&mut inbox);
     let result = json!({"outcome":{"outcome":"selected","optionId":"allow_once"}});
-    inbox.activate(owner()).unwrap();
+    drop(_principal);
+    let _replacement = inbox.register(owner()).unwrap();
     // Syntax/schema remain valid, but the original token cannot acquire a new scope.
     let answer = decode_reply(&prompt, &result).unwrap();
     assert!(inbox.reply(prompt.token(), answer).is_err());
@@ -323,7 +326,7 @@ fn typed_reply_validation_never_replaces_native_freshness_checks() {
 
 #[test]
 fn form_schema_metadata_and_accepted_number_are_lossless() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut pending = bridge.present(form(), CancellationToken::new());
     assert!(poll(&mut pending).is_pending());
     let prompt = view(&mut inbox);
@@ -348,7 +351,7 @@ fn form_schema_metadata_and_accepted_number_are_lossless() {
 
 #[test]
 fn malformed_schema_and_action_results_are_rejected_before_inbox_reply() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut pending = bridge.present(form(), CancellationToken::new());
     assert!(poll(&mut pending).is_pending());
     let prompt = view(&mut inbox);
@@ -367,7 +370,7 @@ fn malformed_schema_and_action_results_are_rejected_before_inbox_reply() {
 
 #[test]
 fn escaped_mcp_reply_obeys_native_serialized_answer_ceiling() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let request = request(
         r#"{"message":"Text","requestedSchema":{"type":"object","properties":{"text":{"type":"string"}}}}"#,
     );
@@ -384,7 +387,7 @@ fn escaped_mcp_reply_obeys_native_serialized_answer_ceiling() {
 
 #[test]
 fn schema_projection_preserves_properties_named_like_annotations() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let request = request(
         r#"{"message":"Fields","requestedSchema":{"type":"object","properties":{"$schema":{"type":"string"},"enumNames":{"type":"string"}},"required":["$schema","enumNames"]}}"#,
     );
@@ -401,7 +404,7 @@ fn schema_projection_preserves_properties_named_like_annotations() {
 
 #[test]
 fn human_feature_projection_never_invents_tool_call_authority() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let source = form();
     let request = McpElicitationPromptRequest::new_human_feature(
         owner(),
@@ -419,7 +422,7 @@ fn human_feature_projection_never_invents_tool_call_authority() {
 
 #[test]
 fn urls_require_host_registration_and_never_copy_remote_scope_or_id() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let presenter = NativeAcpElicitationPresenter::new(bridge.clone());
     presenter.activate(owner());
     let request = request(
@@ -454,7 +457,7 @@ fn urls_require_host_registration_and_never_copy_remote_scope_or_id() {
 
 #[test]
 fn ordinary_questions_use_native_provenance_and_accept_free_text() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let tool = AskUserQuestionTool::shared_prompter(bridge);
     let arguments = json!({"questions":[{"question":"Which path?","options":[{"label":"One"},{"label":"Two"}]}]});
     let arguments = tool

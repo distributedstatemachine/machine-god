@@ -7,6 +7,13 @@ and its long-lived interactive session owner. Current
 milestone state is maintained only in the
 [implementation plan](implementation-plan.md#current-delivery-state).
 
+The native host groups its engine, concrete session store/lifecycle, worker and
+terminal services, and shared permission/model/observation registries in one
+`NativeHostServices` allocation. Sharing this execution domain does not copy a
+principal's mutable workspace selection, permission grants, undo history or
+ephemeral MCP owner. Reverse runtime routes remain weak; the service allocation
+must not own a manager which in turn owns conversations using that engine.
+
 ## Availability
 
 The complete reference host is compiled when all of these are true:
@@ -380,6 +387,14 @@ descriptors must match the selected authority. State selections may use differen
 path aliases; the actual state-directory identity, not its spelling, must match.
 An authority prepared while state was absent must be prepared again with the
 explicit existing state descriptor before constructing this host.
+
+`NativeWorkspaceAuthority::fork_selection()` explicitly allocates an independent
+mutable selection manager over the admitted immutable snapshot. It shares retained
+descriptors and provenance without opening paths; later parent/child installs do
+not affect one another. Prepared installs remain bound to their exact manager,
+even when snapshots and generation numbers match. Ordinary `clone()` continues
+to share one manager and must not be used to isolate a principal. Forking a
+workspace copies neither permission grants nor undo history.
 
 Call `host.configure_conversation_workspace(conversation)` before admitting each
 created or resumed conversation. The native interactive owner performs this

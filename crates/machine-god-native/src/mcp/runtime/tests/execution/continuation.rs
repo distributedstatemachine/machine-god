@@ -30,10 +30,11 @@ fn configured_with_launcher(
     clock: Option<Arc<dyn NativeMcpRuntimeClock>>,
     launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
 ) -> (Fixture, NativeInteractivePromptInbox) {
-    let (bridge, mut inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
-    inbox
-        .activate(BackgroundOutputOwner::new(
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
+    let principal = inbox
+        .register(BackgroundOutputOwner::new(
             SessionId::new("runtime").unwrap(),
             SessionIncarnationId::new("life").unwrap(),
         ))
@@ -58,7 +59,7 @@ fn configured_with_launcher(
             response,
         )
     };
-    let fixture = match clock {
+    let mut fixture = match clock {
         Some(clock) => Fixture::with_executor_and_clock(
             arguments,
             PermissionMode::Auto,
@@ -77,6 +78,7 @@ fn configured_with_launcher(
             prepare,
         ),
     };
+    fixture._prompt_principal = Some(principal);
     (fixture, inbox)
 }
 fn envelope(id: i64, body: &str) -> Box<[u8]> {

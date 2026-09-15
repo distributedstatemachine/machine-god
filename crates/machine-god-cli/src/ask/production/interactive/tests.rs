@@ -27,17 +27,19 @@ fn context() -> ToolContext {
 fn bridge() -> (
     Arc<NativeInteractivePromptBridge>,
     NativeInteractivePromptInbox,
+    machine_god_native::NativeInteractivePromptPrincipal,
 ) {
-    let (bridge, mut inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
     let context = context();
-    inbox
-        .activate(BackgroundOutputOwner::new(
+    let principal = inbox
+        .register(BackgroundOutputOwner::new(
             context.session_id,
             context.session_incarnation_id,
         ))
         .unwrap();
-    (bridge, inbox)
+    (bridge, inbox, principal)
 }
 
 fn modal(inbox: &mut NativeInteractivePromptInbox) -> Modal {
@@ -65,7 +67,7 @@ fn request(reason: &str) -> PermissionRequest {
 
 #[test]
 fn permission_answers_require_the_exact_acknowledged_page() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut pending = PermissionPrompter::prompt(bridge.as_ref(), request("confirm"));
     assert!(
         pending
@@ -84,14 +86,14 @@ fn permission_answers_require_the_exact_acknowledged_page() {
             PermissionPromptDecision::AllowSession
         )))
     ));
-    inbox.deactivate();
+    drop(_principal);
     let response = modal.answer("yes", &binding).unwrap().unwrap();
     assert!(inbox.reply(modal.view.token(), response).is_err());
 }
 
 #[test]
 fn permission_render_escapes_controls_and_fails_closed_at_output_bound() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut pending = PermissionPrompter::prompt(bridge.as_ref(), request("reason\u{1b}\u{202e}"));
     assert!(
         pending
@@ -116,7 +118,7 @@ fn permission_render_escapes_controls_and_fails_closed_at_output_bound() {
 
 #[test]
 fn question_pages_cannot_consume_buffered_previous_page_answers() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let tool = AskUserQuestionTool::shared_prompter(bridge);
     let prepared = tool
         .prepare(ToolCall {
@@ -162,7 +164,7 @@ fn mcp_form_answers_require_each_acknowledged_page_and_exact_native_reply() {
         mrtr::{McpElicitationRequest, McpMrtrLimits},
         protocol::ProtocolVersion,
     };
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let raw = serde_json::value::RawValue::from_string(
         r#"{"message":"Confirm value","requestedSchema":{"type":"object","properties":{"count":{"type":"number"}},"required":["count"]}}"#.into(),
     ).unwrap();

@@ -664,14 +664,15 @@ mod tests {
             PermissionRisk, SessionId, SessionIncarnationId, TurnId,
         };
         use machine_god_native::{
-            NativeInteractivePromptBridge, NativeInteractivePromptLimits, PermissionPrompter,
+            NativeInteractivePromptInbox, NativeInteractivePromptLimits, PermissionPrompter,
         };
-        let (bridge, mut inbox) =
-            NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+        let mut inbox =
+            NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+        let bridge = inbox.router();
         let session = SessionId::new("binding-session").unwrap();
         let incarnation = SessionIncarnationId::new("binding-incarnation").unwrap();
-        inbox
-            .activate(BackgroundOutputOwner::new(
+        let _principal = inbox
+            .register(BackgroundOutputOwner::new(
                 session.clone(),
                 incarnation.clone(),
             ))

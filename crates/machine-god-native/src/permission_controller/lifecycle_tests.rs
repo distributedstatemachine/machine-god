@@ -37,12 +37,13 @@ fn saved_prompt_proposals_retire_with_reset_cancel_drop_and_inbox_scope() {
             .unwrap(),
         );
         let saves_before_proposal = f.store.saves.load(Ordering::SeqCst);
-        let (bridge, mut inbox) = crate::NativeInteractivePromptBridge::new(
+        let mut inbox = crate::NativeInteractivePromptInbox::new(
             crate::NativeInteractivePromptLimits::default(),
         )
         .unwrap();
-        inbox
-            .activate(machine_god_core::BackgroundOutputOwner::new(
+        let bridge = inbox.router();
+        let mut principal = inbox
+            .register(machine_god_core::BackgroundOutputOwner::new(
                 f.owner.session.id(),
                 f.owner.session.incarnation_id(),
             ))
@@ -76,7 +77,7 @@ fn saved_prompt_proposals_retire_with_reset_cancel_drop_and_inbox_scope() {
                 inbox.cancel(view.token()).unwrap();
             }
             2 => {
-                inbox.deactivate();
+                principal.retire();
             }
             _ => {
                 drop(future);

@@ -145,6 +145,7 @@ impl PermissionPrompter for Prompt {
     }
 }
 pub(super) struct Fixture {
+    pub _prompt_principal: Option<crate::NativeInteractivePromptPrincipal>,
     pub conversation: NativeConversationRuntime,
     pub runtime: Arc<NativeMcpRuntime>,
     pub executor: Arc<Executor>,
@@ -298,6 +299,7 @@ impl Fixture {
         .unwrap();
         Self {
             conversation,
+            _prompt_principal: None,
             runtime,
             executor,
             transport,

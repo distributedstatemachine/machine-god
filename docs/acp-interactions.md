@@ -64,6 +64,11 @@ answer ceiling and validate against the original admitted native schema.
 Successful decoding is not freshness evidence: the driver must retain the
 original token and exact owner through outbound correlation and submit replies
 to the native inbox, which independently rejects stale or cross-session tokens.
+The connection retains an explicit principal registration lease. Session
+replacement retires that exact lease, including answered-but-unconsumed replies,
+before registering its replacement; it does not globally invalidate other
+principals in a shared inbox. Prompt construction captures an existing
+registration, so an unpolled old request cannot bind a later replacement.
 The projection layer owns no I/O, pending RPC IDs, permission grants or browser.
 
 ## Modern client-managed URLs

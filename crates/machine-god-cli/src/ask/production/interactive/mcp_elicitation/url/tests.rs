@@ -35,11 +35,13 @@ fn owner() -> BackgroundOutputOwner {
 fn bridge() -> (
     Arc<NativeInteractivePromptBridge>,
     NativeInteractivePromptInbox,
+    machine_god_native::NativeInteractivePromptPrincipal,
 ) {
-    let (bridge, mut inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
-    inbox.activate(owner()).unwrap();
-    (bridge, inbox)
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
+    let principal = inbox.register(owner()).unwrap();
+    (bridge, inbox, principal)
 }
 fn recovery() -> McpUrlRecoveryPromptRequest {
     let raw = RawValue::from_string(r#"{"mode":"url","message":"Authorize","url":"https://example.test/secret-not-for-recovery"}"#.into()).unwrap();
@@ -75,7 +77,7 @@ fn modal(inbox: &mut NativeInteractivePromptInbox) -> Modal {
 
 #[test]
 fn recovery_requires_acknowledged_exact_token_and_returns_only_typed_choices() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     for (line, expected) in [
         ("m", McpUrlRecoveryAnswer::ContinueManually),
         ("r", McpUrlRecoveryAnswer::RetryBrowser),
@@ -117,7 +119,7 @@ fn recovery_requires_acknowledged_exact_token_and_returns_only_typed_choices() {
 
 #[test]
 fn stale_recovery_binding_and_dropped_producer_cannot_reply() {
-    let (bridge, mut inbox) = bridge();
+    let (bridge, mut inbox, _principal) = bridge();
     let mut first = bridge.recover_url(recovery(), CancellationToken::new());
     assert!(poll(&mut first).is_pending());
     let old = modal(&mut inbox).presentation_binding();

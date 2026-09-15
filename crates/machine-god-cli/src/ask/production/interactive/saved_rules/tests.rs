@@ -19,8 +19,9 @@ struct Harness {
 
 impl Harness {
     async fn new() -> Self {
-        let (bridge, inbox) =
-            NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+        let inbox =
+            NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+        let bridge = inbox.router();
         let fixture = support::Fixture::with_prompter(bridge);
         let options = NativeInteractiveSessionOptions::new(
             fixture.workspace.clone(),

@@ -74,8 +74,8 @@ async fn harness(fixture: &support::Fixture) -> Harness {
     let (work, received) = tokio::sync::mpsc::channel(1);
     let (ack, acknowledgements) = tokio::sync::mpsc::channel(1);
     let (signal, signals) = tokio::sync::mpsc::channel(1);
-    let (_, inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    let inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
     let options = NativeInteractiveSessionOptions::new(
         fixture.workspace.clone(),
         fixture.host.loaded_config().config().model_preferences(),

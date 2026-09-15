@@ -16,9 +16,9 @@ fn owner(id: &str) -> BackgroundOutputOwner {
     )
 }
 fn presenter() -> NativeAcpElicitationPresenter {
-    let (bridge, _inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
-    NativeAcpElicitationPresenter::new(bridge)
+    let inbox =
+        crate::NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    NativeAcpElicitationPresenter::new(inbox.router())
 }
 fn request(owner: BackgroundOutputOwner) -> McpElicitationPromptRequest {
     let raw = RawValue::from_string(

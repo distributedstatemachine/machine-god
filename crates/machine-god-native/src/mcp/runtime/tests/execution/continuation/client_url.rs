@@ -53,10 +53,11 @@ impl McpElicitationPresenter for Client {
 }
 
 fn configured_client(archive: &Archive) -> ClientFixture {
-    let (bridge, mut inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
-    inbox
-        .activate(BackgroundOutputOwner::new(
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
+    let principal = inbox
+        .register(BackgroundOutputOwner::new(
             SessionId::new("runtime").unwrap(),
             SessionIncarnationId::new("life").unwrap(),
         ))
@@ -75,7 +76,7 @@ fn configured_client(archive: &Archive) -> ClientFixture {
     );
     // No local browser authority has been supplied at all.
     assert!(executor.execution_policy().url);
-    let fixture = Fixture::with_executor(
+    let mut fixture = Fixture::with_executor(
         &[json!({})],
         PermissionMode::Auto,
         executor.clone(),
@@ -104,6 +105,7 @@ fn configured_client(archive: &Archive) -> ClientFixture {
             )
         },
     );
+    fixture._prompt_principal = Some(principal);
     (fixture, inbox, finished)
 }
 

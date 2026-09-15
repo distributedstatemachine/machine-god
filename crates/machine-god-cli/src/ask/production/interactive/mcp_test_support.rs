@@ -48,8 +48,9 @@ pub(super) async fn setup_with_host_options(
         native::NativeReferenceHostConversationOptions,
     ) -> native::NativeReferenceHostConversationOptions,
 ) -> HttpFixture {
-    let (bridge, inbox) =
-        NativeInteractivePromptBridge::new(NativeInteractivePromptLimits::default()).unwrap();
+    let inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let bridge = inbox.router();
     let clock = Arc::new(TokioMcpClock);
     let options = native::NativeReferenceHostMcpOptions::new(
         Arc::new(NativeMcpContexts::new()),

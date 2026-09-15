@@ -341,6 +341,79 @@ fn old_snapshots_and_routes_retain_exact_descriptors_after_install_and_rename() 
 }
 
 #[test]
+fn forked_selections_share_descriptors_but_not_mutable_managers() {
+    let fixture = Fixture::new();
+    let extra = fixture.directory("extra");
+    let parent = fixture
+        .authority(vec![spec(&extra, true, false)], false)
+        .unwrap();
+    let child = parent.fork_selection().unwrap();
+    let sibling = parent.fork_selection().unwrap();
+    let parent_scope = parent.snapshot().unwrap();
+    let child_scope = child.snapshot().unwrap();
+    assert!(Arc::ptr_eq(&parent_scope.0, &child_scope.0));
+
+    // A prepared install belongs to the actual manager, not a matching scope,
+    // generation or descriptor identity.
+    let foreign = parent.prepare_blocking(vec![], true).unwrap();
+    assert!(matches!(
+        child.install(foreign),
+        Err(NativeWorkspaceAuthorityError::WrongAuthority)
+    ));
+
+    let prepared = child.prepare_blocking(vec![], false).unwrap();
+    child.install(prepared).unwrap();
+    assert!(child.snapshot().unwrap().entries().is_empty());
+    assert_eq!(parent.snapshot().unwrap().entries().len(), 1);
+    assert_eq!(sibling.snapshot().unwrap().entries().len(), 1);
+
+    let prepared = parent.prepare_blocking(vec![], true).unwrap();
+    parent.install(prepared).unwrap();
+    assert!(parent.snapshot().unwrap().saved_suppressed());
+    assert!(!child.snapshot().unwrap().saved_suppressed());
+    assert!(!sibling.snapshot().unwrap().saved_suppressed());
+    assert_eq!(sibling.snapshot().unwrap().generation(), 0);
+
+    // Clone remains a handle to the same manager; forking is explicit.
+    let alias = sibling.clone();
+    alias
+        .install(alias.prepare_blocking(vec![], true).unwrap())
+        .unwrap();
+    assert!(sibling.snapshot().unwrap().saved_suppressed());
+}
+
+#[test]
+fn fork_retains_admitted_identity_without_reopening_retargeted_paths() {
+    let fixture = Fixture::new();
+    let extra = fixture.directory("extra");
+    std::fs::write(extra.join("marker"), b"original").unwrap();
+    let parent = fixture
+        .authority(vec![spec(&extra, true, false)], false)
+        .unwrap();
+    std::fs::rename(&extra, fixture.base.join("retained-extra")).unwrap();
+    std::fs::create_dir(&extra).unwrap();
+    std::fs::write(extra.join("marker"), b"replacement").unwrap();
+
+    let child = parent.fork_selection().unwrap();
+    drop(parent);
+    let route = child
+        .snapshot()
+        .unwrap()
+        .route(&extra.join("marker"))
+        .unwrap();
+    let file = rustix::fs::openat(
+        route.root_descriptor(),
+        route.relative_path(),
+        OFlags::RDONLY | OFlags::NOFOLLOW,
+        Mode::empty(),
+    )
+    .unwrap();
+    let mut bytes = [0; 8];
+    assert_eq!(rustix::io::read(file, &mut bytes).unwrap(), 8);
+    assert_eq!(&bytes, b"original");
+}
+
+#[test]
 fn canonical_identity_retarget_is_inactive_then_same_identity_reactivates() {
     let fixture = Fixture::new();
     let extra = fixture.directory("extra");

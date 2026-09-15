@@ -130,8 +130,7 @@ impl Driver {
             ) {
                 Ok(receipt) => {
                     self.picker_request = Some(receipt.id);
-                    self.inbox.deactivate();
-                    self.scope_active = false;
+                    self.retire_prompt_principal();
                     self.input.reset_raw_draft();
                     self.reset_skills();
                 }
