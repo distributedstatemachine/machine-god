@@ -4,13 +4,54 @@ use super::{
     Checkpoint, ConversationInput, NativeConversation, NativeConversationError, map_engine_error,
 };
 use crate::managed::prompt_context::{
-    self, NOTICE_CONTEXT_KEY, NoticeCheckpoint, NoticePublicationError, ParentNoticeContext,
-    PreparedNoticeContext,
+    self, NOTICE_CONTEXT_KEY, NOTICE_OUTBOX_KEY, NoticeCheckpoint, NoticeDelivery,
+    NoticePublicationError, ParentNoticeContext, PreparedNoticeContext,
 };
-use machine_god_core::{Session, SessionRecord, SessionTurnPreparation, SessionUserContext, Turn};
+use machine_god_core::{
+    BoxFuture, Session, SessionRecord, SessionRevision, SessionTurnPreparation, SessionUserContext,
+    Turn,
+};
 use std::sync::Arc;
 
 impl NativeConversation {
+    /// Explicit metadata-only durability repair; never starts a parent turn.
+    pub(crate) fn recover_notice_delivery(
+        &self,
+    ) -> BoxFuture<'_, Result<Option<NoticeDelivery>, NativeConversationError>> {
+        Box::pin(async move {
+            let _lifecycle = self.acquire_lifecycle()?;
+            let _admission = self.acquire_workspace_control()?;
+            let owner = self
+                .notices
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or(NativeConversationError::ManagedAdmission)?;
+            owner
+                .recover_delivery(&self.session)
+                .await
+                .map_err(publication_error)
+        })
+    }
+
+    /// Clears only the original batch after all exact source ACKs are confirmed.
+    pub(crate) fn clear_notice_delivery<'a>(
+        &'a self,
+        delivery: &'a NoticeDelivery,
+    ) -> BoxFuture<'a, Result<SessionRevision, NativeConversationError>> {
+        Box::pin(async move {
+            let _lifecycle = self.acquire_lifecycle()?;
+            let _admission = self.acquire_workspace_control()?;
+            let owner = self
+                .notices
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or(NativeConversationError::ManagedAdmission)?;
+            owner
+                .clear_delivery(&self.session, delivery)
+                .await
+                .map_err(publication_error)
+        })
+    }
     pub(crate) fn with_notice_context(
         mut self,
         owner: &Arc<ParentNoticeContext>,
@@ -88,6 +129,10 @@ impl NativeConversation {
                 NOTICE_CONTEXT_KEY.to_owned(),
                 prepared.checkpoint_value().map_err(rejected)?,
             );
+            record.metadata.insert(
+                NOTICE_OUTBOX_KEY.to_owned(),
+                prepared.outbox_value().map_err(rejected)?,
+            );
         } else if !is_prompt && let Some(saved) = saved {
             *context = prompt_context::compose_user_context(
                 base,
@@ -139,6 +184,7 @@ pub(super) fn validate_saved_context(
     skill: Option<&str>,
     resource: Option<&str>,
 ) -> Result<(), NativeConversationError> {
+    prompt_context::saved_outbox(record).map_err(rejected)?;
     let saved = prompt_context::saved_context(
         record,
         checkpoint.map(|value| (value.turn_sequence, value.first_user_message)),
@@ -147,7 +193,7 @@ pub(super) fn validate_saved_context(
     prompt_context::compose_user_context(
         skill,
         resource,
-        saved.as_ref().map(|saved| saved.text()),
+        saved.as_ref().map(prompt_context::SavedNoticeContext::text),
         checkpoint.map_or(0, |value| value.first_user_message),
     )
     .map_err(rejected)?;

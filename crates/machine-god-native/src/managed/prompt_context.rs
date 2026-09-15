@@ -2,6 +2,7 @@
 mod checkpoint;
 #[cfg(test)]
 mod conversation_tests;
+mod outbox;
 mod publication;
 #[cfg(test)]
 mod tests;
@@ -11,6 +12,10 @@ pub(crate) use checkpoint::{
     NOTICE_CONTEXT_KEY, NoticeCheckpoint, SavedNoticeContext, compose_user_context, saved_context,
 };
 use machine_god_core::{Session, SessionRecord, SessionUserContext, SessionWitness};
+use outbox::{DeliveryRecord, SavedNoticeOutbox};
+pub(crate) use outbox::{
+    NOTICE_OUTBOX_KEY, NoticeDelivery, NoticeDeliveryProvenance, saved_outbox,
+};
 pub(crate) use publication::NoticePublicationError;
 use std::{
     fmt,
@@ -49,12 +54,18 @@ enum Slot {
     Prepared(Arc<Payload>),
     Publishing(Arc<Payload>),
     Uncertain(Arc<Payload>),
+    Delivered(Arc<DeliveryRecord>),
+    Recovering(Arc<DeliveryRecord>),
+    RecoveryUncertain(Arc<DeliveryRecord>),
+    Clearing(Arc<DeliveryRecord>),
+    ClearUncertain(Arc<DeliveryRecord>),
     Retired,
 }
 struct Payload {
     batch: NoticeBatch,
     tokens: Vec<NoticeAckToken>,
     saved: SavedNoticeContext,
+    outbox: SavedNoticeOutbox,
 }
 
 pub(crate) struct PreparedNoticeContext {
@@ -97,7 +108,9 @@ impl ParentNoticeContext {
     ) -> Result<Option<PreparedNoticeContext>, NoticeContextError> {
         self.validate_session(session)?;
         checkpoint.validate_record(record)?;
-        checkpoint.validate_record(&session.record())?;
+        let actual = session.record();
+        checkpoint.validate_record(&actual)?;
+        let existing_outbox = saved_outbox(&actual)?;
         let base = compose_user_context(skill, resource, None, checkpoint.first_user_message)?;
         let base_text = base.as_ref().map(|context| context.text.as_str());
         let notices = self
@@ -112,9 +125,15 @@ impl ParentNoticeContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match &*slot {
             Slot::Idle => {}
+            Slot::Delivered(_) | Slot::RecoveryUncertain(_) | Slot::ClearUncertain(_) => {
+                return Ok(None);
+            }
             Slot::Uncertain(_) => return Err(NoticeContextError::Uncertain),
             Slot::Retired => return Err(NoticeContextError::Retired),
             _ => return Err(NoticeContextError::Busy),
+        }
+        if existing_outbox.is_some() {
+            return Ok(None);
         }
         let batch = notices
             .snapshot(
@@ -142,16 +161,22 @@ impl ParentNoticeContext {
             ) else {
                 break;
             };
+            let outbox = match SavedNoticeOutbox::new(&saved) {
+                Ok(outbox) => outbox,
+                Err(NoticeContextError::ResourceLimit) => break,
+                Err(error) => return Err(error),
+            };
             tokens.push(entry.token());
-            selected = Some((saved, context.text));
+            selected = Some((saved, outbox, context.text));
         }
-        let Some((saved, text)) = selected else {
+        let Some((saved, outbox, text)) = selected else {
             return Ok(None);
         };
         let payload = Arc::new(Payload {
             batch,
             tokens,
             saved,
+            outbox,
         });
         *slot = Slot::Prepared(Arc::clone(&payload));
         Ok(Some(PreparedNoticeContext {
@@ -204,6 +229,9 @@ impl ParentNoticeContext {
         {
             return Err(NoticeContextError::InvalidCheckpoint);
         }
+        if saved_outbox(&actual)?.as_ref() != Some(&payload.outbox) {
+            return Err(NoticeContextError::InvalidCheckpoint);
+        }
         let text = compose_user_context(
             skill,
             resource,
@@ -246,7 +274,10 @@ impl ParentNoticeContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
         {
-            Slot::Idle => Ok(false),
+            Slot::Idle
+            | Slot::Delivered(_)
+            | Slot::RecoveryUncertain(_)
+            | Slot::ClearUncertain(_) => Ok(false),
             Slot::Uncertain(_) => Ok(true),
             Slot::Retired => Err(NoticeContextError::Retired),
             _ => Err(NoticeContextError::Busy),
@@ -273,5 +304,8 @@ impl PreparedNoticeContext {
             .saved
             .at_checkpoint(self.checkpoint.clone())
             .to_value()
+    }
+    pub(crate) fn outbox_value(&self) -> Result<serde_json::Value, NoticeContextError> {
+        self.payload.outbox.to_value()
     }
 }

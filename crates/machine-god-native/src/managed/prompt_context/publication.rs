@@ -1,5 +1,6 @@
 use super::{
-    NOTICE_CONTEXT_KEY, NoticeContextError, PreparedNoticeContext, Slot, checkpoint::bounded_value,
+    DeliveryRecord, NOTICE_CONTEXT_KEY, NOTICE_OUTBOX_KEY, NoticeContextError,
+    PreparedNoticeContext, Slot, checkpoint::bounded_value,
 };
 use machine_god_core::{
     BoxFuture, EngineError, InferenceOptions, Prompt, Session, SessionTurnPreparation, Turn,
@@ -73,8 +74,15 @@ impl PreparedNoticeContext {
             .and_then(|metadata| metadata.get(NOTICE_CONTEXT_KEY))
             .ok_or(NoticeContextError::InvalidCheckpoint)?;
         bounded_value(value)?;
+        let outbox = preparation
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get(NOTICE_OUTBOX_KEY))
+            .ok_or(NoticeContextError::InvalidCheckpoint)?;
+        bounded_value(outbox)?;
         if preparation.expected_revision != self.checkpoint.expected_revision
             || value != &self.checkpoint_value()?
+            || outbox != &self.outbox_value()?
             || preparation.user_context.as_ref().is_none_or(|context| {
                 context.user_message_index != self.checkpoint.first_user_message
                     || context.text != self.text
@@ -157,7 +165,7 @@ impl PreparedNoticeContext {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if matches!(&*slot, Slot::Publishing(payload) if Arc::ptr_eq(payload, &self.payload)) {
-                *slot = Slot::Idle;
+                *slot = Slot::Delivered(DeliveryRecord::confirmed(self.payload.outbox.clone()));
                 parent_live = true;
             }
         }

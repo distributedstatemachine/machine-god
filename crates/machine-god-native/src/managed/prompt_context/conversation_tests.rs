@@ -13,6 +13,73 @@ use machine_god_core::{
 use machine_god_testkit::{InMemorySessionStore, ScriptedModelProvider, ScriptedPermissionHandler};
 use std::{num::NonZeroU64, sync::Arc, time::Instant};
 
+#[test]
+fn actual_finalization_preserves_outbox_and_new_arrivals_wait_for_source_ack_clear() {
+    use futures_util::StreamExt;
+    use machine_god_core::{ModelEvent, StopReason};
+    use machine_god_testkit::ModelProviderStep;
+    let provider = ScriptedModelProvider::new(
+        "test",
+        (0..3).map(|_| {
+            ModelProviderStep::events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }])
+        }),
+    );
+    let engine = engine(&provider);
+    let session = session(&engine);
+    let notices = Arc::new(ManagedNotices::new(NoticeLimits::default(), Arc::new(Clock)).unwrap());
+    let owner = Arc::new(ParentNoticeContext::new(
+        &session,
+        principal("parent"),
+        &notices,
+    ));
+    let conversation = NativeConversation::from_session(session.clone())
+        .unwrap()
+        .with_notice_context(&owner)
+        .unwrap();
+    emit(&notices, "first");
+    let turn = block_on(conversation.prompt("first input".into(), 1)).unwrap();
+    assert!(block_on(conversation.recover_notice_delivery()).is_err()); // Actual active admission.
+    let _ = block_on(turn.collect::<Vec<_>>());
+    assert!(conversation.paused_turn().unwrap().is_none());
+    assert!(
+        !session
+            .record()
+            .metadata
+            .contains_key(super::NOTICE_CONTEXT_KEY)
+    );
+    let delivery = owner.delivery().unwrap();
+    let original = super::saved_outbox(&session.record()).unwrap().unwrap();
+    emit(&notices, "second");
+    let turn = block_on(conversation.prompt("ordinary input".into(), 2)).unwrap();
+    let _ = block_on(turn.collect::<Vec<_>>());
+    assert_eq!(pending(&notices), 1);
+    assert_eq!(
+        super::saved_outbox(&session.record()).unwrap(),
+        Some(original)
+    );
+    assert!(block_on(conversation.clear_notice_delivery(&delivery)).is_err());
+    let ids = delivery
+        .originals()
+        .iter()
+        .map(super::super::notices::ManagedNotice::identity)
+        .collect::<Vec<_>>();
+    owner
+        .confirm_source_acknowledgements(&delivery, &ids)
+        .unwrap();
+    block_on(conversation.clear_notice_delivery(&delivery)).unwrap();
+    let turn = block_on(conversation.prompt("next notices".into(), 3)).unwrap();
+    assert_eq!(pending(&notices), 0);
+    assert!(
+        owner
+            .confirm_source_acknowledgements(&delivery, &ids)
+            .is_err()
+    );
+    let _ = block_on(turn.collect::<Vec<_>>());
+    assert_eq!(provider.requests().len(), 3);
+}
+
 struct Clock;
 impl NativeMcpRuntimeClock for Clock {
     fn now(&self) -> Instant {

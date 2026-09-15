@@ -586,8 +586,9 @@ without consuming them and combines skill, resource and notice text within
 Only a fitting original subset is selected; remaining notices stay pending.
 The prepared prompt metadata retains those original envelopes, their exact
 source identities and the session/incarnation/revision/turn/user-message
-checkpoint binding. Notice checkpoint metadata has a separate 192 KiB encoded
-ceiling; the configured core limits still apply to the complete session metadata.
+checkpoint binding. Notice checkpoint metadata and its delivery outbox together
+have a 192 KiB encoded ceiling; the configured core limits still apply to the
+complete session metadata.
 
 Publication wraps the actual core `prompt_prepared` or explicit
 `continue_turn_prepared` operation. It checks the actual session witness, exact
@@ -609,6 +610,33 @@ original identity data, never a new snapshot or a receipt. Root composition owns
 paused-checkpoint eligibility, actual parent lifecycle admission across the
 operation, and durable journal/checkpoint reconciliation. The guard neither
 starts idle parent turns nor injects context into an active turn.
+
+### Durable parent delivery outbox
+
+The same prepared core prompt checkpoint also saves one separate delivery outbox:
+at most 64 original envelopes and 64 KiB encoded, with the original parent,
+source identities and checkpoint evidence. Normal finalization removes only the
+prompt context, not this outbox. Until the batch's source-journal acknowledgements
+are confirmed and its outbox is explicitly cleared, further notice ingestion is
+blocked; ordinary prompts and inert continuations remain available. No lifetime
+history or child-creation counter is added.
+
+Only a confirmed original core publication yields a live delivery receipt.
+Restart decoding is inert: explicit recovery, under actual parent lifecycle and
+session admission, must confirm a revision-pinned unchanged-metadata save before
+yielding a recovered-original receipt. That save repairs durability without
+creating a new prompt, turn, notice, replay, or timer; the original checkpoint
+evidence remains unchanged. It cannot settle a still-live uncertain prompt slot.
+
+The manager verifies each exact original source notice before durably recording
+its source acknowledgement. Private subset confirmation updates only that
+receipt's bounded progress bits; stale, foreign or invalid subsets cannot clear
+another batch. After every original is confirmed, an explicit admitted metadata
+save removes only the outbox. Recovery/clear errors and dropped in-flight futures
+retain an exact bounded fence; neither readback nor an unrelated ordinary prompt
+silently settles it. A committed-but-unconfirmed clear may be repaired explicitly
+with another confirmed save even when readback already shows the key absent.
+Receipts hold weak parent/session authority, not a runtime ownership edge.
 
 ## Source evidence
 

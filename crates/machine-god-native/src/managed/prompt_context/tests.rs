@@ -1,5 +1,7 @@
 use super::super::notices::*;
 use super::*;
+#[path = "outbox_tests.rs"]
+mod outbox_tests;
 use crate::mcp::runtime::NativeMcpRuntimeClock;
 use futures_executor::block_on;
 use futures_util::task::noop_waker_ref;
@@ -132,6 +134,7 @@ fn preparation(prepared: &PreparedNoticeContext, record: &SessionRecord) -> Sess
         NOTICE_CONTEXT_KEY.into(),
         prepared.checkpoint_value().unwrap(),
     );
+    metadata.insert(NOTICE_OUTBOX_KEY.into(), prepared.outbox_value().unwrap());
     SessionTurnPreparation {
         expected_revision: record.revision,
         metadata: Some(metadata),
@@ -348,6 +351,13 @@ fn ambiguous_recovery(error: bool) {
     let record = f.record();
     let saved = saved_context(&record, Some((1, 0))).unwrap().unwrap();
     assert_eq!(f.pending(), 1);
+    assert!(matches!(
+        block_on(f.parent.recover_delivery(&f.session)),
+        Err(NoticePublicationError::Context(
+            NoticeContextError::Uncertain
+        ))
+    ));
+    assert!(f.parent.delivery().is_none());
     let recovery = f
         .parent
         .prepare_continuation(
