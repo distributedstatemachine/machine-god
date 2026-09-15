@@ -477,6 +477,39 @@ their original preparer, not a replacement. This does not prove worker or
 runtime settlement. Cancellation,
 preparer callbacks and proof destruction run outside routing locks.
 
+## Parent prompt checkpoints
+
+The native prompt-context guard reserves one bounded preparation slot for an
+actual parent session allocation, not just its public IDs. It snapshots notices
+without consuming them and combines skill, resource and notice text within
+65,536 UTF-8 bytes, including every separator and the notice JSON framing.
+Only a fitting original subset is selected; remaining notices stay pending.
+The prepared prompt metadata retains those original envelopes, their exact
+source identities and the session/incarnation/revision/turn/user-message
+checkpoint binding. Notice checkpoint metadata has a separate 192 KiB encoded
+ceiling; the configured core limits still apply to the complete session metadata.
+
+Publication wraps the actual core `prompt_prepared` or explicit
+`continue_turn_prepared` operation. It checks the actual session witness, exact
+prepared metadata/text and live notice batch before polling the core operation.
+No parent-state mutex spans persistence or caller callbacks. Only the core's
+confirmed successful publication acknowledges the selected original tokens,
+before later native turn registration can fail. Arrivals after the snapshot are
+not acknowledged. If a source in the retained snapshot closes or the parent retires during
+publication, a confirmed checkpoint still receives its exact acknowledgement,
+but the newly created turn is cancelled before it can be supplied to the caller.
+
+Dropping an unpolled preparation leaves notices pending. An error or drop after
+publication starts retains one bounded uncertain slot and the original notices;
+stored-record readback is not confirmation and cannot clear that fence. An
+explicit continuation may reuse exactly matching saved originals, and only its
+newly confirmed core publication can settle the fence. Dropping that retry
+preserves uncertainty. Ordinary saved continuation context is inert text and
+original identity data, never a new snapshot or a receipt. Root composition owns
+paused-checkpoint eligibility, actual parent lifecycle admission across the
+operation, and durable journal/checkpoint reconciliation. The guard neither
+starts idle parent turns nor injects context into an active turn.
+
 ## Source evidence
 
 The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and
