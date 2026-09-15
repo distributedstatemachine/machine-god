@@ -1,96 +1,198 @@
-use machine_god_core::{
-    BoxFuture, CancellationToken, SubagentAuthority, SubagentAuthorityError,
-    SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest,
-};
-use std::collections::VecDeque;
-use std::fmt;
-use std::sync::{Arc, Mutex};
-
 use crate::DEFAULT_RECORD_CAPACITY;
 
-/// One ordered response from a scripted subagent authority.
-#[derive(Clone)]
-pub enum SubagentStep {
-    /// Return the supplied completed child outcome.
-    Complete(SubagentOutcome),
-    /// Return the supplied authority failure.
-    Error(SubagentAuthorityError),
-    /// Remain pending until the invocation is cancelled.
-    Pending,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
+        ScriptedPermissionHandler,
+    };
+    use futures_executor::block_on;
+    use futures_util::StreamExt;
+    use machine_god_core::{
+        Engine, ManagedOutcome, ManagedReceipt, ManagedRequested, ManagedResultStatus, ModelEvent,
+        PermissionDecision, PermissionGrantScope, Session, SessionId, SessionIncarnationId,
+        StopReason, SubagentTool, ToolCall, ToolCallId, ToolName,
+    };
+    use serde_json::json;
 
-impl fmt::Debug for SubagentStep {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Complete(_) => formatter.write_str("Complete(..)"),
-            Self::Error(error) => formatter.debug_tuple("Error").field(&error.kind()).finish(),
-            Self::Pending => formatter.write_str("Pending"),
+    fn result() -> ManagedSubagentResult {
+        ManagedSubagentResult {
+            ok: true,
+            operation_id: "op".into(),
+            child_id: Some("child".into()),
+            status: ManagedResultStatus::Created,
+            error_code: None,
+            retryable: false,
+            requested: Some(ManagedRequested::Receipt(ManagedReceipt {
+                outcome: ManagedOutcome::Created,
+                generation: 1,
+                event_sequence: 1,
+            })),
+            cursor: None,
+        }
+    }
+    fn session(authority: ScriptedSubagentAuthority) -> (Engine, Session) {
+        let call = ToolCall {
+            id: ToolCallId::new("call").unwrap(),
+            name: ToolName::new("subagent").unwrap(),
+            arguments: json!({"command":{"create":{"name":"PRIVATE_NAME","mode":"persistent"}}}),
+        };
+        let engine = Engine::builder()
+            .provider(ScriptedModelProvider::new(
+                "managed-test",
+                [
+                    ModelProviderStep::events([
+                        ModelEvent::ToolCall { call },
+                        ModelEvent::Stop {
+                            reason: StopReason::ToolCalls,
+                        },
+                    ]),
+                    ModelProviderStep::events([ModelEvent::Stop {
+                        reason: StopReason::Completed,
+                    }]),
+                ],
+            ))
+            .session_store(InMemorySessionStore::default())
+            .permission_handler(ScriptedPermissionHandler::new([PermissionStep::Decision(
+                PermissionDecision::Allow {
+                    scope: PermissionGrantScope::Once,
+                },
+            )]))
+            .tool(SubagentTool::new(authority))
+            .build()
+            .unwrap();
+        let session = engine
+            .create_session(
+                SessionId::new("test").unwrap(),
+                SessionIncarnationId::new("incarnation").unwrap(),
+            )
+            .unwrap();
+        (engine, session)
+    }
+    #[test]
+    fn actual_turn_is_required_and_recording_does_not_retain_authority() {
+        let authority = ScriptedSubagentAuthority::new([SubagentStep::Complete(result())]);
+        let (engine, session) = session(authority.clone());
+        let turn = block_on(session.prompt("task")).unwrap();
+        let witness = turn.witness();
+        let session_witness = session.witness();
+        authority.bind_turn(witness.clone());
+        assert!(authority.requests().is_empty());
+        assert_eq!(authority.remaining_steps(), 1);
+        let events = block_on(turn.collect::<Vec<_>>());
+        assert!(events.iter().all(Result::is_ok));
+        assert_eq!(authority.requests().len(), 1);
+        assert_eq!(authority.remaining_steps(), 0);
+        assert!(!format!("{authority:?} {:?}", authority.requests()).contains("PRIVATE_NAME"));
+        assert!(!witness.is_live());
+        drop(session);
+        drop(engine);
+        assert!(!session_witness.is_live());
+    }
+    #[test]
+    fn missing_witness_and_zero_capacity_preserve_script() {
+        for bind in [false, true] {
+            let authority = ScriptedSubagentAuthority::with_record_capacity(
+                [SubagentStep::Complete(result())],
+                0,
+            );
+            let (_engine, session) = session(authority.clone());
+            let turn = block_on(session.prompt("task")).unwrap();
+            if bind {
+                authority.bind_turn(turn.witness());
+            }
+            block_on(turn.collect::<Vec<_>>());
+            assert!(authority.requests().is_empty());
+            assert_eq!(authority.remaining_steps(), 1);
         }
     }
 }
 
-/// One subagent request captured before its scripted behavior starts.
+use machine_god_core::{
+    BoxFuture, CancellationToken, ManagedSubagentAuthority, ManagedSubagentCommand,
+    ManagedSubagentError, ManagedSubagentInvocation, ManagedSubagentResult, ToolContext,
+    TurnWitness,
+};
+use std::{
+    collections::VecDeque,
+    fmt,
+    sync::{Arc, Mutex},
+};
+
+/// One manager response, not a foreground child's final answer.
+#[derive(Clone)]
+pub enum SubagentStep {
+    Complete(ManagedSubagentResult),
+    Error(ManagedSubagentError),
+    Pending,
+}
+impl fmt::Debug for SubagentStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Complete(_) => "Complete(..)",
+            Self::Error(_) => "Error(..)",
+            Self::Pending => "Pending",
+        })
+    }
+}
+/// Data-only recording deliberately drops the opaque invocation proof.
 #[derive(Clone)]
 pub struct RecordedSubagentRequest {
-    pub request: SubagentRequest,
+    pub context: ToolContext,
+    pub command: ManagedSubagentCommand,
     pub cancellation: CancellationToken,
 }
-
 impl fmt::Debug for RecordedSubagentRequest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("RecordedSubagentRequest")
-            .field("cancelled", &self.cancellation.is_cancelled())
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecordedSubagentRequest")
             .finish_non_exhaustive()
     }
 }
-
-struct SubagentState {
+struct State {
     steps: VecDeque<SubagentStep>,
     requests: Vec<RecordedSubagentRequest>,
+    turn: Option<TurnWitness>,
 }
-
-struct SubagentInner {
-    record_capacity: usize,
-    state: Mutex<SubagentState>,
+struct Inner {
+    capacity: usize,
+    state: Mutex<State>,
 }
-
-/// A cloneable, strict subagent authority with bounded request recording.
-///
-/// Calls after script exhaustion, or after the recording bound is reached,
-/// return fixed authority failures without consuming another step. Debug
-/// formatting deliberately omits scripted outcomes and request payloads.
-/// Calling `run` is inert; recording and step selection occur on first poll.
+/// Strict bounded manager double. Bind an actual Turn witness before polling;
+/// forged or stale execution cannot consume scripted behavior. No child runner.
 #[derive(Clone)]
 pub struct ScriptedSubagentAuthority {
-    inner: Arc<SubagentInner>,
+    inner: Arc<Inner>,
 }
-
 impl ScriptedSubagentAuthority {
-    /// Creates an authority with the default request-recording bound.
     #[must_use]
     pub fn new(steps: impl IntoIterator<Item = SubagentStep>) -> Self {
         Self::with_record_capacity(steps, DEFAULT_RECORD_CAPACITY)
     }
-
-    /// Creates an authority with an explicit request-recording bound.
     #[must_use]
     pub fn with_record_capacity(
         steps: impl IntoIterator<Item = SubagentStep>,
-        record_capacity: usize,
+        capacity: usize,
     ) -> Self {
         Self {
-            inner: Arc::new(SubagentInner {
-                record_capacity,
-                state: Mutex::new(SubagentState {
+            inner: Arc::new(Inner {
+                capacity,
+                state: Mutex::new(State {
                     steps: steps.into_iter().collect(),
-                    requests: Vec::new(),
+                    requests: vec![],
+                    turn: None,
                 }),
             }),
         }
     }
-
-    /// Returns a consistent snapshot in authority-call order.
+    /// Test host supplies a real turn; the retained observation is weak.
+    pub fn bind_turn(&self, turn: TurnWitness) {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .turn = Some(turn);
+    }
     #[must_use]
     pub fn requests(&self) -> Vec<RecordedSubagentRequest> {
         self.inner
@@ -100,8 +202,6 @@ impl ScriptedSubagentAuthority {
             .requests
             .clone()
     }
-
-    /// Returns the number of unconsumed strict steps.
     #[must_use]
     pub fn remaining_steps(&self) -> usize {
         self.inner
@@ -111,243 +211,58 @@ impl ScriptedSubagentAuthority {
             .steps
             .len()
     }
-
-    fn record_and_select(
-        &self,
-        request: SubagentRequest,
-        cancellation: CancellationToken,
-    ) -> Result<SubagentStep, SubagentAuthorityError> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.requests.len() >= self.inner.record_capacity {
-            return Err(SubagentAuthorityError::new(
-                SubagentAuthorityErrorKind::ResourceLimit,
-            ));
-        }
-        state.requests.push(RecordedSubagentRequest {
-            request,
-            cancellation,
-        });
-        let Some(step) = state.steps.pop_front() else {
-            return Err(SubagentAuthorityError::new(
-                SubagentAuthorityErrorKind::Failed,
-            ));
-        };
-        Ok(step)
-    }
 }
-
 impl fmt::Debug for ScriptedSubagentAuthority {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self
-            .inner
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        formatter
-            .debug_struct("ScriptedSubagentAuthority")
-            .field("record_capacity", &self.inner.record_capacity)
-            .field("recorded_request_count", &state.requests.len())
-            .field("remaining_step_count", &state.steps.len())
-            .finish()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScriptedSubagentAuthority")
+            .field("capacity", &self.inner.capacity)
+            .finish_non_exhaustive()
     }
 }
-
-impl SubagentAuthority for ScriptedSubagentAuthority {
-    fn run(
+impl ManagedSubagentAuthority for ScriptedSubagentAuthority {
+    fn execute(
         &self,
-        request: SubagentRequest,
+        invocation: ManagedSubagentInvocation,
         cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
-        let authority = self.clone();
+    ) -> BoxFuture<'_, Result<ManagedSubagentResult, ManagedSubagentError>> {
         Box::pin(async move {
-            let step = authority.record_and_select(request, cancellation.clone())?;
+            if cancellation.is_cancelled() {
+                return Err(ManagedSubagentError::Cancelled);
+            }
+            let step = {
+                let mut state = self
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if !state
+                    .turn
+                    .as_ref()
+                    .is_some_and(|turn| invocation.claim(turn))
+                {
+                    return Err(ManagedSubagentError::Unavailable);
+                }
+                if state.requests.len() >= self.inner.capacity {
+                    return Err(ManagedSubagentError::ResourceLimit);
+                }
+                state.requests.push(RecordedSubagentRequest {
+                    context: invocation.context().clone(),
+                    command: invocation.command().clone(),
+                    cancellation: cancellation.clone(),
+                });
+                state
+                    .steps
+                    .pop_front()
+                    .ok_or(ManagedSubagentError::Failed)?
+            };
             match step {
-                SubagentStep::Complete(outcome) => Ok(outcome),
+                SubagentStep::Complete(result) => Ok(result),
                 SubagentStep::Error(error) => Err(error),
                 SubagentStep::Pending => {
                     cancellation.cancelled().await;
-                    Err(SubagentAuthorityError::new(
-                        SubagentAuthorityErrorKind::Cancelled,
-                    ))
+                    Err(ManagedSubagentError::Cancelled)
                 }
             }
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ScriptedSubagentAuthority, SubagentStep};
-    use core::task::{Context, Poll};
-    use futures_executor::block_on;
-    use futures_util::task::noop_waker_ref;
-    use machine_god_core::{
-        CancellationToken, SessionId, SessionIncarnationId, SubagentAuthority,
-        SubagentAuthorityError, SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest,
-        ToolCallId, ToolContext, TurnId,
-    };
-
-    fn context(call_id: &str) -> ToolContext {
-        ToolContext {
-            session_id: SessionId::new("subagent-test-session").unwrap(),
-            session_incarnation_id: SessionIncarnationId::new("subagent-test-incarnation").unwrap(),
-            turn_id: TurnId::new("subagent-test-turn").unwrap(),
-            call_id: ToolCallId::new(call_id).unwrap(),
-        }
-    }
-
-    fn request(call_id: &str, name: &str, prompt: &str) -> SubagentRequest {
-        SubagentRequest::new(context(call_id), name, prompt).expect("test request is bounded")
-    }
-
-    fn outcome(text: &str) -> SubagentOutcome {
-        SubagentOutcome::new(text).expect("test outcome is bounded")
-    }
-
-    #[test]
-    fn completed_steps_are_strict_and_requests_are_recorded_in_order() {
-        let authority = ScriptedSubagentAuthority::new([
-            SubagentStep::Complete(outcome("first result")),
-            SubagentStep::Complete(outcome("second result")),
-        ]);
-        let first = request("call-1", "first", "inspect one");
-        let second = request("call-2", "second", "inspect two");
-
-        let first_result =
-            block_on(authority.run(first.clone(), CancellationToken::new())).unwrap();
-        let second_result =
-            block_on(authority.run(second.clone(), CancellationToken::new())).unwrap();
-
-        assert_eq!(first_result.text(), "first result");
-        assert_eq!(second_result.text(), "second result");
-        assert_eq!(authority.remaining_steps(), 0);
-        let recorded = authority.requests();
-        assert_eq!(recorded.len(), 2);
-        assert_eq!(recorded[0].request, first);
-        assert_eq!(recorded[1].request, second);
-    }
-
-    #[test]
-    fn unpolled_run_is_inert_and_preserves_the_script() {
-        let authority =
-            ScriptedSubagentAuthority::new([SubagentStep::Complete(outcome("retained result"))]);
-        let unpolled = authority.run(
-            request("call-unpolled", "unpolled", "must remain inert"),
-            CancellationToken::new(),
-        );
-
-        assert!(authority.requests().is_empty());
-        assert_eq!(authority.remaining_steps(), 1);
-        drop(unpolled);
-        assert!(authority.requests().is_empty());
-        assert_eq!(authority.remaining_steps(), 1);
-
-        let executed = request("call-executed", "executed", "consume now");
-        let result = block_on(authority.run(executed.clone(), CancellationToken::new())).unwrap();
-        assert_eq!(result.text(), "retained result");
-        assert_eq!(authority.requests()[0].request, executed);
-        assert_eq!(authority.remaining_steps(), 0);
-    }
-
-    #[test]
-    fn scripted_error_and_exhaustion_return_fixed_kinds() {
-        let authority = ScriptedSubagentAuthority::new([SubagentStep::Error(
-            SubagentAuthorityError::new(SubagentAuthorityErrorKind::Unavailable),
-        )]);
-
-        let scripted = block_on(authority.run(
-            request("call-scripted", "scripted", "first"),
-            CancellationToken::new(),
-        ))
-        .unwrap_err();
-        let exhausted = block_on(authority.run(
-            request("call-exhausted", "exhausted", "second"),
-            CancellationToken::new(),
-        ))
-        .unwrap_err();
-
-        assert_eq!(scripted.kind(), SubagentAuthorityErrorKind::Unavailable);
-        assert_eq!(exhausted.kind(), SubagentAuthorityErrorKind::Failed);
-        assert_eq!(authority.requests().len(), 2);
-    }
-
-    #[test]
-    fn record_capacity_failure_does_not_consume_a_step() {
-        let authority = ScriptedSubagentAuthority::with_record_capacity(
-            [
-                SubagentStep::Complete(outcome("first")),
-                SubagentStep::Complete(outcome("retained")),
-            ],
-            1,
-        );
-        block_on(authority.run(
-            request("call-first", "first", "first"),
-            CancellationToken::new(),
-        ))
-        .unwrap();
-
-        let error = block_on(authority.run(
-            request("call-overflow", "overflow", "overflow"),
-            CancellationToken::new(),
-        ))
-        .unwrap_err();
-
-        assert_eq!(error.kind(), SubagentAuthorityErrorKind::ResourceLimit);
-        assert_eq!(authority.requests().len(), 1);
-        assert_eq!(authority.remaining_steps(), 1);
-    }
-
-    #[test]
-    fn pending_step_waits_for_cancellation_and_returns_cancelled() {
-        let authority = ScriptedSubagentAuthority::new([SubagentStep::Pending]);
-        let cancellation = CancellationToken::new();
-        let mut pending = authority.run(
-            request("call-pending", "pending", "wait"),
-            cancellation.clone(),
-        );
-        let mut context = Context::from_waker(noop_waker_ref());
-        assert!(matches!(pending.as_mut().poll(&mut context), Poll::Pending));
-
-        assert!(cancellation.cancel());
-        let error = block_on(pending).unwrap_err();
-
-        assert_eq!(error.kind(), SubagentAuthorityErrorKind::Cancelled);
-        assert!(authority.requests()[0].cancellation.is_cancelled());
-    }
-
-    #[test]
-    fn clones_share_strict_state_and_debug_redacts_payloads() {
-        let authority = ScriptedSubagentAuthority::new([SubagentStep::Complete(outcome(
-            "PRIVATE_OUTCOME_SENTINEL",
-        ))]);
-        let clone = authority.clone();
-        let authority_before_run_debug = format!("{authority:?}");
-        block_on(clone.run(
-            request(
-                "call-private",
-                "PRIVATE_NAME_SENTINEL",
-                "PRIVATE_PROMPT_SENTINEL",
-            ),
-            CancellationToken::new(),
-        ))
-        .unwrap();
-
-        let authority_debug = format!("{authority:?}");
-        let request_debug = format!("{:?}", authority.requests()[0]);
-        for secret in [
-            "PRIVATE_OUTCOME_SENTINEL",
-            "PRIVATE_NAME_SENTINEL",
-            "PRIVATE_PROMPT_SENTINEL",
-        ] {
-            assert!(!authority_debug.contains(secret));
-            assert!(!authority_before_run_debug.contains(secret));
-            assert!(!request_debug.contains(secret));
-        }
-        assert_eq!(authority.requests().len(), 1);
-        assert_eq!(authority.remaining_steps(), 0);
     }
 }

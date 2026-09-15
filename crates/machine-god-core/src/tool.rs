@@ -8,6 +8,10 @@ use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+mod invocation;
+pub(crate) use invocation::InvocationTurnScope;
+pub use invocation::{AdmittedToolInvocation, SessionWitness, TurnWitness};
+
 #[cfg(test)]
 mod execution_tests;
 #[cfg(test)]
@@ -452,6 +456,17 @@ pub struct ToolInputLimits {
 
 /// Object-safe tool implementation supplied explicitly by a host.
 pub trait Tool: Send + Sync + 'static {
+    /// Executes an actual core-admitted call. The opaque envelope proves only
+    /// orchestration identity, never native authority. Wrappers must forward it
+    /// unchanged. The default adapter discards the proof for ordinary tools.
+    fn execute_admitted(
+        &self,
+        invocation: AdmittedToolInvocation,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        let (context, arguments) = invocation.into_parts();
+        self.execute_for_turn(context, arguments, cancellation)
+    }
     /// Opts into separately bounded complete arguments. Ordinary transcript
     /// limits still apply to arguments returned by [`Self::persist_arguments`].
     fn complete_input_limits(&self) -> Option<ToolInputLimits> {

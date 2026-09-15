@@ -18,6 +18,137 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 
+#[derive(Clone)]
+struct WitnessTool {
+    expected: Arc<Mutex<Option<machine_god_core::TurnWitness>>>,
+    foreign: Arc<Mutex<Option<machine_god_core::TurnWitness>>>,
+    retained: Arc<Mutex<Vec<machine_god_core::AdmittedToolInvocation>>>,
+    claim_now: bool,
+}
+impl Tool for WitnessTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("witness").unwrap(),
+            description: "test".into(),
+            input_schema: json!({}),
+        }
+    }
+    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        Ok(PreparedToolCall::new(
+            Capability::Tool {
+                name: call.name,
+                call_id: call.id,
+                arguments: json!({"prepared":true}),
+            },
+            json!({"prepared":true}),
+        ))
+    }
+    fn execute(
+        &self,
+        _: ToolContext,
+        _: Value,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        panic!("core must forward authenticated envelope")
+    }
+    fn execute_admitted(
+        &self,
+        invocation: machine_god_core::AdmittedToolInvocation,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<machine_god_core::ToolExecution, ToolError>> {
+        Box::pin(async move {
+            assert_eq!(invocation.arguments(), &json!({"prepared":true}));
+            assert_eq!(invocation.tool_name().as_str(), "witness");
+            let expected = self.expected.lock().unwrap().clone().unwrap();
+            let foreign = self.foreign.lock().unwrap().clone().unwrap();
+            assert!(!invocation.claim(&foreign));
+            if self.claim_now {
+                assert!(invocation.claim(&expected));
+                assert!(!invocation.claim(&expected));
+            }
+            self.retained.lock().unwrap().push(invocation);
+            Ok(machine_god_core::ToolExecution::output(
+                ToolOutput::success(json!("accepted")),
+            ))
+        })
+    }
+}
+
+#[test]
+fn admitted_call_proof_is_exact_one_shot_weak_and_not_structural_ids() {
+    for claim_now in [false, true] {
+        let tool = WitnessTool {
+            expected: Arc::default(),
+            foreign: Arc::default(),
+            retained: Arc::default(),
+            claim_now,
+        };
+        let call = ToolCall {
+            id: ToolCallId::new("same-provider-id").unwrap(),
+            name: ToolName::new("witness").unwrap(),
+            arguments: json!({"raw":true}),
+        };
+        let build = || {
+            Engine::builder()
+                .provider(BoundaryProvider::new(call.clone()))
+                .session_store(MemoryStore::default())
+                .permission_handler(AllowOnce)
+                .tool(tool.clone())
+                .build()
+                .unwrap()
+        };
+        let engine = build();
+        let foreign_engine = build();
+        let session = engine.create_test_session(SessionId::new("same-id").unwrap());
+        let foreign_session =
+            foreign_engine.create_test_session(SessionId::new("same-id").unwrap());
+        let turn = prompt(&session, "one");
+        let foreign_turn = prompt(&foreign_session, "one");
+        // Identical public session/incarnation/turn IDs are not allocation proof.
+        assert_eq!(turn.session_id(), foreign_turn.session_id());
+        assert_eq!(
+            turn.session_incarnation_id(),
+            foreign_turn.session_incarnation_id()
+        );
+        assert_eq!(turn.handle().id(), foreign_turn.handle().id());
+        let witness = turn.witness();
+        let session_witness = session.witness();
+        assert!(session_witness.owns_turn(&witness));
+        assert!(!foreign_session.owns_turn(&witness));
+        assert!(!session_witness.same_session(&foreign_session.witness()));
+        assert!(session_witness.same_session(&session.witness()));
+        *tool.expected.lock().unwrap() = Some(witness.clone());
+        *tool.foreign.lock().unwrap() = Some(foreign_turn.witness());
+        let events = futures_executor::block_on(turn.collect::<Vec<_>>());
+        assert!(events.iter().all(Result::is_ok));
+        assert_eq!(tool.retained.lock().unwrap().len(), 1);
+        assert!(!witness.is_live());
+        assert!(!tool.retained.lock().unwrap()[0].claim(&witness));
+        drop(foreign_turn);
+        drop(session);
+        drop(engine);
+        assert!(!session_witness.is_live());
+    }
+}
+
+#[test]
+fn cancelled_and_dropped_turns_retire_weak_execution_identity() {
+    let engine = engine_with(StaticProvider::completed());
+    let session = engine.create_test_session(SessionId::new("witness-retirement").unwrap());
+    let turn = prompt(&session, "one");
+    let first = turn.witness();
+    assert!(first.is_live());
+    assert!(turn.handle().cancel());
+    assert!(!first.is_live());
+    drop(turn);
+    let second_turn = prompt(&session, "two");
+    let second = second_turn.witness();
+    assert!(!first.same_turn(&second));
+    assert!(second.is_live());
+    drop(second_turn);
+    assert!(!second.is_live());
+}
+
 trait EngineTestSessions {
     fn create_test_session(&self, id: SessionId) -> Session;
 }

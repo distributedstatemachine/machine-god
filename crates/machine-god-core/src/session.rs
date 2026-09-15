@@ -3,7 +3,9 @@ use crate::json_bounds::{
     serialized_json_size_bounded, validate_json_roots,
 };
 use crate::session_context::ValidatedSessionContext;
-use crate::tool::ToolExecutionCancellation;
+use crate::tool::{
+    AdmittedToolInvocation, InvocationTurnScope, ToolExecutionCancellation, TurnWitness,
+};
 use crate::{
     BoxFuture, CancellationToken, Capability, ContentBlock, EngineError, EngineEvent,
     InferenceOptions, Message, ModelEvent, ModelEventStream, ModelRequest, PermissionDecision,
@@ -1028,6 +1030,7 @@ impl SessionOperation {
             cancellation.clone(),
         );
         let gate = EmissionGate::default();
+        let invocation_scope = InvocationTurnScope::new(&self.state, cancellation.clone());
         let workflow = Box::pin(run_turn(
             Arc::clone(&self.engine),
             Arc::clone(&self.state),
@@ -1038,6 +1041,7 @@ impl SessionOperation {
             context,
             cancellation.clone(),
             gate.emitter(),
+            invocation_scope.witness(),
         ));
 
         Ok(Turn {
@@ -1060,6 +1064,7 @@ impl SessionOperation {
             cancellation_waiter: None,
             lease: Some(lease),
             metadata_scope,
+            invocation_scope,
         })
     }
 
@@ -1666,6 +1671,7 @@ async fn run_turn(
     context: Option<ValidatedSessionContext>,
     cancellation: CancellationToken,
     emitter: TurnEmitter,
+    invocation_turn: TurnWitness,
 ) -> WorkflowExit {
     match run_turn_inner(
         engine,
@@ -1677,6 +1683,7 @@ async fn run_turn(
         context,
         cancellation,
         emitter,
+        invocation_turn,
     )
     .await
     {
@@ -1702,6 +1709,7 @@ async fn run_turn_inner(
     context: Option<ValidatedSessionContext>,
     cancellation: CancellationToken,
     emitter: TurnEmitter,
+    invocation_turn: TurnWitness,
 ) -> Result<CompletedTurn, WorkflowAbort> {
     emitter.emit(TurnEvent::Started).await;
 
@@ -2215,11 +2223,18 @@ async fn run_turn_inner(
                             .await;
                         let execution_cancellation = prepared.execution_cancellation();
                         let execution = || {
-                            tool.execute_for_turn(
+                            let (invocation, scope) = AdmittedToolInvocation::new(
                                 tool_context,
+                                call_name.clone(),
                                 prepared.into_arguments(),
-                                cancellation.clone(),
-                            )
+                                invocation_turn.clone(),
+                            );
+                            let cancellation = cancellation.clone();
+                            let tool = &tool;
+                            Box::pin(async move {
+                                let _scope = scope;
+                                tool.execute_admitted(invocation, cancellation).await
+                            }) as BoxFuture<'_, _>
                         };
                         let (result, cancellation_deferral) = await_tool_execution(
                             execution,
@@ -2874,7 +2889,7 @@ async fn await_tool_execution<'a>(
     ),
     WorkflowAbort,
 > {
-    // Legacy and no-authority calls retain their existing construction ordering.
+    // Ordinary and no-authority calls retain their construction ordering.
     // Guarded calls defer construction until the final admission poll below.
     let mut factory = Some(factory);
     let mut future = if admission.is_none() {
@@ -3376,6 +3391,7 @@ impl TurnHandle {
 
 /// Ordered asynchronous events for one session turn.
 pub struct Turn {
+    invocation_scope: Arc<InvocationTurnScope>,
     session_id: SessionId,
     session_incarnation_id: SessionIncarnationId,
     id: TurnId,
@@ -3407,6 +3423,11 @@ impl fmt::Debug for Turn {
 }
 
 impl Turn {
+    /// Weak allocation identity for registering this actual native turn.
+    #[must_use]
+    pub fn witness(&self) -> TurnWitness {
+        self.invocation_scope.witness()
+    }
     /// Exact session owning this reserved turn.
     #[must_use]
     pub fn session_id(&self) -> &SessionId {
@@ -3430,6 +3451,7 @@ impl Turn {
     }
 
     fn finish(&mut self) {
+        self.invocation_scope.close();
         self.metadata_scope.close_admission();
         self.cancellation.deregister(&mut self.cancellation_waiter);
         self.state = TurnState::Done;
@@ -3579,6 +3601,19 @@ impl Turn {
                 )))))
             }
         }
+    }
+}
+
+impl Session {
+    /// Checks actual session allocation ownership, never equality of IDs.
+    #[must_use]
+    pub fn owns_turn(&self, witness: &TurnWitness) -> bool {
+        witness.belongs_to(&self.state)
+    }
+    /// Weak allocation identity for native principal registration.
+    #[must_use]
+    pub fn witness(&self) -> crate::SessionWitness {
+        crate::SessionWitness::new(&self.state)
     }
 }
 

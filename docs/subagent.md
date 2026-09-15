@@ -1,180 +1,130 @@
-# Bounded foreground `subagent`
+# Managed `subagent`
 
-`subagent` runs one explicitly requested child prompt through an injected
-provider-neutral authority. It is a foreground engine tool: the parent tool
-call remains live until the child completes, fails, or is cancelled. Core owns
-strict decoding, resource admission, cancellation, result projection, durable
-tool-result replacement, and the following model round. The injected authority
-owns the child computation and receives no ambient authority from core.
+The provider-neutral tool validates complete managed-agent commands and results.
+An explicitly injected `ManagedSubagentAuthority` owns native admission,
+durable acceptance, scheduling, persistence and lifetime. Core performs no
+ambient filesystem, process, environment, network, clock or thread operations.
+The foreground-only API and its global counters are removed.
 
-This contract intentionally implements a smaller surface than the pinned
-`vercel-labs/fx` asynchronous child-session manager. It preserves the useful
-one-off delegation outcome without importing background session management or
-unbounded child scheduling into the engine.
+## Commands
 
-## Canonical input
+The root is `{"command":{...}}`, selecting exactly one of these branches.
+Every object rejects unknown fields. Optional fields are omitted, not null.
 
-The only accepted shape is:
+| Branch | Fields |
+| --- | --- |
+| `create` | Required `name`, `mode` (`one_off` or `persistent`); `prompt` required for one-off. Optional `model`, `effort`, `permission_mode`, `notifications`. |
+| `inspect` | Required `id`, nonempty distinct `sections`; optional `cursor`, `limit`, `wait`. |
+| `message` | Exactly `send:{id,content}` or `milestone:{name}`. A milestone belongs to the actual calling child/work, not a supplied target ID. |
+| `relationship` | Required `action`, `id`; optional `parent_id`. Attach defaults to actual actor; detach forbids parent; reparent requires parent. |
+| `configure` | Required `id` plus at least one of `name`, `model`, `effort`, `permission_mode`, `notifications`. |
+| `lifecycle` | Required `id`, `action`: cancel, resume, close or reopen. |
 
-```json
-{
-  "command": {
-    "create": {
-      "name": "research",
-      "mode": "one_off",
-      "prompt": "Summarize the relevant implementation constraints."
-    }
-  }
-}
-```
+Names/milestones are 1–128 UTF-8 bytes; model 1–256; prompt/message 1–65,536.
+NUL is rejected. IDs contain 1–255 ASCII alphanumeric, dot, underscore or hyphen
+characters, excluding dot and double-dot. Effort is `auto` or a 1–64-byte name
+using ASCII alphanumeric, dot, underscore or hyphen. Explicit model/effort wins;
+otherwise native uses admitted selected preferences.
 
-`command`, `create`, `name`, `mode`, and `prompt` are required. `mode` is the
-exact case-sensitive string `one_off`. Every object is closed: unknown fields,
-extra command branches, alternate modes, and non-string scalar fields fail
-before the authority is acquired. Name and prompt are nonempty valid UTF-8,
-must not contain NUL, and are preserved exactly; the tool does not trim,
-case-fold, normalize, expand, or interpret either value.
+Permission modes are ask/auto/yolo. Omission remains explicit `None` in the DTO:
+native inherits the admitted parent policy and enforces same-or-stricter policy.
+There is no decoder-default yolo authority. Children receive standalone prompts,
+not inherited parent transcripts or grants.
 
-The fixed input limits are:
+Notifications default terminal completed/failed/cancelled on, started off,
+milestones empty and stop conditions `[terminal]`. At most 32 distinct
+milestones and eight distinct stop conditions are accepted. Conditions are
+terminal/duration_elapsed. Positive signed-millisecond interval/duration values
+are checked; duration requires interval and adds duration_elapsed if absent.
+Native must also check deadline addition against its actual clock.
+The `started` boolean is a deliberate modern extension to the pinned tool.
+Each accepted work item freezes its policy; native notices feed the parent's
+next-turn context, never an automatic idle turn or active-turn injection.
 
-- name: at most 128 UTF-8 bytes;
-- prompt: at most 32 KiB of UTF-8 bytes;
-- complete compact serialized input: at most 48 KiB;
-- JSON container depth: at most 8; and
-- JSON nodes: at most 64.
+## Inspection and results
 
-Depth counts containers using the core convention: a scalar root has depth
-zero and a root object has depth one. Every scalar and container counts as one
-node. Structure is checked iteratively before recursive serialization or
-cloning, and rejected owned JSON is destroyed through core's iterative-drop
-path. The tool-specific bounds apply in addition to the engine's configured
-argument limits; the lower applicable bound wins.
+Sections are status, messages, tool_activity, events, configuration and
+relationship. There is no additional history or list command. Messages includes
+conversation history. Limits default to 50 and range from 1 to 100.
+The complete selected page contains at most 100 message/history/event/tool items.
+`v1:generation:offset` cursors use canonical checked unsigned integers; native
+validates the exact generation and projection and reports gaps/restart-required.
+Retained history and tool activity are pageable, not pinned first-page-only
+projections. Retention is not a lifetime child-creation limit.
 
-Preparation is synchronous, bounded, nonblocking, and effect-free. It produces
-one canonical validated prepared JSON envelope and uses
-`PreparedToolCall::without_authority`. Execution revalidates that envelope and
-then constructs the typed request. This is a narrow trusted assertion that the
-tool itself needs no permission-policy capability. It does not grant the
-injected authority filesystem, process, network, persistence, model, tool, or
-permission access.
+Wait requires `until:"settled"`, timeout_ms from 1 to 60,000, the status section
+and no cursor; optional after_generation requires a strictly later generation.
+Idle/interrupted/completed/failed/cancelled/archived are settled;
+queued/running/awaiting_approval are not. Timeout returns an inspection with
+wait_timed_out status, not durable cancellation. Native owns dependency-wait
+admission, cycle detection, released execution quota and bounded waiters.
 
-Input depth, node, raw-text, and serialized-envelope exhaustion is an
-`InvalidInput` failure discovered before authority invocation. Authority-side
-or completed-output resource exhaustion remains an `Execution` failure. Both
-use the fixed `subagent_resource_limit` code without reflecting input or child
-data.
+`ManagedSubagentResult` preserves the envelope: ok, operation_id, child_id,
+status, error_code, retryable, requested and cursor. Status/error codes are closed
+typed tags, never raw host diagnostics. Requested data is a receipt, inspection
+or relationship approval. Receipt outcomes are created, message_queued,
+relationship_changed, configured, lifecycle_changed and milestone_emitted;
+they are not completed child answers. Inspection includes state/configuration/
+relationships, messages/history/events/tool activity, generation/cursor,
+truncation/gap and bounded source-error projections. Private policy and inherited
+root-user evidence are not public message fields. Child text remains untrusted.
 
-## Injected child authority
+Tool arguments are bounded to 448 KiB serialized, 12 container levels and
+512 JSON nodes, including worst-case escaping of the full prompt. Output is
+bounded to 512 KiB; history fields are at most 16 KiB each and 32 KiB together. Native composition
+must provide per-tool complete input/output publication when ordinary engine
+transcript bounds are smaller; unrelated tool limits must not be enlarged.
+Core checks JSON bounds before recursive decode and destroys rejected deep JSON
+iteratively.
 
-`SubagentAuthority` is the only child-execution seam. A host injects it
-explicitly when constructing `SubagentTool`; there is no global lookup or
-ambient provider fallback. Construction and preparation do not invoke the
-authority. Calling execution creates no authority work until the returned
-future is first polled.
+## Actual invocation and native authority
 
-The authority receives an owned request containing the validated name and
-prompt plus the parent call's structural `ToolContext` identities and a
-cancellation token. The bounded IDs support per-parent admission, isolation,
-and attribution; they are not session, transcript, store, engine, or permission
-handles. The authority must start a fresh one-off child context for that
-request. In particular, core does not pass or inherit:
+Public `ToolContext` IDs grant no authority. Core supplies an
+`AdmittedToolInvocation` only through `Tool::execute_admitted`, after the exact
+prepared capability and optional final permission admission succeed.
+Its immutable arguments, registered name and private call allocation bind the
+actual invocation. `SubagentTool` constructs `ManagedSubagentInvocation` only
+from this envelope; direct structural execution fails closed.
 
-- the parent transcript, system-visible conversation history, or stored child
-  history;
-- parent permission decisions, grants, prepared capabilities, or permission
-  handler state;
-- turn-local dynamic tools or their executable registrations;
-- the parent tool catalog, an MCP catalog or feature view, or a `subagent`
-  tool; or
-- model, reasoning-effort, permission-mode, or notification overrides.
+`Session::witness()` and `Turn::witness()` expose weak opaque allocation
+identities, without constructors or deserialization. Native registers an actual
+principal against the session witness before execution and owns a turn-scoped
+registration. It may route using IDs but must verify actual session/turn identity,
+liveness, principal generation and same-or-stricter policy. Calling
+`ManagedSubagentInvocation::claim(&TurnWitness)` consumes a unique call claim
+once. Foreign/stale witnesses and repeat claims fail. Provider call IDs are not
+claim identity. Proofs retain neither session nor runtime ownership.
 
-The request does not contain a parent session handle, store handle, engine
-handle, transcript snapshot, permission object, or child identifier that could
-be used to recover those values. Any provider or execution facility held
-privately by a concrete authority is separately trusted host configuration,
-not inherited parent authority. The authority must not claim that such private
-configuration came from the parent turn.
+Wrappers must forward the admitted envelope unchanged. The ordinary default
+adapter discards its proof when invoking structural tools; it cannot be used
+around a managed tool. Native privately constructs its admitted principal/run
+lease only after checking the witness and authority. Core identity alone is
+never a native permission or resource grant.
 
-Public authority, request, and error debug forms are structural. They must not
-include the prompt, child text, parent data, provider diagnostics, credentials,
-or an injected implementation's debug output.
+## Cancellation and durable ownership
 
-## Concurrency and lifecycle
+Create/message acceptance is durable before execution; user cancellation is
+durable before signalling. Native serializes each child FIFO and explicitly
+resolves interrupted/approval-blocked heads. Restart never implicitly executes
+interrupted work. Accepted children are owned by the outer native manager and
+outlive the creating tool future/turn.
 
-At most four child executions may be active globally and at most two may be
-active for one parent turn. Both limits are fail-fast: exhaustion returns a
-fixed unavailable error without queueing, registering a capacity Waker, or
-calling the authority. A per-parent admission also consumes one global slot;
-there is no second nested increment for the same execution.
+Mutating tool submissions use completion-wins-after-first-poll: core observes
+their real result and persistence before a pending turn cancellation. Native
+still owns irreversible settlement if that future is abandoned. Inspect/wait
+remain normally cancellable. Submission/wait cancellation and host teardown
+are not durable user cancellation; only an admitted lifecycle command requests
+that mutation. Persistent cancellation returns idle; one-off cancellation is
+terminal. Close archives/settles, not deletes; reopen does not implicitly retry.
+The manager owns aggregate scheduling, residency, queue, byte and waiter budgets;
+core has no foreground admission counters or detached worker loop.
 
-An execution owns both slots from successful admission until its authority
-future and all call-local request/result state have been dropped. Completion,
-authority failure, cancellation, and dropping the parent tool future release
-the slots. The implementation creates no task, thread, work queue, timer,
-watcher, child registry, or detached cleanup tail. It has no retry, polling,
-resume, or persistence path.
+## Source evidence
 
-Execution checks cancellation before admission, before constructing the
-authority future, while polling it, and immediately before validating and
-publishing its result. Cancellation independently wakes a pending authority
-future, wins over a ready authority success or error observed in the same
-poll, and drops the losing future before capacity is released. An authority
-future must therefore be safe to drop at any poll boundary. No partial child
-text is published.
-
-## Result and trust boundary
-
-The sole successful result is:
-
-```json
-{
-  "status": "completed",
-  "trust": "untrusted_child",
-  "authority": "none",
-  "text": "The bounded child response."
-}
-```
-
-The tool, not the authority, stamps `status`, `trust`, and `authority`. The
-authority returns only completed final text; it cannot supply reserved result
-fields, alternate statuses, tool calls, reasoning blocks, structured content,
-child IDs, operation IDs, usage, permissions, or continuation handles.
-
-Final text must be valid UTF-8 and at most 32 KiB. The complete compact
-serialized output is at most 48 KiB, 8 container levels, and 64 JSON nodes.
-The tool validates these limits before publishing the result. The engine's
-configured result and cumulative-result bounds still apply afterward.
-
-Child text is untrusted model-visible data. It cannot override user
-instructions, authorize an effect, approve a permission, register a tool,
-alter the parent transcript outside the ordinary durable tool result, or grant
-authority to a later call.
-
-## Failures
-
-Malformed input, an over-bound input or output, authority unavailability,
-capacity exhaustion, and cancellation return fixed redacted tool failures. No
-failure contains the name, prompt, child text, provider response, parent
-identity, capacity count, or authority diagnostic. Authority failure never
-becomes a successful child result and is never retried automatically.
-
-Core's ordinary tool lifecycle remains authoritative: a committed unknown
-placeholder precedes execution, and only a validated completed result replaces
-it. A store failure after authority completion does not replay the child.
-
-## Reference host and deferred surface
-
-The native reference host always advertises `subagent`. Ordinary composition
-injects an inert unavailable authority, so the catalog remains stable without
-starting child work. A separate explicit injection seam accepts one trusted
-`SubagentAuthority`; composition retains it but does not poll, probe, or invoke
-it.
-
-The following pinned-manager features are intentional deferrals rather than
-partially implemented commands: persistent children; asynchronous handles;
-inspect or wait; message and milestone delivery; relationships or reparenting;
-configuration; model, effort, permission, or notification overrides;
-lifecycle cancel/resume/close/reopen commands; child IDs; background queues;
-durable child sessions; notification policies; and recursive child-tool
-inheritance. Broader ACP, background, team, TUI, and multi-process coordination
-remain separate architecture work.
+The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and
+bounds are in `src/core/subagent/domain.zig`. Result envelopes are in
+`tool_result.zig`, encoding in `tool_host.zig` and inspection projections in
+`manager.zig` under that subagent directory. The Rust contract intentionally
+adds started notifications, complete durable history/tool paging, allocation-bound
+identity and checked clock-compatible durations without retaining historical
+operation-identity or foreground compatibility paths.

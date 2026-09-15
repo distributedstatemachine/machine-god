@@ -278,38 +278,30 @@ iteratively if this configuration check fails.
 
 ## Foreground child-agent boundary
 
-The provider-neutral [`subagent` tool](subagent.md) exposes one bounded
-`one_off` create operation through `SubagentTool` and an explicitly injected
-`SubagentAuthority`. Core owns its closed input schema, admission, cancellation,
-result projection, durable tool-result lifecycle, and next model round. It
-receives no child provider, executor, filesystem, process, network, permission,
-clock, task, thread, queue, or persistence authority implicitly.
+The provider-neutral [`subagent` tool](subagent.md) supports complete managed
+create, inspect/wait, message/milestone, relationship, configuration and lifecycle
+commands through `ManagedSubagentAuthority`. Native owns durable acceptance,
+long-lived child scheduling and aggregate budgets. Core owns bounded typed
+input/results and actual invocation identity, not native effects or authority.
+The foreground-only API and admission counters are removed.
 
-The authority receives only an owned validated name and prompt, the bounded
-structural `ToolContext` identifiers for the parent session, incarnation,
-turn, and call, plus a cancellation token. Those identifiers are identities,
-not handles or authority. The child context is fresh. Core does not pass the
-parent transcript, grants, dynamic tools, executable registrations, tool
-catalog, `subagent` capability, or model/effort/permission/notification
-overrides.
-Preparation uses the explicit no-authority disposition because all child work
-is behind the separately injected seam; it does not call the permission
-handler or turn the child's returned text into authority.
+`Session::witness()` and `Turn::witness()` return weak opaque actual-allocation
+identities. `SessionWitness::owns_turn` and `TurnWitness::same_turn` compare
+allocations, never publicly constructible IDs. `Tool::execute_admitted` receives
+an immutable `AdmittedToolInvocation` only after the exact prepared permission
+and optional execution admission. It binds prepared arguments, registered name
+and a unique call allocation, even when provider call IDs repeat. A one-shot
+`claim` checks its actual live turn; native must separately admit principal
+generation, policy and resource authority. No proof owns a session or runtime.
+Wrappers must forward this envelope unchanged. Ordinary tools use the default
+adapter; direct structural managed-tool execution fails closed.
 
-The execution future is inert until first poll and remains foreground. Four
-global and two per-parent-turn active executions are admitted fail-fast with no
-wait queue. A successful admission owns both counters until every call-local
-authority future and value is dropped. Cancellation wins over authority success
-or failure observed in the same poll. The implementation starts no detached
-task, thread, timer, watcher, queue, or child session.
-
-Only a completed final-text authority result is accepted. Core stamps the
-model-visible projection with `status: "completed"`,
-`trust: "untrusted_child"`, and `authority: "none"`. Names are bounded to 128
-bytes; prompts and final text to 32 KiB each; complete compact input and output
-to 48 KiB each; and tool-local JSON to 8 container levels and 64 nodes. See the
-complete [subagent contract](subagent.md) for failure, drop, reference-host, and
-intentional pinned-manager divergence semantics.
+Mutating managed submissions use completion-wins-after-first-poll; inspection
+and dependency waits remain normally cancellable. Cancelling submission/wait
+does not durably cancel a child. Accepted work belongs to the outer native
+manager and survives its creating turn. Private inherited user/policy evidence
+does not become model-visible authority. The [managed contract](subagent.md)
+defines exact fields, bounds, native obligations and pinned-source differences.
 
 ## Terminal session value contracts
 

@@ -59,13 +59,7 @@ pub use session_context::{
     MAX_CONTEXT_SUMMARY_BYTES, MAX_SESSION_USER_CONTEXT_BYTES, SessionContextProjection,
     SessionTurnPreparation, SessionUserContext,
 };
-pub use subagent::{
-    MAX_CONCURRENT_SUBAGENTS, MAX_CONCURRENT_SUBAGENTS_PER_PARENT_TURN,
-    MAX_SUBAGENT_ARGUMENT_BYTES, MAX_SUBAGENT_JSON_DEPTH, MAX_SUBAGENT_JSON_NODES,
-    MAX_SUBAGENT_NAME_BYTES, MAX_SUBAGENT_OUTCOME_BYTES, MAX_SUBAGENT_OUTPUT_BYTES,
-    MAX_SUBAGENT_PROMPT_BYTES, SUBAGENT_TOOL_NAME, SubagentAuthority, SubagentAuthorityError,
-    SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest, SubagentTool,
-};
+pub use subagent::*;
 pub use terminal::{
     MAX_TERMINAL_HYPERLINK_BYTES, MAX_TERMINAL_HYPERLINKS, MAX_TERMINAL_ID_BYTES,
     MAX_TERMINAL_MONITOR_ID_BYTES, MAX_TERMINAL_MONITOR_PATTERN_BYTES, MAX_TERMINAL_SCREEN_CELLS,
@@ -92,6 +86,7 @@ pub use terminal_action::{
     TerminalMonitorSummary, TerminalPersistenceLevel, TerminalRawRange, TerminalReturnOutcome,
     TerminalScreenRecovery, TerminalSessionFacts, TerminalShellSpec, TerminalStartRequest,
 };
+pub use tool::{AdmittedToolInvocation, SessionWitness, TurnWitness};
 pub use tool::{
     PreparedToolAuthorization, PreparedToolCall, Tool, ToolCall, ToolContext, ToolExecution,
     ToolInputLimits, ToolOutput, ToolOutputLimits, ToolSpec, TurnToolRegistration,

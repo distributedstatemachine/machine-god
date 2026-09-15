@@ -10,7 +10,7 @@ a string code, a strict script that runs out returns
 `testkit_script_exhausted`, and a full recorded-call log returns
 `testkit_record_capacity_exhausted` instead of silently discarding evidence.
 `ScriptedSubagentAuthority` is constrained by the provider-neutral
-`SubagentAuthorityError` kind-only contract: script exhaustion maps to `Failed`
+`ManagedSubagentError` kind-only contract: script exhaustion maps to `Failed`
 and recording-capacity exhaustion maps to `ResourceLimit`.
 Recorded-call logs default to 1,024 entries.
 Constructors ending in `with_record_capacity` let tests choose a smaller or
@@ -83,10 +83,13 @@ assert!(matches!(
   their session incarnation, including terminal cancellation delivery.
 - `ScriptedPermissionHandler` records complete requests and returns ordered
   decisions, errors, or pending futures.
-- `ScriptedSubagentAuthority` records bounded child requests on first poll and
-  returns strict completed, error, or cancellation-pending steps. Calling and
-  dropping an unpolled authority future is inert and preserves both the request
-  log and the next scripted step.
+- `ScriptedSubagentAuthority` binds an actual weak turn witness before polling,
+  claims each authenticated managed invocation once, and records only its
+  data-only command/context plus cancellation observation. It returns strict
+  managed receipts/inspection, errors, or cancellation-pending steps, never
+  foreground child answers. Missing/foreign/stale witnesses cannot consume a
+  step. Unpolled futures preserve the request log and next step; recordings
+  retain no execution proof or owning runtime.
 - `ScriptedTool` preserves its advertised specification and the default
   source-compatible preflight, so policy sees raw `Capability::Tool` and
   execution receives the original arguments. It records the context, exact
