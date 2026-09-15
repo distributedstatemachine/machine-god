@@ -125,7 +125,7 @@ fn human_forms_and_url_consent_roundtrip_through_real_inbox() {
 
 #[test]
 fn human_owner_and_captured_activation_reject_foreign_or_stale_prompts() {
-    let (bridge, mut inbox, _principal) = bridge();
+    let (bridge, mut inbox, principal) = bridge();
     for owner in [
         BackgroundOutputOwner::new(
             SessionId::new("foreign").unwrap(),
@@ -149,8 +149,8 @@ fn human_owner_and_captured_activation_reject_foreign_or_stale_prompts() {
         human(McpFeatureAction::PromptGet, url()),
         CancellationToken::new(),
     );
-    drop(_principal);
-    let _principal = inbox.register(human_owner()).unwrap();
+    drop(principal);
+    let principal = inbox.register(human_owner()).unwrap();
     assert!(block_on(unpolled).is_err());
     let mut future = bridge.present(
         human(McpFeatureAction::ResourceRead, url()),
@@ -161,8 +161,8 @@ fn human_owner_and_captured_activation_reject_foreign_or_stale_prompts() {
     inbox
         .reply(old.token(), input(r#"{"action":"accept"}"#))
         .unwrap();
-    drop(_principal);
-    let _principal = inbox.register(human_owner()).unwrap();
+    drop(principal);
+    let _replacement_principal = inbox.register(human_owner()).unwrap();
     assert!(block_on(future).is_err());
     assert_eq!(
         inbox.cancel(old.token()),

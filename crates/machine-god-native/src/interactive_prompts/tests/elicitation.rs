@@ -194,7 +194,7 @@ fn url_actions_are_data_and_engine_cancellation_has_precedence() {
 
 #[test]
 fn scope_owner_tokens_unpolled_drop_and_unavailable_are_explicit() {
-    let (bridge, mut inbox, _principal) = bridge();
+    let (bridge, mut inbox, principal) = bridge();
     let request = url();
     let count = Arc::strong_count(&request);
     drop(prompt(&bridge, request.clone(), CancellationToken::new()));
@@ -222,8 +222,8 @@ fn scope_owner_tokens_unpolled_drop_and_unavailable_are_explicit() {
         inbox.reply(foreign.token(), input(r#"{"action":"accept"}"#)),
         Err(NativeInteractivePromptError::Stale)
     );
-    drop(_principal);
-    let _principal = inbox.register(owner()).unwrap();
+    drop(principal);
+    let _replacement_principal = inbox.register(owner()).unwrap();
     assert!(block_on(never).is_err() && block_on(future).is_err());
     assert_eq!(
         inbox.cancel(old.token()),
@@ -431,4 +431,53 @@ fn source_identity_is_required_bounded_charged_and_redacted() {
         382
     );
     assert!(!format!("{long:?}").contains("ssss"));
+}
+
+#[test]
+fn unrelated_owner_retirement_preserves_original_form_and_url_response_custody() {
+    for request in [form(), url()] {
+        let (router, mut inbox, mut parent) = bridge();
+        let mut child_context = context();
+        child_context.session_id = SessionId::new("child").unwrap();
+        let child = inbox
+            .register(BackgroundOutputOwner::new(
+                child_context.session_id.clone(),
+                child_context.session_incarnation_id.clone(),
+            ))
+            .unwrap();
+        let mut parent_future = router.present(
+            sourced(context(), request.clone()),
+            CancellationToken::new(),
+        );
+        assert!(poll(&mut parent_future).is_pending());
+        let mut child_future = router.present(
+            sourced(child_context.clone(), request.clone()),
+            CancellationToken::new(),
+        );
+        assert!(poll(&mut child_future).is_pending());
+        let page = inbox
+            .page(&mut Context::from_waker(Waker::noop()), None, 64)
+            .unwrap();
+        let child_view = inbox.select_prompt(page.entries()[1].token()).unwrap();
+        assert!(Arc::ptr_eq(
+            child_view.elicitation().unwrap().request(),
+            &request
+        ));
+        assert!(
+            matches!(child_view.elicitation().unwrap().source(), McpElicitationPromptSource::ModelTool { context, .. } if context == &child_context)
+        );
+        inbox
+            .reply(child_view.token(), input(r#"{"action":"decline"}"#))
+            .unwrap();
+        parent.retire();
+        assert!(block_on(parent_future).is_err());
+        assert_eq!(
+            block_on(child_future).unwrap().action(),
+            McpElicitationAction::Decline
+        );
+        let mut next = router.present(sourced(child_context, request), CancellationToken::new());
+        assert!(poll(&mut next).is_pending());
+        drop(child);
+        assert!(block_on(next).is_err());
+    }
 }

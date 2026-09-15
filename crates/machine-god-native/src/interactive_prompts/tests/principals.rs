@@ -246,3 +246,108 @@ fn dropping_bridge_and_hidden_owner_does_not_retire_other_registration() {
     inbox.cancel(prompt.token()).unwrap();
     assert_eq!(block_on(future), Ok(PermissionPromptDecision::Deny));
 }
+
+#[test]
+fn payload_and_response_budgets_are_shared_and_targeted_retirement_releases_charges() {
+    let parent_owner = owner();
+    let child_owner = named_owner("childxx"); // Same identity length for exact charging.
+    let charge = Payload::Permission {
+        request: owned_request(&parent_owner),
+        rule: None,
+    }
+    .bytes(usize::MAX)
+    .unwrap();
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::new(2, charge).unwrap())
+            .unwrap();
+    let router = inbox.router();
+    let mut parent = inbox.register(parent_owner).unwrap();
+    let child = inbox.register(child_owner).unwrap();
+    let first = pending(&router, parent.owner());
+    assert!(
+        block_on(PermissionPrompter::prompt(
+            router.as_ref(),
+            owned_request(child.owner())
+        ))
+        .is_err()
+    );
+    let prompt = view(&mut inbox);
+    respond(&mut inbox, &prompt, PermissionPromptDecision::AllowOnce);
+    assert!(
+        block_on(PermissionPrompter::prompt(
+            router.as_ref(),
+            owned_request(child.owner())
+        ))
+        .is_err()
+    );
+    parent.retire();
+    assert!(block_on(first).is_err());
+    let second = pending(&router, child.owner());
+    drop(second);
+
+    let limits = NativeInteractivePromptLimits::new(2, charge * 2)
+        .unwrap()
+        .with_response_bytes(64)
+        .unwrap();
+    let mut inbox = NativeInteractivePromptInbox::new(limits).unwrap();
+    let router = inbox.router();
+    let mut parent = inbox.register(owner()).unwrap();
+    let child = inbox.register(named_owner("childxx")).unwrap();
+    let first = pending(&router, parent.owner());
+    let second = pending(&router, child.owner());
+    let prompt = view(&mut inbox);
+    respond(&mut inbox, &prompt, PermissionPromptDecision::AllowSession);
+    let child_prompt = view(&mut inbox);
+    assert_eq!(
+        inbox.cancel(child_prompt.token()),
+        Err(NativeInteractivePromptError::Limit)
+    );
+    parent.retire();
+    assert!(block_on(first).is_err());
+    inbox.cancel(child_prompt.token()).unwrap();
+    assert_eq!(block_on(second), Ok(PermissionPromptDecision::Deny));
+}
+
+#[test]
+fn full_domain_projects_with_bounded_rows_without_retaining_payloads() {
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let router = inbox.router();
+    let principals = (0..64)
+        .map(|index| {
+            inbox
+                .register(named_owner(&format!("{index:0128}")))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let futures = principals
+        .iter()
+        .map(|principal| pending(&router, principal.owner()))
+        .collect::<Vec<_>>();
+    let page = inbox
+        .page(&mut Context::from_waker(Waker::noop()), None, 64)
+        .unwrap();
+    assert_eq!(page.entries().len(), 64);
+    assert!(page.next().is_none());
+    assert!(
+        block_on(PermissionPrompter::prompt(
+            router.as_ref(),
+            owned_request(principals[0].owner())
+        ))
+        .is_err()
+    );
+    drop(futures);
+    assert!(
+        inbox
+            .page(&mut Context::from_waker(Waker::noop()), None, 64)
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
+    for row in page.entries() {
+        assert_eq!(
+            inbox.select_prompt(row.token()).unwrap_err(),
+            NativeInteractivePromptError::Stale
+        );
+    }
+}

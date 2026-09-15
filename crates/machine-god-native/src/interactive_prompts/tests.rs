@@ -48,8 +48,8 @@ fn bridge() -> (
     let mut inbox =
         NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
     let bridge = inbox.router();
-    let _principal = inbox.register(owner()).unwrap();
-    (bridge, inbox, _principal)
+    let principal = inbox.register(owner()).unwrap();
+    (bridge, inbox, principal)
 }
 fn permission<'a>(
     bridge: &'a NativeInteractivePromptBridge,
@@ -183,14 +183,14 @@ fn fifo_backpressure_drop_and_ready_responses_keep_admission_bounded() {
 
 #[test]
 fn reactivation_rejects_old_unpolled_and_ready_answers_even_for_same_principal() {
-    let (bridge, mut inbox, _principal) = bridge();
+    let (bridge, mut inbox, principal) = bridge();
     let never = permission(&bridge, "never");
     let mut ready = permission(&bridge, "ready");
     assert!(poll(&mut ready).is_pending());
     let old = view(&mut inbox);
     respond(&mut inbox, &old, PermissionPromptDecision::AllowSession);
-    drop(_principal);
-    let _principal = inbox.register(owner()).unwrap();
+    drop(principal);
+    let _replacement_principal = inbox.register(owner()).unwrap();
     assert!(block_on(never).is_err());
     assert!(block_on(ready).is_err());
     let mut replacement = permission(&bridge, "ready");
@@ -214,7 +214,7 @@ fn no_ambient_scope_cross_bridge_token_or_closed_inbox_can_authorize() {
         NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
     let bridge = inbox.router();
     let no_scope = permission(&bridge, "unbound");
-    let _principal = inbox.register(owner()).unwrap();
+    let principal = inbox.register(owner()).unwrap();
     assert!(block_on(no_scope).is_err());
     let mut other = request("wrong-owner");
     other.session_incarnation_id = SessionIncarnationId::new("different").unwrap();
@@ -230,7 +230,7 @@ fn no_ambient_scope_cross_bridge_token_or_closed_inbox_can_authorize() {
         inbox.cancel(second_view.token()),
         Err(NativeInteractivePromptError::Stale)
     );
-    drop(_principal);
+    drop(principal);
     assert!(block_on(future).is_err());
     assert_eq!(
         inbox.cancel(active.token()),
@@ -538,13 +538,13 @@ fn waker_clone_drop_and_wake_reenter_outside_bridge_locks() {
 
 #[test]
 fn retirement_from_ready_poll_waker_drop_suppresses_old_positive_response() {
-    let (bridge, mut inbox, _principal) = bridge();
+    let (bridge, mut inbox, principal) = bridge();
     let mut future = permission(&bridge, "ready-drop");
     assert!(poll(&mut future).is_pending());
     let prompt = view(&mut inbox);
     respond(&mut inbox, &prompt, PermissionPromptDecision::AllowSession);
     let shared = bridge.shared.clone();
-    let key = _principal.key.clone();
+    let key = principal.key.clone();
     let (wake, _) = reentrant_waker(Callback::Drop, move || {
         shared.retire(&key);
     });
