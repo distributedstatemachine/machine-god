@@ -1,6 +1,12 @@
 //! Attribute readiness/checkpoint I/O before a core turn exists.
 
-use super::*;
+use super::{ManagedConversationBinding, NativeConversationError, NativeOwnedWorkerRun, Result};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 pub(crate) struct ManagedAdmission {
     cohort: Option<Arc<NativeOwnedWorkerRun>>,
@@ -36,14 +42,14 @@ impl ManagedConversationBinding {
                     .map_err(|_| NativeConversationError::ManagedAdmission)
             })
             .transpose()?;
-        active.admission = cohort.clone();
+        active.admission.clone_from(&cohort);
         Ok(ManagedAdmission {
             cohort,
             transferred: false,
         })
     }
 
-    /// Actual most-recent admission, including one which never minted a RunRef.
+    /// Actual most-recent admission, including one which never minted a `RunRef`.
     /// This is completion metadata only and cannot keep the manager alive.
     pub(crate) fn admission_completion(&self) -> Option<crate::NativeOwnedWorkerCompletion> {
         self.0

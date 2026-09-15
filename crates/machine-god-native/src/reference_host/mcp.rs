@@ -292,22 +292,25 @@ pub(super) fn features(
     }
 }
 
+pub(super) struct Selected {
+    pub composition: Option<Composition>,
+    pub catalog: Arc<dyn crate::McpToolCatalog>,
+    pub managed_seed: Option<Arc<ManagedMcpSeed>>,
+}
+
 pub(super) fn select(
     selection: Selection,
     terminal: &super::SelectedTerminalComposition,
     permissions: Option<&super::PermissionComposition>,
     catalog: Arc<dyn crate::McpToolCatalog>,
     url_launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
-) -> Result<
-    (
-        Option<Composition>,
-        Arc<dyn crate::McpToolCatalog>,
-        Option<Arc<ManagedMcpSeed>>,
-    ),
-    NativeReferenceHostBuildError,
-> {
+) -> Result<Selected, NativeReferenceHostBuildError> {
     let Some(options) = selection.options else {
-        return Ok((None, catalog, None));
+        return Ok(Selected {
+            composition: None,
+            catalog,
+            managed_seed: None,
+        });
     };
     if terminal.resource.is_none() || permissions.is_none() {
         return Err(error());
@@ -330,7 +333,11 @@ pub(super) fn select(
     let mut composition = options.compose(archive, url_launcher)?;
     composition.management = selection.management;
     let catalog = composition.runtime.clone();
-    Ok((Some(composition), catalog, Some(seed)))
+    Ok(Selected {
+        composition: Some(composition),
+        catalog,
+        managed_seed: Some(seed),
+    })
 }
 impl fmt::Debug for NativeReferenceHostMcpOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

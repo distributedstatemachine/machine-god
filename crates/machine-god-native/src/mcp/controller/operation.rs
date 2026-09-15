@@ -339,6 +339,7 @@ fn run(
             }
         } else if result.is_err() {
             generation.cancellation.cancel();
+            #[cfg(feature = "mcp-http")]
             generation.release_authentication();
         }
         result

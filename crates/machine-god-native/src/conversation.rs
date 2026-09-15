@@ -1097,12 +1097,11 @@ impl NativeConversation {
     {
         self.managed
             .as_ref()
-            .map(|binding| binding.prepare_admission())
+            .map(crate::managed::conversation::ManagedConversationBinding::prepare_admission)
             .transpose()
     }
 
     #[allow(
-        clippy::too_many_lines,
         clippy::too_many_arguments,
         reason = "Keep exact admission authority and rollback ownership in one linear scope."
     )]
@@ -1117,7 +1116,9 @@ impl NativeConversation {
         cancellation: CancellationToken,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         let mut admission = self.prepare_managed_admission()?;
-        let cohort = admission.as_ref().and_then(|admission| admission.cohort());
+        let cohort = admission
+            .as_ref()
+            .and_then(crate::managed::conversation::ManagedAdmission::cohort);
         let future = self.start_with_policy_body(
             input,
             model,
@@ -1141,7 +1142,11 @@ impl NativeConversation {
         result
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "Keep exact admission authority and rollback ownership in one linear scope."
+    )]
     async fn start_with_policy_body(
         &self,
         mut input: PendingInput,
@@ -1904,7 +1909,10 @@ impl Stream for NativeConversationTurn {
     type Item = Result<EngineEvent, NativeConversationError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let cleanup = self.managed_turn.as_ref().and_then(|turn| turn.cleanup());
+        let cleanup = self
+            .managed_turn
+            .as_ref()
+            .and_then(crate::managed::conversation::ManagedConversationTurn::cleanup);
         match cleanup {
             Some(cleanup) => cleanup.with_poll(|| self.poll_next_inner(cx)),
             None => self.poll_next_inner(cx),
@@ -1985,7 +1993,11 @@ impl NativeConversationTurn {
 
 impl Drop for NativeConversationTurn {
     fn drop(&mut self) {
-        match self.managed_turn.as_ref().and_then(|turn| turn.cleanup()) {
+        match self
+            .managed_turn
+            .as_ref()
+            .and_then(crate::managed::conversation::ManagedConversationTurn::cleanup)
+        {
             Some(cleanup) => cleanup.with_poll(|| self.finish()),
             None => self.finish(),
         }

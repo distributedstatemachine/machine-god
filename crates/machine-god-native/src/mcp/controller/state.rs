@@ -90,15 +90,13 @@ pub(super) struct Generation {
     pub workers: std::sync::atomic::AtomicUsize,
 }
 impl Generation {
+    #[cfg(feature = "mcp-http")]
     pub fn release_authentication(&self) {
-        #[cfg(feature = "mcp-http")]
-        {
-            let startup = lock(&self.loaded)
-                .as_ref()
-                .map(|loaded| loaded.startup.clone());
-            if let Some(startup) = startup {
-                startup.release_authentication_identities();
-            }
+        let startup = lock(&self.loaded)
+            .as_ref()
+            .map(|loaded| loaded.startup.clone());
+        if let Some(startup) = startup {
+            startup.release_authentication_identities();
         }
     }
     pub fn cleanup_complete(&self) -> bool {
@@ -180,6 +178,7 @@ impl Inner {
         }
         for generation in generations {
             generation.cancellation.cancel();
+            #[cfg(feature = "mcp-http")]
             generation.release_authentication();
         }
         self.options.runtime.close();

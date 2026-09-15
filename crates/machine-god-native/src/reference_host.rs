@@ -1634,7 +1634,11 @@ impl NativeReferenceHost {
         construction.observe(selected_terminal.resource.as_ref());
         let web_fetch = compose_web_fetch(selected_terminal.resource.as_ref())?;
         let background_opener = background_url.map(|selected| selected.bind(&selected_terminal));
-        let (mcp, mcp_catalog, managed_mcp_seed) = mcp::select(
+        let mcp::Selected {
+            composition: mcp,
+            catalog: mcp_catalog,
+            managed_seed: managed_mcp_seed,
+        } = mcp::select(
             mcp_options,
             &selected_terminal,
             permission_setup.as_ref(),

@@ -827,7 +827,9 @@ impl NativeConversationRuntime {
     {
         Box::pin(async move {
             let mut admission = self.conversation.prepare_managed_admission()?;
-            let cohort = admission.as_ref().and_then(|admission| admission.cohort());
+            let cohort = admission
+                .as_ref()
+                .and_then(crate::managed::conversation::ManagedAdmission::cohort);
             let future = self.start_next_inner(now_ms, cohort);
             let mut result = match &admission {
                 Some(admission) => admission.wrap(future).await,

@@ -252,7 +252,7 @@ impl ManagedConversationBinding {
         // actual cleanup on an error path.
         slot.run = Some(reference.clone());
         slot.settlement = Some(settlement);
-        slot.cleanup = cleanup.clone();
+        slot.cleanup.clone_from(&cleanup);
         let registration = (|| {
             let principal = owner
                 .principal
