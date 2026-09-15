@@ -424,6 +424,13 @@ journal publication, wake-driven polling and lifecycle integration.
 
 ## Per-principal MCP routing
 
+The actual native conversation owner binds its principal to one weak MCP owner
+before starting work. Each actual turn receives its own MCP guard before the
+provider is polled; finish and drop release that exact guard before its principal
+turn guard. Missing, retired or mismatched bound owners reject admission rather
+than selecting another runtime. The outer manager retains the owning MCP bundle
+and cleanup obligations separately from these weak conversation bindings.
+
 The shared engine installs authenticated wrappers for MCP search, selection and
 native features. Before provider polling, the host registers each actual
 principal turn and its independently composed MCP runtime/context selection.

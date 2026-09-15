@@ -1,5 +1,6 @@
 //! Bridge actual conversation turns to principal and shared scheduler admission.
 
+use super::mcp::{NativePrincipalMcpOwner, NativePrincipalMcpTurn};
 use super::principal::{NativePrincipal, NativePrincipalRegistry, NativePrincipalTurn};
 use super::scheduler::{Acquire, ManagedScheduler, ResidentLease, RunLease, RunRef, RunSettlement};
 use crate::{
@@ -13,7 +14,7 @@ use std::{
     num::NonZeroU64,
     pin::Pin,
     sync::{
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll},
@@ -27,6 +28,7 @@ struct Owner {
     resident: ResidentLease,
     active: Mutex<Active>,
     closed: AtomicBool,
+    mcp: OnceLock<Weak<NativePrincipalMcpOwner>>,
 }
 
 #[derive(Default)]
@@ -59,6 +61,7 @@ impl ManagedConversationOwner {
             resident,
             active: Mutex::new(Active::default()),
             closed: AtomicBool::new(false),
+            mcp: OnceLock::new(),
         })))
     }
 
@@ -68,6 +71,21 @@ impl ManagedConversationOwner {
 
     pub(crate) fn binding(&self) -> ManagedConversationBinding {
         ManagedConversationBinding(Arc::downgrade(&self.0))
+    }
+
+    /// Binds only this exact principal's independently owned MCP registration.
+    /// The manager retains the actual MCP owner, runtime and permission bundle.
+    pub(crate) fn configure_mcp(&self, mcp: &Arc<NativePrincipalMcpOwner>) -> Result<()> {
+        if self.0.closed.load(Ordering::Acquire)
+            || !self.0.scheduler.resident_is_idle(&self.0.resident)
+            || !mcp.matches_principal(&self.0.principal)
+        {
+            return Err(NativeConversationError::ManagedAdmission);
+        }
+        self.0
+            .mcp
+            .set(Arc::downgrade(mcp))
+            .map_err(|_| NativeConversationError::ManagedAdmission)
     }
 
     /// Metadata-only target for authenticated dependency waits.
@@ -146,29 +164,43 @@ impl ManagedConversationBinding {
             .register_run(&owner.resident, work_generation, turn)
             .map_err(|_| NativeConversationError::ManagedAdmission)?;
         let reference = run.reference();
-        let principal =
-            match owner
+        let registration = (|| {
+            let principal = owner
                 .principal
                 .begin_turn(turn, policy, preferences, Some(reference.clone()))
-            {
-                Ok(principal) => principal,
-                Err(_) => {
-                    drop(slot);
-                    // No core/provider poll has occurred, so this rejected reservation
-                    // has no native execution or cleanup obligation to transfer.
-                    run.finish();
-                    settlement
-                        .complete()
-                        .map_err(|_| NativeConversationError::ManagedAdmission)?;
-                    return Err(NativeConversationError::ManagedAdmission);
-                }
-            };
+                .map_err(|_| NativeConversationError::ManagedAdmission)?;
+            let mcp = owner
+                .mcp
+                .get()
+                .map(|mcp| {
+                    mcp.upgrade()
+                        .ok_or(NativeConversationError::ManagedAdmission)?
+                        .begin_turn(&principal)
+                        .map_err(|_| NativeConversationError::ManagedAdmission)
+                })
+                .transpose()?;
+            Ok::<_, NativeConversationError>((principal, mcp))
+        })();
+        let (principal, mcp) = match registration {
+            Ok(registration) => registration,
+            Err(_) => {
+                drop(slot);
+                // No core/provider poll has occurred, so this rejected reservation
+                // has no native execution or cleanup obligation to transfer.
+                run.finish();
+                settlement
+                    .complete()
+                    .map_err(|_| NativeConversationError::ManagedAdmission)?;
+                return Err(NativeConversationError::ManagedAdmission);
+            }
+        };
         let acquisition = run.acquire();
         slot.run = Some(reference);
         slot.settlement = Some(settlement);
         drop(slot);
         Ok(ManagedConversationTurn {
             principal: Some(principal),
+            mcp,
             acquisition: Some(acquisition),
             run: Some(run),
         })
@@ -178,15 +210,12 @@ impl ManagedConversationBinding {
 /// Owned beside the actual core turn. This is execution custody, not settlement.
 pub(crate) struct ManagedConversationTurn {
     principal: Option<NativePrincipalTurn>,
+    mcp: Option<NativePrincipalMcpTurn>,
     acquisition: Option<Acquire>,
     run: Option<RunLease>,
 }
 
 impl ManagedConversationTurn {
-    pub(crate) fn principal_turn(&self) -> Option<&NativePrincipalTurn> {
-        self.principal.as_ref()
-    }
-
     /// Acquire only once before the first core poll. Later dependency waits own
     /// their fair reacquisition; polling them must not create another grant.
     pub(crate) fn poll_admission(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
@@ -203,6 +232,7 @@ impl ManagedConversationTurn {
     }
 
     pub(crate) fn finish_execution(&mut self) {
+        self.mcp.take();
         self.principal.take();
         self.acquisition.take();
         if let Some(run) = self.run.take() {
@@ -213,6 +243,7 @@ impl ManagedConversationTurn {
 
 impl Drop for ManagedConversationTurn {
     fn drop(&mut self) {
+        self.mcp.take();
         self.principal.take();
         self.acquisition.take();
         // RunLease drop cancels the actual turn. Never manufacture settlement.

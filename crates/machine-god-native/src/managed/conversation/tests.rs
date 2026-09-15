@@ -179,7 +179,7 @@ fn actual_conversation_provider_pending_holds_quota_and_finalization_releases_ex
     assert_eq!(fixture.provider.requests().len(), 1);
     assert_eq!(fixture.scheduler.snapshot().executing, 1);
     assert_eq!(fixture.scheduler.snapshot().queued, 1);
-    first.handle().cancel();
+    assert!(first.handle().cancel());
     finish(first);
     finish(second);
     assert_eq!(fixture.provider.requests().len(), 2);

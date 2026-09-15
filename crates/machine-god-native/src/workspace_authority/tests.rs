@@ -380,6 +380,10 @@ fn forked_selections_share_descriptors_but_not_mutable_managers() {
         .install(alias.prepare_blocking(vec![], true).unwrap())
         .unwrap();
     assert!(sibling.snapshot().unwrap().saved_suppressed());
+    let admitted = NativeWorkspaceAuthority::from_admitted_scope(parent_scope);
+    assert_eq!(admitted.snapshot().unwrap().generation(), 0);
+    assert_eq!(admitted.snapshot().unwrap().entries().len(), 1);
+    assert!(!admitted.snapshot().unwrap().saved_suppressed());
 }
 
 #[test]

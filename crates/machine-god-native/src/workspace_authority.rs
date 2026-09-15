@@ -485,9 +485,15 @@ impl NativeWorkspaceAuthority {
     /// # Errors
     /// Returns `Unavailable` if the source publication lock was poisoned.
     pub fn fork_selection(&self) -> Result<Self> {
-        Ok(Self(Arc::new(Manager {
-            current: RwLock::new(self.snapshot()?),
-        })))
+        Ok(Self::from_admitted_scope(self.snapshot()?))
+    }
+
+    /// Uses the original opaque descriptor snapshot captured at native admission,
+    /// not a source principal's later mutable selection. No path is reopened.
+    pub(crate) fn from_admitted_scope(scope: NativeWorkspaceScopeSnapshot) -> Self {
+        Self(Arc::new(Manager {
+            current: RwLock::new(scope),
+        }))
     }
 
     /// Prepares a replacement without changing the current scope.
