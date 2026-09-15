@@ -35,8 +35,8 @@ functionality merely because it shares an implementation with an older mode.
 - Main CI: `34770898541` (`GREEN`)
 - Main Benchmark evidence: `34770898622` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
-- Active phase: `M05 complete modern ACP implementation`
-- Next gate: `fix ACP shutdown completion without observer-worker admission; complete replacement local gate, three fresh ACP reviews, then exact remote gates`
+- Active phase: `M05 ACP replacement acceptance after catalog fixture repair`
+- Next gate: `validate joined malformed-head fixture; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
@@ -307,111 +307,53 @@ the explicitly assigned M04–M07 work or assert literal upstream UI parity.
 
 ## Delivered background CLI boundary
 
-The four interactive forms, `/background`, `/background stop`,
-`/background open`, and `/background logs`, compose native terminal identities,
-generation-bound controls, retained output and owned cancellation receipts.
-The read-only top-level command unifies legacy numeric records and opaque
-terminal histories without restoring process authority. URL detection and
-explicit launching remain bounded and preserve truncation evidence. Both
-feature and main gates passed, with three fresh full-feature review tracks.
-All validation/review worktrees are removed and evidence is retained. Earlier
-intermittent terminal failures remain recorded without an unsupported cause or
-source-fix claim in the [review history](reviews/m05-background-cli-review-01.md).
+`/background`, `/background stop`, `/background open` and `/background logs`
+compose native identities, generation-bound controls, retained output and owned
+cancellation. Read-only listing unifies numeric supervisor records and opaque
+terminal histories without restoring process authority. Bounded URL detection
+and explicit launching preserve truncation evidence. The
+[contract](background-cli.md) owns behavior; the
+[review history](reviews/m05-background-cli-review-01.md) retains acceptance and
+earlier intermittent failures without an unsupported cause or source-fix claim.
 
 ## Delivered skills CLI boundary
 
-The complete skills CLI is one feature, not separately delivered parser,
-catalog, installer or picker fragments. It includes:
-
-- `/skills` list/show/path/create/add/install/remove, local and Git sources,
-  filtered multi-skill installs, replacement consent, removal and owned receipts.
-  Pasted package-manager forms are parsed, never executed; fx roots stay read-only.
-- Explicit native discovery roots, bounded frontmatter and ancestor traversal,
-  duplicate diagnostics, exact revision-bound selection and selected-resource
-  exclusions. Metadata and skill text grant no tool authority.
-- Inline `$` picking bound to the exact draft span and observed generations,
-  with stale acknowledgements, edits, cancellation and handoff handled explicitly.
-- FIFO prompt-bound invocation, bounded provider-only context, preserved canonical
-  user text and permission provenance, and inert checkpoint continuation bytes.
-- Descriptor-bound publication, source revalidation, rollback/uncertainty receipts,
-  bounded Git execution and retained cleanup ownership.
-
-The accepted R5 behavior and initial intermittent macOS reaping timeout remain
-recorded in review history; an unchanged passing retry is not a cause or source
-fix. Completed skills worktrees are removed; evidence and caches remain.
-
-The [skills CLI contract](skills-cli.md) owns durable behavior and the
-[skills CLI review](reviews/m05-skills-cli-review-01.md) retains detailed evidence.
+The complete [skills CLI](skills-cli.md) includes list/show/path/create/add/
+install/remove, filtered local/Git installs, replacement consent and owned
+publication/rollback receipts. Explicit bounded discovery, revision-bound `$`
+picking, FIFO prompt invocation and provider-only context preserve canonical
+user text, permission provenance, cancellation and handoff. Metadata grants no
+authority; pasted installer forms are parsed, not executed; fx roots stay read-only.
+The [review history](reviews/m05-skills-cli-review-01.md) retains accepted R5
+evidence and the initial intermittent macOS reaping timeout. An unchanged passing
+retry is not a cause or source fix. Evidence and caches remain; worktrees do not.
 Import components are retained on `agent/m61-fx-session-import` at `5e77b1b4`
 for history only; foreign-session import is no longer required. Do not merge it.
 
 ## Delivered production MCP and CLI boundary
 
-Production MCP, including `/mcp`, is one complete delivered feature. Component
-commits are not separate deliveries. Its accepted boundary covers:
+Production MCP is one complete feature: `/mcp` configuration, reload, resource
+and prompt actions, OAuth/browser consent and distinct logout receipts, plus
+model search/select/call and modern form/URL continuations. The
+[CLI contract](mcp-cli.md) and linked MCP contracts own the detailed boundaries.
+Modern stdio and Streamable HTTP use explicit profile/environment/header/auth
+authority, bounded framing and atomic paginated executable generations. Exact
+JSON, descriptors, schemas and contextual one-shot permission proofs survive
+through final submission; raw catalog pages and session IDs grant no authority.
+Failed reload preserves the usable runtime, and retired generations retain
+bounded cleanup custody. Saving configuration does not activate it; refresh
+preserves expiry and never replays ambiguous consequential requests. Continuations
+retain original session/request/round, consent and cancellation through settlement.
+Deprecated negotiation and HTTP+SSE transport are absent; modern HTTP response
+SSE remains. Sampling and roots are not added beyond the pinned feature boundary.
 
-- Complete `/mcp` summary/list/path/add/remove/reload, resource
-  list/templates/read/complete, prompt list/get/complete, auth with explicit
-  browser confirmation, and logout with distinct local/remotely revoked receipts.
-- Native owns an explicitly admitted profile MCP configuration and credential
-  store. Do not mutate fx roots or silently widen native schema-v7 settings.
-  Support modern stdio and Streamable HTTP configuration with explicit
-  environment/header/auth selection; constructors acquire no ambient authority.
-- Implement bounded JSON-RPC framing and modern discovery for stdio and
-  Streamable HTTP. Remove older protocol negotiation, downgrade/restart chains
-  and deprecated HTTP+SSE transport; reject unsupported selections before effects.
-  Keep SSE framing used by modern HTTP streaming. Use modern producer fixtures
-  from the exact upstream pin and never replay an ambiguous consequential call.
-- Publish atomic, bounded, paginated tool/resource/prompt catalogs, with stable
-  naming, schema admission, TTL/notification refresh and exact executable
-  generations. Failed reload preserves the previous usable runtime; superseded
-  candidates and retired connections retain bounded cleanup ownership.
-- Reuse core's existing tool capability, prepared invocation and one-shot
-  permission admission. Add native MCP-specific preparation rather than an
-  unknown-tool bypass. Bind server/configuration/schema, exact arguments and
-  live session/incarnation/turn/call; retain the native proof through writer
-  submission. Queue waits cannot bypass later revocation. Never automatically
-  replay a partially submitted consequential request.
-- Use contextual catalog/feature hooks and forward the
-  exact `ToolContext`. Production routing rejects missing/foreign/retired turns;
-  no engine-global current-session fallback or serialized authority tokens.
-- Include OAuth discovery, credential refresh, explicit browser/elicitation
-  consent, bounded continuation custody, progress and owned cancellation.
-  Complete modern input-required form/URL behavior for tools and human feature
-  actions. Remove legacy inbound forms and URL completion/retry machinery. Sampling
-  and roots are not implemented at the pin and are not added as new features.
-- Compose startup, commands, model search/select/call, seven feature actions,
-  reload, continuation and finalization through the thin CLI. Test transport
-  fixtures, two-session isolation, stale authority, cancellation, partial writes,
-  failed reload/auth/logout, fresh-release CLI and supported platforms.
-
-The integrated implementation preserves exact JSON across provider, permission
-and history codecs. Admitted schemas and complete descriptors back typed
-requests, search/select, progress and modern headers without granting authority
-from raw catalog pages. Independent schema, descriptor, catalog and model-spec
-budgets include retained generations and bounded optional caches.
-
-Native startup, reload and demand activation retain exact profile, credential,
-publication and cleanup ownership. Saving configuration does not activate it.
-Credential refresh preserves original expiry and never replays old requests;
-subscriptions and catalog/result caches preserve descriptor identity and
-invalidation. One-shot permission proofs survive through final submission.
-Tool and human continuations retain their original session/request/round,
-consent and cancellation boundaries through finalization.
-
-The [CLI contract](mcp-cli.md) and linked MCP contracts own durable behavior;
-the [MCP review history](reviews/m05-mcp-cli-review-01.md) retains candidate,
-failure, repair and acceptance evidence. The full local gate, three fresh R4
-reviews and exact feature/main CI and artifact-producing Benchmark gates passed.
-Both exact-main artifacts are retained and unexpired. This is regression
-acceptance, not an M07 performance claim.
-Acceptance includes configured Ask/Resume and interactive composition, actual
-production stdio helpers, HTTP fixtures, OAuth/browser/logout, human form/URL
-recovery, archived results, blocked-output paging, pipe EOF and PTY transitions.
-
-Runtime/resource state stays native and core stays provider-neutral and
-effect-free. ACP follows this complete feature; pinned `teams` means
-account/team selection, not subagents.
+The [review history](reviews/m05-mcp-cli-review-01.md) retains full local, fresh R4
+and exact feature/main acceptance, including four platform architectures,
+Ask/Resume/interactive composition, production transports, OAuth and human
+continuations, archives, blocked output, EOF and PTY transitions. Both exact-main
+artifacts were verified. These delivered features are regression acceptance, not
+M07 claims; their completed worktrees are removed. Runtime/resource state remains
+native and core effect-free. Pinned `teams` means account/team selection, not agents.
 
 ## Next complete feature: modern ACP CLI
 
@@ -422,16 +364,16 @@ Do not deliver codec, session or interaction fragments separately.
 Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
 [client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) compose
 native session ownership, request dispatch, bounded projections and CLI stdio.
-Integrated, not delivered: cancellation and mixed-input fixes, fixture corrections
-and host-owned deferred resolver capture passed the complete required local gate
-on Linux and macOS. R4 then rejected one shutdown defect: failed admission of a
-new completion-observer worker can allow connection closure before retired host
-workers settle. The repair observes actual completion asynchronously without
-new worker admission; deterministic worker/ACP regressions accompany it.
-Run focused checks and the full replacement gate before three fresh reviewers;
-prior zero-finding tracks do not accept a changed candidate. No ACP commit has
-been pushed and no remote acceptance is established. Exact failures, samples,
-remediation and review provenance belong in the
+Candidate `f4ce36823885b9a73c7ee9b350047d2a6f721410` observes actual shutdown
+completion without observer-worker admission. The complete replacement local
+gate passed on Linux/macOS, and three fresh R5 reviewers reported zero findings.
+Exact feature CI and artifact-producing Benchmark evidence passed, with both
+unexpired artifacts verified. Main was fast-forwarded to the same candidate.
+Main Benchmark `34918146228` passed with both artifacts verified. Main CI
+`34918146254` failed the Intel macOS model-catalog fixture's socket-shutdown
+assertion; the fixture predates ACP. Join before peer drop and repeat the full
+local/review/remote gates before delivery. ACP is not counted as delivered;
+failure, remediation, acceptance and review evidence belong in the
 [review history](reviews/m05-acp-cli-review-01.md).
 
 - ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
@@ -465,6 +407,69 @@ Parallel worktrees may own native session/driver, native interaction plus
 ephemeral MCP activation, and pure wire/thin CLI lanes. Freeze shared interfaces
 first and assign each shared file to one owner. The coordinator integrates and
 runs the full feature gate, then three fresh reviews and exact remote evidence.
+
+## Following complete feature: managed subagents
+
+After ACP delivery and its documentation seal, use
+`agent/m65-managed-subagents` for one complete managed-agent tool and CLI feature.
+Replace the foreground one-off implementation, not retain a parallel legacy path.
+The current [subagent contract](subagent.md) describes the earlier boundary;
+update it with implementation, using the pinned source as behavioral evidence.
+
+- Complete create, inspect, message, milestone, attach/detach, reparent,
+  configure, cancel, resume, close and reopen, for one-off and persistent agents.
+  Include names, standalone prompts, model/effort selection, notifications,
+  relationships and bounded status/message/tool/event/history paging and waits.
+- Persist create/message acceptance before execution and cancellation before
+  signalling. Run one FIFO item per child; interrupted or approval-blocked heads
+  require explicit resolution. Restart pending/running/approval work as interrupted
+  without automatic model/tool execution. Host teardown is not durable user cancel.
+  Persistent cancellation returns idle; one-off cancellation is terminal. Close
+  archives and settles rather than deletes; reopen does not implicitly retry.
+- Children outlive the creating turn under an outer native manager. Share host
+  services/engine per explicitly admitted authority domain, not a host per child.
+  Keep distinct conversation runtimes, sessions, workspace selections, policies,
+  grants, turn routes and ephemeral MCP custody. Weak requesters/UI observations
+  must not retain runtimes or form host-resource ownership cycles.
+- Use explicit aggregate execution/residency/queue/byte/waiter budgets and a fair
+  shared scheduler, with no idle thread or timer per child. Page settled durable
+  history rather than imposing a lifetime creation limit. A completion ring is
+  not a child-count cap. Dependency waits release execution quota while retaining
+  bounded waiters; reject cycles and unschedulable waits. Ordinary provider
+  pending states still count as active execution.
+- Preserve standalone prompt and same-or-stricter permission policy; never inherit
+  parent transcripts or grants. Explicit model/effort wins, otherwise use selected
+  preferences. Freeze each accepted work item's notification policy: completion,
+  failure and cancellation on by default; start/interval optional. Coalesce late
+  interval observations without inference. Parent notices enter next-turn context,
+  not active-turn injection or an automatic idle turn; closing stops notices.
+- Preserve pinned observable bounds, including 32 milestones and eight stop
+  conditions, checked positive durations and gap-aware bounded communications,
+  consumers, approvals and policy snapshots. Separate history retention from live
+  execution admission, and reserve aggregate capacity before accepting work.
+- Complete Ctrl-X “Agents & processes” navigation through native projections and
+  exact receipts, with a thin CLI renderer. Keep input owner/chunk/flush ACK,
+  presentation route/editor/page epoch, and native authority separate. Preserve
+  partial UTF-8/paste provenance, reject stale frames, retain the parent runtime,
+  and progress hidden children/cancellation even under blocked stdout. Use one
+  bounded multi-owner approval/elicitation inbox with targeted retirement.
+- Isolate undo and mutable workspace/MCP state per principal under shared budgets.
+  Reserve retained and in-flight undo bytes/entries/descriptors before capture;
+  bind reservations to the original principal/generation through commit or
+  ambiguity. Clear/evict/undo only that owner's history. Keep registry locks short
+  and never hold a global lock across filesystem effects or asynchronous waits.
+- Parent new/resume/reset retires only its own routes and controls. Manager
+  navigation grants no process authority. Shutdown drops owning runtime leases
+  and settles children, controls, services and actual worker/TLS/reap obligations
+  before terminal/input teardown; reuse async completion without observer admission.
+
+Freeze interfaces before parallel worktrees for manager/tool persistence,
+principal isolation/shared service integration, and native UI/thin CLI lanes.
+Assign shared files to one owner and integrate complete end-to-end behavior.
+Test restart/approval/FIFO and dependency races, aggregate pressure, owner-local
+undo, stale/blocked UI, cancellation and actual cleanup on Linux/macOS with fresh
+release CLI scenarios. Run the complete gate and three fresh reviews for this
+whole feature, then exact feature/main artifact-producing gates and worktree cleanup.
 
 ## Required gates
 

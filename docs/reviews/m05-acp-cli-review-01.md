@@ -478,3 +478,76 @@ unscoped-admission rejection exercises close and EOF while a real host worker
 remains held, without saturating the process-wide collector. Primitive waiter
 and wake/drop regressions accompany it. These component changes require the
 replacement gate; they are not a new acceptance record.
+
+## Candidate f4ce3682: replacement gate, R5 and feature acceptance
+
+Candidate `f4ce36823885b9a73c7ee9b350047d2a6f721410` contains the observer-free
+shutdown repair, twelve primitive completion regressions and the composed
+close/EOF regression under rejected unscoped admission. Its final follow-up
+renames test notification counters and applies lint-required punctuation;
+it does not change the repair's behavior.
+
+The complete required Rust 1.94.1 local gate passed on both platforms. Linux
+native units passed 3,579 tests with zero failures and 11 existing ignores in
+53.04 seconds; macOS passed 3,581 with zero failures and 12 existing ignores in
+908.94 seconds. CLI units passed 549 with zero failures and six existing ignores
+on each platform (2.63 seconds Linux, 47.80 seconds macOS). Both platforms passed
+the twelve completion regressions, close/EOF regression and 157 focused ACP
+native tests, followed by the full workspace integrations and doctests.
+
+Formatting, warnings-denied workspace Clippy, fresh locked release helpers,
+required FreeBSD/WASI lint, dependency policy/audit, pinned drift and Unicode
+checks, documentation policy, 269 Python tests and fresh-release smoke passed.
+Supplementary standalone web-fetch compilation was not a strict-lint claim.
+The earlier supplementary FreeBSD all-features failure remains recorded above;
+the required portability gate passed without changing that probe's scope.
+
+Three fresh local adversarial reviewers inspected the complete branch against
+`658f3366258cf1207904f9c2a274f32db2bb981b` in isolated exact-SHA worktrees:
+
+| Track | Fresh reviewer | Actionable introduced findings |
+| --- | --- | ---: |
+| Correctness/API | `acp_r5_correctness` | 0 |
+| Lifecycle/platform | `acp_r5_lifecycle` | 0 |
+| Performance/resources | `acp_r5_resources` | 0 |
+
+Each track inspected related contracts, callers and regression sources without
+relying on prior zero-finding reviews. These were independent static local
+reviews, not Bugbot, dynamic race reproduction or independent reruns of the
+coordinator's gates. The resources reviewer started after a completed track
+freed capacity; no repair author was reused. All review worktrees were checked
+clean at the candidate and removed. No M07 performance claim follows.
+
+Feature CI `34915965303` and Benchmark evidence `34915965295` succeeded for the
+exact candidate. All ten expected CI jobs passed, including all four native
+Linux/macOS architecture jobs; all four Benchmark jobs passed. The benchmark
+run retained matching, nonempty, unexpired artifacts `10376106781` (bootstrap)
+and `10376412517` (pinned upstream), both expiring on 2026-12-14. Their names and
+workflow-run metadata matched the full candidate SHA. Main was then advanced
+from the reviewed base to this candidate by fast-forward without force. This
+records local, review and feature-branch acceptance only; the implementation
+plan owns subsequent main acceptance and delivery state.
+
+## Exact-main catalog fixture failure and replacement
+
+Main CI `34918146254` rejected `f4ce36823885b9a73c7ee9b350047d2a6f721410`:
+the Intel macOS native job failed
+`timeout_fixture_does_not_accept_a_malformed_complete_head_as_peer_close` in
+`crates/machine-god-native/tests/ai_gateway_model_catalog_http.rs`. Its client
+`shutdown(Shutdown::Both).unwrap()` returned OS error 57, `NotConnected`;
+the integration suite reported 19 passed and one failed. The other substantive
+CI jobs passed; the aggregate correctly failed. Main Benchmark `34918146228`
+passed and retained nonempty, unexpired exact-main bootstrap `10377067210` and
+upstream `10377262031` artifacts. Benchmark success does not accept failed CI.
+
+The fixture file was unchanged by the ACP branch and last changed in
+`ad346115db8ec56bf0e27f2fbff1495c9bc1ff81`. Complete malformed-head parsing
+returns `Other("malformed request header")` immediately and drops the accepted
+socket, racing the client's redundant shutdown. The isolated repair component
+`7fe005b8b33151f5514528f7d80d10802e3ac1c9` joins the server while the peer is
+still open, then drops the peer and asserts both the error kind and exact
+diagnostic. Rejection therefore cannot pass as peer EOF, timeout or another
+error. Actual worker joining is retained; deadlines and production code are
+unchanged. Adjacent partial/empty-head cases require peer closure before their
+worker can finish and are unchanged. Component formatting and diff checks
+passed; this record does not assert replacement runtime or remote acceptance.

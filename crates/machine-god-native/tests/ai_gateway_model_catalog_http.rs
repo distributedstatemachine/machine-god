@@ -964,9 +964,13 @@ fn timeout_fixture_does_not_accept_a_malformed_complete_head_as_peer_close() {
     configure(&peer);
     peer.write_all(b"GET / HTTP/1.1\r\nmalformed header\r\n\r\n")
         .unwrap();
-    peer.shutdown(Shutdown::Both).unwrap();
+    // A complete malformed head must fail while the peer is still open.
+    // Join before dropping it: the server closes on rejection, so requiring
+    // peer.shutdown() to succeed would race that server-side close on macOS.
+    let error = server.finish().unwrap_err();
     drop(peer);
-    assert_eq!(server.finish().unwrap_err().kind(), io::ErrorKind::Other);
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(error.to_string(), "malformed request header");
 }
 
 #[test]
