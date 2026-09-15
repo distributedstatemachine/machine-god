@@ -34,6 +34,13 @@ the original immutable notice and confirmed parent checkpoint; an arbitrary
 label, ordinary record readback or current child status cannot establish delivery.
 One notice publication occupies its own source sequence and advances the durable
 publication cursor; acknowledgements do not synthesize notices or timers.
+Suppressed start/milestone observations consume a control-only source checkpoint
+before a later occurrence can reuse the journal's next sequence; they create no
+visible notice. Confirmed manager writes invalidate replay's exact-head read
+cursor, without treating ordinary cursor staleness as ambiguous publication.
+Replay and source acknowledgements validate the parent transcript incarnation
+against the historical control record at the original relationship revision,
+not the current parent or a reused display ID/generation.
 
 The root is `{"command":{...}}`, selecting exactly one of these branches.
 Every object rejects unknown fields. Optional fields are omitted, not null.
@@ -389,6 +396,46 @@ Attach/reparent authorization uses an injected human endpoint carrying the exact
 actor, target generation/revision and old/new parent proposal. Supplied labels
 or permission mode alone never authorize that relationship change.
 
+The manager polls its mailbox, child streams, actual cleanup and notice delivery
+independently of terminal output. A captured control head pauses only its target's
+new stream observations while existing writes drain; siblings continue. Human
+relationship approval and inspect waits retain bounded jobs outside the global
+journal operation slot. Configuration changes affect future accepted work only.
+Each queued work retains its own model, effort, permission mode and normalized
+notification policy. Runtime preparation for messages/resume/reopen uses the
+current authenticated caller's captured origin and rejects policy escalation.
+
+Journal publication, receipt reconciliation and execution admission have separate
+states. Busy/limit pressure retains the original FIFO operation. Ambiguity parks
+on explicit retry with its original proposal and resources; capacity becoming
+available does not automatically retry an uncertain publication. Cancellation
+intent precedes the signal, and ordinary lifecycle observers wait for settlement.
+A child cancelling/closing itself receives the confirmed intent receipt before
+its own completion-wins tool returns, avoiding a dependency on its own terminal
+event; the manager retains the remaining settlement independently.
+
+Native navigation uses weak allocation-bound selections, not control authority
+derived from public labels. Idle, actually settled runtimes may be evicted to
+admit another child; their immutable journal history remains pageable. Inspection
+cursors bind exact source, revision and selected sections, with bounded raw scans
+and one shared encoded result budget. A changed or retired cursor asks the caller
+to restart rather than silently changing the requested projection.
+
+Restore explicitly repairs a saved original notice outbox before child execution;
+factory preparation itself never performs delivery recovery. Close waits for the
+resident's exact source acknowledgements and outbox clear. Reopen first prepares
+the old generation, repairs and acknowledges its original delivery, clears the
+outbox and confirms actual old-resource closure; only then may it prepare and
+publish the new generation. No envelope or checkpoint is retargeted.
+
+History replay holds one catalog/source frontier and one candidate, pages through
+nonresident histories, and admits only typed confirmed originals for an exact
+registered target. It checks source acknowledgement records, excludes archived
+or replaced source generations, and neither starts timers nor resumes execution.
+Confirmed source acknowledgements remove exact replayed originals before an
+outbox clear permits another snapshot. Parent registration restarts this bounded
+scan so an absent or retired target never requires an unbounded in-memory queue.
+
 ## Durable journal
 
 The native managed control journal is separate from `FileSessionStore`, which
@@ -471,6 +518,12 @@ execution leases. Storage and residency pressure are explicit bounds, not a
 lifetime count of children created.
 
 ## Native notifications and deadlines
+
+Stopped tracking and queued payload custody have separate lifetimes. Reclaiming
+a stopped tracker does not remove immutable queued originals or refund their
+count/byte reservations, including slow snapshots. Exact source retirement can
+invalidate those records after the tracker is gone; private durable-ACK repair
+removes only the original envelopes, without manufacturing batch ACK tokens.
 
 The native notice component freezes the normalized notification policy for each
 accepted work item. Actual start begins its checked monotonic interval/duration

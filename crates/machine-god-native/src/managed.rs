@@ -2,6 +2,7 @@
 
 pub(crate) mod conversation;
 pub(crate) mod mailbox;
+pub(crate) mod manager;
 pub(crate) mod mcp;
 pub(crate) mod notices;
 pub(crate) mod principal;

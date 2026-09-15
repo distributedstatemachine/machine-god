@@ -118,8 +118,11 @@ pub(crate) struct PreparedManagedRuntime {
 
 /// Per-principal/run cleanup custody, not a shared global completion observer.
 pub(crate) trait ManagedRuntimeResources: Send + 'static {
-    /// Confirm readiness/auth/checkpoint cleanup even when no RunRef was minted.
-    fn poll_admission_settled(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ManagedRuntimeError>>;
+    /// Confirm readiness/auth/checkpoint cleanup even when no `RunRef` was minted.
+    fn poll_admission_settled(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), ManagedRuntimeError>>;
     /// Confirm original attributed worker, TLS and process-reap obligations.
     /// Runtime stream completion alone does not satisfy this method.
     fn poll_turn_settled(

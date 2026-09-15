@@ -378,7 +378,8 @@ impl Inner {
                 return Err(NoticeError::InvalidInput);
             }
             if let Some(original) = state.queue.iter().find(|record| {
-                record.work == identity.id && overlaps(&record.notice.event, &notice.event)
+                record.notice.source == notice.source
+                    && overlaps(&record.notice.event, &notice.event)
             }) {
                 return if original.notice == *notice {
                     Ok(NoticeEmission::AlreadyRecorded)
@@ -723,11 +724,44 @@ impl Inner {
             let work = state.trackers.get(&identity.id).ok_or(NoticeError::Stale)?;
             if (!work.stopped && (work.terminal.is_none() || work.next_due.is_some()))
                 || work.pending.is_some()
-                || state.queue.iter().any(|record| record.work == identity.id)
             {
                 return Err(NoticeError::Busy);
             }
             state.trackers.remove(&identity.id);
+            Ok(())
+        })
+    }
+    pub(super) fn retire_source(&self, source: &NoticePrincipal) -> Result<(), NoticeError> {
+        valid_principal(source)?;
+        self.mutate(|state| {
+            for work in state.trackers.values_mut() {
+                if work.identity.source.source == *source {
+                    work.closed = true;
+                    work.stopped = true;
+                    work.next_due = None;
+                    work.duration_end = None;
+                    if let Some(pending) = &mut work.pending {
+                        pending.eligible = false;
+                    }
+                }
+            }
+            state
+                .queue
+                .retain(|record| record.notice.source.source != *source);
+            Ok(())
+        })
+    }
+    pub(super) fn acknowledge_recovered(
+        &self,
+        originals: &[ManagedNotice],
+    ) -> Result<(), NoticeError> {
+        if originals.len() > 64 {
+            return Err(NoticeError::InvalidInput);
+        }
+        self.mutate(|state| {
+            state
+                .queue
+                .retain(|record| !originals.contains(&record.notice));
             Ok(())
         })
     }

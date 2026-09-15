@@ -47,6 +47,7 @@ pub(super) fn enqueue(
     Ok(vec![JournalRecord::WorkAccepted(work)])
 }
 
+#[allow(clippy::too_many_lines)] // Exhaustive typed transaction validation without effects.
 pub(super) fn apply(
     head: &mut JournalHead,
     mutation: JournalMutation,
@@ -122,6 +123,12 @@ pub(super) fn apply(
                 return Err(Error::Conflict);
             }
             head.notice_cursor = cursor;
+        }
+        JournalMutation::SuppressedNotice(sequence) => {
+            if sequence != head.next_sequence || sequence <= head.notice_cursor {
+                return Err(Error::Conflict);
+            }
+            head.notice_cursor = sequence;
         }
         JournalMutation::AppendHistory(records) => {
             validate_history(&records)?;

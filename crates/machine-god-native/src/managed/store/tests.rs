@@ -225,6 +225,36 @@ fn exact_notice_envelope_is_pageable_and_validated() {
 }
 
 #[test]
+fn suppressed_notice_checkpoints_only_the_exact_next_source_sequence() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let initial = confirmed(block_on(journal.create(create("suppressed"))).unwrap());
+    let sequence = initial.head.next_sequence;
+    for invalid in [sequence - 1, sequence + 1] {
+        assert!(matches!(
+            block_on(journal.mutate(initial.clone(), JournalMutation::SuppressedNotice(invalid))),
+            Err(JournalError::Conflict)
+        ));
+    }
+    let snapshot = mutate(
+        &journal,
+        initial,
+        JournalMutation::SuppressedNotice(sequence),
+    );
+    assert_eq!(snapshot.head.next_sequence, sequence + 1);
+    assert_eq!(snapshot.head.notice_cursor, sequence);
+    let page = block_on(journal.history(snapshot.clone(), None, 1)).unwrap();
+    assert!(matches!(
+        page.records.as_slice(),
+        [JournalRecord::Control(control)] if control.notice_cursor == sequence
+    ));
+    assert!(matches!(
+        block_on(journal.mutate(snapshot, JournalMutation::SuppressedNotice(sequence))),
+        Err(JournalError::Conflict)
+    ));
+}
+
+#[test]
 fn archived_source_accepts_exact_delivery_ack_without_reopening() {
     use crate::managed::{notices::*, prompt_context::NoticeCheckpoint};
     use machine_god_core::SessionRevision;

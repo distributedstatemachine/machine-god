@@ -117,6 +117,7 @@ pub(super) fn head(head: &JournalHead, limits: JournalLimits) -> Result<(), Erro
     }
     Ok(())
 }
+#[allow(clippy::too_many_lines)] // Exhaustive bounded durable record schema validation.
 pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
     if records.is_empty() || records.len() > MAX_RECORDS {
         return Err(Error::Limit);

@@ -45,6 +45,7 @@ pub(crate) struct ParentNoticeContext {
 }
 struct Inner {
     session: SessionWitness,
+    transcript: super::store::JournalTranscript,
     parent: NoticePrincipal,
     notices: Weak<ManagedNotices>,
     slot: Mutex<Slot>,
@@ -83,6 +84,25 @@ impl fmt::Debug for PreparedNoticeContext {
     }
 }
 impl ParentNoticeContext {
+    /// Compares labels captured from the actual session, never caller-supplied
+    /// notice labels, and requires that original session allocation to be live.
+    pub(crate) fn matches_transcript(&self, transcript: &super::store::JournalTranscript) -> bool {
+        self.inner.session.is_live() && !self.is_retired() && &self.inner.transcript == transcript
+    }
+    /// Observes the original bound notice target; never mints native authority.
+    pub(crate) fn principal(&self) -> &NoticePrincipal {
+        &self.inner.parent
+    }
+    pub(crate) fn is_retired(&self) -> bool {
+        matches!(
+            &*self
+                .inner
+                .slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Slot::Retired
+        )
+    }
     pub(crate) fn new(
         session: &Session,
         parent: NoticePrincipal,
@@ -91,6 +111,10 @@ impl ParentNoticeContext {
         Self {
             inner: Arc::new(Inner {
                 session: session.witness(),
+                transcript: super::store::JournalTranscript {
+                    session_id: session.id(),
+                    incarnation: session.incarnation_id(),
+                },
                 parent,
                 notices: Arc::downgrade(notices),
                 slot: Mutex::new(Slot::Idle),

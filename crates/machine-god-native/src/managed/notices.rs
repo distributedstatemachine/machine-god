@@ -396,9 +396,24 @@ impl ManagedNotices {
     pub(crate) fn retire_target(&self, target: &NoticePrincipal) -> Result<(), NoticeError> {
         self.inner.retire_target(target)
     }
-    /// Only stopped/terminal trackers without pending custody can be reclaimed.
+    /// Reclaim stopped/terminal tracking independently of immutable queued
+    /// records. Snapshot and reply owners retain their original byte/count charge.
     pub(crate) fn release_work(&self, work: &WorkNoticeRef) -> Result<(), NoticeError> {
         self.inner.release(work)
+    }
+    /// Exact durable source retirement also invalidates queued records whose
+    /// stopped tracker has already been reclaimed. Labels here are projections;
+    /// only the manager may invoke this after its original source closes.
+    pub(super) fn retire_source(&self, source: &NoticePrincipal) -> Result<(), NoticeError> {
+        self.inner.retire_source(source)
+    }
+    /// Manager-only exact original removal after confirmed source journal ACKs.
+    /// This repairs replay visibility; it does not create private batch tokens.
+    pub(super) fn acknowledge_recovered(
+        &self,
+        originals: &[ManagedNotice],
+    ) -> Result<(), NoticeError> {
+        self.inner.acknowledge_recovered(originals)
     }
     pub(crate) fn snapshot(
         &self,

@@ -251,7 +251,7 @@ fn terminal_defaults_are_exactly_once_and_tracker_retention_is_not_a_lifetime_ca
             manager.terminal(&work, nz(2), outcome, None),
             Ok(NoticeEmission::AlreadyRecorded)
         );
-        assert_eq!(manager.release_work(&work), Err(NoticeError::Busy));
+        manager.release_work(&work).unwrap();
         let batch = snapshot(&manager);
         assert_eq!(batch.entries().len(), 1);
         assert_eq!(
@@ -259,7 +259,6 @@ fn terminal_defaults_are_exactly_once_and_tracker_retention_is_not_a_lifetime_ca
             NoticeEvent::Terminal { outcome }
         );
         ack_all(&manager, &batch);
-        manager.release_work(&work).unwrap();
         assert_eq!(manager.usage().trackers, 0);
         drop(batch);
         assert_eq!(manager.usage().retained_records, 0);
@@ -788,9 +787,8 @@ fn explicit_restore_preserves_original_identity_target_and_payload_without_timer
     assert_eq!(poll(&mut deadline), Poll::Pending);
     assert_eq!(clock.created.load(Ordering::Acquire), 0);
     manager.stop_work(&work).unwrap();
-    assert_eq!(manager.release_work(&work), Err(NoticeError::Busy));
-    ack_all(&manager, &batch);
     manager.release_work(&work).unwrap();
+    ack_all(&manager, &batch);
 }
 
 #[test]
@@ -824,4 +822,53 @@ fn reentrant_waker_operations_never_run_under_the_notice_registry_lock() {
         assert!(handle.calls() > 0);
         assert_eq!(clock.active(), 0);
     }
+}
+
+#[test]
+fn stopped_trackers_release_without_refunding_queued_originals() {
+    let clock = Clock::new();
+    let manager = ManagedNotices::new(
+        NoticeLimits {
+            trackers: 1,
+            ..NoticeLimits::default()
+        },
+        clock,
+    )
+    .unwrap();
+    let first = manager
+        .register_work(
+            &identity("first"),
+            ManagedNotifications::default(),
+            &relationship("parent"),
+            0,
+        )
+        .unwrap();
+    manager
+        .terminal(&first, nz(1), NoticeTerminal::Completed, None)
+        .unwrap();
+    let batch = snapshot(&manager);
+    let bytes = manager.usage().retained_bytes;
+    manager.release_work(&first).unwrap();
+    assert_eq!(manager.usage().trackers, 0);
+    assert_eq!(manager.usage().retained_bytes, bytes);
+    let second = manager
+        .register_work(
+            &identity("second"),
+            ManagedNotifications::default(),
+            &relationship("parent"),
+            0,
+        )
+        .unwrap();
+    manager
+        .terminal(&second, nz(1), NoticeTerminal::Completed, None)
+        .unwrap();
+    manager.release_work(&second).unwrap();
+    assert_eq!(snapshot(&manager).entries().len(), 2);
+    manager.validate_batch(&batch).unwrap();
+    manager.retire_source(&identity("first").source).unwrap();
+    assert!(manager.validate_batch(&batch).is_err());
+    assert_eq!(snapshot(&manager).entries().len(), 1);
+    assert_eq!(manager.usage().retained_records, 2);
+    drop(batch);
+    assert_eq!(manager.usage().retained_records, 1);
 }
