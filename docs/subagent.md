@@ -201,6 +201,86 @@ run after unlocking. This scheduler supplies admission and lifecycle primitives;
 native manager composition owns durable acceptance, deadlines, scheduling polls
 and actual finalizer custody.
 
+## Durable journal
+
+The native managed control journal is separate from `FileSessionStore`, which
+continues to own conversation transcripts. A journal receives an already-open
+private directory descriptor and an explicit `NativeOwnedWorkerScope`; it does
+not discover paths, reopen directory authority by pathname, or perform model,
+process, browser or conversation effects. Construction and unpolled operations
+are inert. All journal filesystem work runs on the injected owned workers.
+
+An exclusive descriptor-relative owner lock is separate from head compare-and-swap
+revisions. Another manager receives Busy, even in the same process. The outer
+manager retains the journal's owner lease through actual child/control/worker
+settlement, not merely result observation. Each exclusive open durably advances
+a checked ownership epoch. Old-owner heads require explicit recovery before
+mutation; recovery persists pending/running/approval work as interrupted without
+execution or signalling. Current-owner live work cannot be reset through recovery.
+
+Schema-v1 heads retain child identity, owner epoch, lifecycle generation, checked
+revision, mode, selected configuration, transcript binding, parent relationship,
+FIFO work references, failure head, cancellation/archive intent and notice cursor.
+Full accepted work contents and frozen configuration/notification policy live in
+immutable pages, not in a 64 KiB head or a copied child transcript. Pages carry
+child/generation/sequence identity, encoded length and SHA-256 digest; their
+exact session/incarnation owner as well as child/generation/sequence, and
+back-links strictly decrease sequence. Accepted work retains its original source
+principal and frozen policy without deriving fresh authority from those labels.
+The digest detects inconsistent content,
+not authenticity, encryption or protection against a writer with equivalent
+filesystem authority; those M04 concerns remain separate.
+
+Create and enqueue return confirmation only after immutable pages are written,
+file-synced, renamed, directory-synced and validated before the referencing head
+is published with the same durability sequence. Head CAS retains the original
+opened file revision and rejects equal-byte inode replacement, stale/foreign
+observations and modified snapshot contents. Public child/work IDs remain labels,
+not execution or process authority. Native run admission remains separate.
+
+Every head publication appends typed immutable control evidence. Accepted work,
+state transitions/resolutions, configuration, history, events and tool activity
+are pageable. FIFO state changes name the exact first work item; interrupted,
+failed or approval-blocked heads require explicit resolution. Cancellation intent
+is durable before the manager may signal. Persistent cancellation returns idle
+and leaves later accepted work interrupted; one-off cancellation is terminal.
+Close records archive intent, settles active work and archives without deleting
+history. Reopen advances generation and never implicitly retries queued work.
+
+Before publication, one shared reservation covers old/new/temp files, encoding,
+decoding, recovery and retained reconciliation receipts. Defaults are 256 MiB
+aggregate accounting, 128 KiB encoded heads, 1 MiB encoded pages, 64 queued items
+per child and 65,536 directory entries. Explicit limits allow heads up to 1 MiB,
+pages from 512 KiB through 8 MiB, up to 256 queued items, up to 1,048,576 directory
+entries and aggregate accounting up to 4 GiB; aggregate capacity must also cover
+the configured operation reservation. Counts, identity/string bounds and bounded
+list deserialization cover structural overhead. Full 65,536-byte messages and
+32 milestones remain supported, including JSON escaping. Serialized size limits
+reject without truncation.
+
+The operation slot returns Busy rather than blocking the native event loop;
+the manager retains an unaccepted FIFO submission for retry and never reports
+Busy as accepted work. After any uncertain publication, the journal retains the
+exact candidate and reservation even if its result observer disappears. Further
+ordinary operations reject while that receipt awaits reconciliation. Reconciliation
+repairs directory/file durability and validates the exact referenced state;
+readback alone is not confirmation. It reports Confirmed or NotApplied, or retains
+ambiguity on failure. A page-only orphan cannot authorize execution of an
+unpublished head, and reconciliation never automatically republishes a candidate.
+Unreferenced immutable pages and stale temporary files remain charged. Reusing a
+known temporary name removes only that validated private temporary descriptor;
+heads and immutable histories are not deleted by close or reopen.
+
+Exclusive reopen reconstructs accounting from the bounded directory inventory,
+including old, orphan and temporary files, before new acceptance. Payload-free
+catalog pages discover nonresident and archived children without pinning all
+heads. History pages touch a bounded number of immutable pages and return at most
+100 records and 512 KiB of encoded projection data. Opaque continuation cursors
+bind the exact journal/snapshot; stale cursors require a fresh projection.
+Returned observations/pages are caller-owned bounded values, not additional
+execution leases. Storage and residency pressure are explicit bounds, not a
+lifetime count of children created.
+
 ## Source evidence
 
 The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and
