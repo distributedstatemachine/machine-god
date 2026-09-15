@@ -17,6 +17,8 @@ mod route;
 mod subscriptions;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::script::ScriptPeer as NativeMcpScriptPeer;
 #[cfg(all(test, feature = "ai-gateway-http"))]
 pub(crate) use tests::script::ScriptPeer;
 mod tool;
@@ -477,6 +479,12 @@ impl McpToolCatalog for NativeMcpRuntime {
                 }),
             )
         })
+    }
+}
+impl NativeMcpRuntime {
+    /// Native factory identity check; this grants no turn or execution authority.
+    pub(crate) fn uses_contexts(&self, contexts: &Arc<NativeMcpContexts>) -> bool {
+        Arc::ptr_eq(&self.contexts, contexts)
     }
 }
 fn catalog_error() -> McpToolCatalogError {

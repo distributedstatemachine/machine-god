@@ -9,14 +9,23 @@ use crate::{
     McpToolCatalogSnapshot, NativeMcpFeaturesTool, NativeToolResultArchiveAdapter,
     mcp::runtime::{NativeMcpPublicationCheckpoint, NativeMcpRuntime},
 };
-use machine_god_core::{BoxFuture, CancellationToken, ToolContext};
+use crate::{NativePermissionActionPreparer, mcp::permission::NativeMcpPermissionPreparer};
+use machine_god_core::{
+    BoxFuture, CancellationToken, SessionId, SessionIncarnationId, ToolContext, TurnId,
+};
 use std::sync::{
     Arc, Mutex, Weak,
     atomic::{AtomicBool, Ordering},
 };
 
+#[path = "mcp/permission.rs"]
+mod permission;
 #[path = "mcp/tool.rs"]
 mod tool;
+pub(crate) use permission::{
+    NativePrincipalMcpPermissionInputs, NativePrincipalMcpPermissionRouter,
+    NativePrincipalMcpPermissions,
+};
 pub(crate) use tool::NativePrincipalMcpTool;
 #[cfg(test)]
 #[path = "mcp/tests.rs"]
@@ -82,10 +91,14 @@ impl NativePrincipalMcpRegistry {
         principal: &Arc<NativePrincipal>,
         runtime: &Arc<NativeMcpRuntime>,
         portable: Option<Arc<dyn McpFeatureAuthority>>,
+        permissions: Option<&NativePrincipalMcpPermissions>,
     ) -> Result<Arc<NativePrincipalMcpOwner>> {
         if !principal.is_live() {
             return Err(PrincipalMcpError::Unavailable);
         }
+        let permissions = permissions
+            .map(|permissions| permissions.for_runtime(runtime))
+            .transpose()?;
         let runtime = Arc::downgrade(runtime);
         let owner = Arc::new(NativePrincipalMcpOwner {
             principal: Arc::downgrade(principal),
@@ -96,6 +109,7 @@ impl NativePrincipalMcpRegistry {
                 self.0.archive.clone(),
             )),
             portable,
+            permissions,
             active: Mutex::new(None),
             retired: Arc::new(AtomicBool::new(true)),
             registry: Arc::downgrade(&self.0),
@@ -156,6 +170,9 @@ impl NativePrincipalMcpRegistry {
             )),
         )
     }
+    pub(crate) fn permission_preparer(&self) -> NativePrincipalMcpPermissionRouter {
+        NativePrincipalMcpPermissionRouter(self.requester())
+    }
 }
 
 /// Outer manager owns this registration and the runtime/controller/ephemeral owners separately.
@@ -166,11 +183,17 @@ pub(crate) struct NativePrincipalMcpOwner {
     runtime: Weak<NativeMcpRuntime>,
     features: Arc<NativeMcpFeaturesTool>,
     portable: Option<Arc<dyn McpFeatureAuthority>>,
+    permissions: Option<Weak<NativeMcpPermissionPreparer>>,
     active: Mutex<Option<Weak<TurnRoute>>>,
     retired: Arc<AtomicBool>,
     registry: Weak<Registry>,
 }
 impl NativePrincipalMcpOwner {
+    pub(crate) fn matches_principal(&self, principal: &Arc<NativePrincipal>) -> bool {
+        self.live()
+            && self.generation == principal.generation()
+            && self.principal.ptr_eq(&Arc::downgrade(principal))
+    }
     fn live(&self) -> bool {
         !self.retired.load(Ordering::Acquire)
             && self.registry.strong_count() != 0
@@ -205,6 +228,9 @@ impl NativePrincipalMcpOwner {
         let state = Arc::new(TurnRoute {
             owner: Arc::downgrade(self),
             stamp,
+            session: principal.owner().session_id().clone(),
+            incarnation: principal.owner().session_incarnation_id().clone(),
+            turn: turn.turn_id().clone(),
         });
         *active = Some(Arc::downgrade(&state));
         Ok(NativePrincipalMcpTurn { state })
@@ -213,10 +239,14 @@ impl NativePrincipalMcpOwner {
         if self.retired.swap(true, Ordering::AcqRel) {
             return;
         }
-        self.active
+        let route = self
+            .active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        if let Some(route) = route.and_then(|route| route.upgrade()) {
+            self.close_permissions(&route);
+        }
         // Keep the allocation's route occupied until synchronous generation
         // invalidation completes; this does not prove worker/reap settlement.
         if let Some(runtime) = self.runtime.upgrade() {
@@ -230,6 +260,11 @@ impl NativePrincipalMcpOwner {
                 .retain(|route| !Arc::ptr_eq(&route.retired, &self.retired));
         }
     }
+    fn close_permissions(&self, route: &TurnRoute) {
+        if let Some(preparer) = self.permissions.as_ref().and_then(Weak::upgrade) {
+            preparer.close_turn(&route.session, &route.incarnation, &route.turn);
+        }
+    }
 }
 impl Drop for NativePrincipalMcpOwner {
     fn drop(&mut self) {
@@ -240,6 +275,11 @@ impl Drop for NativePrincipalMcpOwner {
 struct TurnRoute {
     owner: Weak<NativePrincipalMcpOwner>,
     stamp: NativePrincipalTurnStamp,
+    // Frozen lookup keys, not authority; retained so cancellation/guard drop
+    // can retire original unclaimed proofs even after the principal guard ends.
+    session: SessionId,
+    incarnation: SessionIncarnationId,
+    turn: TurnId,
 }
 impl TurnRoute {
     fn select(self: &Arc<Self>) -> Result<Selection> {
@@ -284,6 +324,8 @@ impl Drop for NativePrincipalMcpTurn {
                 .is_some_and(|route| route.ptr_eq(&Arc::downgrade(&self.state)))
             {
                 *active = None;
+                drop(active);
+                owner.close_permissions(&self.state);
             }
         }
     }
@@ -361,17 +403,19 @@ impl NativePrincipalMcpRequester {
             .principals
             .stamp(context)
             .map_err(|_| PrincipalMcpError::Unavailable)?;
-        let route = registry.route(&stamp)?;
-        let selected = route
-            .upgrade()
-            .ok_or(PrincipalMcpError::Unavailable)?
-            .select()?;
-        let publication = selected
-            .runtime
-            .publication_checkpoint()
-            .map_err(|_| PrincipalMcpError::Unavailable)?;
-        Ok(CapturedRoute { route, publication })
+        capture_route(registry.route(&stamp)?)
     }
+}
+fn capture_route(route: Weak<TurnRoute>) -> Result<CapturedRoute> {
+    let selected = route
+        .upgrade()
+        .ok_or(PrincipalMcpError::Unavailable)?
+        .select()?;
+    let publication = selected
+        .runtime
+        .publication_checkpoint()
+        .map_err(|_| PrincipalMcpError::Unavailable)?;
+    Ok(CapturedRoute { route, publication })
 }
 fn select_captured(captured: Result<CapturedRoute>) -> Result<Selection> {
     let captured = captured?;

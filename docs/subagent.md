@@ -431,6 +431,29 @@ requesters and unpolled operations do not retain a session or runtime. Future
 construction captures only weak turn-route and publication identity; first poll
 rejects a replaced route/publication rather than resolving public IDs again.
 
+Permission preparation uses a factory-owned typed bundle. Construction validates
+the exact runtime/context allocation pair and builds the existing concrete MCP
+preparer with the original builtin/helper-bearing preparer, review contexts,
+reviewer and workspace selection. Registering that bundle against any other
+runtime fails closed. The outer manager retains the bundle/controller; principal
+routes hold only weak preparer references. Missing bundles do not fall back to
+another principal or an engine-global preparer.
+
+Shared permission dispatch captures the original weak turn/publication before
+polling and forwards the original request and prepared arguments without claiming
+the tool invocation. The returned action and final execution admission recheck
+the exact route while preserving the underlying native proof. Retirement before
+final admission prevents execution; completed effects are not reinterpreted.
+Turn guards retain frozen lookup keys solely for targeted cleanup, so cancellation
+or principal-guard destruction cannot prevent release of original unclaimed
+permission proofs. Shared ID-only `close_turn` callbacks are non-authorizing
+no-ops: even one current candidate could be a replacement allocation targeted
+by a delayed old callback. The manager drops the exact MCP turn guard on
+finish/cancel before finalization; that guard and owner retirement close only
+their original preparer, not a replacement. This does not prove worker or
+runtime settlement. Cancellation,
+preparer callbacks and proof destruction run outside routing locks.
+
 ## Source evidence
 
 The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and

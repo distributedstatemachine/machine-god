@@ -100,7 +100,10 @@ fn actual_engine_admission_preserves_native_receipts_and_finish_turn() {
     let session = session(&engine, "a");
     let principal = f.principals.register(&session, 1, &f.workspace).unwrap();
     let (_, runtime) = runtime();
-    let owner = f.registry.register(&principal, &runtime, None).unwrap();
+    let owner = f
+        .registry
+        .register(&principal, &runtime, None, None)
+        .unwrap();
     *retire.lock().unwrap() = Some(Arc::downgrade(&owner));
     let mut turn = block_on(session.prompt("a")).unwrap();
     let guard = begin(&principal, &turn);
@@ -188,7 +191,10 @@ fn stale_unpolled_actual_invocation_never_reaches_inner_tool() {
     let s = session(&engine, "a");
     let principal = f.principals.register(&s, 1, &f.workspace).unwrap();
     let (_, runtime) = runtime();
-    let owner = f.registry.register(&principal, &runtime, None).unwrap();
+    let owner = f
+        .registry
+        .register(&principal, &runtime, None, None)
+        .unwrap();
     *retire.lock().unwrap() = Some(Arc::downgrade(&owner));
     let mut turn = block_on(s.prompt("a")).unwrap();
     let guard = begin(&principal, &turn);
@@ -235,7 +241,10 @@ fn engine_search_select_and_native_features_keep_selected_runtime_and_executable
     let (contexts, runtime) = runtime();
     let writes = Arc::default();
     publish(&runtime, "alpha", Arc::clone(&writes));
-    let owner = f.registry.register(&principal, &runtime, None).unwrap();
+    let owner = f
+        .registry
+        .register(&principal, &runtime, None, None)
+        .unwrap();
     let native_session = contexts.register(&session).unwrap();
     let mut turn = block_on(session.prompt("a")).unwrap();
     let _native = native_session.begin(&session, &turn).unwrap();

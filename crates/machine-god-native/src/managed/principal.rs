@@ -7,8 +7,8 @@ use crate::{
     NativeWorkspaceScopeSnapshot,
 };
 use machine_god_core::{
-    AdmittedToolInvocation, BackgroundOutputOwner, ManagedSubagentInvocation, Session,
-    SessionWitness, ToolContext, Turn, TurnWitness,
+    AdmittedToolInvocation, BackgroundOutputOwner, ManagedSubagentInvocation, Session, SessionId,
+    SessionIncarnationId, SessionWitness, ToolContext, Turn, TurnId, TurnWitness,
 };
 use std::sync::{
     Arc, Mutex, Weak,
@@ -128,6 +128,18 @@ impl NativePrincipalRegistry {
 
 impl Registry {
     fn stamp(&self, context: &ToolContext) -> Result<NativePrincipalTurnStamp> {
+        self.stamp_for_turn(
+            &context.session_id,
+            &context.session_incarnation_id,
+            &context.turn_id,
+        )
+    }
+    fn stamp_for_turn(
+        &self,
+        session: &SessionId,
+        incarnation: &SessionIncarnationId,
+        turn: &TurnId,
+    ) -> Result<NativePrincipalTurnStamp> {
         let candidates: Vec<_> = self
             .routes
             .lock()
@@ -137,8 +149,8 @@ impl Registry {
             .collect();
         let mut selected = None;
         for principal in candidates {
-            if principal.owner.session_id() != &context.session_id
-                || principal.owner.session_incarnation_id() != &context.session_incarnation_id
+            if principal.owner.session_id() != session
+                || principal.owner.session_incarnation_id() != incarnation
             {
                 continue;
             }
@@ -148,9 +160,7 @@ impl Registry {
                 .map_err(|_| PrincipalError::Unavailable)?
                 .as_ref()
                 .and_then(Weak::upgrade);
-            let Some(state) =
-                state.filter(|state| state.turn_id == context.turn_id && state.live())
-            else {
+            let Some(state) = state.filter(|state| &state.turn_id == turn && state.live()) else {
                 continue;
             };
             if selected.is_some() {
@@ -211,6 +221,17 @@ impl Registry {
 #[derive(Clone)]
 pub(crate) struct NativePrincipalRequester(Weak<Registry>);
 impl NativePrincipalRequester {
+    pub(crate) fn stamp_for_turn(
+        &self,
+        session: &SessionId,
+        incarnation: &SessionIncarnationId,
+        turn: &TurnId,
+    ) -> Result<NativePrincipalTurnStamp> {
+        self.0
+            .upgrade()
+            .ok_or(PrincipalError::Unavailable)?
+            .stamp_for_turn(session, incarnation, turn)
+    }
     pub(crate) fn stamp(&self, context: &ToolContext) -> Result<NativePrincipalTurnStamp> {
         self.0
             .upgrade()
@@ -389,6 +410,9 @@ pub(crate) struct NativePrincipalTurn {
     state: Arc<TurnState>,
 }
 impl NativePrincipalTurn {
+    pub(crate) fn turn_id(&self) -> &TurnId {
+        &self.state.turn_id
+    }
     pub(crate) fn stamp(&self) -> NativePrincipalTurnStamp {
         NativePrincipalTurnStamp {
             state: Arc::downgrade(&self.state),

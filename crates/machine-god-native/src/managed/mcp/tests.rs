@@ -32,6 +32,8 @@ use std::{
 
 #[path = "tests/execution.rs"]
 mod execution;
+#[path = "tests/permission.rs"]
+mod permission;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
@@ -224,8 +226,10 @@ fn overlapping_names_route_to_independent_runtime_and_reload_close_never_retarge
     let (cb, rb) = runtime();
     publish(&ra, "alpha", Arc::default());
     publish(&rb, "beta", Arc::default());
-    let oa = f.registry.register(&pa, &ra, None).unwrap();
-    let ob = f.registry.register(&pb, &rb, None).unwrap();
+    let oa = f.registry.register(&pa, &ra, None, None).unwrap();
+    let ob = f.registry.register(&pb, &rb, None, None).unwrap();
+    assert!(oa.matches_principal(&pa));
+    assert!(!oa.matches_principal(&pb));
     let sa = ca.register(&a).unwrap();
     let sb = cb.register(&b).unwrap();
     let ta = block_on(a.prompt("a")).unwrap();
@@ -251,12 +255,13 @@ fn overlapping_names_route_to_independent_runtime_and_reload_close_never_retarge
     );
     assert_eq!(old.tools()[0].description(), "alpha");
     oa.retire();
+    assert!(!oa.matches_principal(&pa));
     assert!(ra.publication_checkpoint().is_err());
     assert_eq!(
         snapshot(&requester, &b, &tb).tools()[0].description(),
         "beta"
     );
-    assert!(f.registry.register(&pa, &ra, None).is_err());
+    assert!(f.registry.register(&pa, &ra, None, None).is_err());
     assert!(rb.publication_checkpoint().is_ok());
 }
 
@@ -269,9 +274,9 @@ fn same_live_runtime_cannot_be_shared_and_failed_registration_does_not_close_it(
     let pa = f.principals.register(&a, 1, &f.workspace).unwrap();
     let pb = f.principals.register(&b, 1, &f.workspace).unwrap();
     let (_, runtime) = runtime();
-    let owner = f.registry.register(&pa, &runtime, None).unwrap();
+    let owner = f.registry.register(&pa, &runtime, None, None).unwrap();
     assert_eq!(
-        f.registry.register(&pb, &runtime, None).unwrap_err(),
+        f.registry.register(&pb, &runtime, None, None).unwrap_err(),
         PrincipalMcpError::Duplicate
     );
     assert!(owner.live());
@@ -279,7 +284,7 @@ fn same_live_runtime_cannot_be_shared_and_failed_registration_does_not_close_it(
     owner.retire();
     assert!(runtime.publication_checkpoint().is_err());
     assert_eq!(
-        f.registry.register(&pb, &runtime, None).unwrap_err(),
+        f.registry.register(&pb, &runtime, None, None).unwrap_err(),
         PrincipalMcpError::Unavailable
     );
 }
@@ -293,7 +298,10 @@ fn unpolled_requests_are_inert_stale_guards_reject_and_reverse_edges_are_weak() 
     let (contexts, runtime) = runtime();
     let writes = Arc::default();
     publish(&runtime, "alpha", Arc::clone(&writes));
-    let owner = f.registry.register(&principal, &runtime, None).unwrap();
+    let owner = f
+        .registry
+        .register(&principal, &runtime, None, None)
+        .unwrap();
     let session_context = contexts.register(&s).unwrap();
     let turn = block_on(s.prompt("a")).unwrap();
     let _native = session_context.begin(&s, &turn).unwrap();
@@ -336,7 +344,7 @@ fn registry_drop_closes_owned_runtime_but_retained_selection_only_keeps_cleanup_
     let registry =
         NativePrincipalMcpRegistry::new(1, f.principals.requester(), f.registry.0.archive.clone())
             .unwrap();
-    let owner = registry.register(&principal, &runtime, None).unwrap();
+    let owner = registry.register(&principal, &runtime, None, None).unwrap();
     let turn = block_on(s.prompt("a")).unwrap();
     let guard = begin(&principal, &turn);
     let _route = owner.begin_turn(&guard).unwrap();
@@ -359,7 +367,10 @@ fn unpolled_snapshot_never_retargets_reopened_owner_on_same_actual_turn() {
     let principal = f.principals.register(&s, 1, &f.workspace).unwrap();
     let (contexts, original) = runtime();
     publish(&original, "original", Arc::default());
-    let owner = f.registry.register(&principal, &original, None).unwrap();
+    let owner = f
+        .registry
+        .register(&principal, &original, None, None)
+        .unwrap();
     let native_session = contexts.register(&s).unwrap();
     let turn = block_on(s.prompt("a")).unwrap();
     let _native = native_session.begin(&s, &turn).unwrap();
@@ -373,7 +384,10 @@ fn unpolled_snapshot_never_retargets_reopened_owner_on_same_actual_turn() {
     publish(&replacement, "replacement", Arc::default());
     let replacement_session = replacement_contexts.register(&s).unwrap();
     let _replacement_native = replacement_session.begin(&s, &turn).unwrap();
-    let replacement_owner = f.registry.register(&principal, &replacement, None).unwrap();
+    let replacement_owner = f
+        .registry
+        .register(&principal, &replacement, None, None)
+        .unwrap();
     let _replacement_route = replacement_owner.begin_turn(&guard).unwrap();
     assert!(block_on(pending).is_err());
     assert_eq!(
