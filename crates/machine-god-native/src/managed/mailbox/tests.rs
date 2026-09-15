@@ -341,6 +341,21 @@ fn manager_close_rejects_replies_but_dequeued_work_keeps_its_lease_and_charge() 
 }
 
 #[test]
+fn completed_reply_wins_over_later_mailbox_close_until_observed() {
+    let fixture = Fixture::new();
+    let mailbox = fixture.mailbox(1);
+    let requester = mailbox.requester();
+    let (_admission, invocation) = fixture.invocation("principal");
+    let mut future = requester.execute(invocation, CancellationToken::new());
+    assert!(poll(future.as_mut()).is_pending());
+    next(&mailbox).complete(Ok(result()));
+    mailbox.close();
+    assert_eq!(mailbox.usage().requests, 1);
+    assert!(matches!(poll(future.as_mut()), Poll::Ready(Ok(_))));
+    assert_eq!(mailbox.usage(), MailboxUsage::default());
+}
+
+#[test]
 fn dropping_manager_breaks_weak_routes_without_invalidating_dequeued_custody() {
     let fixture = Fixture::new();
     let mailbox = fixture.mailbox(1);

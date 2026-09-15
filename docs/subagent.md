@@ -244,7 +244,8 @@ ownership transfers to core's separately bounded result codec and archive path.
 Dropping a reply or cancelling its submission token does not discard an admitted
 mutation job or imply durable child cancellation. The manager decides whether a
 read-only request may be withdrawn. Closing/dropping the mailbox rejects queued
-and outstanding observers, but already dequeued mutations retain manager-owned
+and unfulfilled observers; already completed replies preserve their exact result.
+Already dequeued mutations retain manager-owned
 settlement custody and resource charges. Requesters, budget progress handles and
 reply registries use weak reverse links, with no queue/engine ownership cycle.
 Callbacks and payload destruction run outside queue, reply and budget locks.
