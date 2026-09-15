@@ -250,6 +250,29 @@ settlement custody and resource charges. Requesters, budget progress handles and
 reply registries use weak reverse links, with no queue/engine ownership cycle.
 Callbacks and payload destruction run outside queue, reply and budget locks.
 
+## Native manager and runtime factory
+
+The outer manager, not a creating tool future or selected UI page, owns child
+conversation runtimes and their separate native principal/scheduler owners.
+Its injected runtime factory shares the existing host execution domain and
+receives an exact transcript candidate, captured configuration and explicit
+timestamp. Fresh preparation receives the original admitted principal custody,
+workspace snapshot, policy and model preferences; asynchronous preparation never
+re-reads the parent's mutable workspace selection. Identity allocation is inert
+before poll and its chosen candidate survives preparation/publication failure.
+Preparing an empty transcript reserves runtime/residency but never polls a
+provider or executes a model-facing tool before durable create acceptance.
+
+Indeterminate factory preparation retains its exact receipt. Reconciliation
+errors preserve custody and cannot trigger another identity allocation or blind
+retry. Prepared resources receive and retain the journal owner lease through
+actual attributed worker, TLS and process-reap cleanup, including abandonment
+of the manager observer. Runtime event completion is not actual cleanup;
+independent per-run settlement and final principal closure must be confirmed.
+Attach/reparent authorization uses an injected human endpoint carrying the exact
+actor, target generation/revision and old/new parent proposal. Supplied labels
+or permission mode alone never authorize that relationship change.
+
 ## Durable journal
 
 The native managed control journal is separate from `FileSessionStore`, which

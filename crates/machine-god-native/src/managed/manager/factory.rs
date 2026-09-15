@@ -2,11 +2,11 @@
 
 use super::super::{
     conversation::ManagedConversationOwner, principal::NativePrincipal,
-    scheduler::RunRef, store::JournalTranscript,
+    scheduler::RunRef, store::{JournalOwner, JournalTranscript},
 };
 use crate::{NativeConversationRuntime, NativeModelPreferences, NativePermissionPolicySnapshot,
     NativeWorkspaceScopeSnapshot};
-use machine_god_core::{BoxFuture, CancellationToken, ManagedConfiguration};
+use machine_god_core::{BoxFuture, CancellationToken, ManagedConfiguration, ManagedRelationshipAction, ToolContext};
 use std::{fmt, sync::Arc, task::{Context, Poll}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +33,8 @@ pub(crate) struct ManagedRuntimeRequest {
     pub child_id: String,
     pub generation: u64,
     pub transcript: JournalTranscript,
+    /// Retain inside actual owned cleanup, even if the manager observer vanishes.
+    pub journal_owner: JournalOwner,
     pub configuration: ManagedConfiguration,
     /// None restores this exact saved transcript under explicit factory authority.
     pub origin: Option<ManagedRuntimeOrigin>,
@@ -47,6 +49,24 @@ pub(crate) trait ManagedRuntimeFactory: Send + Sync + 'static {
     /// acceptance. This must never poll a provider or execute a model-facing tool.
     fn prepare(&self, request: ManagedRuntimeRequest, cancellation: CancellationToken)
         -> BoxFuture<'static, Result<ManagedPreparation, ManagedRuntimeError>>;
+}
+
+pub(crate) struct ManagedRelationshipProposal {
+    pub origin: ManagedRuntimeOrigin,
+    pub context: ToolContext,
+    pub child_id: String,
+    pub generation: u64,
+    pub revision: u64,
+    pub action: ManagedRelationshipAction,
+    pub previous_parent: Option<JournalTranscript>,
+    pub parent: JournalTranscript,
+}
+
+pub(crate) trait ManagedRelationshipAuthorizer: Send + Sync + 'static {
+    /// Ask the original principal's shared human inbox for this exact proposal.
+    /// Permission modes and supplied public IDs never imply approval here.
+    fn authorize(&self, proposal: ManagedRelationshipProposal, cancellation: CancellationToken)
+        -> BoxFuture<'static, Result<bool, ManagedRuntimeError>>;
 }
 
 pub(crate) enum ManagedPreparation {
@@ -86,4 +106,4 @@ macro_rules! redacted_debug {
         }
     })+};
 }
-redacted_debug!(ManagedRuntimeOrigin, ManagedRuntimeRequest, ManagedPreparation, PreparedManagedRuntime);
+redacted_debug!(ManagedRuntimeOrigin, ManagedRuntimeRequest, ManagedPreparation, PreparedManagedRuntime, ManagedRelationshipProposal);
