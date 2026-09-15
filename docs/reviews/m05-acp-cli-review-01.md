@@ -799,3 +799,49 @@ absence of staging artifacts. The three staging regressions remain on macOS;
 all original recording scenarios, deadlines and assertions remain unchanged.
 Component Rust 1.94.1 formatting and diff checks passed. No source build or
 replacement runtime acceptance is asserted by this component record.
+
+## Candidate 1ca9eae2: complete ACP acceptance
+
+Candidate `1ca9eae2c74745d812242876dea1720815873476` integrates the macOS-only
+recording executable repair without changing production resolver behavior,
+deadlines or existing scenario assertions. Its complete exact-Rust-1.94.1 local
+gate passed on Linux and macOS, including locked release helpers, warnings-denied
+Clippy, FreeBSD/WASI checks, dependency policy/audit, pinned compatibility and
+Unicode checks, workspace/integration tests, doctests and fresh-release CLI smoke.
+
+Linux recording tests passed 17 with one existing ignore; background-supervisor
+tests passed 52, PTY tests 23 and native ACP tests 157. The full CLI suite passed
+550 with six existing ignores, and native passed 3,581 with 11 existing ignores.
+All 269 repository Python tests passed. Linux retained default test concurrency.
+macOS recording tests passed 19 with one existing ignore, including both formerly
+timed-out MCP scenarios; background-supervisor passed 52, PTY 27 and ACP 157.
+Its serial full CLI suite passed 552 with six existing ignores, and native passed
+3,583 with 12 existing ignores. The locked production helper hashes remained:
+Linux `ce9f130c02b29067a22e54892bd6757d19d92478f1835138d03dc64312ab3f30`;
+macOS `a7bc5cf57cf8d59c0a02fb7727c02bc37c7edbec6c9fde632a03a9272648e728`.
+
+Three fresh R8 reviewers independently inspected this exact candidate against
+original ACP base `658f3366258cf1207904f9c2a274f32db2bb981b`: correctness/API,
+lifecycle/platform and resources/performance each established zero actionable
+findings. Their scope included the whole ACP feature and all intervening resolver,
+input-ACK, actual worker/TLS/reap completion, HTTP/PTY fixture, blocking-publication
+and recording-launch repairs. These were read-only local source/caller/contract/
+regression reviews, not Bugbot or independent runtime acceptance. All review
+worktrees were verified unchanged and removed.
+
+Exact feature CI `34950373122` passed every selected job, including Linux and
+macOS on both architectures; dependency audit was correctly unselected.
+Benchmark `34950373029` passed with unexpired exact-feature artifacts:
+bootstrap `10389505863` (631 bytes) and upstream `10389685753` (110,297 bytes),
+both expiring `2026-12-14T09:03:18Z`. Main was then fast-forwarded from
+`91a94859057d6f965f57bf2a8976261afc6da290` to this candidate without force.
+
+Exact main CI `34954002810` subsequently passed all selected jobs, including
+both Linux and both macOS architectures and the final aggregate. Main Benchmark
+`34954002729` also passed. Its exact-main artifacts were verified on
+`2026-09-15 10:18:10 UTC`: bootstrap `10390642298` (630 bytes) and upstream
+`10390429482` (110,247 bytes), both unexpired and expiring
+`2026-12-14T09:42:38Z`. Their names, run, branch and full SHA match this candidate.
+This accepts the complete ACP feature without an M07 performance claim. The
+subsequent documentation-only delivery record adds no product behavior or
+benchmark artifacts and does not require another adversarial product review.

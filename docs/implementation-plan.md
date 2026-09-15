@@ -30,16 +30,16 @@ functionality merely because it shares an implementation with an older mode.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `63`
-- Delivered main: `8dfe92553132bc4d9548348fd781281b977ec6ca`
-- Main CI: `34770898541` (`GREEN`)
-- Main Benchmark evidence: `34770898622` (`GREEN`)
+- Delivered slices: `64`
+- Delivered main: `1ca9eae2c74745d812242876dea1720815873476`
+- Main CI: `34954002810` (`GREEN`)
+- Main Benchmark evidence: `34954002729` (`GREEN`)
 - Active branch: `agent/m64-acp-cli`
-- Active phase: `M05 ACP replacement after recording executable-busy failure`
-- Next gate: `validate macOS-only recording staging and Linux no-copy launch; full replacement local gate, three fresh ACP reviews and exact feature/main gates before delivery`
+- Active phase: `M05 ACP documentation seal`
+- Next gate: `pass exact lightweight documentation feature/main gates, then start the complete managed-agent tool and CLI on agent/m65-managed-subagents`
 <!-- canonical-live-status:end -->
 
-The complete terminal, combined CLI, background, skills and MCP CLI are delivered.
+The complete terminal, combined CLI, background, skills, MCP and ACP are delivered.
 The canonical behavior passed the exact local gate, three fresh reviews and
 feature/main CI and Benchmark gates on supported Linux/macOS architectures.
 Both unexpired exact-main artifacts are retained; main advanced by fast-forward.
@@ -50,8 +50,9 @@ Detailed candidate, failure, remediation and review history is retained in the
 [terminal review](reviews/m03-terminal-full-review-01.md),
 [combined CLI review](reviews/m03-cli-full-review-01.md),
 [background CLI review](reviews/m05-background-cli-review-01.md),
-[skills CLI review](reviews/m05-skills-cli-review-01.md), and
-[MCP CLI review](reviews/m05-mcp-cli-review-01.md).
+[skills CLI review](reviews/m05-skills-cli-review-01.md),
+[MCP CLI review](reviews/m05-mcp-cli-review-01.md), and
+[ACP review](reviews/m05-acp-cli-review-01.md).
 This compact plan does not repeat that history.
 
 ### Delivered terminal acceptance boundary
@@ -261,6 +262,7 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 61 | Complete interactive background list/stop/open/logs, owned terminal control and unified read-only histories | [background CLI](background-cli.md), [host](native-reference-host.md) | [review](reviews/m05-background-cli-review-01.md) | `fe7a793c` |
 | 62 | Complete skills commands, local/Git management, inline picking and prompt-bound invocation/context | [skills CLI](skills-cli.md) | [review](reviews/m05-skills-cli-review-01.md) | `431030b9` |
 | 63 | Complete production MCP, modern stdio/HTTP, tool and human continuations, OAuth, catalog activation and CLI composition | [MCP CLI](mcp-cli.md) | [review](reviews/m05-mcp-cli-review-01.md) | `8dfe9255` |
+| 64 | Complete modern ACP, native sessions, human continuations, ephemeral MCP, bounded wire/stdio and owned settlement | [wire](acp-protocol.md), [sessions](acp-sessions.md) | [review](reviews/m05-acp-cli-review-01.md) | `1ca9eae2` |
 
 The exact delivered-main record is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
@@ -355,59 +357,41 @@ artifacts were verified. These delivered features are regression acceptance, not
 M07 claims; their completed worktrees are removed. Runtime/resource state remains
 native and core effect-free. Pinned `teams` means account/team selection, not agents.
 
-## Next complete feature: modern ACP CLI
+## Delivered modern ACP boundary
 
-Implement one complete native `acp` feature on `agent/m64-acp-cli` after the
-MCP documentation seal. Reuse native orchestration; keep CLI limited to host I/O.
-Do not deliver codec, session or interaction fragments separately.
+The complete native implementation passed the full Linux/macOS local gate,
+three fresh whole-feature reviews and exact feature/main CI and Benchmark gates.
+Main advanced by fast-forward, and both unexpired exact-main artifacts were
+verified. This is regression acceptance, not an M07 performance claim.
 
-Implementation checkpoint: [wire](acp-protocol.md), [session](acp-sessions.md),
-[client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) compose
-native session ownership, request dispatch, bounded projections and CLI stdio.
-The blocking-slot replacement passed Linux's full gate and macOS focused
-regressions, but two macOS workspace MCP recording scenarios timed out at startup.
-Diagnostic stacks and unchanged-executable relocation isolate CoreFoundation's
-scan of Cargo's large dependency directory. The first fixture-local staging
-candidate then hit Linux child-spawn `ETXTBSY`; staging is now macOS-only,
-while Linux reuses its running executable without a writable copy.
-Preserve real resolver behavior and existing deadlines. Validate the complete
-replacement before counting delivery. Failure, remediation,
-acceptance and independent review provenance belong in the
-[review history](reviews/m05-acp-cli-review-01.md).
+[Wire](acp-protocol.md), [sessions](acp-sessions.md),
+[client interaction](acp-interactions.md) and [ephemeral MCP](acp-mcp.md) own
+the complete feature contract; CLI remains a thin stdio host:
 
-- ACP version 1 over bounded newline JSON-RPC: initialize/capabilities,
-  new/load/resume/close/list, prompt/cancel and set_config_option.
-  Preserve the pinned 8 MiB frame and 32 pending-outbound bounds, one active
-  prompt, correlation, backpressure, malformed-input handling and EOF cleanup.
-- Native session creation/origin, bounded scoped listing, owned transitions,
-  model/permission configuration and current native persistence. Load projects
-  saved history without executing tools; resume does not replay history.
-  Stream text/resource prompts, supported command and tool updates, and emit
-  the prompt response only after native history/checkpoint finalization.
-- Correlated permission and modern form/URL elicitation requests retain exact
-  session/turn/operation/round custody. Session grants are not persistent rules.
-  Add an explicitly injected client-managed URL endpoint and modern
-  `elicitation/complete` tied to continuation completion, including failure,
-  cancellation and stale/drop invalidation; never restore legacy URL registries.
-- Session `mcpServers` is authoritative and ephemeral for new/load/resume:
-  absent or empty means none, not profile fallback. Admit modern stdio and HTTP,
-  literal environment selection and resolved Authorization without persisting
-  injected config/secrets or using stored credentials. Require readiness,
-  atomic replacement, old-selection preservation on failure and owned retirement.
-- Preserve native filesystem/terminal execution and cleanup. The pinned client
-  capability flags are inert; do not invent editor-side delegation. Exclude
-  deprecated SSE transport, historical negotiation, foreign-session import and
-  WASM-only session removal. Modern HTTP SSE response framing remains supported.
-- Test actual wire/CLI composition, permission round trips, history projection,
-  cancellation/EOF/blocked output, failed/stale replacement, cross-session MCP
-  isolation and sentinels proving no profile/credential fallback or writes.
+- Version-1 newline JSON-RPC, 8 MiB frames, 32 pending outbound requests, one
+  active prompt, exact correlation, backpressure, malformed input and EOF cleanup.
+- Initialize/capabilities, new/load/resume/close/list, prompt/cancel and
+  set_config_option; native origins, scoped listing, model/permission selection,
+  owned transitions and current persistence. Load projects saved history without
+  execution; resume never replays it. Text/resource prompts and command/tool
+  updates settle history/checkpoints before the prompt response.
+- Exact permission and modern form/URL continuation custody, an injected client
+  URL endpoint and elicitation/complete through success, failure, cancellation
+  and stale/drop invalidation. Session grants are not persistent rules.
+- Authoritative ephemeral mcpServers: absent/empty means none. Modern stdio/HTTP,
+  literal environment and resolved Authorization, no profile/credential fallback
+  or injected-secret persistence; readiness, atomic replacement, failed-selection
+  preservation and owned retirement.
+- Native filesystem/terminal execution remains; client capability flags grant no
+  editor delegation. No deprecated SSE transport, negotiation, foreign import or
+  WASM-only removal; modern HTTP response SSE remains.
 
-Parallel worktrees may own native session/driver, native interaction plus
-ephemeral MCP activation, and pure wire/thin CLI lanes. Freeze shared interfaces
-first and assign each shared file to one owner. The coordinator integrates and
-runs the full feature gate, then three fresh reviews and exact remote evidence.
+Composed wire/CLI, human round trips, history, cancellation, blocked output,
+stale replacement and cross-session isolation tests cover this boundary.
+Failure, remediation, local/remote evidence and independent review provenance
+remain in the [review history](reviews/m05-acp-cli-review-01.md).
 
-## Following complete feature: managed subagents
+## Next complete feature: managed subagents
 
 After ACP delivery and its documentation seal, use
 `agent/m65-managed-subagents` for one complete managed-agent tool and CLI feature.
@@ -430,6 +414,10 @@ update it with implementation, using the pinned source as behavioral evidence.
   Keep distinct conversation runtimes, sessions, workspace selections, policies,
   grants, turn routes and ephemeral MCP custody. Weak requesters/UI observations
   must not retain runtimes or form host-resource ownership cycles.
+- Bind model admission to an opaque actual-turn/call execution witness, not
+  publicly constructible ToolContext IDs. Core supplies identity/orchestration
+  proof only; native privately admits principal/run authority. Repeated provider
+  call IDs, stale generations and direct structural tool calls cannot forge it.
 - Use explicit aggregate execution/residency/queue/byte/waiter budgets and a fair
   shared scheduler, with no idle thread or timer per child. Page settled durable
   history rather than imposing a lifetime creation limit. A completion ring is
@@ -469,6 +457,17 @@ Test restart/approval/FIFO and dependency races, aggregate pressure, owner-local
 undo, stale/blocked UI, cancellation and actual cleanup on Linux/macOS with fresh
 release CLI scenarios. Run the complete gate and three fresh reviews for this
 whole feature, then exact feature/main artifact-producing gates and worktree cleanup.
+
+### Remaining M05 integration after managed agents
+
+Complete model-facing skill discovery/location and filtered local/Git installation
+through the delivered native catalog/installer. Human /skills acceptance does not
+widen the still workspace-local skill and local-only install_skill tools; replace
+those narrower paths with model-bound permission, cancellation and receipt tests.
+Pinned teams requires account OAuth acquisition/refresh and source selection;
+assign its minimal account prerequisites explicitly across M05/M06 before coding.
+It is not agent management. The pinned /alias is only an unavailable notice,
+not evidence for a configurable alias engine or another agent slash-command family.
 
 ## Required gates
 
