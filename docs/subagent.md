@@ -282,6 +282,74 @@ Returned observations/pages are caller-owned bounded values, not additional
 execution leases. Storage and residency pressure are explicit bounds, not a
 lifetime count of children created.
 
+## Native notifications and deadlines
+
+The native notice component freezes the normalized notification policy for each
+accepted work item. Actual start begins its checked monotonic interval/duration
+schedule; acceptance alone starts no timer. Started notices are optional,
+declared milestones are emitted once per work/name, and completed/failed/cancelled
+notices default on and are emitted at most once per work. Disabled terminal
+delivery still applies the terminal stop condition. Duration expiry stops
+periodic reporting before a report at that same observation, without inventing
+a duration event; independently enabled terminal delivery remains available.
+An explicit stop prevents new emissions. Close also invalidates pending context
+snapshots; durable history custody must already exist before removing those
+pending projections.
+
+Every interval is one actual observed state with an exact first/last tick range,
+coalesced interval count and explicit gap flag. Late observation never synthesizes
+missed state transitions or individual reports. All duration conversion,
+monotonic addition, tick arithmetic and capacity checks precede advancement of
+the corresponding emission cursor. State-observation cursors are separate from
+actual source-event cursors, so observing a terminal snapshot cannot consume its
+still-required terminal event notice.
+
+Notice identity combines the original source principal ID/generation, work
+ID/generation, supplied durable source-event sequence and typed notice kind;
+interval identity includes its exact tick range. A source sequence means the
+manager's exact persisted event sequence, not a page number that can contain
+multiple records. Bounded opaque history references identify journal records,
+not filesystem read authority. Reparent/detach changes the relationship used by
+future emissions. Each already-pending notice keeps its original parent and
+relationship revision; parent retirement invalidates only that target's pending
+context. Weak work references retain no principal, runtime or manager ownership.
+
+Default bounds are 64 trackers, 256 retained notices, 1 MiB retained notice
+bytes and 8 KiB per encoded notice. Configurable hard ceilings are 4,096
+trackers/notices, 16 MiB retained bytes and 16 KiB per notice. Retained accounting
+includes fixed record storage and payloads pinned by old batches, including
+already-acknowledged records. A rejected insertion does not silently advance
+the source event or timer cursor. Stopped/terminal trackers are reclaimable only
+after pending notice custody has been retained or explicitly closed; history is
+not a lifetime child-count cap.
+
+Snapshots are non-consuming, bounded to 64 records/64 KiB and round-robin across
+source works while preserving each work's order. They report remaining data when
+the caller's remaining context budget cannot fit it. An opaque exact-token subset
+acknowledgement removes only those original records; new arrivals, sibling
+principals and unrelated records survive stale, repeated or foreign receipts.
+The manager validates a batch immediately before serialized context/checkpoint
+admission. An in-memory acknowledgement is not durable delivery: root composition
+must first retain the exact confirmed checkpoint/cursor and only then acknowledge
+its accepted subset. Skill, MCP and notice context share the root's 64 KiB
+checkpoint bound. Notices enter a future explicitly started parent turn, never
+an active-turn injection or an automatic idle turn.
+
+Explicit replay accepts only bounded original persisted identities and payloads,
+without retargeting, inferring events or starting timers/execution. Root restores
+only unacknowledged journal records against their original work/source high-water
+and keeps recovered work stopped until explicit resolution. Private batch tokens
+are process-local allocations, not another durable sequence or persisted authority.
+
+One manager-level deadline future uses the explicitly injected paired
+`NativeMcpRuntimeClock::now`/`sleep_until` boundary. It owns at most one sleep,
+retargets when the earliest interval/duration changes, and releases the timer on
+cancellation, drop or removal of every deadline. There is no child thread, task
+or timer. Clock calls, timer destruction and caller waker operations occur outside
+the notice registry lock; the deadline observer is weak and performs no notice
+emission itself. Root composition supplies actual state observations and owns
+journal publication, wake-driven polling and lifecycle integration.
+
 ## Source evidence
 
 The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and
