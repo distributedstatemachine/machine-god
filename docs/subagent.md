@@ -6,6 +6,12 @@ durable acceptance, scheduling, persistence and lifetime. Core performs no
 ambient filesystem, process, environment, network, clock or thread operations.
 The foreground-only API and its global counters are removed.
 
+Factory preparation explicitly selects `Create` or `Restore`; the presence of
+captured caller authority never chooses between them. Create cannot reuse an
+existing transcript; restore cannot publish an empty replacement. Explicit
+resume, reopen and nonresident message preparation carry the exact admitted
+actor's captured workspace, policy and preferences independently of this kind.
+
 ## Commands
 
 The control journal retains immutable controller transcript identity and the

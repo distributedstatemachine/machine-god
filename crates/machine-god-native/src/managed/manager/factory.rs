@@ -30,6 +30,7 @@ pub(crate) struct ManagedRuntimeOrigin {
 
 #[derive(Clone)]
 pub(crate) struct ManagedRuntimeRequest {
+    pub kind: ManagedRuntimePreparationKind,
     pub child_id: String,
     pub generation: u64,
     pub transcript: JournalTranscript,
@@ -40,6 +41,9 @@ pub(crate) struct ManagedRuntimeRequest {
     pub origin: Option<ManagedRuntimeOrigin>,
     pub now_ms: i64,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ManagedRuntimePreparationKind { Create, Restore }
 
 /// Shared host services implement this; never construct an engine per child.
 /// Both returned futures must remain inert before their first poll.
