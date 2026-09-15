@@ -241,6 +241,8 @@ scope. A host admits at most 64 open or unsettled cohorts; closed, settled cohor
 release capacity even when old completion observers remain. Poll attribution is
 weak, allocation-bound and restored on return or unwind. Worker futures capture
 their original attribution before polling; later callers cannot retarget them.
+An explicit run poll also takes precedence over an unrelated worker's ambient
+attribution when an embedded driver queues effects from inside that worker.
 Implicit attribution to a foreign host fails closed. Closing or dropping a cohort
 rejects new work but does not discharge already-owned cleanup.
 Trusted nested service construction may explicitly verify the original source
@@ -257,6 +259,14 @@ reaping independently of returned values, cancellation and abandoned observers.
 Completion observation uses the existing wake-driven primitive, without a new
 thread, pool, timer or worker admission per child. The manager binds the cohort
 to the exact scheduler run and checks runtime settlement separately.
+
+The manager may bind its journal-owner lease as one bounded cohort keepalive,
+never a runtime, session or manager reference. Every admitted host worker ticket
+retains that lease independently, and transferred cleanup retains the exact host
+ticket. Successful service promotion refunds run capacity without releasing the
+journal owner before the service's actual collector join/TLS/reap settlement.
+The open cohort also retains the lease; closure and actual run settlement release
+that reference outside locks, so old completion observers cannot keep it alive.
 
 A successful handoff to a retained service removes only that owner's run ticket,
 never its host ticket or another cleanup snapshot. Terminal processes cross this

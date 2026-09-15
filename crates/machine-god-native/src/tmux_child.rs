@@ -202,7 +202,10 @@ mod tests {
             }
         }
         let scope = crate::NativeOwnedWorkerScope::new();
-        let run = scope.begin_run().unwrap();
+        let owner = Arc::new(());
+        let owner_weak = Arc::downgrade(&owner);
+        let run = scope.begin_run_with_keepalive(owner.clone()).unwrap();
+        drop(owner);
         let sibling = scope.begin_run().unwrap();
         let release = Release(Arc::new(AtomicBool::new(true)));
         let deferred = Arc::clone(&release.0);
@@ -219,6 +222,7 @@ mod tests {
         sibling.close();
         assert!(sibling.completion().is_complete());
         assert!(!run.completion().is_complete());
+        assert!(owner_weak.upgrade().is_some());
         drop(release);
         let deadline = Instant::now() + Duration::from_secs(5);
         while !run.completion().is_complete() {
@@ -230,6 +234,7 @@ mod tests {
         }
         scope.close();
         scope.completion().wait_on_worker().unwrap();
+        assert!(owner_weak.upgrade().is_none());
     }
 
     #[test]

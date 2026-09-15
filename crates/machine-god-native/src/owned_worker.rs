@@ -137,10 +137,13 @@ struct ScopeStatus {
     tickets: usize,
     runs: usize,
     released: bool,
+    keepalive: Option<Arc<dyn Send + Sync>>,
 }
 
 struct ScopeTicket {
     state: Arc<ScopeState>,
+    // Host tickets retain admitted journal custody independently of run refund.
+    keepalive: Option<Arc<dyn Send + Sync>>,
 }
 
 /// Metadata only. Clones extend an already admitted cleanup obligation; they
@@ -198,6 +201,7 @@ impl NativeOwnedWorkerTicket {
 
 impl Drop for ScopeTicket {
     fn drop(&mut self) {
+        drop(self.keepalive.take());
         let mut status = self
             .state
             .status
@@ -274,6 +278,7 @@ impl NativeOwnedWorkerScope {
         let run = RunAttribution::current()
             .map(|run| run.admit(&self.state))
             .transpose()?;
+        let (run, keepalive) = run.map_or((None, None), |(run, keepalive)| (Some(run), keepalive));
         let mut status = self
             .state
             .status
@@ -289,6 +294,7 @@ impl NativeOwnedWorkerScope {
         Ok(NativeOwnedWorkerTicket(
             Arc::new(ScopeTicket {
                 state: Arc::clone(&self.state),
+                keepalive,
             }),
             Arc::new(RunEnrollment::new(run)),
         ))
@@ -350,7 +356,7 @@ impl NativeOwnedWorkerCompletion {
             .status
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        status.closed && status.tickets == 0
+        status.closed && status.tickets == 0 && (self.state.parent.is_none() || status.released)
     }
 
     /// Observes actual collector/TLS/reap completion without another worker or
@@ -415,7 +421,10 @@ impl NativeOwnedWorkerCompletion {
             .status
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while !status.closed || status.tickets != 0 {
+        while !status.closed
+            || status.tickets != 0
+            || (self.state.parent.is_some() && !status.released)
+        {
             status = self
                 .state
                 .wake

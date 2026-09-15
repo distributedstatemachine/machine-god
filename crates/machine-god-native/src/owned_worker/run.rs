@@ -2,7 +2,7 @@
 
 use super::{
     NativeOwnedWorkerCleanup, NativeOwnedWorkerCompletion, NativeOwnedWorkerScope,
-    NativeOwnedWorkerSpawnError, NativeOwnedWorkerTicket, ScopeState, ScopeTicket,
+    NativeOwnedWorkerSpawnError, NativeOwnedWorkerTicket, ScopeState, ScopeStatus, ScopeTicket,
     current_worker_ticket,
 };
 use std::cell::RefCell;
@@ -10,6 +10,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, Weak};
 
 const MAX_RUNS: usize = 64;
+
+type RunAdmission = (Arc<ScopeTicket>, Option<Arc<dyn Send + Sync>>);
 
 /// One admitted run's completion cohort. It owns neither a runtime nor worker.
 /// The manager binds this non-clone value to its actual scheduler run. Closing
@@ -89,6 +91,22 @@ impl NativeOwnedWorkerScope {
     /// # Errors
     /// Rejects a closed host or exhausted resident cohort capacity.
     pub fn begin_run(&self) -> Result<NativeOwnedWorkerRun, NativeOwnedWorkerSpawnError> {
+        self.begin_run_inner(None)
+    }
+
+    /// Retains only the manager's journal-owner lease, never a runtime/session.
+    /// Independent host tickets keep this custody after successful promotion.
+    pub(crate) fn begin_run_with_keepalive(
+        &self,
+        keepalive: Arc<dyn Send + Sync>,
+    ) -> Result<NativeOwnedWorkerRun, NativeOwnedWorkerSpawnError> {
+        self.begin_run_inner(Some(keepalive))
+    }
+
+    fn begin_run_inner(
+        &self,
+        keepalive: Option<Arc<dyn Send + Sync>>,
+    ) -> Result<NativeOwnedWorkerRun, NativeOwnedWorkerSpawnError> {
         let mut status = self
             .state
             .status
@@ -102,6 +120,10 @@ impl NativeOwnedWorkerScope {
             scope: NativeOwnedWorkerScope {
                 state: Arc::new(ScopeState {
                     parent: Some(Arc::downgrade(&self.state)),
+                    status: Mutex::new(ScopeStatus {
+                        keepalive,
+                        ..ScopeStatus::default()
+                    }),
                     ..ScopeState::default()
                 }),
             },
@@ -112,7 +134,7 @@ impl NativeOwnedWorkerScope {
 
 impl ScopeState {
     pub(super) fn release_run_capacity(&self) {
-        let Some(parent) = self.parent.as_ref().and_then(Weak::upgrade) else {
+        let Some(parent) = self.parent.as_ref() else {
             return;
         };
         let mut status = self
@@ -122,13 +144,21 @@ impl ScopeState {
         if status.released || !status.closed || status.tickets != 0 {
             return;
         }
-        status.released = true;
+        let keepalive = status.keepalive.take();
         drop(status);
-        parent
-            .status
+        // No scope or accounting lock spans destruction of the journal lease.
+        drop(keepalive);
+        if let Some(parent) = parent.upgrade() {
+            parent
+                .status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .runs -= 1;
+        }
+        self.status
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .runs -= 1;
+            .released = true;
     }
 }
 
@@ -179,7 +209,7 @@ impl RunAttribution {
     pub(super) fn admit(
         &self,
         host: &Arc<ScopeState>,
-    ) -> Result<Arc<ScopeTicket>, NativeOwnedWorkerSpawnError> {
+    ) -> Result<RunAdmission, NativeOwnedWorkerSpawnError> {
         if !Weak::ptr_eq(&self.host, &Arc::downgrade(host)) {
             return Err(NativeOwnedWorkerSpawnError);
         }
@@ -195,8 +225,15 @@ impl RunAttribution {
             .tickets
             .checked_add(1)
             .ok_or(NativeOwnedWorkerSpawnError)?;
+        let keepalive = status.keepalive.clone();
         drop(status);
-        Ok(Arc::new(ScopeTicket { state }))
+        Ok((
+            Arc::new(ScopeTicket {
+                state,
+                keepalive: None,
+            }),
+            keepalive,
+        ))
     }
 }
 
@@ -298,9 +335,21 @@ struct FrozenTicketWitness {
 }
 impl NativeOwnedWorkerAttribution {
     pub(crate) fn current() -> Self {
+        let run = RunAttribution::current();
+        // An embedded driver may explicitly poll run A on a worker belonging
+        // to B. Only an exactly matching worker ticket is a continuation of
+        // the selected operation; ambient worker identity cannot override A.
+        let worker = current_worker_ticket().filter(|ticket| match (&run, ticket.attribution()) {
+            (Some(selected), Some(worker)) => {
+                Weak::ptr_eq(&selected.host, &worker.host)
+                    && Weak::ptr_eq(&selected.state, &worker.state)
+            }
+            (None, None) => true,
+            _ => false,
+        });
         Self {
-            run: RunAttribution::current(),
-            worker: current_worker_ticket().map(|ticket| FrozenTicketWitness {
+            run,
+            worker: worker.map(|ticket| FrozenTicketWitness {
                 host: Arc::downgrade(&ticket.0),
                 run: ticket.1.snapshot().as_ref().map(Arc::downgrade),
             }),

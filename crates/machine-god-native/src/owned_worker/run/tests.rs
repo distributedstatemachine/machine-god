@@ -1,5 +1,6 @@
 use super::*;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::task::{Context, Waker};
 use std::time::Duration;
@@ -221,4 +222,104 @@ fn abandoned_handoff_and_cancelled_run_keep_actual_worker_obligation() {
     run.completion().wait_on_worker().unwrap();
     scope.close();
     scope.completion().wait_on_worker().unwrap();
+}
+
+#[test]
+fn explicit_polled_run_overrides_unrelated_ambient_worker_for_queued_effects() {
+    let scope = NativeOwnedWorkerScope::new();
+    let caller = scope.begin_run().unwrap();
+    let ambient = scope.begin_run().unwrap();
+    let caller_completion = caller.completion();
+    let (send, receive) = sync_channel(1);
+    ambient
+        .with_poll(|| {
+            scope.spawn(move || {
+                let attribution = caller.with_poll(NativeOwnedWorkerAttribution::current);
+                let cleanup = attribution.admit().unwrap().unwrap();
+                assert!(cleanup.ticket.owns(&caller.scope.state));
+                caller.close();
+                send.send(cleanup).unwrap();
+            })
+        })
+        .unwrap();
+    let cleanup = receive.recv_timeout(Duration::from_secs(10)).unwrap();
+    ambient.close();
+    ambient.completion().wait_on_worker().unwrap();
+    assert!(!caller_completion.is_complete());
+    drop(cleanup);
+    caller_completion.wait_on_worker().unwrap();
+    scope.close();
+    scope.completion().wait_on_worker().unwrap();
+}
+
+struct JournalOwnerDrop(Arc<AtomicBool>);
+impl Drop for JournalOwnerDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+#[test]
+fn journal_keepalive_ends_after_empty_closed_cohort_not_observer_drop() {
+    let scope = NativeOwnedWorkerScope::new();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let owner = Arc::new(JournalOwnerDrop(Arc::clone(&dropped)));
+    let weak = Arc::downgrade(&owner);
+    let run = scope.begin_run_with_keepalive(owner.clone()).unwrap();
+    let completion = run.completion();
+    drop(owner);
+    assert!(weak.upgrade().is_some());
+    run.close();
+    assert!(completion.is_complete());
+    assert!(weak.upgrade().is_none());
+    assert!(dropped.load(Ordering::Acquire));
+    drop(run);
+    assert!(completion.is_complete());
+}
+
+#[test]
+fn journal_keepalive_survives_promotion_failed_cleanup_and_actual_tls_join() {
+    struct Gate(
+        std::sync::mpsc::SyncSender<()>,
+        std::sync::mpsc::Receiver<()>,
+    );
+    impl Drop for Gate {
+        fn drop(&mut self) {
+            self.0.send(()).unwrap();
+            self.1.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+    }
+    thread_local! { static GATE: RefCell<Option<Gate>> = const { RefCell::new(None) }; }
+    let scope = NativeOwnedWorkerScope::new();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let owner = Arc::new(JournalOwnerDrop(Arc::clone(&dropped)));
+    let weak = Arc::downgrade(&owner);
+    let run = scope.begin_run_with_keepalive(owner.clone()).unwrap();
+    let (send, receive) = sync_channel(1);
+    let (entered, entered_rx) = sync_channel(1);
+    let (release, release_rx) = sync_channel(1);
+    run.with_poll(|| {
+        scope.spawn(move || {
+            let failed = NativeOwnedWorkerScope::retain_current_cleanup().unwrap();
+            let handoff = current_service_handoff().unwrap();
+            GATE.with(|slot| *slot.borrow_mut() = Some(Gate(entered, release_rx)));
+            send.send((failed, handoff)).unwrap();
+        })
+    })
+    .unwrap();
+    drop(owner);
+    let (failed, handoff) = receive.recv_timeout(Duration::from_secs(10)).unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    run.close();
+    handoff.promote();
+    assert!(!run.completion().is_complete());
+    drop(failed);
+    run.completion().wait_on_worker().unwrap();
+    assert!(weak.upgrade().is_some());
+    assert!(!dropped.load(Ordering::Acquire));
+    release.send(()).unwrap();
+    scope.close();
+    scope.completion().wait_on_worker().unwrap();
+    assert!(weak.upgrade().is_none());
+    assert!(dropped.load(Ordering::Acquire));
 }
