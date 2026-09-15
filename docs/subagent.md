@@ -358,6 +358,9 @@ retry. Prepared resources receive and retain the journal owner lease through
 actual attributed worker, TLS and process-reap cleanup, including abandonment
 of the manager observer. Runtime event completion is not actual cleanup;
 independent per-run settlement and final principal closure must be confirmed.
+Failed readiness/auth/checkpoint admission also has an independent cleanup
+receipt, even before an actual run exists. The manager never treats a missing
+or previous run reference as proof that this newer admission has settled.
 Attach/reparent authorization uses an injected human endpoint carrying the exact
 actor, target generation/revision and old/new parent proposal. Supplied labels
 or permission mode alone never authorize that relationship change.
