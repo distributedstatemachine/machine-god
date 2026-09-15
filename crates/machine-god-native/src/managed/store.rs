@@ -147,6 +147,12 @@ impl ManagedJournal {
         JournalOwner(self.shared.clone())
     }
 
+    /// Conservative manager head/decode/work/presentation allowance. Runtime and
+    /// mailbox payloads retain their separate aggregate owners and limits.
+    pub(crate) fn resident_reservation_bytes(&self) -> usize {
+        self.shared.limits.head_bytes * 4 + 256 * 1024
+    }
+
     fn run<T: Send + 'static>(
         &self,
         operation: impl FnOnce(&Arc<Shared>) -> Result<T, JournalError> + Send + 'static,

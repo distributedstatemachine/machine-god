@@ -83,6 +83,17 @@ pub(super) fn apply(
         JournalMutation::Intent(intent) => {
             head.intent = Some(intent);
         }
+        JournalMutation::CancelIdle => {
+            if head.intent != Some(JournalIntent::Cancel) || !head.queue.is_empty() {
+                return Err(Error::Conflict);
+            }
+            head.intent = None;
+            head.status = if head.mode == Mode::Persistent {
+                State::Idle
+            } else {
+                State::Cancelled
+            };
+        }
         JournalMutation::ResolveHead { work_id, retry } => {
             resolve(head, &work_id, retry)?;
             return Ok(vec![JournalRecord::WorkResolved { work_id, retry }]);
@@ -92,11 +103,18 @@ pub(super) fn apply(
             head.configuration = config.clone();
             return Ok(vec![JournalRecord::Configuration(config)]);
         }
-        JournalMutation::Relationship(parent) => {
-            if let Some(parent) = &parent {
+        JournalMutation::Relationship {
+            parent_id,
+            parent_owner,
+        } => {
+            if let Some(parent) = &parent_id {
                 validation::id(parent)?;
             }
-            head.parent_id = parent;
+            if parent_id.is_some() != parent_owner.is_some() {
+                return Err(Error::Invalid);
+            }
+            head.parent_id = parent_id;
+            head.parent_owner = parent_owner;
         }
         JournalMutation::NoticeCursor(cursor) => {
             if cursor < head.notice_cursor || cursor >= head.next_sequence {
@@ -171,7 +189,10 @@ fn validate_history(records: &[JournalRecord]) -> Result<(), Error> {
     if records.iter().any(|item| {
         !matches!(
             item,
-            JournalRecord::History(_) | JournalRecord::Event(_) | JournalRecord::Tool(_)
+            JournalRecord::History(_)
+                | JournalRecord::Event(_)
+                | JournalRecord::Tool(_)
+                | JournalRecord::Notice(_)
         )
     }) {
         return Err(Error::Invalid);

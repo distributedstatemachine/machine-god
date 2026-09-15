@@ -100,7 +100,9 @@ fn create(id: &str) -> JournalCreate {
         mode: ManagedAgentMode::Persistent,
         configuration: config(),
         transcript: transcript(id),
+        controller: transcript("parent"),
         parent_id: Some("parent".into()),
+        parent_owner: Some(transcript("parent")),
         initial_work: Some(work("work-1")),
     }
 }
@@ -109,6 +111,117 @@ fn confirmed(publication: JournalPublication) -> JournalSnapshot {
         panic!("confirmed publication required: {publication:?}");
     };
     *snapshot
+}
+
+#[test]
+fn lineage_survives_empty_creation_and_exact_reparent_history() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let mut record = create("lineage");
+    record.initial_work = None;
+    let initial = confirmed(block_on(journal.create(record)).unwrap());
+    assert_eq!(initial.head.controller, transcript("parent"));
+    let reparented = confirmed(
+        block_on(journal.mutate(
+            initial,
+            JournalMutation::Relationship {
+                parent_id: Some("other".into()),
+                parent_owner: Some(transcript("other")),
+            },
+        ))
+        .unwrap(),
+    );
+    assert_eq!(reparented.head.controller, transcript("parent"));
+    assert_eq!(reparented.head.parent_owner, Some(transcript("other")));
+    let history = block_on(journal.history(reparented.clone(), None, 100)).unwrap();
+    assert!(history.records.iter().any(|record| matches!(record, JournalRecord::Control(control) if control.parent_owner == Some(transcript("other")) && control.controller == transcript("parent"))));
+    assert!(matches!(
+        block_on(journal.mutate(
+            reparented,
+            JournalMutation::Relationship {
+                parent_id: None,
+                parent_owner: Some(transcript("other"))
+            }
+        )),
+        Err(JournalError::Invalid)
+    ));
+}
+
+#[test]
+fn idle_cancel_requires_durable_intent_and_clears_it() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let mut record = create("idle-cancel");
+    record.initial_work = None;
+    let initial = confirmed(block_on(journal.create(record)).unwrap());
+    assert!(matches!(
+        block_on(journal.mutate(initial.clone(), JournalMutation::CancelIdle)),
+        Err(JournalError::Conflict)
+    ));
+    let intent = confirmed(
+        block_on(journal.mutate(initial, JournalMutation::Intent(JournalIntent::Cancel))).unwrap(),
+    );
+    let settled = confirmed(block_on(journal.mutate(intent, JournalMutation::CancelIdle)).unwrap());
+    assert_eq!(settled.head.status, ManagedAgentState::Idle);
+    assert_eq!(settled.head.intent, None);
+    assert!(settled.head.queue.is_empty());
+}
+
+#[test]
+fn exact_notice_envelope_is_pageable_and_validated() {
+    use crate::managed::notices::*;
+    use std::num::NonZeroU64;
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let initial = confirmed(block_on(journal.create(create("notice"))).unwrap());
+    let notice = ManagedNotice {
+        source: WorkNoticeIdentity {
+            source: NoticePrincipal {
+                id: "notice".into(),
+                generation: NonZeroU64::new(1).unwrap(),
+            },
+            work_id: "work-1".into(),
+            work_generation: NonZeroU64::new(1).unwrap(),
+        },
+        source_sequence: NonZeroU64::new(initial.head.next_sequence).unwrap(),
+        target: NoticeTarget {
+            parent: NoticePrincipal {
+                id: "parent".into(),
+                generation: NonZeroU64::new(9).unwrap(),
+            },
+            relationship_generation: NonZeroU64::new(2).unwrap(),
+        },
+        event: NoticeEvent::Started,
+        history: None,
+    };
+    let snapshot = confirmed(
+        block_on(journal.mutate(
+            initial,
+            JournalMutation::AppendHistory(vec![JournalRecord::Notice(notice.clone())]),
+        ))
+        .unwrap(),
+    );
+    let history = block_on(journal.history(snapshot.clone(), None, 100)).unwrap();
+    assert!(
+        history
+            .records
+            .contains(&JournalRecord::Notice(notice.clone()))
+    );
+    let mut invalid = notice;
+    invalid.event = NoticeEvent::Interval {
+        state: ManagedAgentState::Running,
+        first_tick: NonZeroU64::new(1).unwrap(),
+        last_tick: NonZeroU64::new(3).unwrap(),
+        coalesced_intervals: NonZeroU64::new(1).unwrap(),
+        gap: true,
+    };
+    assert!(matches!(
+        block_on(journal.mutate(
+            snapshot,
+            JournalMutation::AppendHistory(vec![JournalRecord::Notice(invalid)])
+        )),
+        Err(JournalError::Invalid)
+    ));
 }
 fn mutate(
     journal: &ManagedJournal,
@@ -174,7 +287,10 @@ fn stale_foreign_and_mutated_snapshots_cannot_publish() {
     let newer = mutate(
         &journal,
         snapshot.clone(),
-        JournalMutation::Relationship(None),
+        JournalMutation::Relationship {
+            parent_id: None,
+            parent_owner: None,
+        },
     );
     assert_eq!(
         block_on(journal.mutate(snapshot, JournalMutation::NoticeCursor(0))).unwrap_err(),
@@ -421,7 +537,14 @@ fn paging_is_bounded_continues_whole_history_and_rejects_stale_cursor() {
     let journal = fixture.open();
     let mut snapshot = confirmed(block_on(journal.create(create("child"))).unwrap());
     for _ in 0..8 {
-        snapshot = mutate(&journal, snapshot, JournalMutation::Relationship(None));
+        snapshot = mutate(
+            &journal,
+            snapshot,
+            JournalMutation::Relationship {
+                parent_id: None,
+                parent_owner: None,
+            },
+        );
     }
     let first = block_on(journal.history(snapshot.clone(), None, 2)).unwrap();
     assert_eq!(first.records.len(), 2);

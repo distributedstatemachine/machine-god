@@ -8,6 +8,16 @@ The foreground-only API and its global counters are removed.
 
 ## Commands
 
+The control journal retains immutable controller transcript identity and the
+exact optional parent transcript identity alongside its public parent label,
+including empty persistent children. Reparenting updates the paired relationship
+fields, not the original controller. These durable labels do not replace actual
+native-call admission. Idle cancellation still publishes intent before its
+separate durable settlement; it cannot leave an empty FIFO permanently blocked.
+Exact typed notice envelopes are immutable pageable journal records, preserving
+source/work generations, target relationship, source sequence and interval gaps.
+Their journal confirmation precedes visibility in the parent notice inbox.
+
 The root is `{"command":{...}}`, selecting exactly one of these branches.
 Every object rejects unknown fields. Optional fields are omitted, not null.
 

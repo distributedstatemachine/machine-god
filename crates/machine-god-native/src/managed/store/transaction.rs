@@ -173,7 +173,9 @@ pub(super) fn create(
         mode: create.mode,
         configuration: create.configuration,
         transcript: create.transcript,
+        controller: create.controller,
         parent_id: create.parent_id,
+        parent_owner: create.parent_owner,
         status: machine_god_core::ManagedAgentState::Idle,
         queue: Vec::new(),
         failure: None,
@@ -232,7 +234,9 @@ fn publish(
         status: head.status,
         intent: head.intent,
         failure: head.failure.clone(),
+        controller: head.controller.clone(),
         parent_id: head.parent_id.clone(),
+        parent_owner: head.parent_owner.clone(),
         notice_cursor: head.notice_cursor,
     }));
     let page = if records.is_empty() {

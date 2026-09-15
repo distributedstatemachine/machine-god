@@ -77,6 +77,7 @@ pub(super) fn head(head: &JournalHead, limits: JournalLimits) -> Result<(), Erro
         || head.revision == 0
         || head.next_sequence == 0
         || head.queue.len() > limits.queue_entries
+        || head.parent_id.is_some() != head.parent_owner.is_some()
     {
         return Err(Error::Invalid);
     }
@@ -122,6 +123,33 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
     }
     for record in records {
         match record {
+            JournalRecord::Notice(value) => {
+                use crate::managed::notices::NoticeEvent;
+                id(&value.source.source.id)?;
+                id(&value.source.work_id)?;
+                id(&value.target.parent.id)?;
+                if let Some(history) = &value.history {
+                    id(&history.record_id)?;
+                }
+                match &value.event {
+                    NoticeEvent::Milestone { name } => text(name, 128, false)?,
+                    NoticeEvent::Interval {
+                        first_tick,
+                        last_tick,
+                        coalesced_intervals,
+                        gap,
+                        ..
+                    } => {
+                        if last_tick < first_tick
+                            || last_tick.get() - first_tick.get() + 1 != coalesced_intervals.get()
+                            || *gap != (coalesced_intervals.get() > 1)
+                        {
+                            return Err(Error::Invalid);
+                        }
+                    }
+                    NoticeEvent::Started | NoticeEvent::Terminal { .. } => {}
+                }
+            }
             JournalRecord::WorkAccepted(value) => work(value)?,
             JournalRecord::Configuration(value) => configuration(value)?,
             JournalRecord::WorkState {
@@ -134,7 +162,8 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
             }
             JournalRecord::WorkResolved { work_id, .. } => id(work_id)?,
             JournalRecord::Control(value) => {
-                if value.revision == 0 {
+                if value.revision == 0 || value.parent_id.is_some() != value.parent_owner.is_some()
+                {
                     return Err(Error::Invalid);
                 }
                 if let Some(parent) = &value.parent_id {

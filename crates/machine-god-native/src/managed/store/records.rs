@@ -67,7 +67,9 @@ pub(crate) struct JournalHead {
     #[serde(deserialize_with = "configuration")]
     pub configuration: ManagedConfiguration,
     pub transcript: JournalTranscript,
+    pub controller: JournalTranscript,
     pub parent_id: Option<String>,
+    pub parent_owner: Option<JournalTranscript>,
     pub status: ManagedAgentState,
     #[serde(deserialize_with = "queue")]
     pub queue: Vec<JournalWorkRef>,
@@ -84,13 +86,16 @@ pub(crate) struct JournalCreate {
     pub mode: ManagedAgentMode,
     pub configuration: ManagedConfiguration,
     pub transcript: JournalTranscript,
+    pub controller: JournalTranscript,
     pub parent_id: Option<String>,
+    pub parent_owner: Option<JournalTranscript>,
     pub initial_work: Option<JournalWork>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum JournalRecord {
+    Notice(crate::managed::notices::ManagedNotice),
     WorkAccepted(JournalWork),
     Event(ManagedEvent),
     History(ManagedHistoryItem),
@@ -114,7 +119,9 @@ pub(crate) struct JournalControl {
     pub status: ManagedAgentState,
     pub intent: Option<JournalIntent>,
     pub failure: Option<JournalFailure>,
+    pub controller: JournalTranscript,
     pub parent_id: Option<String>,
+    pub parent_owner: Option<JournalTranscript>,
     pub notice_cursor: u64,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -139,12 +146,17 @@ pub(crate) enum JournalMutation {
         failure: Option<String>,
     },
     Intent(JournalIntent),
+    /// Finish a confirmed cancellation intent when no queued work exists.
+    CancelIdle,
     ResolveHead {
         work_id: String,
         retry: bool,
     },
     Configure(ManagedConfiguration),
-    Relationship(Option<String>),
+    Relationship {
+        parent_id: Option<String>,
+        parent_owner: Option<JournalTranscript>,
+    },
     NoticeCursor(u64),
     AppendHistory(Vec<JournalRecord>),
     Archive,
