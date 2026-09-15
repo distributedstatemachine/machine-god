@@ -1,7 +1,13 @@
 mod mutation;
 mod validation;
 
-use super::{JournalError as Error, Shared, filesystem as fs, records::*};
+use super::records::{
+    JournalCatalogCursor, JournalCatalogEntry, JournalCatalogPage, JournalControl, JournalCreate,
+    JournalHead, JournalHistoryCursor, JournalHistoryPage, JournalMutation, JournalPageRef,
+    JournalPublication, JournalReceipt, JournalRecord, JournalSnapshot, JournalWork, StoredPage,
+    identity_matches,
+};
+use super::{JournalError as Error, Shared, filesystem as fs};
 use serde::Serialize;
 use std::io::Write;
 use std::sync::Arc;
@@ -181,7 +187,7 @@ pub(super) fn create(
     } else {
         Vec::new()
     };
-    publish(shared, reservation, None, None, head, records)
+    publish(shared, reservation, None, &None, head, records)
 }
 pub(super) fn mutate(
     shared: &Arc<Shared>,
@@ -206,7 +212,7 @@ pub(super) fn mutate(
         shared,
         reservation,
         Some(expected),
-        Some(source),
+        &Some(source),
         head,
         records,
     )
@@ -216,7 +222,7 @@ fn publish(
     shared: &Arc<Shared>,
     mut reservation: Reservation,
     expected: Option<[u8; 32]>,
-    source: Option<Arc<fs::Source>>,
+    source: &Option<Arc<fs::Source>>,
     mut head: JournalHead,
     mut records: Vec<JournalRecord>,
 ) -> Result<JournalPublication, Error> {
@@ -305,9 +311,8 @@ fn publish(
     if result.is_err() {
         return Ok(JournalPublication::Ambiguous(receipt));
     }
-    let snapshot = match inspect_unreserved(shared, &head.id) {
-        Ok(snapshot) => snapshot,
-        Err(_) => return Ok(JournalPublication::Ambiguous(receipt)),
+    let Ok(snapshot) = inspect_unreserved(shared, &head.id) else {
+        return Ok(JournalPublication::Ambiguous(receipt));
     };
     let old = {
         let mut state = shared.state.lock().map_err(|_| Error::Invalid)?;
@@ -315,7 +320,7 @@ fn publish(
         state.pending.take()
     };
     drop(old);
-    Ok(JournalPublication::Confirmed(snapshot))
+    Ok(JournalPublication::Confirmed(Box::new(snapshot)))
 }
 
 fn read_page(
@@ -416,7 +421,7 @@ pub(super) fn reconcile(
             &candidate,
             shared.limits.head_bytes,
         )?;
-        JournalPublication::Confirmed(snapshot)
+        JournalPublication::Confirmed(Box::new(snapshot))
     } else if current.as_ref().map(|bytes| fs::digest(bytes)) == expected {
         if let Some(source) = source {
             fs::validate_source(&shared.root, &fs::head_name(&id), &source)?;

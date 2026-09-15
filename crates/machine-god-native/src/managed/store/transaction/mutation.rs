@@ -1,4 +1,8 @@
-use super::super::{JournalError as Error, JournalLimits, records::*};
+use super::super::records::{
+    JournalFailure, JournalHead, JournalIntent, JournalMutation, JournalPageRef, JournalRecord,
+    JournalWork, JournalWorkRef,
+};
+use super::super::{JournalError as Error, JournalLimits};
 use super::validation;
 use machine_god_core::{
     ManagedAgentMode as Mode, ManagedAgentState as State, ManagedQueueStatus as Status,
@@ -101,18 +105,7 @@ pub(super) fn apply(
             head.notice_cursor = cursor;
         }
         JournalMutation::AppendHistory(records) => {
-            if records.len() > 100 {
-                return Err(Error::Limit);
-            }
-            validation::records(&records)?;
-            if records.iter().any(|item| {
-                !matches!(
-                    item,
-                    JournalRecord::History(_) | JournalRecord::Event(_) | JournalRecord::Tool(_)
-                )
-            }) {
-                return Err(Error::Invalid);
-            }
+            validate_history(&records)?;
             return Ok(records);
         }
         JournalMutation::Archive => {
@@ -144,25 +137,46 @@ pub(super) fn apply(
             head.intent = None;
         }
         JournalMutation::Recover => {
-            if head.status != State::Archived {
-                let mut interrupted = false;
-                for item in &mut head.queue {
-                    if matches!(
-                        item.status,
-                        Status::Pending | Status::Running | Status::AwaitingApproval
-                    ) {
-                        item.status = Status::Interrupted;
-                        interrupted = true;
-                    }
-                }
-                if interrupted {
-                    head.status = State::Interrupted;
-                }
-            }
-            // Durable intent remains evidence; recovery itself never signals.
+            recover(head);
         }
     }
     Ok(Vec::new())
+}
+
+fn recover(head: &mut JournalHead) {
+    if head.status == State::Archived {
+        return;
+    }
+    let mut interrupted = false;
+    for item in &mut head.queue {
+        if matches!(
+            item.status,
+            Status::Pending | Status::Running | Status::AwaitingApproval
+        ) {
+            item.status = Status::Interrupted;
+            interrupted = true;
+        }
+    }
+    if interrupted {
+        head.status = State::Interrupted;
+    }
+    // Durable intent remains evidence; recovery itself never signals.
+}
+
+fn validate_history(records: &[JournalRecord]) -> Result<(), Error> {
+    if records.len() > 100 {
+        return Err(Error::Limit);
+    }
+    validation::records(records)?;
+    if records.iter().any(|item| {
+        !matches!(
+            item,
+            JournalRecord::History(_) | JournalRecord::Event(_) | JournalRecord::Tool(_)
+        )
+    }) {
+        return Err(Error::Invalid);
+    }
+    Ok(())
 }
 
 fn change_state(

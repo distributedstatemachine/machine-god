@@ -231,7 +231,7 @@ pub(super) fn head_candidates(
             continue;
         }
         if name.len() != 71
-            || !name.ends_with(".json")
+            || name.as_bytes().get(66..) != Some(b".json")
             || !name.as_bytes()[2..66].iter().all(u8::is_ascii_hexdigit)
         {
             return Err(Error::Invalid);
@@ -251,11 +251,13 @@ pub(super) fn head_candidates(
 pub(super) fn read(root: &OwnedFd, name: &str, limit: usize) -> Result<Option<Vec<u8>>, Error> {
     Ok(observe(root, name, limit)?.map(|(bytes, _)| bytes))
 }
+type Observation = (Vec<u8>, Arc<Source>);
+
 pub(super) fn observe(
     root: &OwnedFd,
     name: &str,
     limit: usize,
-) -> Result<Option<(Vec<u8>, Arc<Source>)>, Error> {
+) -> Result<Option<Observation>, Error> {
     let fd = match rustix::fs::openat(root, name, READ, Mode::empty()) {
         Ok(fd) => fd,
         Err(rustix::io::Errno::NOENT) => return Ok(None),

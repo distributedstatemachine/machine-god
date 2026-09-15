@@ -1,4 +1,5 @@
-use super::super::{JournalError as Error, JournalLimits, records::*};
+use super::super::records::{JournalHead, JournalPageRef, JournalRecord, JournalWork};
+use super::super::{JournalError as Error, JournalLimits};
 use machine_god_core::{ManagedConfiguration, ManagedEventKind};
 
 pub(super) const MAX_RECORDS: usize = 101;
@@ -190,12 +191,14 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
                         work_item_id,
                         name,
                     } => {
-                        for id_value in [
-                            operation_id,
-                            source_child_id,
-                            target_parent_id,
-                            work_item_id,
-                        ] {
+                        text(operation_id, 128, false)?;
+                        if operation_id
+                            .bytes()
+                            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+                        {
+                            return Err(Error::Invalid);
+                        }
+                        for id_value in [source_child_id, target_parent_id, work_item_id] {
                             id(id_value)?;
                         }
                         text(name, 128, false)?;

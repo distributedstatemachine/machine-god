@@ -222,12 +222,11 @@ Schema-v1 heads retain child identity, owner epoch, lifecycle generation, checke
 revision, mode, selected configuration, transcript binding, parent relationship,
 FIFO work references, failure head, cancellation/archive intent and notice cursor.
 Full accepted work contents and frozen configuration/notification policy live in
-immutable pages, not in a 64 KiB head or a copied child transcript. Pages carry
-child/generation/sequence identity, encoded length and SHA-256 digest; their
-exact session/incarnation owner as well as child/generation/sequence, and
-back-links strictly decrease sequence. Accepted work retains its original source
-principal and frozen policy without deriving fresh authority from those labels.
-The digest detects inconsistent content,
+immutable pages, not in a 64 KiB head or a copied child transcript. Pages bind
+the exact session/incarnation owner, child/generation/sequence, encoded length
+and SHA-256 digest. Their back-links strictly decrease sequence. Accepted work
+retains its original source principal and frozen policy without deriving fresh
+authority from those labels. The digest detects inconsistent content,
 not authenticity, encryption or protection against a writer with equivalent
 filesystem authority; those M04 concerns remain separate.
 
@@ -240,7 +239,9 @@ not execution or process authority. Native run admission remains separate.
 
 Every head publication appends typed immutable control evidence. Accepted work,
 state transitions/resolutions, configuration, history, events and tool activity
-are pageable. FIFO state changes name the exact first work item; interrupted,
+are pageable. Milestone operation labels retain core's bounded non-whitespace,
+non-control syntax rather than being narrowed to child-ID syntax.
+FIFO state changes name the exact first work item; interrupted,
 failed or approval-blocked heads require explicit resolution. Cancellation intent
 is durable before the manager may signal. Persistent cancellation returns idle
 and leaves later accepted work interrupted; one-off cancellation is terminal.

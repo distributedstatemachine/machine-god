@@ -172,7 +172,7 @@ pub(crate) struct JournalReceipt {
     pub(super) operation: u64,
 }
 pub(crate) enum JournalPublication {
-    Confirmed(JournalSnapshot),
+    Confirmed(Box<JournalSnapshot>),
     Ambiguous(JournalReceipt),
     /// Exact reconciliation established that the referencing head did not publish.
     NotApplied,

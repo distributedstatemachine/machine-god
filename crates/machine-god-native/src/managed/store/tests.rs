@@ -108,7 +108,7 @@ fn confirmed(publication: JournalPublication) -> JournalSnapshot {
     let JournalPublication::Confirmed(snapshot) = publication else {
         panic!("confirmed publication required: {publication:?}");
     };
-    snapshot
+    *snapshot
 }
 fn mutate(
     journal: &ManagedJournal,
@@ -319,6 +319,37 @@ fn cancellation_intent_precedes_settlement_and_archive_reopen_never_retries() {
             .len()
             > 4
     );
+}
+
+#[test]
+fn milestone_operation_labels_preserve_the_core_contract() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let mut snapshot = confirmed(block_on(journal.create(create("child"))).unwrap());
+    for operation_id in ["host:call/7", "invalid operation", "invalid\toperation"] {
+        let event = JournalRecord::Event(machine_god_core::ManagedEvent {
+            sequence: 1,
+            revision: snapshot.head.revision,
+            id: "event-1".into(),
+            timestamp_ms: 0,
+            kind: machine_god_core::ManagedEventKind::MilestoneEmitted {
+                operation_id: operation_id.into(),
+                source_child_id: "child".into(),
+                target_parent_id: "parent".into(),
+                work_item_id: "work-1".into(),
+                name: "ready".into(),
+            },
+        });
+        let result = block_on(journal.mutate(
+            snapshot.clone(),
+            JournalMutation::AppendHistory(vec![event]),
+        ));
+        if operation_id == "host:call/7" {
+            snapshot = confirmed(result.unwrap());
+        } else {
+            assert_eq!(result.unwrap_err(), JournalError::Invalid);
+        }
+    }
 }
 
 #[test]

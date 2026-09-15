@@ -56,7 +56,7 @@ impl JournalLimits {
             || !(1..=256).contains(&self.queue_entries)
             || !(1..=1_048_576).contains(&self.directory_entries)
             || self.aggregate_bytes < 4 * self.head_bytes + 8 * self.page_bytes + 1024
-            || self.aggregate_bytes > 4 * 1024 * 1024 * 1024_u64 as usize
+            || u64::try_from(self.aggregate_bytes).is_ok_and(|bytes| bytes > 4 * 1024 * 1024 * 1024)
         {
             return Err(JournalError::Limit);
         }
