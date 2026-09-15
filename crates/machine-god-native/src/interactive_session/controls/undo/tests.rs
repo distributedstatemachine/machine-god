@@ -79,6 +79,56 @@ async fn undo(session: &mut NativeInteractiveSession) -> Result<FileUndoOutcome,
 }
 
 #[test]
+fn undo_control_uses_original_runtime_history_not_shared_host_history() {
+    executor().block_on(async {
+        let fixture = Fixture::new();
+        let mut session = owner(&fixture).await;
+        let original = session.current.clone();
+        let tracker = Arc::new(crate::FileUndoTracker::new());
+        let conversation = crate::interactive_session::transition::prepare(
+            &fixture.host,
+            &session.options,
+            NativeInteractiveTransition::New,
+            200,
+        )
+        .await
+        .unwrap()
+        .with_undo_tracker(tracker.clone())
+        .unwrap();
+        session.current = Arc::new(
+            crate::NativeConversationRuntime::new(conversation, original.model_preferences(), None)
+                .unwrap(),
+        );
+        let root = fs::File::open(&fixture.workspace).unwrap();
+        let mut publication = tracker
+            .begin(
+                root.as_fd(),
+                crate::file_undo::Operation::Replace("child-owned"),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        fs::write(fixture.workspace.join("child-owned"), b"child bytes").unwrap();
+        let published = fs::File::open(fixture.workspace.join("child-owned")).unwrap();
+        publication.committed(Some(published.as_fd()));
+        drop(publication);
+        // An unrelated parent's busy history cannot block the selected child's undo.
+        let parent_reservation = fixture.undo.reserve_clear().unwrap();
+        assert_eq!(
+            undo(&mut session).await.unwrap(),
+            FileUndoOutcome::Removed("child-owned".into())
+        );
+        assert!(!fixture.workspace.join("child-owned").exists());
+        assert!(matches!(
+            fixture.undo.undo_last(&CancellationToken::new()),
+            Err(FileUndoError::Busy)
+        ));
+        drop(parent_reservation);
+        session.current = original;
+        close(session, fixture).await;
+    });
+}
+
+#[test]
 fn all_five_real_tools_undo_in_order_without_transcript_mutation() {
     executor().block_on(async {
         let fixture = Fixture::new();

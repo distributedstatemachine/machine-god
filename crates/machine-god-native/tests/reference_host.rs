@@ -21,10 +21,12 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
-    BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, NetworkTarget,
-    PermissionRequest, Role, SUBAGENT_TOOL_NAME, SessionId, SessionIncarnationId, StopReason,
-    SubagentAuthority, SubagentAuthorityError, SubagentOutcome, SubagentRequest, Tool, ToolCallId,
-    ToolContext, ToolError, ToolName, ToolOutput, ToolSpec, TurnEvent, TurnId,
+    BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, ManagedOutcome,
+    ManagedReceipt, ManagedRequested, ManagedResultStatus, ManagedSubagentAuthority,
+    ManagedSubagentCommand, ManagedSubagentError, ManagedSubagentInvocation, ManagedSubagentResult,
+    NetworkTarget, PermissionRequest, Role, SUBAGENT_TOOL_NAME, SessionId, SessionIncarnationId,
+    StopReason, Tool, ToolCallId, ToolContext, ToolError, ToolName, ToolOutput, ToolSpec,
+    TurnEvent, TurnId, TurnWitness,
 };
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, ASK_USER_QUESTION_TOOL_NAME, AiGatewayByteStream,
@@ -1493,7 +1495,8 @@ impl McpFeatureAuthority for ReadyMcpFeatureAuthority {
 #[derive(Clone, Default)]
 struct ReadySubagentAuthority {
     calls: Arc<AtomicU64>,
-    requests: Arc<Mutex<Vec<SubagentRequest>>>,
+    requests: Arc<Mutex<Vec<(ToolContext, ManagedSubagentCommand)>>>,
+    turn: Arc<Mutex<Option<TurnWitness>>>,
 }
 
 impl ReadySubagentAuthority {
@@ -1501,24 +1504,49 @@ impl ReadySubagentAuthority {
         self.calls.load(Ordering::SeqCst)
     }
 
-    fn requests(&self) -> Vec<SubagentRequest> {
+    fn requests(&self) -> Vec<(ToolContext, ManagedSubagentCommand)> {
         self.requests.lock().unwrap().clone()
     }
 }
 
-impl SubagentAuthority for ReadySubagentAuthority {
-    fn run(
+impl ManagedSubagentAuthority for ReadySubagentAuthority {
+    fn execute(
         &self,
-        request: SubagentRequest,
+        request: ManagedSubagentInvocation,
         cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
+    ) -> BoxFuture<'_, Result<ManagedSubagentResult, ManagedSubagentError>> {
         let calls = Arc::clone(&self.calls);
         let requests = Arc::clone(&self.requests);
         Box::pin(async move {
             assert!(!cancellation.is_cancelled());
+            let turn = self
+                .turn
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or(ManagedSubagentError::Unavailable)?;
+            if !request.claim(&turn) {
+                return Err(ManagedSubagentError::Unavailable);
+            }
             calls.fetch_add(1, Ordering::SeqCst);
-            requests.lock().unwrap().push(request);
-            SubagentOutcome::new("No correctness findings in the bounded review")
+            requests
+                .lock()
+                .unwrap()
+                .push((request.context().clone(), request.command().clone()));
+            Ok(ManagedSubagentResult {
+                ok: true,
+                operation_id: "op-1".into(),
+                child_id: Some("child-1".into()),
+                status: ManagedResultStatus::Created,
+                error_code: None,
+                retryable: false,
+                requested: Some(ManagedRequested::Receipt(ManagedReceipt {
+                    outcome: ManagedOutcome::Created,
+                    generation: 1,
+                    event_sequence: 1,
+                })),
+                cursor: None,
+            })
         })
     }
 }
@@ -1659,7 +1687,7 @@ fn compose_with_transport_and_subagent(
     workspace: &Path,
     sessions: &Path,
     prompter: AllowingPrompter,
-    subagent_authority: Arc<dyn SubagentAuthority>,
+    subagent_authority: Arc<dyn ManagedSubagentAuthority>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError> {
     NativeReferenceHost::compose_with_ai_gateway_transport_and_subagent(
         loaded,
@@ -1675,6 +1703,14 @@ fn compose_with_transport_and_subagent(
 }
 
 fn collect_turn(host: &NativeReferenceHost, session_name: &str) -> (SessionId, Vec<TurnEvent>) {
+    collect_turn_with_witness(host, session_name, |_| {})
+}
+
+fn collect_turn_with_witness(
+    host: &NativeReferenceHost,
+    session_name: &str,
+    bind: impl FnOnce(TurnWitness),
+) -> (SessionId, Vec<TurnEvent>) {
     let session_id = SessionId::new(session_name).unwrap();
     let session = host
         .engine()
@@ -1684,11 +1720,9 @@ fn collect_turn(host: &NativeReferenceHost, session_name: &str) -> (SessionId, V
         )
         .unwrap();
     let events = futures_executor::block_on(async {
-        session
-            .prompt("inspect the workspace")
-            .await
-            .unwrap()
-            .map(|event| event.map(|event| event.payload))
+        let turn = session.prompt("inspect the workspace").await.unwrap();
+        bind(turn.witness());
+        turn.map(|event| event.map(|event| event.payload))
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -2525,7 +2559,7 @@ fn composed_mcp_features_uses_exact_injected_authority_without_permission() {
 }
 
 #[test]
-fn composed_subagent_uses_exact_injected_authority_without_outer_permission() {
+fn composed_subagent_requires_permission_and_actual_admitted_turn() {
     let temporary = TemporaryDirectory::new("subagent");
     let (workspace, sessions) = roots(temporary.path());
     let transport = ScriptedTransport::new("SUBAGENT_FACTORY_SENTINEL", subagent_round_responses());
@@ -2542,15 +2576,20 @@ fn composed_subagent_uses_exact_injected_authority_without_outer_permission() {
     .unwrap();
 
     assert_eq!(authority.call_count(), 0);
-    let (_, events) = collect_turn(&host, "reference-host-subagent");
+    let (_, events) = collect_turn_with_witness(&host, "reference-host-subagent", |turn| {
+        *authority.turn.lock().unwrap() = Some(turn);
+    });
     assert_completed(&events);
-    assert!(prompter.requests().is_empty());
+    assert_eq!(prompter.requests().len(), 1);
     assert_eq!(authority.call_count(), 1);
     let requests = authority.requests();
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].name(), "reviewer");
-    assert_eq!(requests[0].prompt(), "Review the current change");
-    assert_eq!(requests[0].context().call_id.as_str(), "subagent-call");
+    let ManagedSubagentCommand::Create(create) = &requests[0].1 else {
+        panic!("create command")
+    };
+    assert_eq!(create.name, "reviewer");
+    assert_eq!(create.prompt.as_deref(), Some("Review the current change"));
+    assert_eq!(requests[0].0.call_id.as_str(), "subagent-call");
 
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
@@ -2559,10 +2598,10 @@ fn composed_subagent_uses_exact_injected_authority_without_outer_permission() {
         decoded_tool_output(&body(&requests[1]), 2),
         json!({
             "content": {
-                "status": "completed",
-                "trust": "untrusted_child",
-                "authority": "none",
-                "text": "No correctness findings in the bounded review"
+                "ok": true, "operation_id": "op-1", "child_id": "child-1",
+                "status": "created", "error_code": null, "retryable": false,
+                "requested": {"outcome": "created", "generation": 1, "event_sequence": 1},
+                "cursor": null
             },
             "is_error": false
         })
@@ -2570,27 +2609,29 @@ fn composed_subagent_uses_exact_injected_authority_without_outer_permission() {
 }
 
 #[test]
-fn reference_subagent_fixture_is_inert_until_its_future_is_polled() {
-    let authority = ReadySubagentAuthority::default();
-    let future = authority.run(
-        SubagentRequest::new(
-            ToolContext {
-                session_id: SessionId::new("unpolled-subagent").unwrap(),
-                session_incarnation_id: SessionIncarnationId::new("unpolled-subagent-incarnation")
-                    .unwrap(),
-                turn_id: TurnId::new("unpolled-subagent-turn").unwrap(),
-                call_id: ToolCallId::new("unpolled-subagent-call").unwrap(),
-            },
-            "reviewer",
-            "Review the current change",
-        )
-        .unwrap(),
-        CancellationToken::new(),
-    );
+fn reference_subagent_structural_execution_is_inert_and_fails_closed() {
+    let authority = Arc::new(ReadySubagentAuthority::default());
+    let tool = machine_god_core::SubagentTool::shared_authority(authority.clone());
+    let context = ToolContext {
+        session_id: SessionId::new("unpolled-subagent").unwrap(),
+        session_incarnation_id: SessionIncarnationId::new("unpolled-subagent-incarnation").unwrap(),
+        turn_id: TurnId::new("unpolled-subagent-turn").unwrap(),
+        call_id: ToolCallId::new("unpolled-subagent-call").unwrap(),
+    };
+    let arguments = json!({"command":{"create":{
+        "name":"reviewer", "mode":"one_off", "prompt":"Review the current change"
+    }}});
+    let future = tool.execute(context.clone(), arguments.clone(), CancellationToken::new());
 
     assert_eq!(authority.call_count(), 0);
     assert!(authority.requests().is_empty());
     drop(future);
+    assert_eq!(authority.call_count(), 0);
+    assert!(authority.requests().is_empty());
+    assert!(
+        futures_executor::block_on(tool.execute(context, arguments, CancellationToken::new()))
+            .is_err()
+    );
     assert_eq!(authority.call_count(), 0);
     assert!(authority.requests().is_empty());
 }

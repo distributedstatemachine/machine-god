@@ -24,7 +24,8 @@ impl super::NativeReferenceHost {
     }
 
     /// Attaches this host's exact descriptor authority before conversation admission.
-    /// Legacy hosts leave the conversation unchanged. No root is opened or refreshed.
+    /// Hosts without workspace authority still select their injected undo history.
+    /// No root is opened or refreshed.
     ///
     /// # Errors
     /// Rejects duplicate or busy workspace registration.
@@ -32,17 +33,20 @@ impl super::NativeReferenceHost {
         &self,
         conversation: crate::NativeConversation,
     ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
-        match &self.workspace_binding {
-            Some(binding) => {
-                conversation.with_workspace_contexts(binding.authority.clone(), &binding.contexts)
-            }
+        let conversation = match &self.workspace_binding {
+            Some(binding) => conversation
+                .with_workspace_contexts(binding.authority.clone(), &binding.contexts)?,
+            None => conversation,
+        };
+        match &self.undo_tracker {
+            Some(undo) => conversation.with_undo_tracker(undo.clone()),
             None => Ok(conversation),
         }
     }
 
     /// Constructs a service over this host's exact workspace and worker ownership.
     /// The explicitly selected settings store is retained without loading it.
-    /// Legacy hosts without workspace or complete-terminal workers return `None`.
+    /// Hosts without workspace or complete-terminal workers return `None`.
     #[must_use]
     pub fn workspace_service(
         &self,
@@ -56,7 +60,7 @@ impl super::NativeReferenceHost {
     }
 
     /// Constructs a listing-only service without selecting or discovering settings.
-    /// Legacy hosts without workspace or complete-terminal workers return `None`.
+    /// Hosts without workspace or complete-terminal workers return `None`.
     #[must_use]
     pub fn workspace_service_without_settings(&self) -> Option<Arc<crate::NativeWorkspaceService>> {
         Some(Arc::new(crate::NativeWorkspaceService::without_settings(

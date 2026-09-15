@@ -1055,7 +1055,8 @@ pub use file_info::{
 pub use file_undo::{
     FileUndoClearReservation, FileUndoError, FileUndoOutcome, FileUndoTracker,
     FileUndoUnavailableReason, MAX_FILE_UNDO_ENTRIES, MAX_FILE_UNDO_OBSERVATION_BYTES,
-    MAX_FILE_UNDO_PREIMAGE_BYTES, MAX_FILE_UNDO_RETAINED_BYTES,
+    MAX_FILE_UNDO_PREIMAGE_BYTES, MAX_FILE_UNDO_RETAINED_BYTES, NativeUndoBudget, NativeUndoLimits,
+    NativeUndoUsage,
 };
 pub use glob_files::{
     GLOB_FILES_TOOL_NAME, GlobFilesTool, GlobFilesToolOpenError, GlobFilesToolOpenErrorKind,

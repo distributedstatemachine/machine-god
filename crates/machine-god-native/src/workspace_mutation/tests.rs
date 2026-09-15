@@ -1,5 +1,5 @@
 use super::*;
-use crate::NativeFileApprovalPolicy;
+use crate::{FileUndoTracker, NativeFileApprovalPolicy};
 use crate::{
     NATIVE_SESSION_METADATA_KEY, NativeConversation, NativeConversationTurn, NativeSessionMetadata,
     NativeWorkspaceAuthority, NativeWorkspaceEntrySpec, NativeWorkspaceSource,
@@ -172,20 +172,22 @@ impl Fixture {
             Kind::Copy => Arc::new(crate::CopyFileTool::open(&self.primary).unwrap()),
             Kind::Rename => Arc::new(crate::RenameFileTool::open(&self.primary).unwrap()),
         };
-        WorkspaceMutationTool::new(
-            kind,
-            primary,
-            self.contexts.clone(),
-            registry,
-            Some(self.undo.clone()),
-        )
+        WorkspaceMutationTool::new(kind, primary, self.contexts.clone(), registry)
     }
     pub(crate) fn conversation(&self) -> NativeConversation {
         self.conversation_with_tool(None)
     }
     fn conversation_with_tool(&self, kind: Option<Kind>) -> NativeConversation {
+        self.conversation_with_resources(kind, "session", self.undo.clone())
+    }
+    fn conversation_with_resources(
+        &self,
+        kind: Option<Kind>,
+        id: &str,
+        undo: Arc<FileUndoTracker>,
+    ) -> NativeConversation {
         let mut record = SessionRecord::empty(
-            SessionId::new("session").unwrap(),
+            SessionId::new(id).unwrap(),
             SessionIncarnationId::new("incarnation").unwrap(),
         );
         record.revision = SessionRevision(1);
@@ -218,12 +220,14 @@ impl Fixture {
             builder = builder.tool(self.tool(kind, None));
         }
         let engine = builder.build().unwrap();
-        let session = block_on(engine.load_session(SessionId::new("session").unwrap()))
+        let session = block_on(engine.load_session(SessionId::new(id).unwrap()))
             .unwrap()
             .unwrap();
         NativeConversation::from_session(session)
             .unwrap()
             .with_workspace_contexts(self.authority.clone(), &self.contexts)
+            .unwrap()
+            .with_undo_tracker(undo)
             .unwrap()
     }
     pub(crate) fn args(&self, kind: Kind) -> Value {
@@ -270,6 +274,63 @@ const KINDS: [Kind; 5] = [
     Kind::Copy,
     Kind::Rename,
 ];
+
+#[test]
+fn shared_tool_routes_two_principals_to_distinct_undo_histories() {
+    let fixture = Fixture::new();
+    let budget =
+        Arc::new(crate::NativeUndoBudget::new(crate::NativeUndoLimits::default()).unwrap());
+    let tracker = |id: &str| {
+        Arc::new(
+            FileUndoTracker::for_principal(
+                budget.clone(),
+                machine_god_core::BackgroundOutputOwner::new(
+                    SessionId::new(id).unwrap(),
+                    SessionIncarnationId::new("incarnation").unwrap(),
+                ),
+                1,
+            )
+            .unwrap(),
+        )
+    };
+    let first_undo = tracker("first");
+    let second_undo = tracker("second");
+    let first = fixture.conversation_with_resources(None, "first", first_undo.clone());
+    let second = fixture.conversation_with_resources(None, "second", second_undo.clone());
+    let first_turn = block_on(first.prompt("first".into(), 1)).unwrap();
+    let second_turn = block_on(second.prompt("second".into(), 1)).unwrap();
+    let tool = fixture.tool(Kind::Write, None);
+    for (conversation, turn, name, contents) in [
+        (&first, &first_turn, "a", "first-change"),
+        (&second, &second_turn, "b", "second-change"),
+    ] {
+        let args = json!({"path":fixture.additional.join(name), "content":contents});
+        let context = context(conversation, turn);
+        let prepared = tool
+            .prepare_for_turn(&context, call(Kind::Write, args))
+            .unwrap();
+        block_on(tool.execute(
+            context,
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+    }
+    assert_eq!(fixture.undo.budget_usage().entries, 0);
+    assert_eq!(budget.usage().entries, 2);
+    first_undo.undo_last(&CancellationToken::new()).unwrap();
+    assert_eq!(fs::read(fixture.additional.join("a")).unwrap(), b"before");
+    assert_eq!(
+        fs::read(fixture.additional.join("b")).unwrap(),
+        b"second-change"
+    );
+    assert_eq!(budget.usage().entries, 1);
+    first_undo.clear().unwrap();
+    assert_eq!(budget.usage().entries, 1);
+    second_undo.undo_last(&CancellationToken::new()).unwrap();
+    assert!(!fixture.additional.join("b").exists());
+    assert_eq!(budget.usage().entries, 0);
+}
 
 #[test]
 fn all_five_tools_route_actual_effects_and_logical_undo_receipts() {

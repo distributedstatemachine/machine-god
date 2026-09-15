@@ -24,6 +24,73 @@ use serde_json::{Value, json};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn allocation_bound_turns_pin_owner_local_undo_and_retire_only_their_scope() {
+    let fixture = Fixture::new();
+    let contexts = NativeWorkspaceContexts::new();
+    let make_session = || {
+        let engine = Engine::builder()
+            .session_store(InMemorySessionStore::default())
+            .provider(ScriptedModelProvider::new("test", [finished()]))
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .build()
+            .unwrap();
+        let session = engine
+            .create_session(
+                SessionId::new("same").unwrap(),
+                SessionIncarnationId::new("same-incarnation").unwrap(),
+            )
+            .unwrap();
+        (engine, session)
+    };
+    let (_first_engine, first) = make_session();
+    let (_second_engine, second) = make_session();
+    let owner = contexts.register(&first).unwrap();
+    let first_turn = block_on(first.prompt("first")).unwrap();
+    let second_turn = block_on(second.prompt("second")).unwrap();
+    let snapshot = fixture.authority.snapshot().unwrap();
+    let first_undo = Arc::new(crate::FileUndoTracker::new());
+    let second_undo = Arc::new(crate::FileUndoTracker::new());
+    assert!(
+        owner
+            .begin(&second_turn, snapshot.clone(), Some(first_undo.clone()))
+            .is_err()
+    );
+    let first_registration = owner
+        .begin(&first_turn, snapshot.clone(), Some(first_undo.clone()))
+        .unwrap();
+    let first_context = ToolContext {
+        session_id: first.id(),
+        session_incarnation_id: first.incarnation_id(),
+        turn_id: first_turn.handle().id().clone(),
+        call_id: ToolCallId::new("same-call").unwrap(),
+    };
+    let first_scope = contexts.snapshot_for_tool(&first_context).unwrap();
+    assert!(Arc::ptr_eq(
+        &first_scope.undo_tracker().unwrap().unwrap(),
+        &first_undo
+    ));
+    owner.retire();
+    let second_owner = contexts.register(&second).unwrap();
+    let second_registration = second_owner
+        .begin(&second_turn, snapshot, Some(second_undo.clone()))
+        .unwrap();
+    let second_context = ToolContext {
+        turn_id: second_turn.handle().id().clone(),
+        ..first_context
+    };
+    let second_scope = contexts.snapshot_for_tool(&second_context).unwrap();
+    assert!(first_scope.undo_tracker().is_err());
+    assert!(Arc::ptr_eq(
+        &second_scope.undo_tracker().unwrap().unwrap(),
+        &second_undo
+    ));
+    drop(first_registration);
+    assert!(second_scope.is_live());
+    drop(second_registration);
+    assert!(!second_scope.is_live());
+}
+
 struct Fixture {
     base: PathBuf,
     authority: NativeWorkspaceAuthority,

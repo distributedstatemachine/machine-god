@@ -105,7 +105,7 @@ fn configured_client(archive: &Archive) -> ClientFixture {
             )
         },
     );
-    fixture._prompt_principal = Some(principal);
+    fixture.prompt_principal = Some(principal);
     (fixture, inbox, finished)
 }
 

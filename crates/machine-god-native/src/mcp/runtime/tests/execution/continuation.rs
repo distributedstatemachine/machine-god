@@ -78,7 +78,7 @@ fn configured_with_launcher(
             prepare,
         ),
     };
-    fixture._prompt_principal = Some(principal);
+    fixture.prompt_principal = Some(principal);
     (fixture, inbox)
 }
 fn envelope(id: i64, body: &str) -> Box<[u8]> {

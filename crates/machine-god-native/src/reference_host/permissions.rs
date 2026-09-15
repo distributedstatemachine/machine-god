@@ -220,7 +220,7 @@ impl ReferenceHostToolCatalog {
         &mut self,
         catalog: Arc<dyn super::McpToolCatalog>,
         features: Arc<dyn Tool>,
-        subagents: Arc<dyn super::SubagentAuthority>,
+        subagents: Arc<dyn Tool>,
     ) {
         self.add(
             super::McpSearchToolsTool::shared_catalog(Arc::clone(&catalog)),
@@ -228,7 +228,7 @@ impl ReferenceHostToolCatalog {
         );
         self.add(super::McpSelectTool::shared_catalog(catalog), None);
         self.add_shared(features, None);
-        self.add(super::SubagentTool::shared_authority(subagents), None);
+        self.add_shared(subagents, None);
     }
 
     pub(super) fn workspace(
@@ -240,26 +240,22 @@ impl ReferenceHostToolCatalog {
             .workspace_binding
             .as_ref()
             .map(|binding| Arc::clone(&binding.contexts));
-        let undo = tools.undo_tracker.clone();
         self.workspace_contexts.clone_from(&contexts);
         self.mutation(
             tools.copy_file,
             crate::NativeFileApprovalKind::Copy,
             registry,
-            undo.clone(),
         );
         self.add(tools.create_folder, None);
         self.mutation(
             tools.delete_file,
             crate::NativeFileApprovalKind::Delete,
             registry,
-            undo.clone(),
         );
         self.mutation(
             tools.edit_file,
             crate::NativeFileApprovalKind::Edit,
             registry,
-            undo.clone(),
         );
         self.add(tools.file_info, None);
         self.add(tools.glob_files, Some(NativeFileHistoryKind::Glob));
@@ -272,7 +268,6 @@ impl ReferenceHostToolCatalog {
             tools.rename_file,
             crate::NativeFileApprovalKind::Rename,
             registry,
-            undo.clone(),
         );
         self.add(tools.semantic_search, None);
         self.add(tools.skill, None);
@@ -280,7 +275,6 @@ impl ReferenceHostToolCatalog {
             tools.write_file,
             crate::NativeFileApprovalKind::Write,
             registry,
-            undo,
         );
         ReferenceHostWorkspaceAuthority {
             vision_root: tools.vision_root,
@@ -354,7 +348,6 @@ impl ReferenceHostToolCatalog {
         tool: T,
         kind: crate::NativeFileApprovalKind,
         registry: Option<&Arc<NativeFileApprovalRegistry>>,
-        undo: Option<Arc<crate::FileUndoTracker>>,
     ) {
         let primary = Arc::new(tool);
         if let Some(contexts) = &self.workspace_contexts {
@@ -363,7 +356,6 @@ impl ReferenceHostToolCatalog {
                 primary,
                 Arc::clone(contexts),
                 registry.cloned(),
-                undo,
             )
             .with_observations(self.observations.clone());
             self.add_shared(Arc::new(tool), None);

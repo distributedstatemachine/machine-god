@@ -14,7 +14,6 @@ use crate::{
 pub(crate) struct WorkspaceTools {
     pub(crate) workspace_binding:
         Option<crate::reference_host::workspace_binding::WorkspaceBinding>,
-    pub(crate) undo_tracker: Option<std::sync::Arc<crate::FileUndoTracker>>,
     pub(crate) background_root: OwnedFd,
     pub(crate) canonical_workspace: PathBuf,
     pub(crate) copy_file: CopyFileTool,
@@ -116,7 +115,6 @@ impl WorkspaceRoot {
         let write_file_root = clone_descriptor(&self.descriptor)?;
         Ok(WorkspaceTools {
             workspace_binding: None,
-            undo_tracker: None,
             background_root,
             canonical_workspace: self.canonical_path,
             copy_file: CopyFileTool::from_root_descriptor(copy_file_root),

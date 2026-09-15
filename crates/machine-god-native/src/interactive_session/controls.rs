@@ -288,15 +288,18 @@ impl NativeInteractiveSession {
                         .map_err(NativeInteractiveControlError::Allowlist)
                 }) as BoxFuture<'static, _>
             }
-            NativeInteractiveControl::UndoLast => undo::execute(
-                runtime,
-                self.host
+            NativeInteractiveControl::UndoLast => {
+                let tracker = runtime
                     .undo_tracker()
-                    .ok_or(NativeInteractiveError::Configuration)?,
-                self.host
-                    .control_workers()
-                    .ok_or(NativeInteractiveError::Configuration)?,
-            ),
+                    .ok_or(NativeInteractiveError::Configuration)?;
+                undo::execute(
+                    runtime,
+                    tracker,
+                    self.host
+                        .control_workers()
+                        .ok_or(NativeInteractiveError::Configuration)?,
+                )
+            }
             other => Box::pin(execute(runtime, other, now_ms)),
         };
         self.next_control = next;

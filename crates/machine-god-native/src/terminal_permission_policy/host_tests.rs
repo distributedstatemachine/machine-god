@@ -56,7 +56,7 @@ fn permission_host_taken_os_routes_foreground_pty_and_custom_monitors() {
         let scope = workspace_authority(workspace);
         workspace_registration = Some(
             workspace_owner
-                .begin(&turn, scope.snapshot().unwrap())
+                .begin(&turn, scope.snapshot().unwrap(), None)
                 .unwrap(),
         );
         authority = Some(scope);

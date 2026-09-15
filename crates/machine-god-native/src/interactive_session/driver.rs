@@ -511,7 +511,7 @@ impl NativeInteractiveSession {
             return Poll::Ready(());
         }
         let undo = match self
-            .host
+            .current
             .undo_tracker()
             .ok_or(NativeInteractiveError::Configuration)
             .and_then(|tracker| {

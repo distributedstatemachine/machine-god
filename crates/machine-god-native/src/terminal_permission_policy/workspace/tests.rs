@@ -92,7 +92,7 @@ impl Fixture {
 
     fn begin(&self, turn: &Turn) -> WorkspaceContextRegistration {
         self.owner
-            .begin(turn, self.authority.snapshot().unwrap())
+            .begin(turn, self.authority.snapshot().unwrap(), None)
             .unwrap()
     }
 

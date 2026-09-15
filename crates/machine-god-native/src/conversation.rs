@@ -178,6 +178,7 @@ pub struct NativeConversation {
     mcp_contexts: Option<Arc<McpContextSession>>,
     mcp_readiness: Option<McpReadiness>,
     workspace: Option<ConversationWorkspaceBinding>,
+    undo: Option<Arc<crate::FileUndoTracker>>,
 }
 
 enum McpReadiness {
@@ -318,6 +319,7 @@ impl NativeConversation {
             mcp_contexts: None,
             mcp_readiness: None,
             workspace: None,
+            undo: None,
         })
     }
 
@@ -430,6 +432,26 @@ impl NativeConversation {
                 .map_err(NativeConversationError::WorkspaceContext)?,
         });
         Ok(self)
+    }
+
+    /// Selects this conversation's undo history while admission is idle.
+    /// The exact tracker is pinned into each turn alongside its workspace scope.
+    pub(crate) fn with_undo_tracker(
+        mut self,
+        tracker: Arc<crate::FileUndoTracker>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() {
+            return Err(NativeConversationError::Busy);
+        }
+        if self.undo.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.undo = Some(tracker);
+        Ok(self)
+    }
+
+    pub(crate) fn undo_tracker(&self) -> Option<Arc<crate::FileUndoTracker>> {
+        self.undo.clone()
     }
 
     /// Connects this exact session to a native policy handler. The engine must
@@ -1222,7 +1244,7 @@ impl NativeConversation {
             .map(|(binding, scope)| {
                 binding
                     .owner
-                    .begin(&turn, scope)
+                    .begin(&turn, scope, self.undo.clone())
                     .map_err(NativeConversationError::WorkspaceContext)
             })
             .transpose()?;

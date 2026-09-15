@@ -396,8 +396,8 @@ remain in the [review history](reviews/m05-acp-cli-review-01.md).
 After ACP delivery and its documentation seal, use
 `agent/m65-managed-subagents` for one complete managed-agent tool and CLI feature.
 Replace the foreground one-off implementation, not retain a parallel legacy path.
-The current [subagent contract](subagent.md) describes the earlier boundary;
-update it with implementation, using the pinned source as behavioral evidence.
+The [subagent contract](subagent.md) tracks managed commands and native ownership
+boundaries; update it with implementation, using the pinned source as evidence.
 
 - Complete create, inspect, message, milestone, attach/detach, reparent,
   configure, cancel, resume, close and reopen, for one-off and persistent agents.

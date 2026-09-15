@@ -4,7 +4,7 @@ use machine_god_core::CancellationToken;
 use machine_god_native as native;
 use native::{
     NativeInteractiveControlReceipt, NativeInteractiveInitialSession, NativeInteractiveInput,
-    NativeInteractiveInputSource, NativeInteractivePromptBridge, NativeInteractivePromptLimits,
+    NativeInteractiveInputSource, NativeInteractivePromptInbox, NativeInteractivePromptLimits,
     NativeInteractiveSession, NativeInteractiveSessionOptions, NativeModelPreferencePersistence,
     NativeModelPreferences, NativeReasoningEffort, NativeSandboxMode, NativeSlashCommand,
     NativeUserConfigStore, PermissionMode,

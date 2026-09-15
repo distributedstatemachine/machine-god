@@ -1,8 +1,8 @@
 //! Exact-turn routing for the five descriptor-owned file mutations.
 
 use crate::{
-    FileUndoTracker, NativeFileApprovalKind as Kind, NativeFileApprovalRegistry,
-    NativeWorkspaceContexts, NativeWorkspaceTurnScope,
+    NativeFileApprovalKind as Kind, NativeFileApprovalRegistry, NativeWorkspaceContexts,
+    NativeWorkspaceTurnScope,
 };
 use machine_god_core::{
     BoxFuture, CancellationToken, PreparedToolCall, Tool, ToolCall, ToolContext, ToolError,
@@ -19,7 +19,6 @@ pub(crate) struct WorkspaceMutationTool {
     primary: Arc<dyn Tool>,
     contexts: Arc<NativeWorkspaceContexts>,
     registry: Option<Arc<NativeFileApprovalRegistry>>,
-    undo: Option<Arc<FileUndoTracker>>,
     observations: Option<Arc<crate::NativeConversationObservations>>,
 }
 
@@ -29,14 +28,12 @@ impl WorkspaceMutationTool {
         primary: Arc<dyn Tool>,
         contexts: Arc<NativeWorkspaceContexts>,
         registry: Option<Arc<NativeFileApprovalRegistry>>,
-        undo: Option<Arc<FileUndoTracker>>,
     ) -> Self {
         Self {
             kind,
             primary,
             contexts,
             registry,
-            undo,
             observations: None,
         }
     }
@@ -91,6 +88,17 @@ fn name(kind: Kind) -> &'static str {
         Kind::Delete => crate::DELETE_FILE_TOOL_NAME,
         Kind::Copy => crate::COPY_FILE_TOOL_NAME,
         Kind::Rename => crate::RENAME_FILE_TOOL_NAME,
+    }
+}
+
+fn history_kind(kind: Kind) -> crate::file_history_tool::NativeFileHistoryKind {
+    use crate::file_history_tool::NativeFileHistoryKind;
+    match kind {
+        Kind::Write => NativeFileHistoryKind::Write,
+        Kind::Edit => NativeFileHistoryKind::Edit,
+        Kind::Delete => NativeFileHistoryKind::Delete,
+        Kind::Copy => NativeFileHistoryKind::Copy,
+        Kind::Rename => NativeFileHistoryKind::Rename,
     }
 }
 
@@ -154,6 +162,7 @@ impl Tool for WorkspaceMutationTool {
                 return Err(cancelled());
             }
             let scope = Arc::new(scope.map_err(|_| unavailable())?);
+            let undo = scope.undo_tracker().map_err(|_| unavailable())?;
             let projection = project(
                 &scope.snapshot().map_err(|_| unavailable())?,
                 self.kind,
@@ -206,23 +215,15 @@ impl Tool for WorkspaceMutationTool {
             macro_rules! execute {
                 ($tool:expr) => {{
                     let mut tool = $tool.with_workspace_scope(scope);
-                    if let Some(undo) = &self.undo {
+                    if let Some(undo) = &undo {
                         tool = tool.with_undo_tracker(undo.clone());
                     }
                     if let Some(approval) = approval {
                         tool = tool.with_claimed_approval(approval);
                     }
                     if let Some(observations) = &self.observations {
-                        use crate::file_history_tool::{
-                            NativeFileHistoryKind, NativeFileHistoryTool,
-                        };
-                        let kind = match self.kind {
-                            Kind::Write => NativeFileHistoryKind::Write,
-                            Kind::Edit => NativeFileHistoryKind::Edit,
-                            Kind::Delete => NativeFileHistoryKind::Delete,
-                            Kind::Copy => NativeFileHistoryKind::Copy,
-                            Kind::Rename => NativeFileHistoryKind::Rename,
-                        };
+                        use crate::file_history_tool::NativeFileHistoryTool;
+                        let kind = history_kind(self.kind);
                         NativeFileHistoryTool::shared(Arc::new(tool), kind, observations.clone())
                             .with_workspace_contexts(self.contexts.clone())
                             .execute(context, arguments, cancellation)

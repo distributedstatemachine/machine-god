@@ -10,6 +10,17 @@ host must select the tracker from its actual admitted turn, never from current
 UI selection. Standalone `FileUndoTracker::new` uses this same implementation
 with a private default budget, not a second tracking path.
 
+Workspace-routed mutation tools obtain the tracker from the original native
+conversation's pinned turn scope. The shared tool allocation contains no undo
+selection. Registration checks actual session/turn witnesses, and replacing or
+retiring a route cannot move an existing operation into another history. The
+reference host binds its selected tracker before conversation admission;
+managed principals supply their independently budgeted trackers through that
+same scope boundary.
+Interactive undo controls and transition clears likewise capture the original
+conversation runtime's tracker before accepting work; they do not look it up
+again through the shared host when the control later executes.
+
 Validated `NativeUndoLimits` bound combined retained and in-flight entries,
 bytes, and descriptors. Defaults allow 101 entries, 101 times (10 MiB plus
 128 KiB) of byte reservations, and 3,232 descriptor reservations across the whole

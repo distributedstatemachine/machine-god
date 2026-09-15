@@ -10,6 +10,7 @@ mod construction;
 mod mcp;
 mod permissions;
 mod services;
+mod subagent;
 pub(crate) mod workspace_binding;
 pub use mcp::{NativeReferenceHostMcpEphemeralStartupOptions, NativeReferenceHostMcpOptions};
 pub use permissions::NativeReferenceHostPermissionOptions;
@@ -18,9 +19,9 @@ use services::NativeHostServices;
 use workspace_binding::WorkspaceBinding;
 
 use machine_god_core::{
-    BoxFuture, CancellationToken, Engine, EngineLimits, NetworkTarget, SessionIncarnationId,
-    SessionStore, SubagentAuthority, SubagentAuthorityError, SubagentAuthorityErrorKind,
-    SubagentOutcome, SubagentRequest, SubagentTool, Tool, ToolContext, ToolName,
+    BoxFuture, CancellationToken, Engine, EngineLimits, ManagedSubagentAuthority,
+    ManagedSubagentError, ManagedSubagentInvocation, ManagedSubagentResult, NetworkTarget,
+    SessionIncarnationId, SessionStore, SubagentTool, Tool, ToolContext, ToolName,
 };
 use rustix::fd::OwnedFd;
 
@@ -1020,12 +1021,12 @@ impl NativeReferenceHost {
         )
     }
 
-    /// Composes a reference host with an explicitly injected foreground
+    /// Composes a reference host with an explicitly injected managed
     /// subagent authority and inert MCP authorities.
     ///
     /// The injected allocation is retained exactly and remains inert during
-    /// construction. It owns each bounded child run and must not detach work
-    /// or expose authority through its result.
+    /// construction. It must validate actual admitted-turn identity and own
+    /// bounded durable child execution independently of the calling turn.
     ///
     /// # Errors
     ///
@@ -1041,7 +1042,7 @@ impl NativeReferenceHost {
         permission_prompter: Arc<dyn PermissionPrompter>,
         question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
-        subagent_authority: Arc<dyn SubagentAuthority>,
+        subagent_authority: Arc<dyn ManagedSubagentAuthority>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let workspace_tools = open_workspace_tools(workspace_root)?;
@@ -1071,12 +1072,12 @@ impl NativeReferenceHost {
         )
     }
 
-    /// Composes a reference host with explicitly injected MCP and foreground
+    /// Composes a reference host with explicitly injected MCP and managed
     /// subagent authorities.
     ///
     /// Every injected allocation is retained exactly and remains inert during
-    /// construction. The subagent authority owns one bounded foreground child
-    /// run and must not detach work or expose authority through its result.
+    /// construction. The subagent authority validates actual admitted-turn
+    /// identity and owns durable child execution and settlement.
     ///
     /// # Errors
     ///
@@ -1094,7 +1095,7 @@ impl NativeReferenceHost {
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         mcp_catalog: Arc<dyn McpToolCatalog>,
         mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
-        subagent_authority: Arc<dyn SubagentAuthority>,
+        subagent_authority: Arc<dyn ManagedSubagentAuthority>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let workspace_tools = open_workspace_tools(workspace_root)?;
@@ -1558,7 +1559,11 @@ impl NativeReferenceHost {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "Linear fallible assembly keeps the construction cleanup guard alive until every resource transfers to the engine."
+    )]
     fn finish_composition_with_extensions(
         loaded_config: LoadedNativeConfig,
         transport: Arc<dyn AiGatewayTransport>,
@@ -1572,7 +1577,7 @@ impl NativeReferenceHost {
         credential_source: Option<AiGatewayCredentialSource>,
         mcp_catalog: Arc<dyn McpToolCatalog>,
         mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
-        subagent_authority: Arc<dyn SubagentAuthority>,
+        subagent_authority: Arc<dyn ManagedSubagentAuthority>,
         terminal_selection: Option<TerminalCompositionSelection>,
         model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
         observations: Option<Arc<crate::NativeConversationObservations>>,
@@ -1646,10 +1651,17 @@ impl NativeReferenceHost {
             concrete: terminal_concrete,
         } = selected_terminal;
         let session_store = Arc::new(session_store);
+        let subagent_tool: Arc<dyn Tool> = match archive.as_ref() {
+            Some(archive) => Arc::new(subagent::NativeManagedSubagentTool::new(
+                subagent_authority,
+                archive.clone(),
+            )),
+            None => Arc::new(SubagentTool::shared_authority(subagent_authority)),
+        };
         let (engine_session_store, read_tool_result) = session_store_parts(&session_store, archive);
         catalog.question(AskUserQuestionTool::shared_prompter(question_prompter));
         let features = mcp::features(mcp.as_ref(), mcp_feature_authority);
-        catalog.extensions(mcp_catalog, features, subagent_authority);
+        catalog.extensions(mcp_catalog, features, subagent_tool);
         catalog.add(memory, None);
         catalog.add(read_tool_result, None);
         catalog.terminal(terminal, terminal_concrete)?;
@@ -1844,13 +1856,23 @@ fn compose_full_terminal_provider(
     let input_nodes = crate::MAX_TERMINAL_ACTION_ARGUMENT_NODES;
     let provider = AiGatewayProvider::with_limits(model, transport, AiGatewayLimits::default())
         .and_then(|provider| {
-            provider.with_tool_input_limits([(
-                ToolName::new(crate::TERMINAL_TOOL_NAME).expect("terminal tool name is valid"),
-                AiGatewayToolInputLimits {
-                    max_argument_bytes: input_bytes,
-                    max_json_nodes: input_nodes,
-                },
-            )])
+            provider.with_tool_input_limits([
+                (
+                    ToolName::new(crate::TERMINAL_TOOL_NAME).expect("terminal tool name is valid"),
+                    AiGatewayToolInputLimits {
+                        max_argument_bytes: input_bytes,
+                        max_json_nodes: input_nodes,
+                    },
+                ),
+                (
+                    ToolName::new(machine_god_core::SUBAGENT_TOOL_NAME)
+                        .expect("subagent tool name is valid"),
+                    AiGatewayToolInputLimits {
+                        max_argument_bytes: machine_god_core::MAX_SUBAGENT_ARGUMENT_BYTES,
+                        max_json_nodes: machine_god_core::MAX_SUBAGENT_JSON_NODES,
+                    },
+                ),
+            ])
         })
         .map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
@@ -2158,17 +2180,13 @@ impl McpFeatureAuthority for EmptyMcpFeatureAuthority {
 #[derive(Clone, Copy, Debug)]
 struct EmptySubagentAuthority;
 
-impl SubagentAuthority for EmptySubagentAuthority {
-    fn run(
+impl ManagedSubagentAuthority for EmptySubagentAuthority {
+    fn execute(
         &self,
-        _request: SubagentRequest,
+        _request: ManagedSubagentInvocation,
         _cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
-        Box::pin(async {
-            Err(SubagentAuthorityError::new(
-                SubagentAuthorityErrorKind::Unavailable,
-            ))
-        })
+    ) -> BoxFuture<'_, Result<ManagedSubagentResult, ManagedSubagentError>> {
+        Box::pin(async { Err(ManagedSubagentError::Unavailable) })
     }
 }
 
@@ -2433,7 +2451,6 @@ fn consume_prepared_composition(
         tools.workspace_binding = Some(binding);
     }
     if let Some(tracker) = options.undo_tracker {
-        tools.undo_tracker = Some(Arc::clone(&tracker));
         tools.write_file = tools.write_file.with_undo_tracker(Arc::clone(&tracker));
         tools.edit_file = tools.edit_file.with_undo_tracker(Arc::clone(&tracker));
         tools.delete_file = tools.delete_file.with_undo_tracker(Arc::clone(&tracker));

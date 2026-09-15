@@ -2,9 +2,9 @@ use super::super::support;
 use super::*;
 use machine_god_core::{CancellationToken, SessionRecord, TurnEvent};
 use machine_god_native::{
-    NativeInteractiveInputSource, NativeInteractiveOutcome, NativeInteractivePromptBridge,
-    NativeInteractivePromptLimits, NativeInteractiveTerminalSizeReader, NativeModelPreferences,
-    NativeReasoningEffort, NativeSessionCatalog, NativeSessionCatalogQuery,
+    NativeInteractiveInputSource, NativeInteractiveOutcome, NativeInteractivePromptLimits,
+    NativeInteractiveTerminalSizeReader, NativeModelPreferences, NativeReasoningEffort,
+    NativeSessionCatalog, NativeSessionCatalogQuery,
 };
 use std::{fs::File, future::poll_fn, io::Write as _, os::fd::OwnedFd};
 

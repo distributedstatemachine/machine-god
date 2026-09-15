@@ -52,7 +52,6 @@ fn register_mutation(catalog: &mut ReferenceHostToolCatalog, fixture: &Fixture, 
                     .with_file_approvals(fixture.registry.clone()),
                 kind,
                 Some(&fixture.registry),
-                None,
             )
         };
     }

@@ -5,7 +5,7 @@ use super::{
     AskCommandOutcome, AskSignals, Context, Driver, InFlight, InputBinding, Modal,
     NativeInteractiveControlOutcome, NativeInteractiveCopyOutcome, NativeInteractiveOutcome,
     OutputAcknowledgement, OutputWork, Poll, ReceiptKind, Render, SIGNAL_OUTPUT_GRACE,
-    TurnDriveResult, principal, wall_clock_ms,
+    TurnDriveResult, wall_clock_ms,
 };
 use machine_god_core::{EngineEvent, ModelEvent, TurnEvent};
 use machine_god_native::{

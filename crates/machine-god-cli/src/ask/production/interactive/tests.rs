@@ -67,7 +67,7 @@ fn request(reason: &str) -> PermissionRequest {
 
 #[test]
 fn permission_answers_require_the_exact_acknowledged_page() {
-    let (bridge, mut inbox, _principal) = bridge();
+    let (bridge, mut inbox, principal) = bridge();
     let mut pending = PermissionPrompter::prompt(bridge.as_ref(), request("confirm"));
     assert!(
         pending
@@ -86,7 +86,7 @@ fn permission_answers_require_the_exact_acknowledged_page() {
             PermissionPromptDecision::AllowSession
         )))
     ));
-    drop(_principal);
+    drop(principal);
     let response = modal.answer("yes", &binding).unwrap().unwrap();
     assert!(inbox.reply(modal.view.token(), response).is_err());
 }

@@ -7,8 +7,8 @@ use std::sync::{
 };
 
 use machine_god_core::{
-    PermissionRequest, Session, SessionId, SessionIncarnationId, ToolContext, Turn, TurnHandle,
-    TurnId,
+    PermissionRequest, Session, SessionId, SessionIncarnationId, SessionWitness, ToolContext, Turn,
+    TurnHandle, TurnId, TurnWitness,
 };
 
 use crate::{NativeWorkspaceAuthority, NativeWorkspaceScopeSnapshot};
@@ -67,6 +67,7 @@ impl NativeWorkspaceContexts {
         let owner = Arc::new(WorkspaceContextSession {
             id,
             incarnation,
+            session: session.witness(),
             active: Mutex::new(None),
             retired: AtomicBool::new(false),
             routes: Arc::downgrade(&self.routes),
@@ -141,6 +142,7 @@ impl fmt::Debug for NativeWorkspaceContexts {
 pub(crate) struct WorkspaceContextSession {
     id: SessionId,
     incarnation: SessionIncarnationId,
+    session: SessionWitness,
     active: Mutex<Option<Weak<WorkspaceContextTurn>>>,
     retired: AtomicBool,
     routes: Weak<Routes>,
@@ -151,8 +153,14 @@ impl WorkspaceContextSession {
         self: &Arc<Self>,
         turn: &Turn,
         scope: NativeWorkspaceScopeSnapshot,
+        undo: Option<Arc<crate::FileUndoTracker>>,
     ) -> Result<WorkspaceContextRegistration> {
-        if turn.session_id() != &self.id || turn.session_incarnation_id() != &self.incarnation {
+        let witness = turn.witness();
+        if turn.session_id() != &self.id
+            || turn.session_incarnation_id() != &self.incarnation
+            || !witness.is_live()
+            || !self.session.owns_turn(&witness)
+        {
             return Err(NativeWorkspaceContextError::Unavailable);
         }
         let mut active = self
@@ -170,8 +178,10 @@ impl WorkspaceContextSession {
         let state = Arc::new(WorkspaceContextTurn {
             owner: Arc::downgrade(self),
             handle: turn.handle(),
+            witness,
             open: AtomicBool::new(true),
             scope,
+            undo,
         });
         *active = Some(Arc::downgrade(&state));
         Ok(WorkspaceContextRegistration {
@@ -203,18 +213,20 @@ impl WorkspaceContextSession {
 struct WorkspaceContextTurn {
     owner: Weak<WorkspaceContextSession>,
     handle: TurnHandle,
+    witness: TurnWitness,
     open: AtomicBool,
     scope: NativeWorkspaceScopeSnapshot,
+    undo: Option<Arc<crate::FileUndoTracker>>,
 }
 
 impl WorkspaceContextTurn {
     fn live(&self) -> bool {
         self.open.load(Ordering::Acquire)
+            && self.witness.is_live()
             && !self.handle.is_cancelled()
-            && self
-                .owner
-                .upgrade()
-                .is_some_and(|owner| !owner.retired.load(Ordering::Acquire))
+            && self.owner.upgrade().is_some_and(|owner| {
+                owner.session.is_live() && !owner.retired.load(Ordering::Acquire)
+            })
     }
 }
 
@@ -247,6 +259,13 @@ pub struct NativeWorkspaceTurnScope {
 }
 
 impl NativeWorkspaceTurnScope {
+    pub(crate) fn undo_tracker(&self) -> Result<Option<Arc<crate::FileUndoTracker>>> {
+        if !self.is_live() {
+            return Err(NativeWorkspaceContextError::Unavailable);
+        }
+        Ok(self.state.undo.clone())
+    }
+
     #[must_use]
     pub fn is_live(&self) -> bool {
         self.state.live()

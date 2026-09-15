@@ -121,13 +121,26 @@ The root, transport, and MCP composition paths are:
 | `PreparedNativeRoots` and explicit conversation options | Production HTTP or injected transport | Shares the caller's exact file-undo tracker across all five file mutation tools; optional terminal selection uses the same complete-terminal path |
 | Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source; feature access remains an inert empty authority |
 | Existing explicit roots | Injected transport, `Arc<dyn McpToolCatalog>`, and `Arc<dyn McpFeatureAuthority>` | Adds bounded exact server-qualified resource, prompt, and completion access through the separately injected read-only authority |
-| Existing explicit roots | Injected transport and `Arc<dyn SubagentAuthority>` | Adds bounded foreground one-off delegation while MCP authorities remain inert |
+| Existing explicit roots | Injected transport and `Arc<dyn ManagedSubagentAuthority>` | Adds allocation-bound managed commands while MCP authorities remain inert |
 | Existing explicit roots | Injected transport plus MCP catalog, MCP feature, and subagent authorities | Retains all three exact extensibility allocations without probing or polling them |
 
-Every ordinary path injects an inert unavailable `SubagentAuthority`. A
+Every ordinary path injects an inert unavailable `ManagedSubagentAuthority`. A
 separate explicit subagent injection seam accepts the same root/transport
 composition plus one trusted authority allocation. Neither path probes or polls
 the authority during construction.
+
+Complete-terminal composition shares its owned argument/result archive with the
+managed tool. The Gateway override admits up to 448 KiB of managed arguments;
+the concrete tool validates the complete command and publishes lossless input
+and output references when inline transcript limits are exceeded. Permission
+wrappers forward the unchanged actual-call proof. These per-tool limits do not
+widen ordinary tools, and archive publication does not admit child execution.
+
+Workspace mutation tools select undo history from the original conversation's
+live turn scope, never from the currently displayed principal or a shared tool
+field. Workspace registration checks actual session/turn allocation witnesses;
+reusing public IDs cannot attach a foreign turn. A scope retains its original
+tracker for settlement but targeted retirement prevents new use or rebinding.
 
 `compose_ai_gateway_with_prepared_roots_and_conversation_and_credential_and_transport`
 accepts an already discovered credential and a trusted one-shot transport factory.
@@ -698,9 +711,10 @@ catalog allocation and exact-selects one attached executable registration for
 advertisement on the next model round. The overlay remains turn-local as
 defined by the [MCP selection contract](mcp-select-tool.md). `read_tool_result` uses the
 engine's exact session-store allocation and has no workspace authority.
-`subagent` performs only bounded foreground one-off delegation through its
-injected authority. It receives no parent transcript, grants, dynamic tools, or
-recursive subagent visibility; its complete boundary is defined by the
+`subagent` accepts managed commands through its injected authority, which must
+validate the actual admitted turn and own durable child lifetime. Public context
+IDs and structural execution grant no authority. Children receive no inherited
+parent transcript or grants; the complete boundary is defined by the
 [subagent contract](subagent.md).
 `memory` uses a clone of the retained state-root identity but has no workspace
 or session-record authority; its fixed files and permission boundary are

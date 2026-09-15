@@ -145,7 +145,7 @@ impl PermissionPrompter for Prompt {
     }
 }
 pub(super) struct Fixture {
-    pub _prompt_principal: Option<crate::NativeInteractivePromptPrincipal>,
+    pub prompt_principal: Option<crate::NativeInteractivePromptPrincipal>,
     pub conversation: NativeConversationRuntime,
     pub runtime: Arc<NativeMcpRuntime>,
     pub executor: Arc<Executor>,
@@ -198,6 +198,10 @@ impl Fixture {
             prepare,
         )
     }
+    #[allow(
+        clippy::too_many_lines,
+        reason = "One fixture keeps matching engine, MCP, permission and prompt-principal ownership together."
+    )]
     fn configured(
         values: &[Value],
         mode: PermissionMode,
@@ -299,7 +303,7 @@ impl Fixture {
         .unwrap();
         Self {
             conversation,
-            _prompt_principal: None,
+            prompt_principal: None,
             runtime,
             executor,
             transport,

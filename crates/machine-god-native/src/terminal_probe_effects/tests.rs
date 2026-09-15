@@ -163,7 +163,7 @@ fn workspace_probe_grant_outlives_source_turn_but_stale_grant_creation_is_denied
     .unwrap();
     let (turn, _permission_registration, key) = permission.turn();
     let registration = workspace_owner
-        .begin(&turn, authority.snapshot().unwrap())
+        .begin(&turn, authority.snapshot().unwrap(), None)
         .unwrap();
     let policy = crate::NativeTerminalPermissionPolicy::new(vec![], None)
         .unwrap()

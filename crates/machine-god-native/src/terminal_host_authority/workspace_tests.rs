@@ -50,7 +50,7 @@ impl Scoped {
                 false,
             )
             .unwrap();
-            registration = Some(owner.begin(&turn, scope.snapshot().unwrap()).unwrap());
+            registration = Some(owner.begin(&turn, scope.snapshot().unwrap(), None).unwrap());
             authority = Some(scope);
             mode.map(|_| {
                 let executable =
@@ -89,7 +89,7 @@ impl Scoped {
         self.registration.take();
         self.registration = Some(
             self.owner
-                .begin(&self.turn, self.authority.snapshot().unwrap())
+                .begin(&self.turn, self.authority.snapshot().unwrap(), None)
                 .unwrap(),
         );
     }
@@ -176,7 +176,7 @@ fn workspace_cwd_unpolled_entrypoints_cannot_rebind_reused_registration() {
             fixture.registration = Some(
                 fixture
                     .owner
-                    .begin(&fixture.turn, fixture.authority.snapshot().unwrap())
+                    .begin(&fixture.turn, fixture.authority.snapshot().unwrap(), None)
                     .unwrap(),
             );
             assert!(futures_executor::block_on(future).is_err());
@@ -190,7 +190,7 @@ fn workspace_cwd_unpolled_entrypoints_cannot_rebind_reused_registration() {
             fixture.registration = Some(
                 fixture
                     .owner
-                    .begin(&fixture.turn, fixture.authority.snapshot().unwrap())
+                    .begin(&fixture.turn, fixture.authority.snapshot().unwrap(), None)
                     .unwrap(),
             );
             assert!(futures_executor::block_on(future).is_err());
@@ -324,7 +324,7 @@ fn workspace_cwd_missing_foreign_removed_replaced_and_cancelled_scopes_fail_clos
     fixture.registration = Some(
         fixture
             .owner
-            .begin(&fixture.turn, fixture.authority.snapshot().unwrap())
+            .begin(&fixture.turn, fixture.authority.snapshot().unwrap(), None)
             .unwrap(),
     );
     assert!(futures_executor::block_on(absent).is_err());

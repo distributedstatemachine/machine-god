@@ -211,6 +211,10 @@ impl fmt::Debug for NativeConversationRuntime {
 }
 
 impl NativeConversationRuntime {
+    pub(crate) fn undo_tracker(&self) -> Option<Arc<crate::FileUndoTracker>> {
+        self.conversation.undo_tracker()
+    }
+
     #[cfg(test)]
     pub(crate) fn set_skill_queue_test_hook(
         &self,

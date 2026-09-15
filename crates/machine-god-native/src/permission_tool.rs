@@ -4,9 +4,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use machine_god_core::{
-    BoxFuture, CancellationToken, EngineLimits, PreparedToolCall, Tool, ToolCall, ToolCallId,
-    ToolContext, ToolError, ToolErrorKind, ToolExecution, ToolInputLimits, ToolName, ToolOutput,
-    ToolOutputLimits, ToolSpec,
+    AdmittedToolInvocation, BoxFuture, CancellationToken, EngineLimits, PreparedToolCall, Tool,
+    ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolExecution, ToolInputLimits,
+    ToolName, ToolOutput, ToolOutputLimits, ToolSpec,
 };
 use serde_json::Value;
 
@@ -124,5 +124,13 @@ impl Tool for NativePermissionGovernedTool {
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
         self.tool.execute_for_turn(context, arguments, cancellation)
+    }
+
+    fn execute_admitted(
+        &self,
+        invocation: AdmittedToolInvocation,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        self.tool.execute_admitted(invocation, cancellation)
     }
 }

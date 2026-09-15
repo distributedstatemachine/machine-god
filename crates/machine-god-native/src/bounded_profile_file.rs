@@ -410,7 +410,7 @@ fn remove_owned_temp(root: &OwnedFd, temp: &File, kind: ProfileFileKind) {
     }
 }
 
-fn write_bounded(writer: &mut impl Write, mut bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_bounded(writer: &mut impl Write, mut bytes: &[u8]) -> std::io::Result<()> {
     let mut interruptions = 0;
     while !bytes.is_empty() {
         match writer.write(bytes) {
@@ -428,7 +428,10 @@ fn write_bounded(writer: &mut impl Write, mut bytes: &[u8]) -> std::io::Result<(
     Ok(())
 }
 
-fn read_bounded(reader: &mut impl Read, limit: usize) -> Result<Vec<u8>, ProfileFileError> {
+pub(crate) fn read_bounded(
+    reader: &mut impl Read,
+    limit: usize,
+) -> Result<Vec<u8>, ProfileFileError> {
     let mut bytes = vec![0; limit + 1];
     let mut length = 0;
     let mut interruptions = 0;
@@ -491,7 +494,10 @@ fn open_root(
     }
 }
 
-fn validate_private(fd: &impl rustix::fd::AsFd, directory: bool) -> Result<(), ProfileFileError> {
+pub(crate) fn validate_private(
+    fd: &impl rustix::fd::AsFd,
+    directory: bool,
+) -> Result<(), ProfileFileError> {
     let stat = rustix::fs::fstat(fd).map_err(|_| ProfileFileError::Persistence)?;
     let kind = FileType::from_raw_mode(stat.st_mode);
     if stat.st_uid != nix::unistd::Uid::effective().as_raw()
@@ -530,7 +536,7 @@ fn same_file(
     Ok(a.st_dev == b.st_dev && a.st_ino == b.st_ino)
 }
 
-fn validate_link(
+pub(crate) fn validate_link(
     parent: &OwnedFd,
     name: impl rustix::path::Arg,
     fd: &impl rustix::fd::AsFd,

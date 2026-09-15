@@ -312,12 +312,12 @@ fn malformed_permission_replies_do_not_settle_the_native_request() {
 
 #[test]
 fn typed_reply_validation_never_replaces_native_freshness_checks() {
-    let (bridge, mut inbox, _principal) = bridge();
+    let (bridge, mut inbox, principal) = bridge();
     let mut pending = bridge.prompt(permission());
     assert!(poll(&mut pending).is_pending());
     let prompt = view(&mut inbox);
     let result = json!({"outcome":{"outcome":"selected","optionId":"allow_once"}});
-    drop(_principal);
+    drop(principal);
     let _replacement = inbox.register(owner()).unwrap();
     // Syntax/schema remain valid, but the original token cannot acquire a new scope.
     let answer = decode_reply(&prompt, &result).unwrap();
