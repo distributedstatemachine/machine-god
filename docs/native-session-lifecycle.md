@@ -306,6 +306,31 @@ another ID after that successful publication. Other unknown or ambiguous
 publication errors likewise return without retry. The eight-attempt collision
 bound and source-failure behavior remain unchanged.
 
+### Managed initial-publication receipts
+
+Native managed-runtime preparation separates allocation of an exact session ID
+and incarnation from their publication. Both allocation and preparation futures
+are inert before polling. Preparation validates typed metadata and reserves the
+empty canonical candidate without publishing a transcript. The retained receipt
+keeps the original identity and reservation through a publication error; it
+permits only one creation attempt, never a generated-ID retry. Dropping an
+unpolled publication leaves the receipt available for that first attempt.
+
+Explicit reconciliation compares the exact original revision-one canonical bytes
+under the per-session writer lock, synchronizes the retained regular file and
+state directory, and verifies that the linked file is still that same version.
+It then requires the canonical live record to match the confirmed record and
+remain turn-idle. A readback alone, mismatched metadata, another incarnation,
+an advanced revision, a replaced file, or either failed synchronization cannot
+confirm preparation. Confirmed absence also requires directory synchronization
+under the lock; it does not publish or retry a leftover temporary record.
+
+Reconciliation errors leave ownership with the caller, which must retain the
+same receipt and explicitly decide when to reconcile again. This internal seam
+does not execute providers or tools, restore a dropped host, authorize a child,
+or replace the manager journal's separate durable acceptance gate. The receipt's
+engine requester and canonical reservation do not retain the host lifetime.
+
 ## Resume
 
 `resume` loads the durable record for the supplied ID through the exact shared

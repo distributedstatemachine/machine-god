@@ -1,5 +1,7 @@
 //! Native ownership of conversation admission and durable paused-turn state.
 
+mod notice_context;
+
 use std::fmt;
 use std::pin::Pin;
 use std::sync::{
@@ -182,6 +184,7 @@ pub struct NativeConversation {
     workspace: Option<ConversationWorkspaceBinding>,
     undo: Option<Arc<crate::FileUndoTracker>>,
     managed: Option<crate::managed::conversation::ManagedConversationBinding>,
+    notices: Option<std::sync::Weak<crate::managed::prompt_context::ParentNoticeContext>>,
 }
 
 enum McpReadiness {
@@ -324,6 +327,7 @@ impl NativeConversation {
             workspace: None,
             undo: None,
             managed: None,
+            notices: None,
         })
     }
 
@@ -794,6 +798,12 @@ impl NativeConversation {
             resource_context,
         )
         .map_err(NativeConversationError::InvalidResourceContext)?;
+        notice_context::validate_saved_context(
+            &record,
+            checkpoint,
+            skill_context,
+            resource_context,
+        )?;
         Ok(checkpoint.map(|checkpoint| NativePausedTurn {
             turn_sequence: checkpoint.turn_sequence,
             has_uncertain_tool_results: record.messages[checkpoint.first_user_message..]
@@ -1217,7 +1227,7 @@ impl NativeConversation {
                 resource_context.to_value(checkpoint.turn_sequence, checkpoint.first_user_message),
             );
         }
-        let user_context = if let Some(resource_context) = &resource_context {
+        let mut user_context = if let Some(resource_context) = &resource_context {
             crate::conversation_resource_context::compose_user_context(
                 skill_context
                     .as_ref()
@@ -1229,6 +1239,13 @@ impl NativeConversation {
         } else {
             skill_context.map(|context| context.into_user_context(checkpoint.first_user_message))
         };
+        let notice = self.prepare_notice_context(
+            &mut record,
+            previous,
+            checkpoint,
+            matches!(&input.input, Some(ConversationInput::Prompt(_))),
+            &mut user_context,
+        )?;
         let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidMetadata)?;
         metadata
@@ -1272,17 +1289,13 @@ impl NativeConversation {
             context,
             user_context,
         };
-        let turn = match input.input.take().expect("input is consumed once") {
-            ConversationInput::Prompt(prompt) => {
-                self.session.prompt_prepared(prompt, preparation).await
-            }
-            ConversationInput::Continue(options) => {
-                self.session
-                    .continue_turn_prepared(options, preparation)
-                    .await
-            }
-        }
-        .map_err(map_engine_error)?;
+        let turn = notice_context::publish(
+            notice,
+            &self.session,
+            input.input.take().expect("input is consumed once"),
+            preparation,
+        )
+        .await?;
         let managed_turn = self
             .managed
             .as_ref()
@@ -1559,6 +1572,7 @@ pub(crate) fn validated_history(
         resource_context,
     )
     .map_err(NativeConversationError::InvalidResourceContext)?;
+    notice_context::validate_saved_context(record, checkpoint, skill_context, resource_context)?;
     for group in history.groups() {
         if group.state() == NativeHistoryState::Running
             && checkpoint.is_none_or(|checkpoint| {
@@ -1773,6 +1787,9 @@ impl NativeConversationTurn {
             record
                 .metadata
                 .remove(crate::conversation_resource_context::NATIVE_RESOURCE_PROMPT_CONTEXT_KEY);
+            record
+                .metadata
+                .remove(crate::managed::prompt_context::NOTICE_CONTEXT_KEY);
         } else {
             record.metadata.insert(
                 NATIVE_CONVERSATION_CHECKPOINT_KEY.to_owned(),

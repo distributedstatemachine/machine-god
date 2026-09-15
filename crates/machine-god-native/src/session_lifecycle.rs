@@ -2,6 +2,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+mod initial;
+pub(crate) use initial::NativeInitialSession;
+
 use machine_god_core::{
     BoxFuture, Engine, EngineError, EngineRequester, Session, SessionId, SessionIncarnationId,
     SessionRecord, SessionReservation, SessionStore, SessionStoreError, SessionStoreErrorKind,
@@ -936,6 +939,79 @@ mod tests {
     }
 
     struct HostResource(Arc<AtomicUsize>);
+
+    #[test]
+    fn managed_initial_identity_allocation_and_publication_are_separately_inert() {
+        let root = TempDirectory::new("managed-initial");
+        let (source, id_calls) = ScriptedSessionIdSource::ids(["managed-exact"]);
+        let incarnation_calls = Arc::new(AtomicUsize::new(0));
+        let (lifecycle, store, _) =
+            lifecycle_with_session_ids(&root, source, incarnation_calls.clone());
+        let allocation = lifecycle.allocate_identity();
+        assert_eq!(id_calls.load(Ordering::Relaxed), 0);
+        let (id, incarnation) = futures_executor::block_on(allocation).unwrap();
+        assert_eq!(id_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(incarnation_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        let prepare = lifecycle.prepare_initial(
+            id.clone(),
+            incarnation.clone(),
+            NativeSessionMetadata::default(),
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        let mut receipt = futures_executor::block_on(prepare).unwrap();
+        drop(receipt.publish());
+        assert!(
+            futures_executor::block_on(store.load(id.clone()))
+                .unwrap()
+                .is_none()
+        );
+        assert!(futures_executor::block_on(receipt.reconcile()).is_err());
+        let session = futures_executor::block_on(receipt.publish()).unwrap();
+        assert_eq!(session.id(), id);
+        assert_eq!(session.record().incarnation_id, incarnation);
+        assert_eq!(
+            session.record().revision,
+            machine_god_core::SessionRevision(1)
+        );
+        assert!(futures_executor::block_on(receipt.publish()).is_err());
+        assert_eq!(
+            futures_executor::block_on(receipt.reconcile())
+                .unwrap()
+                .unwrap()
+                .record(),
+            session.record()
+        );
+        assert_eq!(id_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(incarnation_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn managed_initial_receipt_cannot_keep_or_resurrect_the_host() {
+        let root = TempDirectory::new("managed-initial-host");
+        let released = Arc::new(AtomicUsize::new(0));
+        let lifecycle = lifecycle_with_host_resource(&root, released.clone());
+        let id = SessionId::new("managed-no-resurrection").unwrap();
+        let mut receipt = futures_executor::block_on(lifecycle.prepare_initial(
+            id.clone(),
+            SessionIncarnationId::new("managed-exact").unwrap(),
+            NativeSessionMetadata::default(),
+        ))
+        .unwrap();
+        let store = Arc::clone(lifecycle.session_store());
+        drop(lifecycle);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert!(futures_executor::block_on(receipt.publish()).is_err());
+        // Publication may have succeeded even though no real handle can be
+        // returned; the exact receipt still cannot resurrect the closed host.
+        assert!(
+            futures_executor::block_on(store.load(id))
+                .unwrap()
+                .is_some()
+        );
+        assert!(futures_executor::block_on(receipt.reconcile()).is_err());
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+    }
     impl Drop for HostResource {
         fn drop(&mut self) {
             self.0.fetch_add(1, Ordering::SeqCst);

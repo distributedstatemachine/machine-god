@@ -1,5 +1,7 @@
 //! Explicit next-turn notice preparation, never an idle-turn trigger.
 mod checkpoint;
+#[cfg(test)]
+mod conversation_tests;
 mod publication;
 #[cfg(test)]
 mod tests;
@@ -70,7 +72,7 @@ impl fmt::Debug for PreparedNoticeContext {
     }
 }
 impl ParentNoticeContext {
-    pub(super) fn new(
+    pub(crate) fn new(
         session: &Session,
         parent: NoticePrincipal,
         notices: &Arc<ManagedNotices>,
@@ -233,7 +235,25 @@ impl ParentNoticeContext {
         );
         drop(old);
     }
-    fn validate_session(&self, session: &Session) -> Result<(), NoticeContextError> {
+    pub(crate) fn needs_reconciliation(
+        &self,
+        session: &Session,
+    ) -> Result<bool, NoticeContextError> {
+        self.validate_session(session)?;
+        match &*self
+            .inner
+            .slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            Slot::Idle => Ok(false),
+            Slot::Uncertain(_) => Ok(true),
+            Slot::Retired => Err(NoticeContextError::Retired),
+            _ => Err(NoticeContextError::Busy),
+        }
+    }
+
+    pub(crate) fn validate_session(&self, session: &Session) -> Result<(), NoticeContextError> {
         if self.inner.session.same_session(&session.witness()) && self.inner.session.is_live() {
             Ok(())
         } else {

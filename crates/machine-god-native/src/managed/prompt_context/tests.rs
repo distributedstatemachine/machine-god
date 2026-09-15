@@ -70,14 +70,18 @@ impl Fixture {
                 0,
             )
             .unwrap();
-        notices
-            .terminal(
+        let PreparedNotice::Staged(stage) = notices
+            .prepare_terminal(
                 &work,
                 NonZeroU64::new(1).unwrap(),
                 NoticeTerminal::Completed,
                 None,
             )
-            .unwrap();
+            .unwrap()
+        else {
+            panic!("terminal fixture is staged");
+        };
+        notices.confirm_durable(&stage).unwrap();
         Self {
             engine,
             session,
@@ -401,14 +405,19 @@ fn new_arrivals_between_snapshot_and_confirmation_are_not_consumed() {
             0,
         )
         .unwrap();
-    f.notices
-        .terminal(
+    let PreparedNotice::Staged(stage) = f
+        .notices
+        .prepare_terminal(
             &work,
             NonZeroU64::new(1).unwrap(),
             NoticeTerminal::Failed,
             None,
         )
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("terminal fixture is staged");
+    };
+    f.notices.confirm_durable(&stage).unwrap();
     let turn = block_on(prepared.publish_prompt(&f.session, "hello".into(), prep)).unwrap();
     assert_eq!(f.pending(), 1);
     assert_eq!(

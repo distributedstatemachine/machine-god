@@ -508,6 +508,15 @@ preparer callbacks and proof destruction run outside routing locks.
 
 ## Parent prompt checkpoints
 
+Native conversation admission binds a weak notice owner to the actual session
+allocation. New prompts snapshot notices under the existing admission lease;
+ordinary continuation reuses only the saved inert context, leaving later notices
+queued. A retained uncertain publication uses the explicit guarded continuation
+path. Core checkpoint confirmation acknowledges the selected originals before
+subsequent native route registration; normal completion removes the saved notice
+context alongside skill/resource context, while interrupted work retains it.
+History and paused-turn validation apply the combined context bound as well.
+
 The native prompt-context guard reserves one bounded preparation slot for an
 actual parent session allocation, not just its public IDs. It snapshots notices
 without consuming them and combines skill, resource and notice text within

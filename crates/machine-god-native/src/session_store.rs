@@ -7,6 +7,9 @@ use std::path::Path;
 mod maintenance;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod initial;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::BTreeMap;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io::{self, Read, Write};
@@ -383,16 +386,7 @@ impl FileSessionStore {
         incarnation_id: SessionIncarnationId,
         metadata: &crate::NativeSessionMetadata,
     ) -> Result<SessionRecord, SessionStoreError> {
-        let mut record = SessionRecord::empty(id, incarnation_id);
-        record.metadata.insert(
-            crate::NATIVE_SESSION_METADATA_KEY.to_owned(),
-            metadata.to_value(),
-        );
-        if crate::NativeSessionMetadata::from_metadata(&record.metadata).as_ref() != Ok(metadata)
-            || validate_record_json(&record).is_err()
-        {
-            return Err(serialization_failed());
-        }
+        let record = initial::initial_record(id, incarnation_id, metadata)?;
         self.publish_initial_record(record)
     }
 
