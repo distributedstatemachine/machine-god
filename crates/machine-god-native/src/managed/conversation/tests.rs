@@ -58,6 +58,14 @@ impl Fixture {
         steps: Vec<ModelProviderStep>,
         wrap: impl FnOnce(ScriptedModelProvider) -> P,
     ) -> Self {
+        Self::with_adapters(steps, wrap, InMemorySessionStore::default())
+    }
+
+    fn with_adapters<P: machine_god_core::ModelProvider, S: machine_god_core::SessionStore>(
+        steps: Vec<ModelProviderStep>,
+        wrap: impl FnOnce(ScriptedModelProvider) -> P,
+        store: S,
+    ) -> Self {
         let path = std::env::temp_dir().join(format!(
             "mg-managed-conversation-{}-{}",
             std::process::id(),
@@ -86,7 +94,7 @@ impl Fixture {
         let engine = Engine::builder()
             .provider(wrap(provider.clone()))
             .shared_permission_handler(permissions.clone())
-            .session_store(InMemorySessionStore::default())
+            .session_store(store)
             .build()
             .unwrap();
         Self {

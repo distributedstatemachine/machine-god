@@ -1069,6 +1069,7 @@ impl NativeConversation {
         permit: &LifecyclePermit,
         workspace: Option<crate::NativeWorkspaceScopeSnapshot>,
         cancellation: CancellationToken,
+        cohort: Option<Arc<crate::owned_worker::NativeOwnedWorkerRun>>,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         if self
             .lifecycle
@@ -1077,7 +1078,7 @@ impl NativeConversation {
         {
             return Err(NativeConversationError::Engine);
         }
-        self.start_with_policy_inner(
+        self.start_with_policy_body(
             input,
             model,
             policy,
@@ -1085,8 +1086,19 @@ impl NativeConversation {
             Some(permit),
             WorkspaceAdmission::Taken(workspace),
             cancellation,
+            cohort,
         )
         .await
+    }
+
+    pub(crate) fn prepare_managed_admission(
+        &self,
+    ) -> Result<Option<crate::managed::conversation::ManagedAdmission>, NativeConversationError>
+    {
+        self.managed
+            .as_ref()
+            .map(|binding| binding.prepare_admission())
+            .transpose()
     }
 
     #[allow(
@@ -1096,6 +1108,42 @@ impl NativeConversation {
     )]
     async fn start_with_policy_inner(
         &self,
+        input: PendingInput,
+        model: Option<NativeModelSnapshot>,
+        policy: Option<crate::NativePermissionPolicySnapshot>,
+        now_ms: i64,
+        permit: Option<&LifecyclePermit>,
+        workspace: WorkspaceAdmission,
+        cancellation: CancellationToken,
+    ) -> Result<NativeConversationTurn, NativeConversationError> {
+        let mut admission = self.prepare_managed_admission()?;
+        let cohort = admission.as_ref().and_then(|admission| admission.cohort());
+        let future = self.start_with_policy_body(
+            input,
+            model,
+            policy,
+            now_ms,
+            permit,
+            workspace,
+            cancellation,
+            cohort,
+        );
+        let mut result = match &admission {
+            Some(admission) => admission.wrap(future).await,
+            None => future.await,
+        };
+        if let Ok(turn) = &mut result {
+            turn.activate_managed_cleanup();
+            if let Some(admission) = &mut admission {
+                admission.transfer();
+            }
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_with_policy_body(
+        &self,
         mut input: PendingInput,
         model: Option<NativeModelSnapshot>,
         policy: Option<crate::NativePermissionPolicySnapshot>,
@@ -1103,6 +1151,7 @@ impl NativeConversation {
         permit: Option<&LifecyclePermit>,
         workspace: WorkspaceAdmission,
         cancellation: CancellationToken,
+        cohort: Option<Arc<crate::owned_worker::NativeOwnedWorkerRun>>,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         let lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
@@ -1307,6 +1356,7 @@ impl NativeConversation {
                         .ok_or(NativeConversationError::ManagedAdmission)?,
                     policy,
                     preferences,
+                    cohort,
                 )
             })
             .transpose()?;
@@ -1703,6 +1753,11 @@ impl fmt::Debug for NativeConversationTurn {
 }
 
 impl NativeConversationTurn {
+    pub(crate) fn activate_managed_cleanup(&mut self) {
+        if let Some(managed) = &mut self.managed_turn {
+            managed.activate_cleanup();
+        }
+    }
     #[must_use]
     pub fn handle(&self) -> TurnHandle {
         self.handle.clone()

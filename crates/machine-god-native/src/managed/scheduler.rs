@@ -92,7 +92,7 @@ pub(crate) struct ManagedScheduler {
     inner: Arc<Inner>,
 }
 impl ManagedScheduler {
-    pub(super) fn new(limits: SchedulerLimits) -> Self {
+    pub(crate) fn new(limits: SchedulerLimits) -> Self {
         Self {
             inner: Arc::new(Inner {
                 limits,

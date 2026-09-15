@@ -826,112 +826,134 @@ impl NativeConversationRuntime {
     ) -> BoxFuture<'_, Result<Option<NativeConversationRuntimeTurn>, NativeConversationRuntimeError>>
     {
         Box::pin(async move {
-            let lease = self.acquire_idle(false)?;
-            let Some((mut job, snapshot, generation, policy, workspace, cancellation)) =
-                self.take_job(&lease.permit)?
-            else {
-                return Ok(None);
+            let mut admission = self.conversation.prepare_managed_admission()?;
+            let cohort = admission.as_ref().and_then(|admission| admission.cohort());
+            let future = self.start_next_inner(now_ms, cohort);
+            let mut result = match &admission {
+                Some(admission) => admission.wrap(future).await,
+                None => future.await,
             };
-            if let Some(expected) = job.checkpoint
-                && self
-                    .conversation
-                    .paused_turn()?
-                    .map(|value| value.turn_sequence)
-                    != Some(expected)
-            {
-                return Err(NativeConversationError::Conflict.into());
-            }
-            if lease.permit.was_quiesced() {
-                cancellation.cancel();
-            }
-            let mut admission = (lease, policy, workspace);
-            if let Some(resources) = job.resources.take() {
-                let scope =
-                    admission
-                        .2
-                        .clone()
-                        .ok_or(NativeConversationRuntimeError::Resources(
-                            crate::acp::resources::NativeAcpResourceContextError::WorkerUnavailable,
-                        ))?;
-                let Some(ConversationInput::Prompt(prompt)) = job.input.input.take() else {
-                    return Err(NativeConversationError::Engine.into());
-                };
-                let (returned_admission, materialized) = resources
-                    .materialize(prompt, scope, admission, cancellation.clone())
-                    .await
-                    .map_err(NativeConversationRuntimeError::Resources)?;
-                admission = returned_admission;
-                let materialized =
-                    materialized.map_err(NativeConversationRuntimeError::Resources)?;
-                job.input.input = Some(ConversationInput::Prompt(materialized.prompt));
-                job.input.resource_context = materialized.context;
-                if cancellation.is_cancelled() {
-                    return Err(NativeConversationRuntimeError::Resources(
-                        crate::acp::resources::NativeAcpResourceContextError::Cancelled,
-                    ));
+            if let Ok(Some(turn)) = &mut result {
+                turn.core
+                    .as_mut()
+                    .expect("new runtime turn retains core")
+                    .activate_managed_cleanup();
+                if let Some(admission) = &mut admission {
+                    admission.transfer();
                 }
             }
-            if let Some(skills) = job.skills.take() {
-                // Retain the exact policy/workspace observations alongside the
-                // runtime lease even if the admission response is abandoned.
-                let (returned_admission, context) = skills
-                    .materialize(admission, cancellation.clone())
-                    .await
-                    .map_err(NativeConversationRuntimeError::Skills)?;
-                admission = returned_admission;
-                job.input.skill_context =
-                    context.map_err(NativeConversationRuntimeError::Skills)?;
-                if cancellation.is_cancelled() {
-                    return Err(NativeConversationRuntimeError::Skills(
-                        crate::skills_queue::NativeSkillsQueueError::Cancelled,
-                    ));
-                }
-            }
-            let (lease, policy, workspace) = admission;
-            // Dropped or failed admission can be publication-uncertain; only a
-            // confirmed reservation below restores a saved-generation receipt.
-            self.state
-                .lock()
-                .expect("runtime state poisoned")
-                .saved_generation = None;
-            let turn = self
-                .conversation
-                .start_with_policy_admitted(
-                    job.input,
-                    Some(snapshot.clone()),
-                    policy,
-                    now_ms,
-                    &lease.permit,
-                    workspace,
-                    cancellation,
-                )
-                .await?;
-            let handle = turn.handle();
-            let cancellation = {
-                let mut state = self.state.lock().expect("runtime state poisoned");
-                state.saved_generation = Some(generation);
-                state.active_handle = Some(handle.clone());
-                state.active_preparation = None;
-                if lease.permit.was_quiesced() || state.active_cancel_requested {
-                    cancellation_to_dispatch(&mut state)
-                } else {
-                    None
-                }
-            };
-            // A quiescence request can precede the core reservation's handle.
-            // Publish the handle first, then recheck: either this path or the
-            // requesting path observes it before any provider work is polled.
-            if let Some(handle) = cancellation {
-                let _ = handle.cancel();
-            }
-            Ok(Some(NativeConversationRuntimeTurn {
-                core: Some(turn),
-                model_route: self.model_route.clone(),
-                lease: Some(lease),
-                id: job.id,
-                snapshot,
-            }))
+            result
         })
+    }
+
+    async fn start_next_inner(
+        &self,
+        now_ms: i64,
+        cohort: Option<Arc<crate::owned_worker::NativeOwnedWorkerRun>>,
+    ) -> Result<Option<NativeConversationRuntimeTurn>, NativeConversationRuntimeError> {
+        let lease = self.acquire_idle(false)?;
+        let Some((mut job, snapshot, generation, policy, workspace, cancellation)) =
+            self.take_job(&lease.permit)?
+        else {
+            return Ok(None);
+        };
+        if let Some(expected) = job.checkpoint
+            && self
+                .conversation
+                .paused_turn()?
+                .map(|value| value.turn_sequence)
+                != Some(expected)
+        {
+            return Err(NativeConversationError::Conflict.into());
+        }
+        if lease.permit.was_quiesced() {
+            cancellation.cancel();
+        }
+        let mut admission = (lease, policy, workspace);
+        if let Some(resources) = job.resources.take() {
+            let scope = admission
+                .2
+                .clone()
+                .ok_or(NativeConversationRuntimeError::Resources(
+                    crate::acp::resources::NativeAcpResourceContextError::WorkerUnavailable,
+                ))?;
+            let Some(ConversationInput::Prompt(prompt)) = job.input.input.take() else {
+                return Err(NativeConversationError::Engine.into());
+            };
+            let (returned_admission, materialized) = resources
+                .materialize(prompt, scope, admission, cancellation.clone())
+                .await
+                .map_err(NativeConversationRuntimeError::Resources)?;
+            admission = returned_admission;
+            let materialized = materialized.map_err(NativeConversationRuntimeError::Resources)?;
+            job.input.input = Some(ConversationInput::Prompt(materialized.prompt));
+            job.input.resource_context = materialized.context;
+            if cancellation.is_cancelled() {
+                return Err(NativeConversationRuntimeError::Resources(
+                    crate::acp::resources::NativeAcpResourceContextError::Cancelled,
+                ));
+            }
+        }
+        if let Some(skills) = job.skills.take() {
+            // Retain the exact policy/workspace observations alongside the
+            // runtime lease even if the admission response is abandoned.
+            let (returned_admission, context) = skills
+                .materialize(admission, cancellation.clone())
+                .await
+                .map_err(NativeConversationRuntimeError::Skills)?;
+            admission = returned_admission;
+            job.input.skill_context = context.map_err(NativeConversationRuntimeError::Skills)?;
+            if cancellation.is_cancelled() {
+                return Err(NativeConversationRuntimeError::Skills(
+                    crate::skills_queue::NativeSkillsQueueError::Cancelled,
+                ));
+            }
+        }
+        let (lease, policy, workspace) = admission;
+        // Dropped or failed admission can be publication-uncertain; only a
+        // confirmed reservation below restores a saved-generation receipt.
+        self.state
+            .lock()
+            .expect("runtime state poisoned")
+            .saved_generation = None;
+        let turn = self
+            .conversation
+            .start_with_policy_admitted(
+                job.input,
+                Some(snapshot.clone()),
+                policy,
+                now_ms,
+                &lease.permit,
+                workspace,
+                cancellation,
+                cohort,
+            )
+            .await?;
+        let handle = turn.handle();
+        let cancellation = {
+            let mut state = self.state.lock().expect("runtime state poisoned");
+            state.saved_generation = Some(generation);
+            state.active_handle = Some(handle.clone());
+            state.active_preparation = None;
+            if lease.permit.was_quiesced() || state.active_cancel_requested {
+                cancellation_to_dispatch(&mut state)
+            } else {
+                None
+            }
+        };
+        // A quiescence request can precede the core reservation's handle.
+        // Publish the handle first, then recheck: either this path or the
+        // requesting path observes it before any provider work is polled.
+        if let Some(handle) = cancellation {
+            let _ = handle.cancel();
+        }
+        Ok(Some(NativeConversationRuntimeTurn {
+            core: Some(turn),
+            model_route: self.model_route.clone(),
+            lease: Some(lease),
+            id: job.id,
+            snapshot,
+        }))
     }
 
     fn take_job(

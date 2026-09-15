@@ -24,6 +24,10 @@ use std::{
 
 type Result<T> = std::result::Result<T, NativeConversationError>;
 
+#[path = "conversation/admission.rs"]
+mod admission;
+pub(crate) use admission::ManagedAdmission;
+
 struct Owner {
     principal: Arc<NativePrincipal>,
     scheduler: ManagedScheduler,
@@ -60,6 +64,7 @@ struct Active {
     run: Option<RunRef>,
     settlement: Option<RunSettlement>,
     cleanup: Option<ManagedRunCleanup>,
+    admission: Option<Arc<NativeOwnedWorkerRun>>,
 }
 
 /// The outer manager keeps this owner independently of the creating tool/turn.
@@ -219,6 +224,7 @@ impl ManagedConversationBinding {
         work_generation: NonZeroU64,
         policy: NativePermissionPolicySnapshot,
         preferences: NativeModelPreferences,
+        cohort: Option<Arc<NativeOwnedWorkerRun>>,
     ) -> Result<ManagedConversationTurn> {
         let owner = self
             .0
@@ -237,21 +243,17 @@ impl ManagedConversationBinding {
             .register_run(&owner.resident, work_generation, turn)
             .map_err(|_| NativeConversationError::ManagedAdmission)?;
         let reference = run.reference();
+        let cleanup = cohort.map(|cohort| ManagedRunCleanup {
+            run: reference.clone(),
+            cohort,
+        });
+        // Even a rejected post-publication registration can own admission I/O.
+        // Preserve the exact run/settlement for the manager rather than refunding
+        // actual cleanup on an error path.
+        slot.run = Some(reference.clone());
+        slot.settlement = Some(settlement);
+        slot.cleanup = cleanup.clone();
         let registration = (|| {
-            let cleanup = owner
-                .workers
-                .get()
-                .map(|workers| {
-                    workers
-                        .scope
-                        .begin_run_with_keepalive(workers.keepalive.clone())
-                        .map(|cohort| ManagedRunCleanup {
-                            run: reference.clone(),
-                            cohort: Arc::new(cohort),
-                        })
-                        .map_err(|_| NativeConversationError::ManagedAdmission)
-                })
-                .transpose()?;
             let principal = owner
                 .principal
                 .begin_turn(turn, policy, preferences, Some(reference.clone()))
@@ -266,22 +268,15 @@ impl ManagedConversationBinding {
                         .map_err(|_| NativeConversationError::ManagedAdmission)
                 })
                 .transpose()?;
-            Ok::<_, NativeConversationError>((principal, mcp, cleanup))
+            Ok::<_, NativeConversationError>((principal, mcp))
         })();
-        let Ok((principal, mcp, cleanup)) = registration else {
+        let Ok((principal, mcp)) = registration else {
             drop(slot);
-            // No core/provider poll has occurred, so this rejected reservation
-            // has no native execution or cleanup obligation to transfer.
             run.finish();
-            settlement
-                .complete()
-                .map_err(|_| NativeConversationError::ManagedAdmission)?;
             return Err(NativeConversationError::ManagedAdmission);
         };
         let acquisition = run.acquire();
         slot.run = Some(reference);
-        slot.settlement = Some(settlement);
-        slot.cleanup = cleanup.clone();
         drop(slot);
         Ok(ManagedConversationTurn {
             principal: Some(principal),
@@ -289,6 +284,7 @@ impl ManagedConversationBinding {
             acquisition: Some(acquisition),
             run: Some(run),
             cleanup,
+            close_cleanup: false,
         })
     }
 }
@@ -300,9 +296,13 @@ pub(crate) struct ManagedConversationTurn {
     acquisition: Option<Acquire>,
     run: Option<RunLease>,
     cleanup: Option<ManagedRunCleanup>,
+    close_cleanup: bool,
 }
 
 impl ManagedConversationTurn {
+    pub(crate) fn activate_cleanup(&mut self) {
+        self.close_cleanup = true;
+    }
     pub(crate) fn cleanup(&self) -> Option<ManagedRunCleanup> {
         self.cleanup.clone()
     }
@@ -338,7 +338,7 @@ impl Drop for ManagedConversationTurn {
         self.acquisition.take();
         // RunLease drop cancels the actual turn. Never manufacture settlement.
         self.run.take();
-        if let Some(cleanup) = self.cleanup.take() {
+        if let Some(cleanup) = self.cleanup.take().filter(|_| self.close_cleanup) {
             cleanup.cohort.close();
         }
     }

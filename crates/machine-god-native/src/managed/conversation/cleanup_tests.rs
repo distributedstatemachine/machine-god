@@ -1,6 +1,9 @@
 use super::*;
 use crate::NativeOwnedWorkerScope;
 use machine_god_core::{ModelEventStream, ModelProvider, ModelRequest, ProviderError};
+use machine_god_core::{
+    SessionRecord, SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind,
+};
 use std::{sync::mpsc, time::Duration};
 
 struct DropWorker {
@@ -143,4 +146,131 @@ fn unpolled_actual_turn_closes_empty_cohort_without_provider_work() {
     assert!(fixture.provider.requests().is_empty());
     owner.take_settlement().unwrap().1.complete().unwrap();
     scope.close();
+}
+
+struct CleanupStore {
+    cleanup: Arc<DropWorker>,
+    pending: bool,
+}
+
+impl SessionStore for CleanupStore {
+    fn load(
+        &self,
+        _: SessionId,
+    ) -> BoxFuture<'_, std::result::Result<Option<SessionRecord>, SessionStoreError>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn save(
+        &self,
+        _: SessionRecord,
+        _: Option<SessionRevision>,
+    ) -> BoxFuture<'_, std::result::Result<SessionRevision, SessionStoreError>> {
+        Box::pin(CleanupSave {
+            cleanup: self.cleanup.clone(),
+            pending: self.pending,
+            polled: false,
+        })
+    }
+}
+
+struct CleanupSave {
+    cleanup: Arc<DropWorker>,
+    pending: bool,
+    polled: bool,
+}
+
+impl Future for CleanupSave {
+    type Output = std::result::Result<SessionRevision, SessionStoreError>;
+
+    fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        self.polled = true;
+        if self.pending {
+            Poll::Pending
+        } else {
+            Poll::Ready(Err(SessionStoreError::new(
+                SessionStoreErrorKind::Other,
+                "fixture",
+                "fixture save failed",
+                false,
+            )))
+        }
+    }
+}
+
+impl Drop for CleanupSave {
+    fn drop(&mut self) {
+        if self.polled {
+            self.cleanup.spawn();
+        }
+    }
+}
+
+#[test]
+fn failed_and_dropped_pre_turn_checkpoint_keep_actual_admission_cleanup() {
+    for pending in [false, true] {
+        let scope = NativeOwnedWorkerScope::new();
+        let (release, receiver) = mpsc::channel();
+        let (admitted, admission) = mpsc::channel();
+        let cleanup = Arc::new(DropWorker {
+            scope: scope.clone(),
+            release: Mutex::new(Some(receiver)),
+            admitted,
+        });
+        let fixture = Fixture::with_adapters(
+            vec![],
+            |provider| provider,
+            CleanupStore { cleanup, pending },
+        );
+        let (conversation, owner) = fixture.conversation("a");
+        owner
+            .configure_worker_binding(scope.clone(), Arc::new(()))
+            .unwrap();
+        let runtime = crate::NativeConversationRuntime::new(
+            conversation,
+            NativeModelPreferences::new("selected-model", NativeReasoningEffort::default(), false)
+                .unwrap(),
+            None,
+        )
+        .unwrap();
+        runtime
+            .enqueue(machine_god_core::Prompt {
+                text: "work".into(),
+                options: machine_god_core::InferenceOptions::default(),
+            })
+            .unwrap();
+        let mut future = runtime.start_next(100);
+        assert!(owner.binding().admission_completion().is_none());
+        let outcome = future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()));
+        if pending {
+            assert!(outcome.is_pending());
+        } else {
+            assert!(matches!(outcome, Poll::Ready(Err(_))));
+        }
+        drop(future);
+        assert!(admission.recv_timeout(Duration::from_secs(5)).unwrap());
+        assert!(owner.run().is_none(), "no actual core turn was minted");
+        assert!(fixture.provider.requests().is_empty());
+        let completion = owner.binding().admission_completion().unwrap();
+        assert!(!completion.is_complete());
+        runtime
+            .enqueue(machine_god_core::Prompt {
+                text: "later".into(),
+                options: machine_god_core::InferenceOptions::default(),
+            })
+            .unwrap();
+        assert!(matches!(
+            block_on(runtime.start_next(101)),
+            Err(crate::NativeConversationRuntimeError::Conversation(
+                NativeConversationError::ManagedAdmission
+            ))
+        ));
+        assert_eq!(runtime.status().queued_jobs, 1);
+        release.send(()).unwrap();
+        completion.wait_on_worker().unwrap();
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+    }
 }

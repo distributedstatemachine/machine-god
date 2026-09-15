@@ -294,7 +294,7 @@ pub(crate) struct ManagedNotices {
     inner: Arc<Inner>,
 }
 impl ManagedNotices {
-    pub(super) fn new(
+    pub(crate) fn new(
         limits: NoticeLimits,
         clock: Arc<dyn NativeMcpRuntimeClock>,
     ) -> Result<Self, NoticeError> {

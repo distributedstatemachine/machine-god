@@ -278,6 +278,15 @@ charged to the original run. Cleanup lookup requires that exact opaque run
 allocation; a sibling or superseded run cannot borrow another run's receipt.
 An empty unpolled turn closes its cohort without starting provider work.
 
+Attribution begins at actual native admission, before runtime skill/resource
+materialization, MCP readiness/authentication and checkpoint publication. The
+same cohort transfers to the resulting core turn. Failed or dropped admission
+closes only after its future and checkpoint finalizers are destroyed under that
+attribution. Its independent completion remains observable even when no core
+turn or run reference was minted, and blocks another admission until settled.
+Post-publication registration failure retains its scheduler settlement instead
+of treating an error response as proof that checkpoint cleanup has finished.
+
 The manager may bind its journal-owner lease as one bounded cohort keepalive,
 never a runtime, session or manager reference. Every admitted host worker ticket
 retains that lease independently, and transferred cleanup retains the exact host
