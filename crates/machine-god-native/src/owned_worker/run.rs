@@ -10,6 +10,30 @@ use std::fmt;
 use std::sync::{Arc, Mutex, Weak};
 
 const MAX_RUNS: usize = 64;
+const MAX_CLEANUP_RUNS: usize = 64;
+
+#[derive(Clone, Copy, Default)]
+pub(super) enum RunClass {
+    #[default]
+    Ordinary,
+    Cleanup,
+}
+
+impl RunClass {
+    const fn limit(self) -> usize {
+        match self {
+            Self::Ordinary => MAX_RUNS,
+            Self::Cleanup => MAX_CLEANUP_RUNS,
+        }
+    }
+
+    fn count(self, status: &mut ScopeStatus) -> &mut usize {
+        match self {
+            Self::Ordinary => &mut status.runs,
+            Self::Cleanup => &mut status.cleanup_runs,
+        }
+    }
+}
 
 type RunAdmission = (Arc<ScopeTicket>, Option<Arc<dyn Send + Sync>>);
 
@@ -85,13 +109,13 @@ impl NativeOwnedWorkerScope {
         Ok(RunAttribution::with(inherited, operation))
     }
     /// Admits a bounded, inert run cohort without starting any native worker.
-    /// At most 64 open or unsettled cohorts share one host. Settled observers
+    /// At most 64 open or unsettled ordinary cohorts share one host. Settled observers
     /// do not consume capacity, so this is not a lifetime creation limit.
     ///
     /// # Errors
     /// Rejects a closed host or exhausted resident cohort capacity.
     pub fn begin_run(&self) -> Result<NativeOwnedWorkerRun, NativeOwnedWorkerSpawnError> {
-        self.begin_run_inner(None)
+        self.begin_run_inner(None, RunClass::Ordinary)
     }
 
     /// Retains only the manager's journal-owner lease, never a runtime/session.
@@ -100,26 +124,59 @@ impl NativeOwnedWorkerScope {
         &self,
         keepalive: Arc<dyn Send + Sync>,
     ) -> Result<NativeOwnedWorkerRun, NativeOwnedWorkerSpawnError> {
-        self.begin_run_inner(Some(keepalive))
+        self.begin_run_inner(Some(keepalive), RunClass::Ordinary)
+    }
+
+    /// Explicit trusted settlement reserve; ordinary runs cannot borrow it.
+    /// This uses the same actual worker/keepalive custody, not another pool.
+    pub(crate) fn begin_cleanup_run_with_keepalive(
+        &self,
+        keepalive: Arc<dyn Send + Sync>,
+    ) -> Result<NativeOwnedWorkerRun, NativeOwnedWorkerSpawnError> {
+        self.begin_run_inner(Some(keepalive), RunClass::Cleanup)
+    }
+
+    /// Observation only, not a reservation. Callers retry exact admission under
+    /// their original deadline; a closed host is an error rather than a wake loop.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) fn wait_for_cleanup_capacity(
+        &self,
+    ) -> machine_god_core::BoxFuture<'_, Result<(), NativeOwnedWorkerSpawnError>> {
+        Box::pin(self.state.wait_until(|| {
+            let status = self
+                .state
+                .status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if status.closed {
+                Some(Err(NativeOwnedWorkerSpawnError))
+            } else if status.cleanup_runs < MAX_CLEANUP_RUNS {
+                Some(Ok(()))
+            } else {
+                None
+            }
+        }))
     }
 
     fn begin_run_inner(
         &self,
         keepalive: Option<Arc<dyn Send + Sync>>,
+        class: RunClass,
     ) -> Result<NativeOwnedWorkerRun, NativeOwnedWorkerSpawnError> {
         let mut status = self
             .state
             .status
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if status.closed || status.runs == MAX_RUNS {
+        if status.closed || *class.count(&mut status) == class.limit() {
             return Err(NativeOwnedWorkerSpawnError);
         }
-        status.runs += 1;
+        *class.count(&mut status) += 1;
         Ok(NativeOwnedWorkerRun {
             scope: NativeOwnedWorkerScope {
                 state: Arc::new(ScopeState {
                     parent: Some(Arc::downgrade(&self.state)),
+                    run_class: class,
                     status: Mutex::new(ScopeStatus {
                         keepalive,
                         ..ScopeStatus::default()
@@ -148,17 +205,22 @@ impl ScopeState {
         drop(status);
         // No scope or accounting lock spans destruction of the journal lease.
         drop(keepalive);
-        if let Some(parent) = parent.upgrade() {
-            parent
-                .status
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .runs -= 1;
+        let parent = parent.upgrade();
+        if let Some(parent) = &parent {
+            *self.run_class.count(
+                &mut parent
+                    .status
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            ) -= 1;
         }
         self.status
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .released = true;
+        if let Some(parent) = parent {
+            parent.notify_progress();
+        }
     }
 }
 
@@ -404,5 +466,7 @@ impl NativeOwnedWorkerAttribution {
     }
 }
 
+#[cfg(test)]
+mod cleanup_tests;
 #[cfg(test)]
 mod tests;

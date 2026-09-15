@@ -117,11 +117,16 @@ struct ScopeState {
     #[cfg(any(test, feature = "ai-gateway-http"))]
     completed: tokio::sync::Notify,
     parent: Option<Weak<ScopeState>>,
+    run_class: run::RunClass,
 }
 
 impl ScopeState {
     fn notify_complete(&self) {
         self.release_run_capacity();
+        self.notify_progress();
+    }
+
+    fn notify_progress(&self) {
         self.wake.notify_all();
         #[cfg(any(test, feature = "ai-gateway-http"))]
         // Notification invokes caller wakers only after releasing scope state.
@@ -136,6 +141,7 @@ struct ScopeStatus {
     closed: bool,
     tickets: usize,
     runs: usize,
+    cleanup_runs: usize,
     released: bool,
     keepalive: Option<Arc<dyn Send + Sync>>,
 }
@@ -262,7 +268,7 @@ impl NativeOwnedWorkerScope {
         if complete {
             self.state.notify_complete();
         } else {
-            self.state.wake.notify_all();
+            self.state.notify_progress();
         }
     }
 
@@ -365,42 +371,9 @@ impl NativeOwnedWorkerCompletion {
     /// but must not block its own enrolled thread waiting for its own join.
     #[cfg(any(test, feature = "ai-gateway-http"))]
     pub(crate) async fn wait(&self) {
-        loop {
-            // Retain the forwarding waker until after Notified is removed from
-            // its intrusive list, including when this future is abandoned.
-            let mut forwarded = None;
-            let notified = self.state.completed.notified();
-            let mut notified = std::pin::pin!(notified);
-            // Enroll before checking the closed/ticket predicate. Completion
-            // between this registration, the check and polling cannot be lost.
-            notified.as_mut().enable();
-            if self.is_complete() {
-                return;
-            }
-            std::future::poll_fn(|cx| {
-                if self.is_complete() {
-                    return Poll::Ready(());
-                }
-                let Ok(waker) = contain(|| cx.waker().clone()) else {
-                    // A broken caller cannot guarantee notification. Preserve
-                    // custody; a later poll can still observe real completion.
-                    return if self.is_complete() {
-                        Poll::Ready(())
-                    } else {
-                        Poll::Pending
-                    };
-                };
-                let waker = Waker::from(Arc::new(CompletionWake(Some(waker))));
-                let previous = forwarded.replace(waker);
-                let mut forwarded_context = Context::from_waker(forwarded.as_ref().unwrap());
-                let result = notified.as_mut().poll(&mut forwarded_context);
-                // Keep the previous forwarding allocation alive while Notify
-                // replaces it, so its last user-waker drop is outside all locks.
-                drop(previous);
-                result
-            })
+        self.state
+            .wait_until(|| self.is_complete().then_some(()))
             .await;
-        }
     }
 
     /// Blocks a dedicated caller worker until this scope closes and settles.
@@ -432,6 +405,47 @@ impl NativeOwnedWorkerCompletion {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         Ok(())
+    }
+}
+
+#[cfg(any(test, feature = "ai-gateway-http"))]
+impl ScopeState {
+    async fn wait_until<T>(&self, predicate: impl Fn() -> Option<T>) -> T {
+        loop {
+            // Retain the forwarding waker until after Notified is removed from
+            // its intrusive list, including when this future is abandoned.
+            let mut forwarded = None;
+            let notified = self.completed.notified();
+            let mut notified = std::pin::pin!(notified);
+            // Enroll before checking the closed/ticket predicate. Completion
+            // between this registration, the check and polling cannot be lost.
+            notified.as_mut().enable();
+            if let Some(value) = predicate() {
+                return value;
+            }
+            let outcome = std::future::poll_fn(|cx| {
+                if let Some(value) = predicate() {
+                    return Poll::Ready(Some(value));
+                }
+                let Ok(waker) = contain(|| cx.waker().clone()) else {
+                    // A broken caller cannot guarantee notification. Preserve
+                    // custody; a later poll can still observe real completion.
+                    return predicate().map_or(Poll::Pending, |value| Poll::Ready(Some(value)));
+                };
+                let waker = Waker::from(Arc::new(CompletionWake(Some(waker))));
+                let previous = forwarded.replace(waker);
+                let mut forwarded_context = Context::from_waker(forwarded.as_ref().unwrap());
+                let result = notified.as_mut().poll(&mut forwarded_context);
+                // Keep the previous forwarding allocation alive while Notify
+                // replaces it, so its last user-waker drop is outside all locks.
+                drop(previous);
+                result.map(|()| None)
+            })
+            .await;
+            if let Some(value) = outcome {
+                return value;
+            }
+        }
     }
 }
 

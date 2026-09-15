@@ -248,7 +248,11 @@ transfer; a weak conversation binding cannot keep management authority alive.
 ### Per-run native cleanup
 
 Each actual run receives a non-clone cleanup cohort under the shared host worker
-scope. A host admits at most 64 open or unsettled cohorts; closed, settled cohorts
+scope. A host admits at most 64 open or unsettled ordinary cohorts and separately
+reserves 64 settlement-only cohorts. Ordinary work cannot borrow this cleanup
+reserve: shutdown must be able to drive retained MCP startup settlement even
+when all ordinary slots are occupied. Both classes use the same worker and
+journal-custody machinery, without another thread or pool. Closed, settled cohorts
 release capacity even when old completion observers remain. Poll attribution is
 weak, allocation-bound and restored on return or unwind. Worker futures capture
 their original attribution before polling; later callers cannot retarget them.
@@ -256,6 +260,11 @@ An explicit run poll also takes precedence over an unrelated worker's ambient
 attribution when an embedded driver queues effects from inside that worker.
 Implicit attribution to a foreign host fails closed. Closing or dropping a cohort
 rejects new work but does not discharge already-owned cleanup.
+An inert cleanup-capacity observer uses the existing panic-safe wake primitive;
+it wakes after actual capacity refund or host closure, which returns a fixed
+error. Observation grants no slot: callers recheck admission under the original
+unchanged deadline. Completion observers and abandoned waits consume no cohort
+capacity and cannot prevent reuse.
 Trusted nested service construction may explicitly verify the original source
 scope and enroll a target scope in that same run cohort; it cannot infer this
 relationship from public identities. A weak, non-clone service-handoff token
