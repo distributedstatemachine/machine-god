@@ -119,6 +119,52 @@ terminal. Close archives/settles, not deletes; reopen does not implicitly retry.
 The manager owns aggregate scheduling, residency, queue, byte and waiter budgets;
 core has no foreground admission counters or detached worker loop.
 
+## Native scheduling and actual settlement
+
+The shared native scheduler validates independent execution, resident and waiter
+limits. Defaults are 4 executing runs, 64 resident principals and 64 queued or
+dependency-waiting runs. All limits are positive, execution cannot exceed
+residency, and hard ceilings are 256 executions and 4,096 residents/waiters.
+These are live-resource budgets, not lifetime creation or durable-history caps.
+Ordinary provider `Pending` retains execution capacity. Acquisition and
+reacquisition use one FIFO queue; a grant reserves capacity before its future is
+observed, and new work cannot bypass existing queued work.
+
+Only the native manager registers an actual core turn against a non-clone
+resident lease and a strictly increasing work generation. Opaque weak run
+references cannot be constructed from public IDs and retain no manager/runtime.
+Private managed-call admission must bind the actual turn and generation before
+using a run reference. Register before polling the provider, acquire before
+execution, and never use a principal residency epoch as a work generation.
+
+A dependency wait targets an exact registered run. Self-dependencies, cycles,
+foreign or unregistered targets and exhausted waiter capacity fail before quota
+release. Under one short lock, the scheduler reserves a waiter and records the
+dependency before releasing caller execution capacity. Observation success,
+error and timeout all queue for fair reacquisition before the tool returns;
+their outputs remain private until then. Cancellation or abandonment unlinks
+the exact waiter/grant and cancels the actual caller turn instead of permitting
+quota-free continuation. An unpolled wait is inert. No generic pending future
+is interpreted as a dependency, and no thread/task/timer is created per child.
+Native observation futures must likewise use weak manager/runtime access;
+wrapping an owning future does not erase its ownership.
+
+Execution completion and actual worker settlement have separate non-clone
+owners. Finishing, cancellation or run-owner drop releases execution capacity
+and enters a bounded settlement lane, which progresses even when all execution
+slots are occupied. Only the actual finalizer may complete its settlement owner
+after turn/worker/TLS/process-reap obligations finish. Dropping a response
+observer proves nothing about settlement. Dropping the settlement owner without
+completion quarantines its resident slot; dropping a resident with unsettled
+work does not make that capacity reusable. A settled resident can admit its next
+FIFO generation; a retired settled resident releases its capacity.
+
+Registry locks never cover asynchronous waits, cancellation callbacks or caller
+waker clone/wake/drop operations. Cancellation and removed-value destruction
+run after unlocking. This scheduler supplies admission and lifecycle primitives;
+native manager composition owns durable acceptance, deadlines, scheduling polls
+and actual finalizer custody.
+
 ## Source evidence
 
 The pinned FX decoder is `src/tools/agent/subagent.zig`; typed validation and
