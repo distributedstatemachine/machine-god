@@ -40,6 +40,9 @@ use std::time::Instant;
 /// Implementations retain native authority, never reconstruct it from a PID.
 /// Read/write are nonblocking and bounded; Drop must release native ownership.
 pub(crate) trait TerminalSessionBackend {
+    /// Called only after the final startup ACK and artifact retirement. Failed
+    /// startup keeps its original run's cleanup obligation until actual reap.
+    fn promote_to_service(&mut self) {}
     /// Startup transports may disable echo until the trusted readiness marker.
     fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
         Ok(())
@@ -82,6 +85,9 @@ pub(crate) trait TerminalSessionBackend {
     ) -> std::result::Result<TerminalPtyClose, ()>;
 }
 impl TerminalSessionBackend for TerminalPty {
+    fn promote_to_service(&mut self) {
+        TerminalPty::promote_to_service(self);
+    }
     fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
         TerminalPty::restore_startup_echo(self).map_err(|_| ())
     }
@@ -442,6 +448,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             && startup.control.is_complete()
             && startup.control.retry_cleanup().is_ok()
         {
+            if let Some(backend) = self.backend.as_mut() {
+                backend.promote_to_service();
+            }
             self.startup.take();
         }
         Ok(())

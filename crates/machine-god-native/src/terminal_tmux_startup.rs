@@ -817,6 +817,11 @@ impl NativeTerminalTmuxBackend {
     }
 }
 impl TerminalSessionBackend for NativeTerminalTmuxBackend {
+    fn promote_to_service(&mut self) {
+        if let Some(child) = self.server.child.as_mut() {
+            child.promote_to_service();
+        }
+    }
     fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
         if let Some(echo) = self.echo.as_ref() {
             set_echo(echo, true).map_err(|_| ())?;

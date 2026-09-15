@@ -1630,6 +1630,7 @@ struct BlockingResult<T> {
 }
 
 struct BlockingTaskFuture<T> {
+    attribution: crate::owned_worker::NativeOwnedWorkerAttribution,
     pool: Arc<BlockingPool>,
     task: Option<Box<dyn FnOnce() -> T + Send + 'static>>,
     admission_failure: Option<T>,
@@ -1638,6 +1639,35 @@ struct BlockingTaskFuture<T> {
     submitted: bool,
     caller_cancellation: Option<Cancelled>,
     operation_cancellation: Option<CancellationToken>,
+}
+
+/// A rejected queued job must destroy its captured values under the same
+/// attribution as execution, not under the unrelated thread polling its future.
+struct AttributedBlockingTask<T> {
+    task: Option<Box<dyn FnOnce() -> T + Send>>,
+    cleanup: Option<crate::NativeOwnedWorkerCleanup>,
+}
+impl<T> AttributedBlockingTask<T> {
+    fn execute(mut self) -> (T, Option<crate::NativeOwnedWorkerCleanup>) {
+        let task = self.task.take().expect("blocking task executes once");
+        let value = match self.cleanup.as_ref() {
+            Some(cleanup) => cleanup.run_on_cleanup_worker(task),
+            None => task(),
+        };
+        (value, self.cleanup.take())
+    }
+}
+impl<T> Drop for AttributedBlockingTask<T> {
+    fn drop(&mut self) {
+        let task = self.task.take();
+        let dropped = catch_unwind(AssertUnwindSafe(|| match self.cleanup.as_ref() {
+            Some(cleanup) => cleanup.run_on_cleanup_worker(|| drop(task)),
+            None => drop(task),
+        }));
+        if let Err(payload) = dropped {
+            std::mem::forget(payload);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1741,6 +1771,7 @@ impl BlockingExecutor {
     {
         BlockingTaskFuture {
             pool: Arc::clone(&self.pool),
+            attribution: crate::owned_worker::NativeOwnedWorkerAttribution::current(),
             task: Some(Box::new(task)),
             admission_failure: Some(admission_failure),
             pre_submission_cancellation: None,
@@ -1771,6 +1802,7 @@ impl BlockingExecutor {
     {
         BlockingTaskFuture {
             pool: Arc::clone(&self.pool),
+            attribution: crate::owned_worker::NativeOwnedWorkerAttribution::current(),
             task: Some(Box::new(move || Ok(task()))),
             admission_failure: Some(Err(BlockingTaskFailure::Admission)),
             pre_submission_cancellation: Some(Err(BlockingTaskFailure::CancelledBeforeSubmission)),
@@ -1801,6 +1833,7 @@ impl BlockingExecutorHandle {
     {
         BlockingTaskFuture {
             pool: Arc::clone(&self.pool),
+            attribution: crate::owned_worker::NativeOwnedWorkerAttribution::current(),
             task: Some(Box::new(move || Ok(task()))),
             admission_failure: Some(Err(BlockingTaskFailure::Admission)),
             pre_submission_cancellation: Some(Err(BlockingTaskFailure::CancelledBeforeSubmission)),
@@ -1947,13 +1980,21 @@ where
             };
             drop(superseded);
             let task = this.task.take().expect("blocking task is submitted once");
+            let Ok(cleanup) = this.attribution.admit() else {
+                return Poll::Ready(this.admission_failure.take().expect("admission fails once"));
+            };
             let result = Arc::clone(&this.result);
+            let task = AttributedBlockingTask {
+                task: Some(task),
+                cleanup,
+            };
             let job: BlockingJob = Box::new(move || {
-                let value = task();
+                let (value, cleanup) = task.execute();
                 // Retain the result privately until the worker retires its
                 // operation token and returns this fixed-pool slot. Merely
                 // delaying wake is insufficient: another poll can read value.
                 Box::new(move || {
+                    let _cleanup = cleanup;
                     let wake = {
                         let mut result = result
                             .lock()
@@ -2555,6 +2596,12 @@ impl CoreOwnedProcess for NativeOwned {
                 .activate_input_controller()
                 .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
         }
+        // Core immediately transfers this successful activation to its already
+        // admitted retainer; no cancellation/async gap precedes that handoff.
+        self.process
+            .as_mut()
+            .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?
+            .promote_to_service();
         Ok(())
     }
 
@@ -5355,6 +5402,38 @@ mod tests {
                 publication_handoff(panic, shutdown);
             }
         }
+    }
+
+    #[test]
+    fn reusable_pool_operation_transfers_only_original_run_cleanup() {
+        let scope = crate::NativeOwnedWorkerScope::new();
+        let run = scope.begin_run().unwrap();
+        let sibling = scope.begin_run().unwrap();
+        let executor = BlockingExecutor::new(1).unwrap();
+        let held = Arc::new(Mutex::new(None));
+        let worker_held = Arc::clone(&held);
+        let future = run.with_poll(|| {
+            executor.run(
+                move || {
+                    *worker_held.lock().unwrap() =
+                        crate::NativeOwnedWorkerScope::retain_current_cleanup();
+                    true
+                },
+                false,
+            )
+        });
+        assert!(sibling.with_poll(|| futures_executor::block_on(future)));
+        run.close();
+        sibling.close();
+        assert!(sibling.completion().is_complete());
+        assert!(!run.completion().is_complete());
+        drop(held.lock().unwrap().take());
+        run.completion().wait_on_worker().unwrap();
+        // The reusable pool is still live and available for unrelated work.
+        assert!(futures_executor::block_on(executor.run(|| true, false)));
+        executor.shutdown();
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
     }
 
     fn publication_handoff(panic: bool, shutdown: bool) {

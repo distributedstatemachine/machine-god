@@ -26,6 +26,12 @@ pub(crate) enum TerminalNativeBackend<
 impl<P: TerminalSessionBackend, T: TerminalSessionBackend> TerminalSessionBackend
     for TerminalNativeBackend<P, T>
 {
+    fn promote_to_service(&mut self) {
+        match self {
+            Self::Pty(backend) => backend.promote_to_service(),
+            Self::Tmux(backend) => backend.promote_to_service(),
+        }
+    }
     fn restore_startup_echo(&mut self) -> Result<(), ()> {
         match self {
             Self::Pty(backend) => backend.restore_startup_echo(),

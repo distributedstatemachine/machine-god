@@ -10,6 +10,14 @@ use std::pin::Pin;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::task::{Context, Poll, Waker};
 
+mod run;
+pub use run::NativeOwnedWorkerRun;
+pub(crate) use run::{
+    NativeOwnedWorkerAttribution, NativeOwnedWorkerServiceHandoff, current_service_handoff,
+    promote_current_worker_to_service,
+};
+use run::{RunAttribution, RunEnrollment, TicketWitness};
+
 /// Fixed, redacted failure to admit, start or complete an owned native worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeOwnedWorkerSpawnError;
@@ -46,7 +54,6 @@ pub struct NativeOwnedWorkerCompletion {
 /// retain it alongside transferred reap authority. It grants no admission,
 /// native capability or host-lifetime vote; dropping it discharges only this
 /// reference to the existing completion obligation.
-#[derive(Clone)]
 pub struct NativeOwnedWorkerCleanup {
     #[cfg_attr(
         not(any(test, target_os = "linux", target_os = "macos")),
@@ -58,15 +65,20 @@ pub struct NativeOwnedWorkerCleanup {
     ticket: NativeOwnedWorkerTicket,
 }
 impl NativeOwnedWorkerCleanup {
+    /// Transfers this cleanup owner's obligation to the existing host service.
+    /// Other cleanup snapshots and the ordinary worker's collector ticket stay
+    /// enrolled in the original run until their own actual settlement.
+    pub(crate) fn promote_to_service(&mut self) {
+        self.ticket.1.clear();
+    }
     /// Attributes nested cleanup obligations to this original scope while a
     /// shared cleanup worker services it. Restore the previous attribution on
     /// return or unwind; unlike a dedicated worker, this thread serves other
     /// scopes afterward. Cloned cleanup tokens retain the existing ticket only.
-    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
     pub fn run_on_cleanup_worker<T>(&self, operation: impl FnOnce() -> T) -> T {
         struct RestoreTicket<'a> {
-            slot: &'a RefCell<Option<Weak<ScopeTicket>>>,
-            previous: Option<Weak<ScopeTicket>>,
+            slot: &'a RefCell<Option<TicketWitness>>,
+            previous: Option<TicketWitness>,
         }
         impl Drop for RestoreTicket<'_> {
             fn drop(&mut self) {
@@ -77,10 +89,17 @@ impl NativeOwnedWorkerCleanup {
         WORKER_TICKET.with(|slot| {
             let _restore = RestoreTicket {
                 slot,
-                previous: slot.replace(Some(Arc::downgrade(&self.ticket.0))),
+                previous: slot.replace(Some(self.ticket.witness())),
             };
-            operation()
+            RunAttribution::with(self.ticket.attribution(), operation)
         })
+    }
+}
+impl Clone for NativeOwnedWorkerCleanup {
+    fn clone(&self) -> Self {
+        Self {
+            ticket: self.ticket.snapshot(),
+        }
     }
 }
 impl fmt::Debug for NativeOwnedWorkerCleanup {
@@ -97,10 +116,12 @@ struct ScopeState {
     wake: Condvar,
     #[cfg(any(test, feature = "ai-gateway-http"))]
     completed: tokio::sync::Notify,
+    parent: Option<Weak<ScopeState>>,
 }
 
 impl ScopeState {
     fn notify_complete(&self) {
+        self.release_run_capacity();
         self.wake.notify_all();
         #[cfg(any(test, feature = "ai-gateway-http"))]
         // Notification invokes caller wakers only after releasing scope state.
@@ -114,6 +135,8 @@ impl ScopeState {
 struct ScopeStatus {
     closed: bool,
     tickets: usize,
+    runs: usize,
+    released: bool,
 }
 
 struct ScopeTicket {
@@ -123,20 +146,19 @@ struct ScopeTicket {
 /// Metadata only. Clones extend an already admitted cleanup obligation; they
 /// cannot create processes or authorize a new worker after scope closure.
 #[derive(Clone)]
-pub(crate) struct NativeOwnedWorkerTicket(Arc<ScopeTicket>);
+pub(crate) struct NativeOwnedWorkerTicket(Arc<ScopeTicket>, Arc<RunEnrollment>);
 
 thread_local! {
-    static WORKER_TICKET: RefCell<Option<Weak<ScopeTicket>>> = const { RefCell::new(None) };
+    static WORKER_TICKET: RefCell<Option<TicketWitness>> = const { RefCell::new(None) };
 }
 
 /// Used only by existing child-reap reservation while inside an explicitly
 /// scoped worker. The ordinary zero-state spawner never installs this metadata.
 pub(crate) fn current_worker_ticket() -> Option<NativeOwnedWorkerTicket> {
     WORKER_TICKET
-        .try_with(|slot| slot.borrow().as_ref().and_then(Weak::upgrade))
+        .try_with(|slot| slot.borrow().as_ref().and_then(TicketWitness::upgrade))
         .ok()
         .flatten()
-        .map(NativeOwnedWorkerTicket)
 }
 
 /// Non-owning scope identity for one explicit inventory-service registration.
@@ -169,7 +191,7 @@ impl NativeOwnedWorkerTicket {
         // Each collector job owns a dedicated thread. Keep weak metadata through
         // thread-local destruction; the collector retains the strong ticket
         // until join, so cleanup can still enroll and self-waits are rejected.
-        WORKER_TICKET.with(|slot| *slot.borrow_mut() = Some(Arc::downgrade(&self.0)));
+        WORKER_TICKET.with(|slot| *slot.borrow_mut() = Some(self.witness()));
         operation()
     }
 }
@@ -211,7 +233,9 @@ impl NativeOwnedWorkerScope {
     /// Keep this token with existing cleanup ownership, never with response data.
     #[must_use]
     pub fn retain_current_cleanup() -> Option<NativeOwnedWorkerCleanup> {
-        current_worker_ticket().map(|ticket| NativeOwnedWorkerCleanup { ticket })
+        current_worker_ticket().map(|ticket| NativeOwnedWorkerCleanup {
+            ticket: ticket.snapshot(),
+        })
     }
 
     /// Inert: no worker, collector, process or native reservation is created.
@@ -247,6 +271,9 @@ impl NativeOwnedWorkerScope {
     }
 
     fn admit(&self) -> Result<NativeOwnedWorkerTicket, NativeOwnedWorkerSpawnError> {
+        let run = RunAttribution::current()
+            .map(|run| run.admit(&self.state))
+            .transpose()?;
         let mut status = self
             .state
             .status
@@ -259,9 +286,12 @@ impl NativeOwnedWorkerScope {
             .tickets
             .checked_add(1)
             .ok_or(NativeOwnedWorkerSpawnError)?;
-        Ok(NativeOwnedWorkerTicket(Arc::new(ScopeTicket {
-            state: Arc::clone(&self.state),
-        })))
+        Ok(NativeOwnedWorkerTicket(
+            Arc::new(ScopeTicket {
+                state: Arc::clone(&self.state),
+            }),
+            Arc::new(RunEnrollment::new(run)),
+        ))
     }
 
     /// Runs one job through the existing collector and enrolls its actual thread
@@ -303,8 +333,9 @@ impl NativeOwnedWorkerScope {
         operation: impl FnOnce() -> T + Send + 'static,
     ) -> BoxFuture<'static, Result<T, NativeOwnedWorkerSpawnError>> {
         let scope = self.clone();
+        let attribution = RunAttribution::current();
         Box::pin(OwnedWorkerFuture::new(operation, move |job| {
-            scope.spawn(job)
+            RunAttribution::with(attribution, || scope.spawn(job))
         }))
     }
 }
@@ -374,7 +405,9 @@ impl NativeOwnedWorkerCompletion {
     /// Rejects a wait from an enrolled worker in this same scope, which would
     /// otherwise wait for its own thread to be joined.
     pub fn wait_on_worker(&self) -> Result<(), NativeOwnedWorkerSpawnError> {
-        if current_worker_ticket().is_some_and(|ticket| Arc::ptr_eq(&ticket.0.state, &self.state)) {
+        if current_worker_ticket().is_some_and(|ticket| ticket.owns(&self.state))
+            || RunAttribution::current().is_some_and(|run| run.matches(&self.state))
+        {
             return Err(NativeOwnedWorkerSpawnError);
         }
         let mut status = self

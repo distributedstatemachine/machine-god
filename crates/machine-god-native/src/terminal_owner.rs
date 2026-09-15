@@ -125,6 +125,7 @@ struct Request<B: TerminalSessionBackend, T, S> {
     _permit: Arc<Permit>,
     callback_panicked: Arc<AtomicBool>,
     completed: bool,
+    cleanup: Option<crate::NativeOwnedWorkerCleanup>,
 }
 impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
     fn execute(
@@ -142,7 +143,8 @@ impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
         let executed = !self.cancellation.is_cancelled();
         let result = if executed {
             let operation = self.operation.take().expect("request executed once");
-            catch_callback(|| {
+            let cleanup = self.cleanup.as_ref();
+            let invoke = || {
                 operation(
                     registry,
                     waits,
@@ -152,6 +154,10 @@ impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
                     profile,
                     state,
                 )
+            };
+            catch_callback(|| match cleanup {
+                Some(cleanup) => cleanup.run_on_cleanup_worker(invoke),
+                None => invoke(),
             })
             .unwrap_or(Err(TerminalOwnerError::Panicked))
         } else {
@@ -168,6 +174,17 @@ impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
 }
 impl<B: TerminalSessionBackend, T, S> Drop for Request<B, T, S> {
     fn drop(&mut self) {
+        let operation = self.operation.take();
+        let dropped = catch_callback(|| {
+            if let Some(cleanup) = self.cleanup.as_ref() {
+                cleanup.run_on_cleanup_worker(|| drop(operation));
+            } else {
+                drop(operation);
+            }
+        });
+        if dropped.is_err() {
+            self.callback_panicked.store(true, Ordering::Release);
+        }
         if !self.completed && !complete(&self.reply, Err(TerminalOwnerError::Closed), false) {
             // Contain wake separately from captured-value Drop: if both panic,
             // unwinding one through the other would abort before any outer catch.
@@ -382,6 +399,7 @@ impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> 
             permit: None,
             submitted: false,
             finished: false,
+            attribution: crate::owned_worker::NativeOwnedWorkerAttribution::current(),
         }
     }
     pub(crate) fn shutdown(&self) {
@@ -398,6 +416,7 @@ pub(crate) struct TerminalOwnerFuture<B: TerminalSessionBackend, T, S = ()> {
     permit: Option<Arc<Permit>>,
     submitted: bool,
     finished: bool,
+    attribution: crate::owned_worker::NativeOwnedWorkerAttribution,
 }
 impl<B: TerminalSessionBackend, T, S> TerminalOwnerFuture<B, T, S> {
     pub(crate) fn operation_executed(&self) -> bool {
@@ -470,6 +489,12 @@ impl<B: TerminalSessionBackend + 'static, T: Send + 'static, S: 'static> Future
             }
             let permit = Arc::new(Permit(Arc::clone(&this.shared.requests)));
             this.permit = Some(Arc::clone(&permit));
+            let Ok(cleanup) = this.attribution.admit() else {
+                this.finished = true;
+                this.permit = None;
+                this.operation = None;
+                return Poll::Ready(Err(TerminalOwnerError::Closed));
+            };
             let job = Request {
                 operation: this.operation.take(),
                 reply: Arc::clone(&this.reply),
@@ -478,6 +503,7 @@ impl<B: TerminalSessionBackend + 'static, T: Send + 'static, S: 'static> Future
                 _permit: permit,
                 callback_panicked: Arc::clone(&this.shared.callback_panicked),
                 completed: false,
+                cleanup,
             };
             this.submitted = true;
             if let Err(error) = this.shared.sender.try_send(Message::Job(Box::new(job))) {
@@ -944,6 +970,48 @@ mod tests {
     struct ReentrantWake {
         reply: std::sync::Weak<Mutex<Reply<()>>>,
         woke: AtomicBool,
+    }
+    #[test]
+    fn queued_callback_preserves_original_run_and_cancelled_request_releases_it() {
+        for cancel in [false, true] {
+            let scope = crate::NativeOwnedWorkerScope::new();
+            let run = scope.begin_run().unwrap();
+            let sibling = scope.begin_run().unwrap();
+            let (worker, handle) = TerminalOwnerLoop::<Backend>::new();
+            let held = Arc::new(Mutex::new(None));
+            let callback_hold = Arc::clone(&held);
+            let caller = CancellationToken::new();
+            let mut future = run.with_poll(|| {
+                handle.request(caller.clone(), move |_, _, _| {
+                    *callback_hold.lock().unwrap() =
+                        crate::NativeOwnedWorkerScope::retain_current_cleanup();
+                })
+            });
+            assert!(sibling.with_poll(|| poll_request(&mut future)).is_pending());
+            run.close();
+            sibling.close();
+            assert!(sibling.completion().is_complete());
+            assert!(!run.completion().is_complete());
+            if cancel {
+                caller.cancel();
+            }
+            let Message::Job(job) = worker.receiver.try_recv().unwrap() else {
+                panic!("queued operation")
+            };
+            assert!(job.execute(
+                &mut TerminalRegistry::new("/workspace".into()).unwrap(),
+                &mut TerminalWaitCoordinator::new(),
+                &mut TerminalWriteCoordinator::new(),
+                1,
+                None,
+                &mut (),
+            ));
+            assert_eq!(held.lock().unwrap().is_some(), !cancel);
+            drop(held.lock().unwrap().take());
+            run.completion().wait_on_worker().unwrap();
+            scope.close();
+            scope.completion().wait_on_worker().unwrap();
+        }
     }
     impl std::task::Wake for ReentrantWake {
         fn wake(self: Arc<Self>) {

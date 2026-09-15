@@ -457,6 +457,11 @@ pub(crate) struct TerminalPty {
     permit: Option<PtyPermit>,
 }
 impl TerminalPty {
+    pub(crate) fn promote_to_service(&mut self) {
+        if let Some(process) = self.process.as_mut() {
+            process.promote_to_service();
+        }
+    }
     fn flush_startup_source(&mut self) -> Result<(), TerminalPtyError> {
         let Some(source) = self.startup_source.as_mut() else {
             return Ok(());

@@ -22,6 +22,15 @@ pub(crate) struct TmuxChild {
 }
 
 impl TmuxChild {
+    pub(crate) fn promote_to_service(&mut self) {
+        if let Some(cleanup) = self
+            .permit
+            .as_mut()
+            .and_then(|permit| permit.shutdown.as_mut())
+        {
+            cleanup.promote_to_service();
+        }
+    }
     pub(crate) fn spawn(command: &mut Command) -> Result<Self, BackgroundProcessError> {
         Self::spawn_checked(command, || Ok::<(), BackgroundProcessError>(()))
     }
@@ -182,6 +191,45 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "exit 7"]).env_clear();
         TmuxChild::spawn(&mut command).unwrap()
+    }
+
+    #[test]
+    fn failed_startup_reap_retains_only_original_run_until_actual_settlement() {
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let scope = crate::NativeOwnedWorkerScope::new();
+        let run = scope.begin_run().unwrap();
+        let sibling = scope.begin_run().unwrap();
+        let release = Release(Arc::new(AtomicBool::new(true)));
+        let deferred = Arc::clone(&release.0);
+        let future = run.with_poll(|| {
+            scope.run(move || {
+                let mut child = exited_child();
+                child.defer_reap_for_test(deferred);
+                assert!(child.abort().is_err());
+                drop(child);
+            })
+        });
+        futures_executor::block_on(future).unwrap();
+        run.close();
+        sibling.close();
+        assert!(sibling.completion().is_complete());
+        assert!(!run.completion().is_complete());
+        drop(release);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !run.completion().is_complete() {
+            assert!(
+                Instant::now() < deadline,
+                "original run must await positive child reap"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
     }
 
     #[test]

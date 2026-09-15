@@ -339,6 +339,7 @@ impl PublishedTerminalBootstrap {
             pty,
             latch: Arc::clone(&latch),
             echo_disabled: !self.has_command,
+            cleanup: crate::NativeOwnedWorkerScope::retain_current_cleanup(),
         };
         let control = TerminalStartupControl {
             listener: Some(self.listener),
@@ -363,6 +364,9 @@ pub(crate) struct TerminalStartupBackend<B: TerminalSessionBackend = TerminalPty
     latch: Arc<AtomicU8>,
     echo_disabled: bool,
     artifacts: Arc<Mutex<ArtifactRetirement>>,
+    // Process reap can finish before artifact retirement. Keep this independent
+    // startup obligation outside the artifact mutex and drop resources first.
+    cleanup: Option<crate::NativeOwnedWorkerCleanup>,
 }
 impl TerminalStartupBackend {
     #[cfg(test)]
@@ -382,6 +386,12 @@ impl<B: TerminalSessionBackend> TerminalStartupBackend<B> {
     }
 }
 impl<B: TerminalSessionBackend> TerminalSessionBackend for TerminalStartupBackend<B> {
+    fn promote_to_service(&mut self) {
+        self.pty.promote_to_service();
+        if let Some(cleanup) = self.cleanup.as_mut() {
+            cleanup.promote_to_service();
+        }
+    }
     fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
         self.restore_startup_echo().map_err(|_| ())
     }
@@ -459,6 +469,9 @@ impl<B: TerminalSessionBackend> TerminalSessionBackend for TerminalStartupBacken
                 #[cfg(test)]
                 eprintln!("startup close artifact cleanup failed: {error:?}");
             })?;
+        if closed.is_ok() {
+            drop(self.cleanup.take());
+        }
         closed
     }
 }
@@ -912,6 +925,7 @@ mod tests {
         writes: Vec<(usize, bool)>,
         settlements: Vec<(usize, bool)>,
         echoes: usize,
+        close_failed: bool,
     }
     struct AlternateBackend(Arc<Mutex<Forwarded>>);
     impl TerminalSessionBackend for AlternateBackend {
@@ -980,10 +994,52 @@ mod tests {
             _: bool,
             _: &mut dyn FnMut(&[u8]),
         ) -> std::result::Result<TerminalPtyClose, ()> {
+            if self.0.lock().unwrap().close_failed {
+                return Err(());
+            }
             Ok(TerminalPtyClose {
                 status: TerminalPtyStatus::Exited(0),
                 output_incomplete: false,
             })
+        }
+    }
+
+    #[test]
+    fn startup_cleanup_retains_run_until_successful_close_or_service_handoff() {
+        for promote in [false, true] {
+            let scope = crate::NativeOwnedWorkerScope::new();
+            let run = scope.begin_run().unwrap();
+            let state = Arc::new(Mutex::new(Forwarded {
+                close_failed: true,
+                ..Forwarded::default()
+            }));
+            let worker_state = Arc::clone(&state);
+            let future = run.with_poll(|| {
+                scope.run(move || TerminalStartupBackend {
+                    pty: AlternateBackend(worker_state),
+                    latch: Arc::new(AtomicU8::new(RELEASED)),
+                    echo_disabled: false,
+                    artifacts: Arc::new(Mutex::new(ArtifactRetirement {
+                        artifacts: None,
+                        failed: false,
+                    })),
+                    cleanup: crate::NativeOwnedWorkerScope::retain_current_cleanup(),
+                })
+            });
+            let mut backend = futures_executor::block_on(future).unwrap();
+            run.close();
+            assert!(backend.close(true, &mut |_| {}).is_err());
+            assert!(!run.completion().is_complete());
+            if promote {
+                backend.promote_to_service();
+            } else {
+                state.lock().unwrap().close_failed = false;
+                backend.close(true, &mut |_| {}).unwrap();
+            }
+            run.completion().wait_on_worker().unwrap();
+            drop(backend);
+            scope.close();
+            scope.completion().wait_on_worker().unwrap();
         }
     }
 

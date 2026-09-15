@@ -218,6 +218,42 @@ transfer that settlement owner without freeing the resident or admitting another
 turn. Manager-owner retirement cancels the original actual turn even after that
 transfer; a weak conversation binding cannot keep management authority alive.
 
+### Per-run native cleanup
+
+Each actual run receives a non-clone cleanup cohort under the shared host worker
+scope. A host admits at most 64 open or unsettled cohorts; closed, settled cohorts
+release capacity even when old completion observers remain. Poll attribution is
+weak, allocation-bound and restored on return or unwind. Worker futures capture
+their original attribution before polling; later callers cannot retarget them.
+Implicit attribution to a foreign host fails closed. Closing or dropping a cohort
+rejects new work but does not discharge already-owned cleanup.
+Trusted nested service construction may explicitly verify the original source
+scope and enroll a target scope in that same run cohort; it cannot infer this
+relationship from public identities. A weak, non-clone service-handoff token
+addresses one original worker enrollment only. Promotion requires a confirmed
+successful service receipt; dropping or losing the token has no effect.
+
+The existing collector retains both host and run tickets through actual dedicated
+worker join, including thread-local destruction. Queued terminal callbacks and
+fixed background-pool operations carry their original cleanup obligation across
+thread boundaries. Cleanup snapshots follow failed startup and deferred positive
+reaping independently of returned values, cancellation and abandoned observers.
+Completion observation uses the existing wake-driven primitive, without a new
+thread, pool, timer or worker admission per child. The manager binds the cohort
+to the exact scheduler run and checks runtime settlement separately.
+
+A successful handoff to a retained service removes only that owner's run ticket,
+never its host ticket or another cleanup snapshot. Terminal processes cross this
+boundary after the final startup acknowledgement and successful artifact cleanup;
+background processes cross after successful retention activation immediately
+before transfer to the preadmitted retainer. The lazy terminal owner crosses after
+successful initialization, before its long-lived loop. Healthy retained processes
+therefore do not block a child's next FIFO item. Failed initialization, startup,
+acknowledgement or cleanup keeps the original run obligation. Reusable pool
+threads remain service-lifetime resources; their individual operations settle
+after execution and result publication, while dedicated worker tickets still
+require actual join/TLS completion. macOS inventory identity remains host-bound.
+
 ## Managed command mailbox
 
 The shared engine retains only a weak native mailbox requester and weak principal

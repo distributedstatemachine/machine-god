@@ -171,6 +171,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Shared<B, S> {
             match contain(initialize) {
                 Ok(Ok(worker)) => {
                     shared.set_phase(Phase::Running);
+                    crate::owned_worker::promote_current_worker_to_service();
                     let completed = contain(|| worker.run(owner));
                     shared.set_phase(match completed {
                         Ok(Ok(())) => Phase::Stopped,
