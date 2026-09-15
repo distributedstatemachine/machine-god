@@ -44,6 +44,11 @@ pub(super) struct SharedManagedRuntimeFactoryOptions {
     pub cleanup_timeout: Duration,
 }
 pub(super) struct SharedManagedRuntimeFactory(Arc<SharedManagedRuntimeFactoryOptions>);
+struct RuntimeSelection {
+    principal: NoticePrincipal,
+    authority: ManagedRestorationAuthority,
+    parent_mcp: Option<ManagedMcpInstance>,
+}
 impl SharedManagedRuntimeFactory {
     pub(super) fn new(
         options: SharedManagedRuntimeFactoryOptions,
@@ -75,10 +80,11 @@ impl SharedManagedRuntimeFactory {
 
     pub(super) fn prepare_parent(
         &self,
-        session: Session,
+        conversation: NativeConversation,
         authority: ManagedRestorationAuthority,
         principal: NoticePrincipal,
         journal_owner: JournalOwner,
+        mcp: Arc<super::mcp::ManagedParentMcpSeed>,
     ) -> BoxFuture<'static, Result<PreparedManagedRuntime, ManagedRuntimeError>> {
         let factory = Arc::downgrade(&self.0);
         Box::pin(async move {
@@ -89,11 +95,29 @@ impl SharedManagedRuntimeFactory {
             let result = preparation::Attributed::new(
                 cohort,
                 Box::pin(async move {
+                    let mcp = mcp
+                        .compose(
+                            factory
+                                .services
+                                .control_workers
+                                .as_ref()
+                                .ok_or(ManagedRuntimeError::Invalid)?,
+                            &factory.reserved_tool_names,
+                            factory
+                                .services
+                                .permission_preparation
+                                .as_ref()
+                                .ok_or(ManagedRuntimeError::Invalid)?,
+                        )
+                        .map_err(|_| ManagedRuntimeError::Invalid)?;
                     factory.compose_selected(
-                        session,
-                        principal,
+                        conversation,
                         &journal_owner,
-                        authority,
+                        RuntimeSelection {
+                            principal,
+                            authority,
+                            parent_mcp: Some(mcp),
+                        },
                         prepared_completion,
                     )
                 }),
@@ -188,11 +212,9 @@ impl SharedManagedRuntimeFactoryOptions {
     }
     fn conversation(
         &self,
-        session: Session,
+        mut conversation: NativeConversation,
         policy: NativePermissionPolicySnapshot,
     ) -> Result<NativeConversation, ManagedRuntimeError> {
-        let mut conversation =
-            NativeConversation::from_session(session).map_err(|_| ManagedRuntimeError::Invalid)?;
         conversation = conversation
             .with_permission_controller(
                 self.services
@@ -235,27 +257,35 @@ impl SharedManagedRuntimeFactoryOptions {
         }
         let selected = self.selection(request)?;
         self.compose_selected(
-            session,
-            NoticePrincipal {
-                id: request.child_id.clone(),
-                generation: NonZeroU64::new(request.generation)
-                    .ok_or(ManagedRuntimeError::Invalid)?,
-            },
+            NativeConversation::from_session(session).map_err(|_| ManagedRuntimeError::Invalid)?,
             &request.journal_owner,
-            selected,
+            RuntimeSelection {
+                principal: NoticePrincipal {
+                    id: request.child_id.clone(),
+                    generation: NonZeroU64::new(request.generation)
+                        .ok_or(ManagedRuntimeError::Invalid)?,
+                },
+                authority: selected,
+                parent_mcp: None,
+            },
             preparation,
         )
     }
 
     fn compose_selected(
         &self,
-        session: Session,
-        principal: NoticePrincipal,
+        conversation: NativeConversation,
         journal_owner: &JournalOwner,
-        selected: ManagedRestorationAuthority,
+        selection: RuntimeSelection,
         preparation: crate::NativeOwnedWorkerCompletion,
     ) -> Result<PreparedManagedRuntime, ManagedRuntimeError> {
-        if session.has_active_turn()
+        let RuntimeSelection {
+            principal,
+            authority: selected,
+            parent_mcp,
+        } = selection;
+        let foreground = parent_mcp.is_some();
+        if conversation.core_session().has_active_turn()
             || principal.id.is_empty()
             || principal.id.len() > 255
             || !principal
@@ -267,9 +297,13 @@ impl SharedManagedRuntimeFactoryOptions {
         }
         let workspace = NativeWorkspaceAuthority::from_admitted_scope(selected.workspace);
         let generation = principal.generation.get();
-        let notice_context = Arc::new(ParentNoticeContext::new(&session, principal, &self.notices));
-        let conversation = self.conversation(session, selected.policy)?;
-        let (mut conversation, owner) = conversation
+        let notice_context = Arc::new(ParentNoticeContext::new(
+            conversation.core_session(),
+            principal,
+            &self.notices,
+        ));
+        let conversation = self.conversation(conversation, selected.policy)?;
+        let (conversation, owner) = conversation
             .with_managed_execution(
                 &self.principals,
                 self.scheduler.clone(),
@@ -286,7 +320,10 @@ impl SharedManagedRuntimeFactoryOptions {
         owner
             .configure_workers(workers.clone(), journal_owner.clone())
             .map_err(|_| ManagedRuntimeError::Unavailable)?;
-        let mcp = self.compose_mcp(workers)?;
+        let mcp = match parent_mcp {
+            Some(mcp) => mcp,
+            None => self.compose_mcp(workers)?,
+        };
         let mcp_owner = self
             .mcp
             .register(
@@ -299,15 +336,7 @@ impl SharedManagedRuntimeFactoryOptions {
         owner
             .configure_mcp(&mcp_owner)
             .map_err(|_| ManagedRuntimeError::Invalid)?;
-        conversation = conversation
-            .with_mcp_contexts(&mcp.contexts)
-            .map_err(|_| ManagedRuntimeError::Capacity)?;
-        if let Some(controller) = &mcp.controller {
-            conversation = conversation
-                .with_mcp_readiness(controller)
-                .map_err(|_| ManagedRuntimeError::Invalid)?;
-        }
-        conversation = conversation
+        let conversation = bind_mcp(conversation, &mcp)?
             .with_notice_context(&notice_context)
             .map_err(|_| ManagedRuntimeError::Invalid)?;
         let runtime = NativeConversationRuntime::new_with_model_routes(
@@ -321,9 +350,11 @@ impl SharedManagedRuntimeFactoryOptions {
         )
         .map_err(|_| ManagedRuntimeError::Capacity)?;
         // Saved child metadata cannot override this work's explicitly captured selection.
-        runtime
-            .set_model_preferences(selected.preferences)
-            .map_err(|_| ManagedRuntimeError::Invalid)?;
+        if !foreground {
+            runtime
+                .set_model_preferences(selected.preferences)
+                .map_err(|_| ManagedRuntimeError::Invalid)?;
+        }
         let resources = resources::Resources::new(
             owner.binding(),
             mcp,
@@ -361,6 +392,25 @@ impl SharedManagedRuntimeFactoryOptions {
             )
             .map_err(|_| ManagedRuntimeError::Invalid)
     }
+}
+fn bind_mcp(
+    mut conversation: NativeConversation,
+    mcp: &ManagedMcpInstance,
+) -> Result<NativeConversation, ManagedRuntimeError> {
+    conversation = conversation
+        .with_mcp_contexts(&mcp.contexts)
+        .map_err(|_| ManagedRuntimeError::Capacity)?;
+    if let Some(controller) = &mcp.controller {
+        conversation = conversation
+            .with_mcp_readiness(controller)
+            .map_err(|_| ManagedRuntimeError::Invalid)?;
+    }
+    if let Some(ephemeral) = &mcp.ephemeral {
+        conversation = conversation
+            .with_mcp_ephemeral_readiness(ephemeral)
+            .map_err(|_| ManagedRuntimeError::Invalid)?;
+    }
+    Ok(conversation)
 }
 fn permission_rank(mode: PermissionMode) -> u8 {
     match mode {

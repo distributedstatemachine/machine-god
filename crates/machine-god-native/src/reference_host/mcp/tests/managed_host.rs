@@ -1,5 +1,6 @@
 use super::*;
 use crate::reference_host::NativeReferenceHostManagedOptions;
+mod owner;
 
 fn options(
     options: NativeReferenceHostConversationOptions,
@@ -71,6 +72,19 @@ fn managed_selection_requires_each_actual_shared_service_without_reading_clock()
     });
     assert!(fixture.host().managed.is_some());
     assert!(fixture.host().services.managed_mcp_seed.is_some());
+    assert!(
+        fixture
+            .host()
+            .managed
+            .as_ref()
+            .unwrap()
+            .parent_mcp
+            .is_some()
+    );
+    assert!(fixture.host().mcp_runtime().is_none());
+    assert!(fixture.host().mcp_controller().is_none());
+    assert!(fixture.host().mcp_ephemeral_owner().is_none());
+    assert!(fixture.host().mcp_contexts().is_none());
     assert!(fixture.transport.requests.lock().unwrap().is_empty());
     assert_eq!(fixture.clock.0.load(Ordering::Relaxed), 0);
 }

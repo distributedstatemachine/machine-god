@@ -3,7 +3,11 @@
 #[cfg(feature = "mcp-http")]
 mod authentication;
 mod ephemeral;
+mod managed;
 pub use ephemeral::NativeReferenceHostMcpEphemeralStartupOptions;
+#[cfg(test)]
+pub(super) use managed::seeds;
+pub(super) use managed::{ManagedMcpInstance, ManagedMcpSeed, ManagedParentMcpSeed};
 #[cfg(feature = "mcp-http")]
 mod startup;
 
@@ -171,60 +175,6 @@ pub(super) struct Selection {
     pub management: Option<Arc<NativeMcpManagementService>>,
 }
 
-/// Explicit configuration seed only. It never retains a parent's live runtime,
-/// contexts, connection, ephemeral owner or permission bundle.
-pub(super) struct ManagedMcpSeed {
-    options: NativeReferenceHostMcpOptions,
-    management: Option<Arc<NativeMcpManagementService>>,
-    archive: Arc<NativeToolResultArchiveAdapter>,
-    url_launcher: Option<crate::mcp::browser_launcher::NativeMcpBrowserLauncher>,
-}
-
-pub(super) struct ManagedMcpInstance {
-    pub runtime: Arc<NativeMcpRuntime>,
-    pub controller: Option<Arc<NativeMcpController>>,
-    pub contexts: Arc<NativeMcpContexts>,
-    pub permissions: crate::managed::mcp::NativePrincipalMcpPermissions,
-    pub clock: Arc<dyn NativeMcpRuntimeClock>,
-}
-
-impl ManagedMcpSeed {
-    pub(super) fn compose(
-        &self,
-        workers: &crate::NativeOwnedWorkerScope,
-        reserved_tool_names: &[ToolName],
-        permissions: &super::permissions::SharedPermissionPreparation,
-    ) -> Result<ManagedMcpInstance, NativeReferenceHostBuildError> {
-        let contexts = Arc::new(NativeMcpContexts::new());
-        let mut options = self.options.clone();
-        options.contexts = contexts.clone();
-        if let Some(startup) = &mut options.startup {
-            startup.owner_cancellation = CancellationToken::new();
-        }
-        // Request-scoped server authority belongs to the original principal.
-        // It is not a configured-server seed for descendants.
-        options.ephemeral = None;
-        let mut composition = options.compose(self.archive.clone(), self.url_launcher.clone())?;
-        composition.management.clone_from(&self.management);
-        let clock = composition.clock.clone();
-        let paired = crate::managed::mcp::NativePrincipalMcpPermissions::new(
-            &composition.runtime,
-            permissions.mcp_inputs(contexts.clone()),
-        )
-        .map_err(|_| error())?;
-        let (runtime, controller, ephemeral) =
-            controller(Some(composition), Some(workers), reserved_tool_names)?;
-        debug_assert!(ephemeral.is_none());
-        Ok(ManagedMcpInstance {
-            runtime: runtime.ok_or_else(error)?,
-            controller,
-            contexts,
-            permissions: paired,
-            clock,
-        })
-    }
-}
-
 pub(super) type OwnedRuntime = (
     Option<Arc<NativeMcpRuntime>>,
     Option<Arc<NativeMcpController>>,
@@ -296,10 +246,12 @@ pub(super) struct Selected {
     pub composition: Option<Composition>,
     pub catalog: Arc<dyn crate::McpToolCatalog>,
     pub managed_seed: Option<Arc<ManagedMcpSeed>>,
+    pub managed_parent: Option<ManagedParentMcpSeed>,
 }
 
 pub(super) fn select(
     selection: Selection,
+    managed: bool,
     terminal: &super::SelectedTerminalComposition,
     permissions: Option<&super::PermissionComposition>,
     catalog: Arc<dyn crate::McpToolCatalog>,
@@ -310,6 +262,7 @@ pub(super) fn select(
             composition: None,
             catalog,
             managed_seed: None,
+            managed_parent: None,
         });
     };
     if terminal.resource.is_none() || permissions.is_none() {
@@ -317,19 +270,20 @@ pub(super) fn select(
     }
     options.validate_controller(selection.management.is_some())?;
     let archive = terminal.archive.clone().ok_or_else(error)?;
-    let mut child_options = options.clone();
-    // Retain no parent context allocation, even before the first child exists.
-    child_options.contexts = Arc::new(NativeMcpContexts::new());
-    child_options.ephemeral = None;
-    if let Some(startup) = &mut child_options.startup {
-        startup.owner_cancellation = CancellationToken::new();
+    let (seed, parent) = managed::seeds(
+        options.clone(),
+        selection.management.clone(),
+        archive.clone(),
+        url_launcher.clone(),
+    )?;
+    if managed {
+        return Ok(Selected {
+            composition: None,
+            catalog,
+            managed_seed: Some(seed),
+            managed_parent: Some(parent),
+        });
     }
-    let seed = Arc::new(ManagedMcpSeed {
-        options: child_options,
-        management: selection.management.clone(),
-        archive: archive.clone(),
-        url_launcher: url_launcher.clone(),
-    });
     let mut composition = options.compose(archive, url_launcher)?;
     composition.management = selection.management;
     let catalog = composition.runtime.clone();
@@ -337,6 +291,7 @@ pub(super) fn select(
         composition: Some(composition),
         catalog,
         managed_seed: Some(seed),
+        managed_parent: None,
     })
 }
 impl fmt::Debug for NativeReferenceHostMcpOptions {

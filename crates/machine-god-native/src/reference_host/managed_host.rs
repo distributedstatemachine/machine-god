@@ -49,6 +49,7 @@ pub(super) struct ManagedHostAssembly {
     pub mailbox: Option<ManagedMailbox>,
     pub clock: Arc<dyn NativeMcpRuntimeClock>,
     pub relationships: Arc<dyn crate::managed::manager::factory::ManagedRelationshipAuthorizer>,
+    pub parent_mcp: Option<super::mcp::ManagedParentMcpSeed>,
 }
 
 impl ManagedHostAssembly {
@@ -90,6 +91,7 @@ impl ManagedHostAssembly {
             mailbox: Some(mailbox),
             clock,
             relationships,
+            parent_mcp: None,
         })
     }
 }

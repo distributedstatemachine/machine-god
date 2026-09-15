@@ -209,6 +209,10 @@ impl fmt::Debug for NativeConversation {
 }
 
 impl NativeConversation {
+    /// Actual session borrowed only for native allocation-bound enrollment.
+    pub(crate) fn core_session(&self) -> &Session {
+        &self.session
+    }
     pub(crate) fn bind_lifecycle(
         &self,
         gate: &Arc<LifecycleGate>,

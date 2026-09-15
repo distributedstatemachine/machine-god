@@ -51,6 +51,7 @@ fn directory(path: &Path) -> rustix::fd::OwnedFd {
 }
 struct FactoryFixture {
     factory: SharedManagedRuntimeFactory,
+    parent_mcp: Arc<crate::reference_host::mcp::ManagedParentMcpSeed>,
     journal: ManagedJournal,
     parent: Arc<crate::managed::principal::NativePrincipal>,
     parent_session: Session,
@@ -61,6 +62,7 @@ impl FactoryFixture {
         Self::with_clock(Arc::new(NoTimerClock))
     }
     fn with_clock(clock: Arc<dyn NativeMcpRuntimeClock>) -> Self {
+        let parent_clock = clock.clone();
         let host = host_fixture::Fixture::with_options("auto", true, |options, _, _| {
             options
                 .with_model_routes(Arc::new(NativeConversationModelRoutes::new()))
@@ -110,6 +112,13 @@ impl FactoryFixture {
             )))
             .with_worker_scope(services.control_workers.as_ref().unwrap().clone()),
         );
+        let (_, parent_mcp) = crate::reference_host::mcp::seeds(
+            NativeReferenceHostMcpOptions::new(Arc::new(NativeMcpContexts::new()), parent_clock),
+            None,
+            archive.clone(),
+            None,
+        )
+        .unwrap();
         let mcp =
             Arc::new(NativePrincipalMcpRegistry::new(64, principals.requester(), archive).unwrap());
         let notices =
@@ -141,6 +150,7 @@ impl FactoryFixture {
         .unwrap();
         Self {
             factory,
+            parent_mcp: Arc::new(parent_mcp),
             journal,
             parent,
             parent_session,
@@ -243,7 +253,7 @@ fn parent_enrollment_uses_actual_session_without_loading_or_publishing_again() {
     let original = session.record();
     let authority = &f.factory.0.restoration;
     let mut parent = block_on(f.factory.prepare_parent(
-        session.clone(),
+        NativeConversation::from_session(session.clone()).unwrap(),
         ManagedRestorationAuthority {
             workspace: authority.workspace.clone(),
             policy: authority.policy.clone(),
@@ -254,6 +264,7 @@ fn parent_enrollment_uses_actual_session_without_loading_or_publishing_again() {
             generation: NonZeroU64::new(1).unwrap(),
         },
         f.journal.owner_lease(),
+        f.parent_mcp.clone(),
     ))
     .unwrap();
     assert_eq!(parent.runtime.id(), session.id());

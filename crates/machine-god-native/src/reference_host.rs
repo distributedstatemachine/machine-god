@@ -7,7 +7,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod construction;
+mod managed_agents;
 mod managed_factory;
+pub use managed_agents::{
+    NativeManagedAgentSelection, NativeManagedAgentView, NativeManagedAgents,
+    NativeManagedAgentsError, NativeManagedAgentsProgress,
+};
 mod managed_host;
 mod mcp;
 mod permissions;
@@ -882,7 +887,9 @@ impl NativeReferenceHost {
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
-            host.mcp_contexts = mcp_contexts;
+            if host.managed.is_none() {
+                host.mcp_contexts = mcp_contexts;
+            }
             host.skills = skills;
             host.undo_tracker = undo_tracker;
             host
@@ -1317,7 +1324,9 @@ impl NativeReferenceHost {
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
-            host.mcp_contexts = mcp_contexts;
+            if host.managed.is_none() {
+                host.mcp_contexts = mcp_contexts;
+            }
             host.skills = skills;
             host.undo_tracker = undo_tracker;
             host
@@ -1663,7 +1672,7 @@ impl NativeReferenceHost {
             TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
         construction.observe(selected_terminal.resource.as_ref());
-        let managed = managed
+        let mut managed = managed
             .map(|selection| {
                 managed_host::ManagedHostAssembly::new(
                     selection,
@@ -1689,8 +1698,10 @@ impl NativeReferenceHost {
             composition: mcp,
             catalog: mcp_catalog,
             managed_seed: managed_mcp_seed,
+            managed_parent,
         } = mcp::select(
             mcp_options,
+            managed.is_some(),
             &selected_terminal,
             permission_setup.as_ref(),
             mcp_catalog,
@@ -1699,6 +1710,9 @@ impl NativeReferenceHost {
                 .and_then(|selected| selected.as_ref().ok())
                 .map(crate::NativeBackgroundUrlOpener::mcp_launcher),
         )?;
+        if let Some(managed) = &mut managed {
+            managed.parent_mcp = managed_parent;
+        }
         let SelectedTerminalComposition {
             tool: terminal,
             resource: host_resource,

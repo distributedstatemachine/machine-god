@@ -769,10 +769,20 @@ permission-session, undo, model-route, MCP and notice owners, without rebuilding
 the engine or its worker pool. Child MCP composition retains configured authority
 only; it creates fresh contexts and owner cancellation and never inherits a
 parent's request-scoped servers.
+The outer reference-host owner separately retains the explicit parent MCP seed,
+including any request-scoped startup authority. Managed host construction does
+not also create a global MCP runtime. Parent preparation instantiates that exact
+selection with fresh contexts and owner cancellation; child preparation has no
+ephemeral selection to inherit. Parent teardown settles its optional ephemeral
+owner alongside actual admission/worker cleanup, without closing a sibling.
 
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted
 authority. It never reloads, replaces, starts, or republishes that transcript.
+It retains the already-prepared native conversation and honors its saved model
+preferences; explicit child-work preferences remain independent of saved child
+metadata. Process-level foreground overrides remain the interactive host's
+explicit selection step, not inherited child authority.
 The outer manager retains these foreground resources independently of the UI,
 using weak allocation-bound selections. Enrollment failure returns the original
 prepared owner for explicit settlement. Retiring a foreground immediately ends

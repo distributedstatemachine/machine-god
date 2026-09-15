@@ -1153,7 +1153,9 @@ pub use read_tool_result::{
     any(target_os = "linux", target_os = "macos")
 ))]
 pub use reference_host::{
-    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+    NativeManagedAgentSelection, NativeManagedAgentView, NativeManagedAgents,
+    NativeManagedAgentsError, NativeManagedAgentsProgress, NativeReferenceHost,
+    NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
     NativeReferenceHostConversationOptions, NativeReferenceHostManagedOptions,
     NativeReferenceHostMcpEphemeralStartupOptions, NativeReferenceHostMcpOptions,
     NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,

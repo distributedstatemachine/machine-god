@@ -5,7 +5,7 @@ use crate::mcp::{
     store::NativeMcpConfigStore,
 };
 
-fn startup(clock: Arc<Clock>) -> NativeReferenceHostMcpEphemeralStartupOptions {
+pub(super) fn startup(clock: Arc<Clock>) -> NativeReferenceHostMcpEphemeralStartupOptions {
     NativeReferenceHostMcpEphemeralStartupOptions {
         captured_environment: vec![],
         stdio: None,

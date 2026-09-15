@@ -27,6 +27,22 @@ enroll actual parent/child conversations before execution and retain the manager
 separately from `NativeHostServices`. Keeping the engine alone does not retain
 the outer assembly or revive its routes.
 
+`NativeReferenceHost::open_managed_agents` opens an explicitly supplied private
+journal descriptor and transfers the assembly once to `NativeManagedAgents`.
+Unpolled opening is inert; validation or journal-open failure preserves the
+original assembly. The outer owner exposes bounded resident projections,
+explicit reconciliation retry and caller-polled progress/shutdown. It uses the
+same engine and worker scope, not another execution domain. Foreground streams
+must be co-polled independently of display output.
+
+Managed construction creates no host-global MCP runtime or context route.
+Configured child seeds stay in shared services, while the parent-only seed
+stays with the outer owner. Actual parent enrollment creates its own MCP
+runtime, contexts, permission bundle and optional ephemeral owner. Parent-only
+ephemeral selection is preserved, not copied to children; every instantiated
+owner has independent cancellation. Actual foreground enrollment preserves
+saved model preferences, while child work keeps its explicitly captured choice.
+
 ## Availability
 
 The complete reference host is compiled when all of these are true:

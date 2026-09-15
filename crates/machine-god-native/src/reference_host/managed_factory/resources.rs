@@ -34,6 +34,9 @@ impl McpLifetime {
         if let Some(controller) = &self.instance.controller {
             controller.close();
         }
+        if let Some(ephemeral) = &self.instance.ephemeral {
+            ephemeral.close();
+        }
         self.instance.runtime.close();
     }
 }
@@ -237,7 +240,12 @@ impl Drop for Resources {
 }
 async fn settle_mcp(mcp: &McpLifetime, deadline: Instant) -> Result<(), ManagedRuntimeError> {
     let cancellation = CancellationToken::new();
-    if let Some(controller) = &mcp.instance.controller {
+    if let Some(ephemeral) = &mcp.instance.ephemeral {
+        ephemeral
+            .settle(cancellation, deadline)
+            .await
+            .map_err(|_| ManagedRuntimeError::Unavailable)?;
+    } else if let Some(controller) = &mcp.instance.controller {
         let receipt = controller
             .settle(deadline, cancellation)
             .await

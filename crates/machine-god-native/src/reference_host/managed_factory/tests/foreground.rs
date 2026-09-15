@@ -19,7 +19,7 @@ fn enrolled_parent_shutdown_waits_for_its_admission_worker_not_unrelated_host_wo
     .unwrap();
     let selected = &f.factory.0.restoration;
     let prepared = block_on(f.factory.prepare_parent(
-        session.clone(),
+        NativeConversation::from_session(session.clone()).unwrap(),
         ManagedRestorationAuthority {
             workspace: selected.workspace.clone(),
             policy: selected.policy.clone(),
@@ -30,6 +30,7 @@ fn enrolled_parent_shutdown_waits_for_its_admission_worker_not_unrelated_host_wo
             generation: NonZeroU64::new(1).unwrap(),
         },
         f.journal.owner_lease(),
+        f.parent_mcp.clone(),
     ))
     .unwrap();
     let binding = prepared.owner.binding();
@@ -93,5 +94,62 @@ fn enrolled_parent_shutdown_waits_for_its_admission_worker_not_unrelated_host_wo
     assert!(context.upgrade().is_none());
     assert!(!workers.completion().is_complete());
     unrelated.send(()).unwrap();
+    assert!(f.host.transport.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn parent_enrollment_honors_saved_preferences_instead_of_child_override_rules() {
+    let f = FactoryFixture::new();
+    let session = block_on(
+        f.factory
+            .0
+            .services
+            .session_lifecycle
+            .create_generated_with_metadata(
+                NativeSessionMetadata::new(&f.host.workspace, 3, NativeSessionOrigin::Cli).unwrap(),
+            ),
+    )
+    .unwrap();
+    let id = session.id();
+    let prepare = |session: machine_god_core::Session| {
+        let selected = &f.factory.0.restoration;
+        let id = session.id().to_string();
+        f.factory.prepare_parent(
+            NativeConversation::from_session(session).unwrap(),
+            ManagedRestorationAuthority {
+                workspace: selected.workspace.clone(),
+                policy: selected.policy.clone(),
+                preferences: selected.preferences.clone(),
+            },
+            NoticePrincipal {
+                id,
+                generation: NonZeroU64::MIN,
+            },
+            f.journal.owner_lease(),
+            f.parent_mcp.clone(),
+        )
+    };
+    let mut first = block_on(prepare(session)).unwrap();
+    let mut saved = first.runtime.model_preferences();
+    saved.set_model("fixture/saved-parent").unwrap();
+    saved.set_effort(NativeReasoningEffort::parse("low").unwrap());
+    first.runtime.set_model_preferences(saved).unwrap();
+    block_on(first.runtime.flush_model_preferences(4)).unwrap();
+    block_on(poll_fn(|cx| first.resources.poll_closed(cx))).unwrap();
+    drop(first);
+    let session = block_on(f.factory.0.services.engine.load_session(id))
+        .unwrap()
+        .unwrap();
+    let mut restored = block_on(prepare(session)).unwrap();
+    assert_eq!(
+        restored.runtime.model_preferences().model(),
+        "fixture/saved-parent"
+    );
+    assert_eq!(restored.runtime.model_preferences().effort().label(), "low");
+    assert_eq!(
+        f.factory.0.restoration.preferences.model(),
+        "fixture/restoration"
+    );
+    block_on(poll_fn(|cx| restored.resources.poll_closed(cx))).unwrap();
     assert!(f.host.transport.requests.lock().unwrap().is_empty());
 }

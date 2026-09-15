@@ -1,0 +1,309 @@
+//! Outer native driver ownership, deliberately excluded from shared engine services.
+use super::{
+    NativeReferenceHost,
+    managed_factory::{
+        ManagedRestorationAuthority, SharedManagedRuntimeFactory,
+        SharedManagedRuntimeFactoryOptions,
+    },
+    mcp::ManagedParentMcpSeed,
+};
+use crate::managed::{
+    manager::{
+        ManagedForegroundSelection, ManagedManager, ManagedSelection, ManagerLimits,
+        factory::{ManagedRuntimeError, PreparedManagedRuntime},
+    },
+    notices::NoticePrincipal,
+    store::{JournalLimits, ManagedJournal},
+};
+use crate::{
+    NativeConversation, NativeConversationRuntime, NativeModelPreferences,
+    NativePermissionPolicySnapshot, NativeSessionOrigin, NativeWorkspaceScopeSnapshot,
+};
+use machine_god_core::{BoxFuture, ManagedAgentState};
+use rustix::fd::OwnedFd;
+use std::{
+    fmt,
+    num::NonZeroU64,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
+
+/// Fixed host-operation categories; never raw filesystem or provider diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum NativeManagedAgentsError {
+    Configuration,
+    Unavailable,
+    Capacity,
+    Persistence,
+    Ambiguous,
+}
+impl fmt::Display for NativeManagedAgentsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Configuration => "managed-agent host configuration failed",
+            Self::Unavailable => "managed-agent host unavailable",
+            Self::Capacity => "managed-agent host capacity unavailable",
+            Self::Persistence => "managed-agent journal unavailable",
+            Self::Ambiguous => "managed-agent operation requires reconciliation",
+        })
+    }
+}
+impl std::error::Error for NativeManagedAgentsError {}
+
+/// Weak native navigation identity. Labels alone cannot construct this value.
+#[derive(Clone, Debug)]
+pub struct NativeManagedAgentSelection(ManagedSelection);
+
+/// Bounded immutable resident projection, not permission or process authority.
+#[derive(Debug)]
+pub struct NativeManagedAgentView {
+    pub id: String,
+    pub generation: u64,
+    pub name: String,
+    pub state: ManagedAgentState,
+    pub selection: NativeManagedAgentSelection,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeManagedAgentsProgress {
+    pub residents: usize,
+    pub executing: usize,
+    pub waiters: usize,
+    pub closing: bool,
+    pub blocked: bool,
+}
+
+/// Owns children and foreground resources independently of selected presentation.
+/// The caller must co-poll this driver with foreground streams and host shutdown.
+pub struct NativeManagedAgents {
+    manager: ManagedManager,
+    factory: Arc<SharedManagedRuntimeFactory>,
+    parent_mcp: Arc<ManagedParentMcpSeed>,
+    journal: ManagedJournal,
+}
+impl fmt::Debug for NativeManagedAgents {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativeManagedAgents { .. }")
+    }
+}
+
+impl NativeReferenceHost {
+    /// Opens one manager using this host's existing engine, workers and weak routes.
+    /// The directory descriptor must identify a private managed-journal directory.
+    /// Construction is inert before poll. Failed validation or journal opening
+    /// leaves the original host assembly available; successful opening transfers
+    /// it once to the returned outer owner, never into shared engine services.
+    ///
+    /// # Errors
+    /// Missing managed selection, invalid captured authority, capacity, or failure
+    /// to acquire the exact journal's exclusive owner. No provider is polled.
+    pub fn open_managed_agents(
+        &mut self,
+        directory: OwnedFd,
+        preferences: NativeModelPreferences,
+        origin: NativeSessionOrigin,
+    ) -> BoxFuture<'_, Result<NativeManagedAgents, NativeManagedAgentsError>> {
+        Box::pin(async move {
+            let assembly = self
+                .managed
+                .as_ref()
+                .ok_or(NativeManagedAgentsError::Configuration)?;
+            if assembly.mailbox.is_none() || assembly.parent_mcp.is_none() {
+                return Err(NativeManagedAgentsError::Configuration);
+            }
+            let workspace = self
+                .workspace_binding
+                .as_ref()
+                .ok_or(NativeManagedAgentsError::Configuration)?;
+            let factory = Arc::new(
+                SharedManagedRuntimeFactory::new(SharedManagedRuntimeFactoryOptions {
+                    services: self.services.clone(),
+                    principals: assembly.principals.clone(),
+                    scheduler: assembly.scheduler.clone(),
+                    mcp: assembly.mcp.clone(),
+                    notices: assembly.notices.clone(),
+                    workspace_contexts: workspace.contexts.clone(),
+                    restoration: ManagedRestorationAuthority {
+                        workspace: workspace
+                            .authority
+                            .snapshot()
+                            .map_err(|_| NativeManagedAgentsError::Configuration)?,
+                        policy: super::configured_permission_policy(
+                            self.loaded_config.config(),
+                            &self.workspace_root,
+                        )
+                        .map_err(|_| NativeManagedAgentsError::Configuration)?,
+                        preferences,
+                    },
+                    reserved_tool_names: self.reserved_tool_names.to_vec(),
+                    origin,
+                    cleanup_timeout: Duration::from_secs(30),
+                })
+                .map_err(map_error)?,
+            );
+            let journal = ManagedJournal::open(
+                directory,
+                self.services
+                    .control_workers
+                    .as_ref()
+                    .ok_or(NativeManagedAgentsError::Configuration)?
+                    .clone(),
+                JournalLimits::default(),
+            )
+            .await
+            .map_err(|_| NativeManagedAgentsError::Persistence)?;
+            let mut assembly = self
+                .managed
+                .take()
+                .ok_or(NativeManagedAgentsError::Configuration)?;
+            let manager = ManagedManager::new(
+                journal.clone(),
+                assembly
+                    .mailbox
+                    .take()
+                    .ok_or(NativeManagedAgentsError::Configuration)?,
+                factory.clone(),
+                assembly.relationships,
+                assembly.notices,
+                assembly.clock,
+                ManagerLimits::default(),
+            )
+            .map_err(map_error)?;
+            Ok(NativeManagedAgents {
+                manager,
+                factory,
+                parent_mcp: Arc::new(
+                    assembly
+                        .parent_mcp
+                        .take()
+                        .ok_or(NativeManagedAgentsError::Configuration)?,
+                ),
+                journal,
+            })
+        })
+    }
+}
+
+impl NativeManagedAgents {
+    /// Observes current resident agents without loading history or starting work.
+    #[must_use]
+    pub fn agents(&self) -> Vec<NativeManagedAgentView> {
+        self.manager
+            .children()
+            .into_iter()
+            .map(|child| NativeManagedAgentView {
+                id: child.id,
+                generation: child.generation,
+                name: child.name,
+                state: child.state,
+                selection: NativeManagedAgentSelection(child.selection),
+            })
+            .collect()
+    }
+
+    /// Progress does not depend on terminal output or a selected agent page.
+    /// # Errors
+    /// Reports fixed resource/persistence categories without discarding owned work.
+    pub fn poll_progress(
+        &mut self,
+        cx: &mut Context<'_>,
+        now_ms: i64,
+    ) -> Poll<Result<NativeManagedAgentsProgress, NativeManagedAgentsError>> {
+        self.manager.poll_progress(cx, now_ms).map(|result| {
+            result
+                .map(|progress| NativeManagedAgentsProgress {
+                    residents: progress.residents,
+                    executing: progress.executing,
+                    waiters: progress.waiters,
+                    closing: progress.closing,
+                    blocked: progress.blocked.is_some(),
+                })
+                .map_err(map_error)
+        })
+    }
+
+    /// Explicitly retry retained reconciliation receipts, never blind creation.
+    pub fn retry_reconciliation(&self) {
+        self.manager.retry_reconciliation();
+    }
+
+    /// Host teardown is not a durable user cancellation command.
+    pub fn request_shutdown(&mut self) {
+        self.manager.request_shutdown();
+    }
+
+    /// # Errors
+    /// Actual child, foreground, control or worker cleanup failed. A display or
+    /// stream completion alone can never produce a successful shutdown receipt.
+    pub fn poll_shutdown(
+        &mut self,
+        cx: &mut Context<'_>,
+        now_ms: i64,
+    ) -> Poll<Result<(), NativeManagedAgentsError>> {
+        self.manager.poll_shutdown(cx, now_ms).map_err(map_error)
+    }
+
+    pub(crate) fn selected_runtime(
+        &self,
+        selection: &NativeManagedAgentSelection,
+    ) -> Option<&Arc<NativeConversationRuntime>> {
+        self.manager.selected_runtime(&selection.0)
+    }
+
+    pub(crate) fn prepare_foreground(
+        &self,
+        conversation: NativeConversation,
+        workspace: NativeWorkspaceScopeSnapshot,
+        policy: NativePermissionPolicySnapshot,
+        preferences: NativeModelPreferences,
+    ) -> BoxFuture<'static, Result<PreparedManagedRuntime, ManagedRuntimeError>> {
+        let principal = NoticePrincipal {
+            id: conversation.id().to_string(),
+            generation: NonZeroU64::MIN,
+        };
+        self.factory.prepare_parent(
+            conversation,
+            ManagedRestorationAuthority {
+                workspace,
+                policy,
+                preferences,
+            },
+            principal,
+            self.journal.owner_lease(),
+            self.parent_mcp.clone(),
+        )
+    }
+
+    pub(crate) fn enroll_foreground(
+        &mut self,
+        prepared: Box<PreparedManagedRuntime>,
+    ) -> Result<ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
+    {
+        self.manager.enroll_foreground(prepared)
+    }
+
+    pub(crate) fn foreground_runtime(
+        &self,
+        selected: &ManagedForegroundSelection,
+    ) -> Option<&Arc<NativeConversationRuntime>> {
+        self.manager.foreground_runtime(selected)
+    }
+
+    pub(crate) fn retire_foreground(&mut self, selected: &ManagedForegroundSelection) -> bool {
+        self.manager.retire_foreground(selected)
+    }
+}
+
+fn map_error(error: ManagedRuntimeError) -> NativeManagedAgentsError {
+    match error {
+        ManagedRuntimeError::Invalid => NativeManagedAgentsError::Configuration,
+        ManagedRuntimeError::Capacity => NativeManagedAgentsError::Capacity,
+        ManagedRuntimeError::Persistence => NativeManagedAgentsError::Persistence,
+        ManagedRuntimeError::Ambiguous => NativeManagedAgentsError::Ambiguous,
+        ManagedRuntimeError::Missing | ManagedRuntimeError::Unavailable => {
+            NativeManagedAgentsError::Unavailable
+        }
+    }
+}

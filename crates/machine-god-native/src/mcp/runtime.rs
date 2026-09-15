@@ -71,7 +71,7 @@ impl Default for NativeMcpRuntimeLimits {
     }
 }
 impl NativeMcpRuntimeLimits {
-    fn validate(self) -> Result<Self> {
+    pub(crate) fn validate(self) -> Result<Self> {
         let cap = Self::default();
         for (value, maximum) in [
             (self.max_servers, cap.max_servers),
