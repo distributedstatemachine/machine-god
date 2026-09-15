@@ -4,18 +4,25 @@ use machine_god_native::{
     NativeReferenceHostMcpOptions, mcp::management::NativeMcpManagementService,
 };
 
+type Selection = (
+    Arc<NativeMcpManagementService>,
+    NativeReferenceHostMcpOptions,
+);
+
+pub(super) fn configure_host(
+    options: NativeReferenceHostConversationOptions,
+    selection: Option<Selection>,
+) -> NativeReferenceHostConversationOptions {
+    let (management, runtime) = selection.unzip();
+    super::super::super::super::mcp_startup::configure_host(options, management, runtime)
+}
+
 pub(super) fn prepare(
     roots: &PreparedNativeRoots,
     terminal: &NativeReferenceHostTerminalOptions,
     environment: &NativeEnvironment,
     bridge: Arc<NativeInteractivePromptBridge>,
-) -> Result<
-    Option<(
-        Arc<NativeMcpManagementService>,
-        NativeReferenceHostMcpOptions,
-    )>,
-    (),
-> {
+) -> Result<Option<Selection>, ()> {
     match std::env::var("RECORDING_TEST_MCP").as_deref() {
         Err(std::env::VarError::NotPresent) => return Ok(None),
         Ok("1") => {}

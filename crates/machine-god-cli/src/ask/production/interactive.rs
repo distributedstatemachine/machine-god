@@ -16,6 +16,7 @@ mod driver;
 mod framing;
 mod history_view;
 mod input_lines;
+mod managed_startup;
 mod mcp_elicitation;
 mod mcp_feature_pages;
 mod mcp_receipts;
@@ -39,6 +40,8 @@ mod tests;
 #[cfg(test)]
 use machine_god_native as native;
 #[cfg(test)]
+use machine_god_native::NativeInteractivePromptBridge;
+#[cfg(test)]
 mod mcp_test_support;
 #[cfg(test)]
 #[path = "../../../../machine-god-native/tests/interactive_session/support.rs"]
@@ -57,9 +60,9 @@ use machine_god_core::BackgroundOutputOwner;
 use machine_god_native::{
     NativeInteractiveControlOutcome, NativeInteractiveCopyOutcome, NativeInteractiveInitialSession,
     NativeInteractiveInput, NativeInteractiveInputHelper, NativeInteractiveInputSource,
-    NativeInteractiveOutcome, NativeInteractivePromptBridge, NativeInteractivePromptInbox,
-    NativeInteractivePromptLimits, NativeInteractiveSession, NativeInteractiveSessionOptions,
-    NativeInteractiveTerminal, NativeResumeTarget,
+    NativeInteractiveOutcome, NativeInteractivePromptInbox, NativeInteractivePromptLimits,
+    NativeInteractiveSession, NativeInteractiveSessionOptions, NativeInteractiveTerminal,
+    NativeResumeTarget,
 };
 use presentation::Modal;
 use std::{
@@ -80,7 +83,8 @@ pub(super) fn execute(
         selection,
         output,
         controller,
-        |bridge, control| {
+        |inbox, control| {
+            let bridge = inbox.router();
             prepare_conversation_host_with_activation(
                 launch,
                 bridge.clone(),
@@ -88,7 +92,10 @@ pub(super) fn execute(
                 Some(bridge),
                 background_open::capture(),
                 || control.activate_turn(),
-                true,
+                super::ConversationFeatures {
+                    discover_skills: true,
+                    managed: Some(managed_startup::options(inbox)),
+                },
             )
         },
         capture_input,
@@ -105,7 +112,7 @@ fn execute_with_preparation(
     output: &mut dyn std::io::Write,
     mut controller: AskSignalController,
     prepare: impl FnOnce(
-        Arc<NativeInteractivePromptBridge>,
+        &NativeInteractivePromptInbox,
         &AskSignalControlSender,
     ) -> Result<PreparedConversationHost, ()>
     + Send,
@@ -154,14 +161,13 @@ fn run_interactive(
     signals: AskSignals,
     control: &AskSignalControlSender,
     prepare: impl FnOnce(
-        Arc<NativeInteractivePromptBridge>,
+        &NativeInteractivePromptInbox,
         &AskSignalControlSender,
     ) -> Result<PreparedConversationHost, ()>,
     capture: impl FnOnce() -> Result<CapturedInput, ()>,
 ) -> Result<AskCommandOutcome, ()> {
     let inbox = NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default())
         .map_err(|_| ())?;
-    let bridge = inbox.router();
     let (source, terminal) = capture()?;
     let size_reader = capture_output_size()?;
     let input = NativeInteractiveInput::new(source, machine_god_core::CancellationToken::new());
@@ -178,7 +184,7 @@ fn run_interactive(
         catalog_cache: _catalog_cache,
         user_config,
         skills_snapshot,
-    }) = prepare(bridge, control)
+    }) = prepare(&inbox, control)
     else {
         return super::finish_setup_failure(signals, control);
     };
@@ -186,6 +192,7 @@ fn run_interactive(
     let recording_selection =
         super::recording_startup::Selection::capture(record_requested, &workspace);
     let recording = super::recording_startup::Settlement::default();
+    let (host, agents) = managed_startup::prepare(host, &state_path, &runtime);
     settle_with_recording(
         host,
         InputSettlement {
@@ -211,8 +218,9 @@ fn run_interactive(
             )?;
             output.tape = prepared.tape;
             runtime.block_on(async {
-                if let Some(notice) =
-                    super::mcp_startup::activate_interactive(&host, signals).await?
+                if !host.managed_agents_selected()
+                    && let Some(notice) =
+                        super::mcp_startup::activate_interactive(&host, signals).await?
                 {
                     prepared
                         .notice
@@ -237,7 +245,7 @@ fn run_interactive(
                     dimensions: prepared.dimensions,
                     startup_notice: prepared.notice,
                 };
-                let mut driver = match opening.open(host, options, signals).await? {
+                let mut driver = match opening.open(host, options, signals, agents?).await? {
                     Ok(driver) => driver
                         .with_resources(catalog, user_config)
                         .with_skills_snapshot(skills_snapshot),
@@ -324,14 +332,42 @@ impl InitialPresentation {
         host: Arc<machine_god_native::NativeReferenceHost>,
         options: NativeInteractiveSessionOptions,
         signals: &mut AskSignals,
+        agents: Option<machine_god_native::NativeManagedAgents>,
     ) -> Result<Result<Driver, FinalPresentation>, ()> {
         let picker_reader = host.session_catalog_reader().map_err(|_| ())?;
         let replay_history = !matches!(self.selection, InteractiveSessionSelection::Fresh);
         let dimensions = self.dimensions;
+        let managed = agents
+            .map(|agents| {
+                machine_god_native::NativeManagedInteractiveStartup::new(
+                    host.clone(),
+                    options.clone(),
+                    agents,
+                )
+            })
+            .transpose()
+            .map_err(|_| ())?;
         if let Some(initial) = initial_selection(self.selection) {
-            let owner = NativeInteractiveSession::open(host, options, initial, wall_clock_ms()?)
-                .await
-                .map_err(|_| ())?;
+            let owner = match managed {
+                Some(startup) => match managed_startup::open(startup, initial, signals).await? {
+                    Some(owner) => owner,
+                    None => {
+                        return Ok(Err(FinalPresentation::startup(
+                            self.output,
+                            None,
+                            None,
+                            signals
+                                .first_observed
+                                .map_or(AskCommandOutcome::OperationalFailure, AskSignal::outcome),
+                            signals.first_observed,
+                            None,
+                        )));
+                    }
+                },
+                None => NativeInteractiveSession::open(host, options, initial, wall_clock_ms()?)
+                    .await
+                    .map_err(|_| ())?,
+            };
             let mut driver = Driver::new(owner, self.input, self.inbox, self.output)?
                 .with_history(replay_history)
                 .with_raw_input(dimensions.columns().get(), Some(self.resize))
@@ -353,6 +389,7 @@ impl InitialPresentation {
                 self.resize,
                 dimensions,
             )
+            .with_managed_startup(managed)
             .with_startup_notice(self.startup_notice);
             poll_fn(|cx| startup.poll(cx, signals)).await;
             startup.into_result(self.inbox)
@@ -595,11 +632,17 @@ impl Driver {
 
     fn register_prompt_principal(&mut self) -> Result<(), ()> {
         self.retire_prompt_principal();
-        self.prompt_principal = Some(
-            self.inbox
-                .register(principal(&self.owner))
-                .map_err(|_| ())?,
-        );
+        if !self
+            .owner
+            .manages_prompt_inbox(&self.inbox)
+            .map_err(|_| ())?
+        {
+            self.prompt_principal = Some(
+                self.inbox
+                    .register(principal(&self.owner))
+                    .map_err(|_| ())?,
+            );
+        }
         self.scope_active = true;
         Ok(())
     }
@@ -619,26 +662,33 @@ impl Driver {
         mut inbox: NativeInteractivePromptInbox,
         output: OutputBridge,
     ) -> Result<Self, ()> {
-        let prompt_principal = inbox.register(principal(&owner)).map_err(|_| ())?;
+        let prompt_principal = if owner.manages_prompt_inbox(&inbox).map_err(|_| ())? {
+            None
+        } else {
+            Some(inbox.register(principal(&owner)).map_err(|_| ())?)
+        };
         let skills = owner
             .skills_catalog()
             .map(|_| skills_driver::SkillsUi::new(None));
+        let mut notice = Vec::new();
+        if owner.mcp_startup_failure().is_some() {
+            notice.extend_from_slice(super::mcp_startup::INTERACTIVE_FAILURE_NOTICE);
+        }
+        notice.extend_from_slice(
+            "machine-god interactive — /help for commands, /quit to exit\n> ".as_bytes(),
+        );
         Ok(Self {
             owner,
             input,
             inbox,
-            prompt_principal: Some(prompt_principal),
+            prompt_principal,
             output,
             modal: None,
             saved_rule: None,
             rule_generation: 0,
             render: None,
             in_flight: None,
-            notice: Some(
-                "machine-god interactive — /help for commands, /quit to exit\n> "
-                    .as_bytes()
-                    .to_vec(),
-            ),
+            notice: Some(notice),
             outcome: None,
             skills_warning: None,
             control_outcome: None,

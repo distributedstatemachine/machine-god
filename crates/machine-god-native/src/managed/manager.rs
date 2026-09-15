@@ -268,6 +268,10 @@ impl ManagedManager {
             let _ = child.prepared.runtime.clear_queued();
         }
     }
+
+    pub(crate) fn is_closing(&self) -> bool {
+        self.closing
+    }
     pub(crate) fn poll_progress(
         &mut self,
         cx: &mut Context<'_>,

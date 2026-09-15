@@ -9,6 +9,7 @@ use machine_god_native::{
 use std::{fs::File, future::poll_fn, io::Write as _, os::fd::OwnedFd};
 
 mod acknowledgement;
+mod managed;
 
 struct Harness {
     startup: Startup,
@@ -63,6 +64,17 @@ fn pty() -> (File, File) {
 }
 
 async fn harness(fixture: &support::Fixture) -> Harness {
+    harness_with_inbox(
+        fixture,
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap(),
+    )
+    .await
+}
+
+async fn harness_with_inbox(
+    fixture: &support::Fixture,
+    inbox: NativeInteractivePromptInbox,
+) -> Harness {
     let (master, slave) = pty();
     let mut resize = Resize::new(NativeInteractiveTerminalSizeReader::new(slave)).unwrap();
     let dimensions = resize.initial_dimensions().await.unwrap();
@@ -74,8 +86,6 @@ async fn harness(fixture: &support::Fixture) -> Harness {
     let (work, received) = tokio::sync::mpsc::channel(1);
     let (ack, acknowledgements) = tokio::sync::mpsc::channel(1);
     let (signal, signals) = tokio::sync::mpsc::channel(1);
-    let inbox =
-        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
     let options = NativeInteractiveSessionOptions::new(
         fixture.workspace.clone(),
         fixture.host.loaded_config().config().model_preferences(),

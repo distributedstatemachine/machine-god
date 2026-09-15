@@ -211,6 +211,12 @@ exact record. Interactive startup sends no fabricated initial prompt. It retains
 one complete host, credential and completed model-catalog cache across turns.
 The catalog can fall back without inventing model capabilities. The noninteractive
 `ask` and prompt-bearing `resume` paths retain their separate contracts.
+Interactive composition selects the native managed-agent owner using a private
+workspace/origin journal beneath the captured state directory. The startup picker
+retains that owner without a provisional conversation; failed selection permits
+explicit retry, and signals settle the original opening before input/terminal
+teardown. The CLI uses native-owned principal registrations in its one shared
+prompt inbox, so foreground replacement does not retire hidden child approvals.
 Both stdin and stdout must be TTYs for production interactive startup; failure
 exits `1` with a fixed diagnostic before configuration, credentials or sessions
 are acquired. The explicitly supplied native pipe adapter is not permission to

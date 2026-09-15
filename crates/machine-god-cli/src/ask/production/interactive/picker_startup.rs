@@ -35,6 +35,7 @@ pub(super) struct Startup {
     resize: Resize,
     dimensions: NativeInteractiveTerminalDimensions,
     pending: Option<BoxFuture<'static, Result<NativeInteractiveSession, NativeInteractiveError>>>,
+    managed: Option<machine_god_native::NativeManagedInteractiveStartup>,
     owner: Option<NativeInteractiveSession>,
     replay: bool,
     render: Option<Render>,
@@ -46,6 +47,14 @@ pub(super) struct Startup {
 }
 
 impl Startup {
+    pub fn with_managed_startup(
+        mut self,
+        managed: Option<machine_god_native::NativeManagedInteractiveStartup>,
+    ) -> Self {
+        self.managed = managed;
+        self
+    }
+
     pub fn with_startup_notice(mut self, notice: Option<Vec<u8>>) -> Self {
         if let Some(notice) = notice
             && let Some(render) = &mut self.render
@@ -75,6 +84,7 @@ impl Startup {
             resize,
             dimensions,
             pending: None,
+            managed: None,
             owner: None,
             replay: false,
             render: Some(Render {
@@ -107,7 +117,7 @@ impl Startup {
             self.stop(signal.outcome());
         }
         if self.stopped.is_some() {
-            return Poll::Ready(());
+            return self.poll_shutdown(cx);
         }
         self.poll_open(cx);
         if self.output.poll_tape(cx).is_err() {
@@ -129,11 +139,12 @@ impl Startup {
             self.poll_input(cx);
         }
         self.poll_output(cx);
-        if self.owner.is_some()
+        if self.stopped.is_some() {
+            self.poll_shutdown(cx)
+        } else if self.owner.is_some()
             && self.render.is_none()
             && self.in_flight.is_none()
             && self.menu_height.is_none()
-            || self.stopped.is_some()
         {
             Poll::Ready(())
         } else {
@@ -144,25 +155,70 @@ impl Startup {
     fn stop(&mut self, outcome: AskCommandOutcome) {
         self.stopped = Some(outcome);
         self.picker.close();
-        self.pending.take();
+        if let Some(managed) = &mut self.managed {
+            managed.request_shutdown();
+        }
+        if let Some(owner) = &mut self.owner {
+            owner.request_shutdown();
+        }
         self.input.input.request_stop();
     }
 
+    fn opening(&self) -> bool {
+        self.pending.is_some()
+            || self
+                .managed
+                .as_ref()
+                .is_some_and(machine_god_native::NativeManagedInteractiveStartup::is_opening)
+    }
+
+    /// Signals stop presentation, not the original opening future or its owner.
+    fn poll_shutdown(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        self.poll_open(cx);
+        if self.pending.is_some()
+            || self
+                .managed
+                .as_ref()
+                .is_some_and(|owner| !owner.is_finished())
+        {
+            return Poll::Pending;
+        }
+        if let Some(owner) = &mut self.owner {
+            owner.request_shutdown();
+            let _ = owner.poll_progress(cx, wall_clock_ms().unwrap_or(0));
+            if !owner.is_closed() {
+                return Poll::Pending;
+            }
+        }
+        Poll::Ready(())
+    }
+
     fn poll_open(&mut self, cx: &mut Context<'_>) {
-        let Some(pending) = &mut self.pending else {
+        let polled = if let Some(managed) = &mut self.managed {
+            if managed.is_finished() {
+                return;
+            }
+            managed.poll_open(cx, wall_clock_ms().unwrap_or(0))
+        } else if let Some(pending) = &mut self.pending {
+            pending.as_mut().poll(cx).map(|result| result.map(Some))
+        } else {
             return;
         };
-        let Poll::Ready(result) = pending.as_mut().poll(cx) else {
+        let Poll::Ready(result) = polled else {
             return;
         };
         self.pending = None;
         match result {
-            Ok(owner) => {
+            Ok(Some(mut owner)) => {
+                if self.stopped.is_some() {
+                    owner.request_shutdown();
+                }
                 self.owner = Some(owner);
                 self.picker.close();
                 self.input.reset_raw_draft();
             }
-            Err(error) if self.replay => self
+            Ok(None) => {}
+            Err(error) if self.replay && self.stopped.is_none() => self
                 .picker
                 .selection_failed(super::picker_driver::resume_failure(&error)),
             Err(_) => self.stop(AskCommandOutcome::OperationalFailure),
@@ -176,6 +232,12 @@ impl Startup {
             return;
         };
         self.replay = matches!(selection, NativeInteractiveInitialSession::Resume(_));
+        if let Some(managed) = &mut self.managed {
+            if managed.request_open(selection, now_ms).is_err() {
+                self.stop(AskCommandOutcome::OperationalFailure);
+            }
+            return;
+        }
         self.pending = Some(NativeInteractiveSession::open(
             self.host.clone(),
             self.options.clone(),
@@ -238,7 +300,7 @@ impl Startup {
                     let _ = self.picker.query("");
                 }
             }
-            _ if self.pending.is_some() => {}
+            _ if self.opening() => {}
             _ => self.picker_event(event, binding),
         }
     }
@@ -300,7 +362,7 @@ impl Startup {
                     {
                         self.picker.acknowledge(generation, revision);
                         if self.stopped.is_none()
-                            && self.pending.is_none()
+                            && !self.opening()
                             && self.owner.is_none()
                             && let Some(binding) = self.picker.take_acknowledged_selection()
                         {

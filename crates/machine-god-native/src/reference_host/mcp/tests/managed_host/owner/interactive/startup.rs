@@ -80,6 +80,55 @@ fn network_fixture() -> (Fixture, PathBuf) {
     (fixture, profile.unwrap())
 }
 
+#[test]
+fn preselection_shutdown_cancels_discovery_and_settles_original_owner() {
+    run(async {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let (mut fixture, profile) = network_fixture();
+        let (mut startup, host) = super::preselection::prepare(&mut fixture).await;
+        let completion = host.terminal_shutdown_completion().unwrap();
+        seed(
+            &profile,
+            &format!(
+                r#"{{"mcp":{{"pending":{{"type":"http","url":"http://127.0.0.1:{}/mcp","startup_timeout_ms":30000}}}}}}"#,
+                listener.local_addr().unwrap().port(),
+            ),
+        );
+        startup
+            .request_open(NativeInteractiveInitialSession::Fresh, 1)
+            .unwrap();
+        let progress = Box::pin(poll_fn(|cx| {
+            assert!(startup.poll_open(cx, 2).is_pending());
+            Poll::<()>::Pending
+        }));
+        let server = Box::pin(async {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let received = request(&mut socket).await;
+            assert!(String::from_utf8_lossy(&received).contains("server/discover"));
+            socket
+        });
+        let mut socket = match select(progress, server).await {
+            Either::Right((socket, observer)) => {
+                drop(observer);
+                socket
+            }
+            Either::Left(_) => panic!("discovery requires the server response"),
+        };
+        startup.request_shutdown();
+        let (closed, eof) =
+            futures_util::future::join(poll_fn(|cx| startup.poll_open(cx, 3)), async {
+                socket.read(&mut [0u8; 1]).await.unwrap()
+            })
+            .await;
+        assert!(closed.unwrap().is_none());
+        assert_eq!(eof, 0);
+        drop(startup);
+        drop(host);
+        completion.wait().await;
+        assert!(fixture.transport.requests.lock().unwrap().is_empty());
+    });
+}
+
 async fn interrupted_startup(shutdown: bool) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let (mut fixture, profile) = network_fixture();

@@ -51,6 +51,21 @@ struct RuntimeSelection {
     parent_mcp: Option<ManagedMcpInstance>,
 }
 impl SharedManagedRuntimeFactory {
+    pub(super) fn manages_prompt_inbox(
+        &self,
+        inbox: &crate::NativeInteractivePromptInbox,
+    ) -> Result<bool, super::NativeManagedAgentsError> {
+        match &self.0.prompts {
+            None => Ok(false),
+            Some(registrar) if registrar.matches(inbox) => Ok(true),
+            Some(_) => Err(super::NativeManagedAgentsError::Configuration),
+        }
+    }
+
+    pub(super) fn belongs_to(&self, services: &Arc<NativeHostServices>) -> bool {
+        Arc::ptr_eq(&self.0.services, services)
+    }
+
     pub(super) fn new(
         options: SharedManagedRuntimeFactoryOptions,
     ) -> Result<Self, ManagedRuntimeError> {

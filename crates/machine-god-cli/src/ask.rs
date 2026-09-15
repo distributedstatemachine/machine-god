@@ -1151,7 +1151,10 @@ mod production {
                             None,
                             None,
                             || control.activate_turn(),
-                            false,
+                            ConversationFeatures {
+                                discover_skills: false,
+                                managed: None,
+                            },
                         )
                         else {
                             return finish_setup_failure(signals, &control);
@@ -1241,7 +1244,7 @@ mod production {
         >,
         background_url: Option<interactive::background_open::Authority>,
         before_host: impl FnOnce() -> Result<(), ()>,
-        discover_skills: bool,
+        features: ConversationFeatures,
     ) -> Result<PreparedConversationHost, ()> {
         let captured_environment: Vec<_> = std::env::vars_os().collect();
         let environment = skills_startup::environment(&captured_environment);
@@ -1256,9 +1259,10 @@ mod production {
                 question: question_prompter,
                 mcp: mcp_presenter,
                 background_url,
+                managed: features.managed,
             },
             before_host,
-            discover_skills,
+            features.discover_skills,
             acp_startup::CapturedHostInputs {
                 environment: captured_environment,
                 roots: root_selection,
@@ -1278,6 +1282,12 @@ mod production {
         question: Arc<dyn QuestionPrompter>,
         mcp: Option<Arc<dyn machine_god_native::mcp::interaction::McpElicitationPresenter>>,
         background_url: Option<interactive::background_open::Authority>,
+        managed: Option<machine_god_native::NativeReferenceHostManagedOptions>,
+    }
+
+    struct ConversationFeatures {
+        discover_skills: bool,
+        managed: Option<machine_god_native::NativeReferenceHostManagedOptions>,
     }
 
     fn prepare_conversation_host_captured<R: acp_startup::HostRuntime>(
@@ -1364,12 +1374,10 @@ mod production {
                     permission_contexts,
                 ));
         options = interactive::background_open::configure(options, adapters.background_url);
-        if let Some(service) = mcp_management {
-            options = options.with_mcp_management(service);
+        if let Some(managed) = adapters.managed {
+            options = options.with_managed_agents(managed);
         }
-        if let Some(mcp_options) = mcp_options {
-            options = options.with_mcp_runtime(mcp_options);
-        }
+        let options = mcp_startup::configure_host(options, mcp_management, mcp_options);
         acp_startup::check_cancelled(&cancellation)?;
         let host = network.compose(
             loaded_config,

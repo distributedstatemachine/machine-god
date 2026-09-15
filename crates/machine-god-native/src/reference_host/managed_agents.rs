@@ -91,6 +91,64 @@ impl fmt::Debug for NativeManagedAgents {
 }
 
 impl NativeReferenceHost {
+    #[must_use]
+    pub fn managed_agents_selected(&self) -> bool {
+        self.services.managed_mcp_seed.is_some()
+    }
+
+    fn validate_managed_open(&self) -> Result<(), NativeManagedAgentsError> {
+        self.managed
+            .as_ref()
+            .filter(|assembly| assembly.mailbox.is_some() && assembly.parent_mcp.is_some())
+            .map(|_| ())
+            .ok_or(NativeManagedAgentsError::Configuration)
+    }
+
+    /// Opens a workspace/origin-specific private journal beneath the explicitly
+    /// supplied state descriptor. No workspace path is reopened for authority.
+    /// Directory preparation and journal ownership use the existing native workers.
+    /// # Errors
+    /// Invalid private state authority, unavailable workers, or an existing owner
+    /// of this exact workspace/origin journal. Construction is inert before poll.
+    pub fn open_workspace_managed_agents(
+        &mut self,
+        state: OwnedFd,
+        preferences: NativeModelPreferences,
+        origin: NativeSessionOrigin,
+    ) -> BoxFuture<'_, Result<NativeManagedAgents, NativeManagedAgentsError>> {
+        Box::pin(async move {
+            self.validate_managed_open()?;
+            let workspace = self
+                .workspace_binding
+                .as_ref()
+                .ok_or(NativeManagedAgentsError::Configuration)?
+                .authority
+                .snapshot()
+                .map_err(|_| NativeManagedAgentsError::Configuration)?;
+            let workers = self
+                .services
+                .control_workers
+                .as_ref()
+                .ok_or(NativeManagedAgentsError::Configuration)?
+                .clone();
+            let directory = ManagedJournal::workspace_directory(
+                state,
+                workspace.primary_identity().to_owned(),
+                origin,
+                workers,
+            )
+            .await
+            .map_err(|error| match error {
+                crate::managed::store::JournalError::Invalid => {
+                    NativeManagedAgentsError::Configuration
+                }
+                _ => NativeManagedAgentsError::Persistence,
+            })?;
+            self.open_managed_agents(directory, preferences, origin)
+                .await
+        })
+    }
+
     pub(crate) fn prepare_managed_foreground(
         &self,
         agents: &NativeManagedAgents,
@@ -142,13 +200,11 @@ impl NativeReferenceHost {
         origin: NativeSessionOrigin,
     ) -> BoxFuture<'_, Result<NativeManagedAgents, NativeManagedAgentsError>> {
         Box::pin(async move {
+            self.validate_managed_open()?;
             let assembly = self
                 .managed
                 .as_ref()
                 .ok_or(NativeManagedAgentsError::Configuration)?;
-            if assembly.mailbox.is_none() || assembly.parent_mcp.is_none() {
-                return Err(NativeManagedAgentsError::Configuration);
-            }
             let workspace = self
                 .workspace_binding
                 .as_ref()
@@ -224,6 +280,21 @@ impl NativeReferenceHost {
 }
 
 impl NativeManagedAgents {
+    pub(crate) fn manages_prompt_inbox(
+        &self,
+        inbox: &crate::NativeInteractivePromptInbox,
+    ) -> Result<bool, NativeManagedAgentsError> {
+        self.factory.manages_prompt_inbox(inbox)
+    }
+
+    pub(crate) fn belongs_to(&self, host: &NativeReferenceHost) -> bool {
+        self.factory.belongs_to(&host.services)
+    }
+
+    pub(crate) fn is_closing(&self) -> bool {
+        self.manager.is_closing()
+    }
+
     /// Observes current resident agents without loading history or starting work.
     #[must_use]
     pub fn agents(&self) -> Vec<NativeManagedAgentView> {

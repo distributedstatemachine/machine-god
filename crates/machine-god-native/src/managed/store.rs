@@ -107,6 +107,20 @@ impl fmt::Debug for ManagedJournal {
 }
 
 impl ManagedJournal {
+    pub(crate) fn workspace_directory(
+        root: OwnedFd,
+        workspace: std::path::PathBuf,
+        origin: crate::NativeSessionOrigin,
+        workers: NativeOwnedWorkerScope,
+    ) -> BoxFuture<'static, Result<OwnedFd, JournalError>> {
+        Box::pin(async move {
+            workers
+                .run(move || filesystem::workspace_directory(&root, &workspace, origin))
+                .await
+                .map_err(|_| JournalError::Worker)?
+        })
+    }
+
     /// Inert until first poll. The explicit private directory is never reopened
     /// through a path. Another actual owner fails Busy, including in-process.
     pub(crate) fn open(

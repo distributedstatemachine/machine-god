@@ -828,6 +828,11 @@ the actual session/incarnation through a weak registrar. Parent and child prompt
 leases share that inbox's aggregate limits and remain in native runtime custody.
 Runtime close retires its exact lease before awaiting permission or elicitation
 cleanup; navigation and another principal's replacement cannot invalidate it.
+Interactive startup retains the outer manager before the first session is
+selected. Failed selection leaves it available for explicit retry; cancellation
+drives the original preparation and any successfully opened session through
+cleanup before terminal teardown. Presentation verifies the exact shared inbox
+and does not acquire or retire a second principal registration.
 
 Create and restore are explicit operations, never inferred from an origin or a
 file's existence. Creation allocates one session/incarnation pair and retains the

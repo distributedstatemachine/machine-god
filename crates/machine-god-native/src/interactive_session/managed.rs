@@ -42,7 +42,7 @@ pub(super) struct Owner {
     foreground_closed: bool,
 }
 impl Owner {
-    fn new(agents: crate::NativeManagedAgents) -> Box<Self> {
+    pub(super) fn new(agents: crate::NativeManagedAgents) -> Box<Self> {
         Box::new(Self {
             agents,
             foreground: None,
@@ -53,6 +53,22 @@ impl Owner {
 }
 
 impl NativeInteractiveSession {
+    /// Reports whether native runtimes own registration in this exact inbox.
+    /// Presentation must not register or retire a second lease in managed mode.
+    /// # Errors
+    /// Rejects an inbox other than the one explicitly bound during composition.
+    pub fn manages_prompt_inbox(
+        &self,
+        inbox: &crate::NativeInteractivePromptInbox,
+    ) -> Result<bool, NativeInteractiveError> {
+        self.managed.as_ref().map_or(Ok(false), |owner| {
+            owner
+                .agents
+                .manages_prompt_inbox(inbox)
+                .map_err(NativeInteractiveError::Managed)
+        })
+    }
+
     pub(super) fn compose_candidate(
         &self,
         transition: &mut Transition,
@@ -311,7 +327,7 @@ pub(super) fn prepare(
     let process_model = initial.then(|| options.process_model.clone()).flatten();
     Box::pin(async move {
         let mut prepared = Box::new(preparation.await.map_err(NativeInteractiveError::Managed)?);
-        let startup = start_parent_mcp(&prepared, cancellation);
+        let startup = start_parent_mcp(&prepared, cancellation.clone());
         let runtime = prepared.runtime.clone();
         let configure = async {
             startup.await?;
@@ -332,6 +348,9 @@ pub(super) fn prepare(
         .await;
         if let Err(error) = configure {
             close_prepared(&mut prepared).await?;
+            if cancellation.is_cancelled() {
+                return Err(NativeInteractiveError::Closed);
+            }
             return Err(error);
         }
         Ok(Prepared::Managed(prepared, reservation))
@@ -422,18 +441,25 @@ pub(super) fn enroll(
 pub(super) async fn reserve_initial(
     agents: &mut crate::NativeManagedAgents,
     now_ms: i64,
+    cancellation: &machine_god_core::CancellationToken,
 ) -> Result<ManagedForegroundReservation, NativeInteractiveError> {
     let reservation = agents
         .reserve_foreground()
         .map_err(NativeInteractiveError::Managed)?;
-    futures_util::future::poll_fn(|cx| {
+    let ready = futures_util::future::poll_fn(|cx| {
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(crate::NativeManagedAgentsError::Unavailable));
+        }
         if let Poll::Ready(Err(error)) = agents.poll_progress(cx, now_ms) {
             return Poll::Ready(Err(error));
         }
         agents.poll_foreground_reservation(&reservation, cx)
     })
-    .await
-    .map_err(NativeInteractiveError::Managed)?;
+    .await;
+    if cancellation.is_cancelled() {
+        return Err(NativeInteractiveError::Closed);
+    }
+    ready.map_err(NativeInteractiveError::Managed)?;
     Ok(reservation)
 }
 

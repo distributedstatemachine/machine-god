@@ -35,6 +35,13 @@ explicit reconciliation retry and caller-polled progress/shutdown. It uses the
 same engine and worker scope, not another execution domain. Foreground streams
 must be co-polled independently of display output.
 
+`open_workspace_managed_agents` instead receives the explicit private state
+directory descriptor and derives a private workspace/origin journal namespace
+on the existing owned workers. It hashes the captured workspace identity, never
+reopening that path as authority. Unpolled preparation is inert; existing
+nonprivate directories and symlinks are rejected. Reopening the same namespace
+does not bypass its journal's exclusive owner lease.
+
 Managed construction creates no host-global MCP runtime or context route.
 Configured child seeds stay in shared services, while the parent-only seed
 stays with the outer owner. Actual parent enrollment creates its own MCP
@@ -52,6 +59,15 @@ human controls resolve the selected foreground's own runtime/controller, never
 a managed host-global fallback. Child progress is polled before presentation or
 control backpressure, and interactive shutdown is not complete until the outer
 manager has settled all child and foreground custody.
+
+`NativeManagedInteractiveStartup` owns that manager before selection, without
+allocating a provisional conversation. Opening is caller-polled and transfers
+the interactive owner once; failed selection retains the manager for explicit
+retry. Signal cancellation retains the original preparation future through MCP
+and admission cleanup, including a session whose successful opening raced with
+shutdown. The caller must settle startup before tearing down input or terminal
+resources. Its constructor rejects a different actual host-service allocation
+and returns the original manager for cleanup.
 
 Managed parent preparation starts its own configured `All` MCP selection under
 an actual journal-retaining admission cohort. An empty child creates no MCP
@@ -81,6 +97,9 @@ stays with that runtime's cleanup resources, not the displayed selection. Closin
 one principal invalidates only its pending requests and unconsumed answers.
 Parent replacement cannot retire a hidden child's approval. Dropping the sole
 inbox rejects later preparation instead of recreating an input or prompt owner.
+`manages_prompt_inbox` checks the exact selected inbox allocation. Presentation
+uses native registrations without taking a duplicate lease; a foreign inbox is
+an error, not permission to create another prompt route.
 
 Foreground quiescence keeps ordinary prompts and saves fenced while granting
 only exact original notice cleanup a weak, generation-bound continuation route.

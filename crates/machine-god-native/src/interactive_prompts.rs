@@ -409,6 +409,10 @@ pub struct NativeInteractivePromptInbox {
 pub(crate) struct NativeInteractivePromptRegistrar(Weak<Shared>);
 
 impl NativeInteractivePromptRegistrar {
+    pub(crate) fn matches(&self, inbox: &NativeInteractivePromptInbox) -> bool {
+        self.0.ptr_eq(&Arc::downgrade(&inbox.shared))
+    }
+
     pub(crate) fn register(
         &self,
         owner: BackgroundOutputOwner,

@@ -90,6 +90,7 @@ impl NativeAcpHostFactory for AcpHostFactory {
                             question: bridge,
                             mcp: Some(presenter),
                             background_url: None,
+                            managed: None,
                         },
                         || Ok(()),
                         true,

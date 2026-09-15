@@ -14,6 +14,31 @@ const OWNER: &str = ".owner.lock";
 const EPOCH: &str = ".owner-epoch";
 pub(super) const FILE_OVERHEAD: usize = 256;
 
+pub(super) fn workspace_directory(
+    root: &OwnedFd,
+    workspace: &std::path::Path,
+    origin: crate::NativeSessionOrigin,
+) -> Result<OwnedFd, Error> {
+    use std::os::unix::ffi::OsStrExt;
+    validate_private(root, true).map_err(|_| Error::Invalid)?;
+    let mut hash = Sha256::new();
+    hash.update(b"machine-god-managed-workspace-v1\0");
+    hash.update(origin.as_str().as_bytes());
+    hash.update([0]);
+    hash.update(workspace.as_os_str().as_bytes());
+    let name = format!("managed-{}", hex(&hash.finalize()));
+    match rustix::fs::mkdirat(root, &name, Mode::RWXU) {
+        Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+        Err(_) => return Err(Error::Persistence),
+    }
+    let directory = rustix::fs::openat(root, &name, READ | OFlags::DIRECTORY, Mode::empty())
+        .map_err(|_| Error::Invalid)?;
+    validate_private(&directory, true).map_err(|_| Error::Invalid)?;
+    validate_link(root, &name, &directory).map_err(|_| Error::Conflict)?;
+    rustix::fs::fsync(root).map_err(|_| Error::Persistence)?;
+    Ok(directory)
+}
+
 pub(super) struct Source {
     file: File,
     revision: [i128; 11],

@@ -5,6 +5,23 @@ use machine_god_native::mcp::{
 };
 use std::{path::Path, sync::Arc};
 
+pub(super) const INTERACTIVE_FAILURE_NOTICE: &[u8] = b"MCP startup failed; management remains available via /mcp. Required servers must be ready before a new model prompt can run.\n";
+
+/// Applies captured selections without loading a profile or activating peers.
+pub(super) fn configure_host(
+    mut options: machine_god_native::NativeReferenceHostConversationOptions,
+    management: Option<Arc<NativeMcpManagementService>>,
+    runtime: Option<machine_god_native::NativeReferenceHostMcpOptions>,
+) -> machine_god_native::NativeReferenceHostConversationOptions {
+    if let Some(management) = management {
+        options = options.with_mcp_management(management);
+    }
+    if let Some(runtime) = runtime {
+        options = options.with_mcp_runtime(runtime);
+    }
+    options
+}
+
 /// No profile selection means no MCP capture. All effectful acquisition remains
 /// in the explicit native startup boundary on this existing constructor worker.
 pub(super) fn prepare_runtime(
@@ -48,8 +65,13 @@ pub(super) async fn activate_interactive(
     host: &machine_god_native::NativeReferenceHost,
     signals: &mut super::AskSignals,
 ) -> Result<Option<&'static [u8]>, ()> {
-    Ok(activate_observed(host, machine_god_native::mcp::startup::NativeMcpStartupPhase::All, signals)
-        .await?.map(|_| b"MCP startup failed; management remains available via /mcp. Required servers must be ready before a new model prompt can run.\n".as_slice()))
+    Ok(activate_observed(
+        host,
+        machine_god_native::mcp::startup::NativeMcpStartupPhase::All,
+        signals,
+    )
+    .await?
+    .map(|_| INTERACTIVE_FAILURE_NOTICE))
 }
 
 async fn activate_observed(

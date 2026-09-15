@@ -1,4 +1,5 @@
 use super::*;
+mod preselection;
 mod prompts;
 #[cfg(feature = "mcp-http")]
 mod startup;

@@ -86,9 +86,10 @@ fn capture_input() -> Result<(NativeInteractiveInputSource, NativeInteractiveTer
 }
 
 fn prepare(
-    bridge: Arc<NativeInteractivePromptBridge>,
+    inbox: &machine_god_native::NativeInteractivePromptInbox,
     control: &AskSignalControlSender,
 ) -> Result<PreparedConversationHost, ()> {
+    let bridge = inbox.router();
     control.activate_turn()?;
     let terminal_environment: Vec<_> = std::env::vars_os().collect();
     let environment = super::super::super::skills_startup::environment(&terminal_environment);
@@ -151,15 +152,12 @@ fn prepare(
         .with_model_routes(Arc::clone(&model_routes))
         .with_observations(Arc::clone(&observations))
         .with_terminal(prepared.terminal)
+        .with_managed_agents(super::super::managed_startup::options(inbox))
         .with_permissions(super::super::super::capture_permission_options());
     if let Some(service) = prepared.service {
         options = options.with_skills(service);
     }
-    if let Some((management, runtime)) = mcp {
-        options = options
-            .with_mcp_management(management)
-            .with_mcp_runtime(runtime);
-    }
+    let options = mcp::configure_host(options, mcp);
     let host =
         NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             load_native_config(&environment).map_err(|_| ())?,

@@ -169,7 +169,24 @@ impl Fixture {
     }
 
     pub fn new_with_workspace() -> Self {
-        Self::configured(true, FixtureExtension::None, Arc::new(AllowPrompter))
+        Self::with_workspace_options(|options| options)
+    }
+
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
+
+    pub fn with_workspace_options(
+        select: impl FnOnce(
+            NativeReferenceHostConversationOptions,
+        ) -> NativeReferenceHostConversationOptions,
+    ) -> Self {
+        Self::configured_with_options(
+            true,
+            FixtureExtension::None,
+            Arc::new(AllowPrompter),
+            select,
+        )
     }
 
     pub fn new_with_skills() -> Self {
@@ -325,7 +342,7 @@ impl Fixture {
         hash.update(b"machine-god:file-session:v1:");
         hash.update(id.as_str().as_bytes());
         let path = self
-            .state_root
+            .state_root()
             .join(format!("session-{:x}.tmp", hash.finalize()));
         fs::create_dir(&path).unwrap();
         PublicationBlock(path)

@@ -8,6 +8,8 @@ use rustix::fs::{Mode, OFlags};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::AtomicU64;
 
+mod workspace;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FailurePoint {
     BeforePageRename,

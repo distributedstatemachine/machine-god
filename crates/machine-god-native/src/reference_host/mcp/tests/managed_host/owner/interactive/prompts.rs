@@ -109,6 +109,16 @@ async fn scenario(shutdown_pending: bool) {
     )
     .await
     .unwrap();
+    assert!(owner.manages_prompt_inbox(&inbox).unwrap());
+    let foreign =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    assert!(matches!(
+        owner.manages_prompt_inbox(&foreign),
+        Err(NativeInteractiveError::Managed(
+            NativeManagedAgentsError::Configuration
+        ))
+    ));
+    drop(foreign);
     owner
         .enqueue("create the persistent worker".into())
         .unwrap();

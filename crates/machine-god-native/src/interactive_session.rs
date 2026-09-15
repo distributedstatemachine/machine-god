@@ -27,6 +27,8 @@ pub use controls::{
 };
 mod driver;
 mod managed;
+mod startup;
+pub use startup::NativeManagedInteractiveStartup;
 #[cfg(test)]
 pub(crate) mod tests;
 mod transition;
@@ -313,64 +315,94 @@ impl NativeInteractiveSession {
         mut agents: Option<Box<managed::Owner>>,
     ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
         Box::pin(async move {
-            options.validate_for_host(&host)?;
-            let conversation = transition::prepare(
-                &host,
-                &options,
-                match initial {
-                    NativeInteractiveInitialSession::Fresh => NativeInteractiveTransition::New,
-                    NativeInteractiveInitialSession::Resume(target) => {
-                        NativeInteractiveTransition::Resume(target)
-                    }
-                },
+            Self::try_open_with_agents(
+                host,
+                options,
+                initial,
                 now_ms,
+                &mut agents,
+                machine_god_core::CancellationToken::new(),
             )
-            .await?;
-            let prepared = match &mut agents {
-                Some(agents) => {
-                    let reservation = managed::reserve_initial(&mut agents.agents, now_ms).await?;
-                    managed::prepare(
-                        &agents.agents,
-                        host.clone(),
-                        &options,
-                        conversation,
-                        managed::Selection {
-                            reservation,
-                            workspace: None,
-                            policy: None,
-                            catalog: options.catalog.clone(),
-                            initial: true,
-                            now_ms,
-                            cancellation: machine_god_core::CancellationToken::new(),
-                        },
-                    )
-                    .await?
-                }
-                None => managed::Prepared::Ordinary(
-                    transition::compose(
-                        &host,
-                        &options,
-                        conversation,
-                        None,
-                        options.catalog.clone(),
-                        true,
-                        now_ms,
-                    )
-                    .await?,
-                ),
-            };
-            let (current, foreground) = match managed::enroll(&mut agents, prepared) {
-                Ok(value) => value,
-                Err((error, mut prepared, _reservation)) => {
-                    managed::close_prepared(&mut prepared).await?;
-                    return Err(error);
-                }
-            };
-            managed::activate_initial(&host, &current, &mut agents, now_ms).await?;
-            Ok(Self::from_runtime(
-                host, options, current, agents, foreground,
-            ))
+            .await
         })
+    }
+
+    async fn try_open_with_agents(
+        host: Arc<NativeReferenceHost>,
+        options: NativeInteractiveSessionOptions,
+        initial: NativeInteractiveInitialSession,
+        now_ms: i64,
+        agents: &mut Option<Box<managed::Owner>>,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<Self, NativeInteractiveError> {
+        if cancellation.is_cancelled() {
+            return Err(NativeInteractiveError::Closed);
+        }
+        options.validate_for_host(&host)?;
+        let conversation = transition::prepare(
+            &host,
+            &options,
+            match initial {
+                NativeInteractiveInitialSession::Fresh => NativeInteractiveTransition::New,
+                NativeInteractiveInitialSession::Resume(target) => {
+                    NativeInteractiveTransition::Resume(target)
+                }
+            },
+            now_ms,
+        )
+        .await?;
+        if cancellation.is_cancelled() {
+            return Err(NativeInteractiveError::Closed);
+        }
+        let prepared = match agents {
+            Some(agents) => {
+                let reservation =
+                    managed::reserve_initial(&mut agents.agents, now_ms, &cancellation).await?;
+                managed::prepare(
+                    &agents.agents,
+                    host.clone(),
+                    &options,
+                    conversation,
+                    managed::Selection {
+                        reservation,
+                        workspace: None,
+                        policy: None,
+                        catalog: options.catalog.clone(),
+                        initial: true,
+                        now_ms,
+                        cancellation,
+                    },
+                )
+                .await?
+            }
+            None => managed::Prepared::Ordinary(
+                transition::compose(
+                    &host,
+                    &options,
+                    conversation,
+                    None,
+                    options.catalog.clone(),
+                    true,
+                    now_ms,
+                )
+                .await?,
+            ),
+        };
+        let (current, foreground) = match managed::enroll(agents, prepared) {
+            Ok(value) => value,
+            Err((error, mut prepared, _reservation)) => {
+                managed::close_prepared(&mut prepared).await?;
+                return Err(error);
+            }
+        };
+        managed::activate_initial(&host, &current, agents, now_ms).await?;
+        Ok(Self::from_runtime(
+            host,
+            options,
+            current,
+            agents.take(),
+            foreground,
+        ))
     }
 
     fn from_runtime(
