@@ -189,6 +189,7 @@ impl PermissionComposition {
         transport: Arc<dyn AiGatewayTransport>,
         prompter: Arc<dyn PermissionPrompter>,
         mcp: Option<&super::mcp::Composition>,
+        managed: Option<crate::managed::mcp::NativePrincipalMcpPermissionRouter>,
     ) -> Result<ComposedPermissions, NativeReferenceHostBuildError> {
         let targets =
             NativePermissionTargetAuthority::new(self.root, self.workspace.clone(), registrations)
@@ -214,8 +215,9 @@ impl PermissionComposition {
             workspace: self.workspace.clone().into(),
             workspace_contexts: self.workspace_contexts.clone(),
         });
-        let selected: Arc<dyn crate::NativePermissionActionPreparer> = match mcp {
-            Some(mcp) => {
+        let selected: Arc<dyn crate::NativePermissionActionPreparer> = match (managed, mcp) {
+            (Some(managed), _) => Arc::new(managed),
+            (None, Some(mcp)) => {
                 let mcp = crate::mcp::permission::NativeMcpPermissionPreparer::new(
                     targets,
                     preparer.clone(),
@@ -231,7 +233,7 @@ impl PermissionComposition {
                     None => mcp,
                 })
             }
-            None => preparer.clone(),
+            (None, None) => preparer.clone(),
         };
         let controller = Arc::new(NativePermissionController::new(selected, prompter));
         preparer.bind_controller(&controller).map_err(|_| error())?;
@@ -267,12 +269,19 @@ impl ReferenceHostToolCatalog {
         catalog: Arc<dyn super::McpToolCatalog>,
         features: Arc<dyn Tool>,
         subagents: Arc<dyn Tool>,
+        managed: Option<&crate::managed::mcp::NativePrincipalMcpRegistry>,
     ) {
-        self.add(
-            super::McpSearchToolsTool::shared_catalog(Arc::clone(&catalog)),
-            None,
-        );
-        self.add(super::McpSelectTool::shared_catalog(catalog), None);
+        let search: Arc<dyn Tool> = Arc::new(super::McpSearchToolsTool::shared_catalog(
+            Arc::clone(&catalog),
+        ));
+        let select: Arc<dyn Tool> = Arc::new(super::McpSelectTool::shared_catalog(catalog));
+        for tool in [search, select] {
+            let tool = match managed {
+                Some(managed) => Arc::new(managed.wrap_tool(tool)) as Arc<dyn Tool>,
+                None => tool,
+            };
+            self.add_shared(tool, None);
+        }
         self.add_shared(features, None);
         self.add_shared(subagents, None);
     }
@@ -351,6 +360,7 @@ impl ReferenceHostToolCatalog {
         transport: Arc<dyn AiGatewayTransport>,
         prompter: Arc<dyn PermissionPrompter>,
         mcp: Option<&super::mcp::Composition>,
+        managed: Option<crate::managed::mcp::NativePrincipalMcpPermissionRouter>,
     ) -> Result<Option<ComposedPermissions>, NativeReferenceHostBuildError> {
         setup
             .map(|setup| {
@@ -361,6 +371,7 @@ impl ReferenceHostToolCatalog {
                     transport,
                     prompter,
                     mcp,
+                    managed,
                 )
             })
             .transpose()

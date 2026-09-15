@@ -205,7 +205,7 @@ impl ManagedMcpSeed {
         // It is not a configured-server seed for descendants.
         options.ephemeral = None;
         let mut composition = options.compose(self.archive.clone(), self.url_launcher.clone())?;
-        composition.management = self.management.clone();
+        composition.management.clone_from(&self.management);
         let clock = composition.clock.clone();
         let paired = crate::managed::mcp::NativePrincipalMcpPermissions::new(
             &composition.runtime,

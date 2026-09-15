@@ -1063,6 +1063,10 @@ impl Drop for FileUndoClearReservation {
 }
 
 impl FileUndoTracker {
+    pub(crate) fn shared_budget(&self) -> Arc<NativeUndoBudget> {
+        self.budget.clone()
+    }
+
     /// Observes this history's shared domain, including sibling reservations.
     #[must_use]
     pub fn budget_usage(&self) -> NativeUndoUsage {

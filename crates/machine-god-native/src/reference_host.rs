@@ -7,11 +7,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod construction;
+mod managed_host;
 mod mcp;
 mod permissions;
 mod services;
-mod subagent;
+pub(crate) mod subagent;
 pub(crate) mod workspace_binding;
+pub use managed_host::NativeReferenceHostManagedOptions;
 pub use mcp::{NativeReferenceHostMcpEphemeralStartupOptions, NativeReferenceHostMcpOptions};
 pub use permissions::NativeReferenceHostPermissionOptions;
 use permissions::{PermissionComposition, ReferenceHostToolCatalog};
@@ -84,6 +86,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     PermissionConfig,
     /// Explicit native MCP archive/runtime authority could not be composed.
     McpConfig,
+    /// Managed construction requires the complete shared native execution domain.
+    ManagedConfig,
     /// The provider-neutral engine could not be constructed.
     Engine,
 }
@@ -123,6 +127,9 @@ impl fmt::Display for NativeReferenceHostBuildError {
             }
             NativeReferenceHostBuildErrorKind::McpConfig => {
                 "native reference-host MCP configuration failed"
+            }
+            NativeReferenceHostBuildErrorKind::ManagedConfig => {
+                "native reference-host managed-agent configuration failed"
             }
             NativeReferenceHostBuildErrorKind::UnsupportedSelection => {
                 "native reference-host selection is unsupported"
@@ -286,6 +293,7 @@ struct TerminalCompositionSelection {
 /// Construction is inert and does not capture files, open roots, or start work.
 #[derive(Clone)]
 pub struct NativeReferenceHostConversationOptions {
+    managed: Option<NativeReferenceHostManagedOptions>,
     background_url: Option<BackgroundUrlSelection>,
     mcp_runtime: Option<NativeReferenceHostMcpOptions>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
@@ -304,6 +312,7 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
         Self {
+            managed: None,
             background_url: None,
             mcp_runtime: None,
             mcp_management: None,
@@ -316,6 +325,14 @@ impl NativeReferenceHostConversationOptions {
             observations: None,
             permissions: None,
         }
+    }
+
+    /// Installs weak managed tool routes. The caller must subsequently prepare
+    /// and drive the outer native manager before admitting model work.
+    #[must_use]
+    pub fn with_managed_agents(mut self, options: NativeReferenceHostManagedOptions) -> Self {
+        self.managed = Some(options);
+        self
     }
 
     /// Also selects the existing complete terminal authority for this host.
@@ -437,6 +454,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 
 #[derive(Default)]
 struct PreparedCompositionOptions {
+    managed: Option<NativeReferenceHostManagedOptions>,
     background_url: Option<BackgroundUrlSelection>,
     mcp_runtime: Option<NativeReferenceHostMcpOptions>,
     mcp_management: Option<Arc<crate::mcp::management::NativeMcpManagementService>>,
@@ -453,6 +471,7 @@ struct PreparedCompositionOptions {
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
     fn from(options: NativeReferenceHostConversationOptions) -> Self {
         Self {
+            managed: options.managed,
             background_url: options.background_url,
             mcp_runtime: options.mcp_runtime,
             mcp_management: options.mcp_management,
@@ -509,6 +528,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
+    managed: Option<managed_host::ManagedHostAssembly>,
     services: Arc<NativeHostServices>,
     background_opener:
         Option<Result<crate::NativeBackgroundUrlOpener, crate::NativeBackgroundOpenError>>,
@@ -827,6 +847,7 @@ impl NativeReferenceHost {
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
         let permissions = options.permissions.clone();
+        let managed = managed_host::select(&options)?;
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -856,6 +877,7 @@ impl NativeReferenceHost {
             permissions,
             mcp_options,
             background_url,
+            managed,
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
@@ -963,6 +985,7 @@ impl NativeReferenceHost {
             None,
             mcp::Selection::default(),
             None,
+            None,
         )
     }
 
@@ -1018,6 +1041,7 @@ impl NativeReferenceHost {
             None,
             mcp::Selection::default(),
             None,
+            None,
         )
     }
 
@@ -1068,6 +1092,7 @@ impl NativeReferenceHost {
             None,
             None,
             mcp::Selection::default(),
+            None,
             None,
         )
     }
@@ -1121,6 +1146,7 @@ impl NativeReferenceHost {
             None,
             None,
             mcp::Selection::default(),
+            None,
             None,
         )
     }
@@ -1262,6 +1288,7 @@ impl NativeReferenceHost {
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
         let permissions = options.permissions.clone();
+        let managed = managed_host::select(&options)?;
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -1285,6 +1312,7 @@ impl NativeReferenceHost {
             permissions,
             mcp_options,
             background_url,
+            managed,
         )
         .map(|mut host| {
             host.mcp_management = mcp_management;
@@ -1556,6 +1584,7 @@ impl NativeReferenceHost {
             None,
             mcp::Selection::default(),
             None,
+            None,
         )
     }
 
@@ -1582,8 +1611,9 @@ impl NativeReferenceHost {
         model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
         observations: Option<Arc<crate::NativeConversationObservations>>,
         permission_options: Option<NativeReferenceHostPermissionOptions>,
-        mcp_options: mcp::Selection,
+        mut mcp_options: mcp::Selection,
         background_url: Option<BackgroundUrlSelection>,
+        managed: Option<managed_host::Selection>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let workspace_binding = workspace_tools.workspace_binding.clone();
         let (workspace_tools, permission_setup) =
@@ -1632,6 +1662,25 @@ impl NativeReferenceHost {
             TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
         construction.observe(selected_terminal.resource.as_ref());
+        let managed = managed
+            .map(|selection| {
+                managed_host::ManagedHostAssembly::new(
+                    selection,
+                    selected_terminal
+                        .archive
+                        .clone()
+                        .ok_or_else(managed_host::error)?,
+                )
+            })
+            .transpose()?;
+        if let Some(managed) = &managed {
+            mcp_options.options.get_or_insert_with(|| {
+                NativeReferenceHostMcpOptions::new(
+                    Arc::new(crate::mcp::context::NativeMcpContexts::new()),
+                    managed.clock.clone(),
+                )
+            });
+        }
         let web_fetch = compose_web_fetch(selected_terminal.resource.as_ref())?;
         let background_opener = background_url.map(|selected| selected.bind(&selected_terminal));
         let mcp::Selected {
@@ -1655,6 +1704,10 @@ impl NativeReferenceHost {
             concrete: terminal_concrete,
         } = selected_terminal;
         let session_store = Arc::new(session_store);
+        let subagent_authority = match &managed {
+            Some(managed) => managed.authority()?,
+            None => subagent_authority,
+        };
         let subagent_tool: Arc<dyn Tool> = match archive.as_ref() {
             Some(archive) => Arc::new(subagent::NativeManagedSubagentTool::new(
                 subagent_authority,
@@ -1664,8 +1717,22 @@ impl NativeReferenceHost {
         };
         let (engine_session_store, read_tool_result) = session_store_parts(&session_store, archive);
         catalog.question(AskUserQuestionTool::shared_prompter(question_prompter));
-        let features = mcp::features(mcp.as_ref(), mcp_feature_authority);
-        catalog.extensions(mcp_catalog, features, subagent_tool);
+        let (mcp_catalog, features) = match &managed {
+            Some(managed) => (
+                Arc::new(managed.mcp.requester()) as Arc<dyn McpToolCatalog>,
+                Arc::new(managed.mcp.features_tool()) as Arc<dyn Tool>,
+            ),
+            None => (
+                mcp_catalog,
+                mcp::features(mcp.as_ref(), mcp_feature_authority),
+            ),
+        };
+        catalog.extensions(
+            mcp_catalog,
+            features,
+            subagent_tool,
+            managed.as_ref().map(|managed| managed.mcp.as_ref()),
+        );
         catalog.add(memory, None);
         catalog.add(read_tool_result, None);
         catalog.terminal(terminal, terminal_concrete)?;
@@ -1678,6 +1745,9 @@ impl NativeReferenceHost {
             transport,
             Arc::clone(&permission_prompter),
             mcp.as_ref(),
+            managed
+                .as_ref()
+                .map(|managed| managed.mcp.permission_preparer()),
         )?;
         let builder = Engine::builder()
             .limits(engine_limits)
@@ -1707,6 +1777,7 @@ impl NativeReferenceHost {
         .map(|mut host| {
             host.workspace_binding = workspace_binding;
             host.background_opener = background_opener;
+            host.managed = managed;
             construction.transfer();
             host
         })
@@ -1795,6 +1866,7 @@ impl NativeReferenceHost {
             loaded_config,
             credential_source,
             undo_tracker: None,
+            managed: None,
         })
     }
 }
@@ -2333,6 +2405,7 @@ fn validate_prepared_selections(
     loaded_config: &LoadedNativeConfig,
     options: &PreparedCompositionOptions,
 ) -> Result<(), NativeReferenceHostBuildError> {
+    managed_host::validate(options)?;
     if let Some(mcp) = &options.mcp_runtime {
         mcp.validate_controller(options.mcp_management.is_some())?;
     }

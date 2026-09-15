@@ -14,6 +14,19 @@ principal's mutable workspace selection, permission grants, undo history or
 ephemeral MCP owner. Reverse runtime routes remain weak; the service allocation
 must not own a manager which in turn owns conversations using that engine.
 
+`NativeReferenceHostConversationOptions::with_managed_agents` explicitly selects
+the managed-agent clock and outer ownership assembly. It requires complete
+terminal, permission, workspace, model-route, observation and undo selections
+before consuming prepared roots. The assembly shares the selected undo budget
+and existing tool archive; it creates no journal and admits no model work during
+construction. An absent MCP profile still supplies an inert, independently
+instantiable empty MCP seed. The shared engine receives only weak mailbox and
+principal MCP routes, including builtin permission preparation; an unregistered
+conversation cannot fall back to host-global authority. The outer driver must
+enroll actual parent/child conversations before execution and retain the manager
+separately from `NativeHostServices`. Keeping the engine alone does not retain
+the outer assembly or revive its routes.
+
 ## Availability
 
 The complete reference host is compiled when all of these are true:

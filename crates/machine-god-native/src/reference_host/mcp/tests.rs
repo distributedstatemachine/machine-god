@@ -25,6 +25,7 @@ mod ephemeral;
 mod fixture;
 #[cfg(feature = "mcp-http")]
 mod http;
+mod managed_host;
 #[cfg(feature = "mcp-http")]
 mod startup;
 use fixture::*;

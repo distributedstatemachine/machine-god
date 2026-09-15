@@ -20,13 +20,13 @@ use crate::{
 // The closed managed result bounds its content; ToolOutput adds its envelope.
 const COMPLETE_OUTPUT_BYTES: usize = MAX_SUBAGENT_OUTPUT_BYTES + 32;
 
-pub(super) struct NativeManagedSubagentTool {
+pub(crate) struct NativeManagedSubagentTool {
     inner: SubagentTool,
     archive: Arc<NativeToolResultArchiveAdapter>,
 }
 
 impl NativeManagedSubagentTool {
-    pub(super) fn new(
+    pub(crate) fn new(
         authority: Arc<dyn ManagedSubagentAuthority>,
         archive: Arc<NativeToolResultArchiveAdapter>,
     ) -> Self {
