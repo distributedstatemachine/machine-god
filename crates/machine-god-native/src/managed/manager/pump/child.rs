@@ -25,7 +25,13 @@ impl ManagedManager {
             Some(Active::Command { target, .. }) => {
                 target.as_ref() == Some(&child.snapshot.head.id)
             }
-            None | Some(Active::Delivery(_) | Active::Replay(_) | Active::Catalog { .. }) => false,
+            None
+            | Some(
+                Active::Delivery(_)
+                | Active::Replay(_)
+                | Active::Catalog { .. }
+                | Active::Observation(_),
+            ) => false,
         } || self.pending_job.as_ref().is_some_and(|(job, _, _)| {
             target_id(job.command()) == Some(child.snapshot.head.id.as_str())
         });
