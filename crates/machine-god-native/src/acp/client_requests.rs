@@ -141,6 +141,7 @@ impl NativeAcpClientRequests {
 
     /// Native managed runtimes own their registration leases. A foreground
     /// change in the same context registry preserves live child RPCs and URLs.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
     pub(crate) fn activate_native(
         &mut self,
         owner: BackgroundOutputOwner,

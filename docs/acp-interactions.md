@@ -75,6 +75,11 @@ deactivation clears that connection's correlations. Prompt construction captures
 an existing registration, so an unpolled old request cannot bind a replacement.
 The projection layer owns no I/O, pending RPC IDs, permission grants or browser.
 
+On Linux/macOS, ordinary connection-level prompt routing remains available
+without optional HTTP features. The private managed-activation adapter is
+compiled with its `ai-gateway-http` reference-host driver or tests, matching
+the inbox registration observer it consumes.
+
 ## Modern client-managed URLs
 
 The native MCP presenter may explicitly select a client-managed URL endpoint.
