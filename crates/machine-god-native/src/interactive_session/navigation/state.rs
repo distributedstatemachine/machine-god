@@ -79,7 +79,7 @@ pub(in crate::interactive_session) struct Navigation {
     drafts: super::drafts::Drafts,
     history: super::history::History,
     history_resident: bool,
-    history_retry: bool,
+    history_retry: Option<u64>,
 }
 
 impl Default for Navigation {
@@ -105,7 +105,7 @@ impl Default for Navigation {
             drafts: super::drafts::Drafts::default(),
             history: super::history::History::default(),
             history_resident: false,
-            history_retry: false,
+            history_retry: None,
         }
     }
 }
@@ -534,7 +534,7 @@ impl Navigation {
                 self.catalog(owner)
             }
             Action::Refresh => {
-                self.history_retry = false;
+                self.history_retry = None;
                 match self.route {
                     Route::Processes(scope) => self.processes(owner, scope),
                     _ => self.catalog(owner),
@@ -562,7 +562,7 @@ impl Navigation {
             Action::Select | Action::Conversation => {
                 self.route = Route::Conversation;
                 self.result = None;
-                self.history_retry = false;
+                self.history_retry = None;
                 self.history(owner)
             }
             Action::Inspect(section) => {
@@ -770,7 +770,7 @@ impl Navigation {
                     runtime.record_snapshot().revision != history.record.revision
                 })
         {
-            self.history_retry = false;
+            self.history_retry = None;
             if self
                 .change(false)
                 .and_then(|()| self.catalog(owner))
@@ -797,9 +797,20 @@ impl Navigation {
                     .is_some();
                 self.history.install(snapshot);
             }
-            Err(crate::NativeManagedHistoryError::Stale) if !self.history_retry => {
-                self.history_retry = true;
-                return true;
+            Err(crate::NativeManagedHistoryError::Stale) => {
+                // Child completion and notification settlement may each advance
+                // the head between catalog and history reads. Refresh while the
+                // rejected head advances, not only once per conversation. An
+                // unchanged rejected observation never creates a polling loop.
+                if let Ok(target) = self.target()
+                    && self
+                        .history_retry
+                        .is_none_or(|revision| target.revision > revision)
+                {
+                    self.history_retry = Some(target.revision);
+                    return true;
+                }
+                self.error = Some(Error::Unavailable);
             }
             Err(_) => self.error = Some(Error::Unavailable),
         }

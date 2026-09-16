@@ -596,8 +596,11 @@ worker against manager publication. Catalog/history reads share one fairness
 allowance before yielding to durable work. The manager continues polling child
 execution and cancellation while an admitted read settles, and shutdown drains
 the original read rather than dropping its worker custody.
-Resident record changes trigger a fresh observed catalog/history
-read; unavailable reads remain explicit and `/refresh` retries them. Rendering
+Resident record changes trigger a fresh observed catalog/history read. Stale
+reads refresh while rejected head revisions advance, including separate child
+completion and notification settlement; repeating the same rejected head stops
+automatic refresh rather than creating an idle polling loop. Other unavailable
+reads remain explicit and `/refresh` retries them. Rendering
 scans the bounded captured record without retaining an unbounded wrapped index.
 
 Ctrl-O opens transcript detail; Left/Right selects transcript/full detail and

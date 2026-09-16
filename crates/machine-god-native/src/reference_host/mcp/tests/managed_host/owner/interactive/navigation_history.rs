@@ -51,6 +51,42 @@ async fn select_first(owner: &mut NativeInteractiveSession) {
         .unwrap();
 }
 
+async fn current_history(
+    owner: &mut NativeInteractiveSession,
+) -> crate::NativeManagedHistorySnapshot {
+    let mut previous = None;
+    for _ in 0..8 {
+        let observed = page(owner, Filter::Current, None, 64)
+            .await
+            .entries
+            .remove(0)
+            .observation;
+        if let Some(revision) = previous {
+            assert!(
+                observed.revision > revision,
+                "stale retry requires actual head progress"
+            );
+        }
+        previous = Some(observed.revision);
+        let request = owner.request_managed_history(observed.clone()).unwrap();
+        assert_eq!(
+            owner.request_managed_history(observed.clone()),
+            Err(Error::Busy)
+        );
+        let outcome = history(owner).await;
+        assert_eq!(outcome.request, request);
+        match outcome.result {
+            Ok(snapshot) => {
+                assert_eq!(owner.request_managed_history(observed), Err(Error::Busy));
+                return snapshot;
+            }
+            Err(Error::Stale) => {}
+            Err(error) => panic!("canonical history read failed: {error}"),
+        }
+    }
+    panic!("settled child failed to reach a stable history observation")
+}
+
 #[test]
 fn native_history_navigation_owns_reads_and_restores_only_valid_source_positions() {
     use super::navigation_ui::ready;
@@ -179,23 +215,10 @@ fn canonical_child_history_preserves_full_unicode_and_reads_archives_without_res
             .ok
         );
         settle_child(&mut owner, &fixture).await;
-        let observed = page(&mut owner, Filter::Current, None, 64)
-            .await
-            .entries
-            .remove(0)
-            .observation;
-        let request = owner.request_managed_history(observed.clone()).unwrap();
-        assert_eq!(
-            owner.request_managed_history(observed.clone()),
-            Err(Error::Busy)
-        );
-        let outcome = history(&mut owner).await;
-        assert_eq!(outcome.request, request);
-        let snapshot = outcome.result.unwrap();
+        let snapshot = current_history(&mut owner).await;
         assert!(snapshot.record().messages.iter().any(|message| message.role == machine_god_core::Role::User
             && message.content.iter().any(|block| matches!(block, machine_god_core::ContentBlock::Text { text: value } if value == &text))));
         assert!(!format!("{snapshot:?}").contains("child history"));
-        assert_eq!(owner.request_managed_history(observed), Err(Error::Busy));
         let transcript = snapshot.record().clone();
         drop(snapshot);
         assert!(
