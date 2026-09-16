@@ -1,4 +1,5 @@
 //! Outer native driver ownership, deliberately excluded from shared engine services.
+pub(super) mod history;
 mod staged;
 use super::{
     NativeReferenceHost,
@@ -20,6 +21,10 @@ use crate::managed::{
 use crate::{
     NativeConversation, NativeConversationRuntime, NativeModelPreferences,
     NativePermissionPolicySnapshot, NativeSessionOrigin, NativeWorkspaceScopeSnapshot,
+};
+pub use history::{
+    NativeManagedHistoryError, NativeManagedHistoryOutcome, NativeManagedHistoryRequest,
+    NativeManagedHistorySnapshot,
 };
 use machine_god_core::{BoxFuture, ManagedAgentState};
 use rustix::fd::OwnedFd;
@@ -100,6 +105,7 @@ impl From<crate::managed::manager::ManagerProgress> for NativeManagedAgentsProgr
 /// Owns children and foreground resources independently of selected presentation.
 /// The caller must co-poll this driver with foreground streams and host shutdown.
 pub struct NativeManagedAgents {
+    history: Box<history::Reader>,
     manager: ManagedManager,
     factory: Arc<SharedManagedRuntimeFactory>,
     parent_mcp: Arc<ManagedParentMcpSeed>,
@@ -298,6 +304,7 @@ impl NativeReferenceHost {
             )
             .map_err(map_error)?;
             Ok(NativeManagedAgents {
+                history: Box::default(),
                 manager,
                 factory,
                 parent_mcp: Arc::new(
@@ -401,6 +408,7 @@ impl NativeManagedAgents {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Poll<Result<NativeManagedAgentsProgress, NativeManagedAgentsError>> {
+        self.history.poll(cx);
         self.manager
             .poll_progress(cx, now_ms)
             .map(|result| result.map(Into::into).map_err(map_error))
@@ -413,6 +421,7 @@ impl NativeManagedAgents {
 
     /// Host teardown is not a durable user cancellation command.
     pub fn request_shutdown(&mut self) {
+        self.history.close();
         self.manager.request_shutdown();
     }
 
@@ -424,6 +433,13 @@ impl NativeManagedAgents {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Poll<Result<(), NativeManagedAgentsError>> {
+        if !self.history.is_closed() {
+            self.request_shutdown();
+        }
+        self.history.poll(cx);
+        if !self.history.settled() {
+            return Poll::Pending;
+        }
         self.manager.poll_shutdown(cx, now_ms).map_err(map_error)
     }
 

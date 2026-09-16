@@ -1,5 +1,6 @@
 //! Native managed observation/admission. UI pages never replace the parent runtime.
 mod drafts;
+mod history_read;
 mod processes;
 mod state;
 mod view;

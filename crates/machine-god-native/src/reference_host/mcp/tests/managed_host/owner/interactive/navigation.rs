@@ -31,7 +31,7 @@ async fn catalog_outcome(owner: &mut NativeInteractiveSession) -> NativeManagedC
     .await
 }
 
-async fn page(
+pub(super) async fn page(
     owner: &mut NativeInteractiveSession,
     filter: Filter,
     cursor: Option<NativeManagedCatalogCursor>,

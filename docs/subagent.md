@@ -166,6 +166,32 @@ and is reported as indeterminate rather than as a preserved-parent rejection.
 
 ## Principal isolation
 
+### Canonical conversation observations
+
+The native manager exposes an owned `request_history` / `take_history_outcome`
+lane for full canonical conversation records, separately from the tool's bounded
+journal summaries. Requests use an original manager-issued child observation;
+foreign, replaced or changed heads are rejected. The reader checks the exact
+journal head before and after reading and validates transcript ID/incarnation.
+Resident reads retain an immutable canonical snapshot. Nonresident and archived
+reads load only the exact existing record through the captured file store and
+owned workers; they never resume, reopen, create a runtime or execute a provider.
+File reads retain the existing 8,651,165-byte record ceiling and cancellation-aware
+nonblocking lock behavior. Stored metadata is not execution authority.
+
+There is one read-or-retained-snapshot slot per manager. The slot is reserved
+before retaining transcript data and includes pending reads, unconsumed outcomes,
+and returned snapshots. A caller must drop the old snapshot before requesting
+another; repeated reads cannot retain unbounded full records. Request tokens are
+weak correlation identities. Cancelling a request keeps its original future
+until actual worker/TLS settlement, and shutdown drains that custody before
+reporting completion. Returned snapshots contain immutable data and no runtime,
+journal or host ownership; retaining one does not block shutdown. Debug output
+does not expose transcript contents. Reading does not acknowledge or mutate
+messages, notices, permissions or the parent selection.
+
+### Execution principal registration
+
 Native registers each principal from an actual session's weak allocation witness,
 with a nonzero private generation. The registry admits at most 64 resident
 routes (configurable downward), not 64 lifetime creations. Dropped, retired and

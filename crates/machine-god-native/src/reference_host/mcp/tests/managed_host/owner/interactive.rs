@@ -4,6 +4,7 @@ mod human;
 mod navigation;
 mod navigation_drafts;
 mod navigation_forms;
+mod navigation_history;
 mod navigation_processes;
 mod navigation_ui;
 mod preselection;

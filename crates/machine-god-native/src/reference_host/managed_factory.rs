@@ -1,4 +1,5 @@
 //! Concrete shared-engine child construction; no parent runtime ownership edge.
+mod history;
 mod preparation;
 mod resources;
 mod staged;

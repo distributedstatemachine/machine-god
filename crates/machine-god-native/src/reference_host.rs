@@ -20,6 +20,8 @@ mod managed_factory;
 pub use managed_agents::{
     NativeManagedAgentSelection, NativeManagedAgentView, NativeManagedAgents,
     NativeManagedAgentsError, NativeManagedAgentsProgress, NativeManagedCommandResponse,
+    NativeManagedHistoryError, NativeManagedHistoryOutcome, NativeManagedHistoryRequest,
+    NativeManagedHistorySnapshot,
 };
 mod managed_host;
 mod mcp;
