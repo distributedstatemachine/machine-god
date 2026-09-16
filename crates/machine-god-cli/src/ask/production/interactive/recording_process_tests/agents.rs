@@ -8,7 +8,7 @@ const PARENT: &[u8] = b"parent draft stays";
 fn open(terminal: &mut Terminal) {
     terminal.output.clear();
     terminal.send(b"\x18");
-    terminal.wait_for(b"Catalog(Current)\n");
+    terminal.wait_for(b"Catalog(Current)\r\n");
     terminal.wait_for(b"Arrows select/scroll");
 }
 
