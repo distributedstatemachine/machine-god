@@ -193,9 +193,21 @@ or selections leave the original draft intact. Snapshot replacement invalidates 
 incomplete discovery visibly suppresses automatic matching but preserves explicit
 choices. Message acceptance freezes the resolved list before durable enqueue.
 
-A successful management mutation refreshes the native catalog before another
-frame can be acknowledged. The next command therefore uses a fresh observation,
-not the pre-mutation journal revision; editor changes do not skip that refresh.
+A successful management mutation retains its original receipt while refreshing
+the target before another frame can be acknowledged. Detail refresh reads one
+original conversation through the same bounded, fair catalog lane, including
+after archive or rename moves it outside the displayed list page. It does not
+substitute a different generation, scan later pages, or load a runtime. Returning
+to the list reapplies its filter. The next command therefore uses a fresh
+observation, not the pre-mutation journal revision; editor changes do not skip
+that refresh.
+
+Notice attempt identity uses the confirmed journal start revision, independently
+of the later core-turn witness. Registration precedes first polling of accepted
+work, so skill/readiness failure can publish its configured terminal notice and
+settle without a model turn. Retrying the same work has a distinct durable attempt
+identity; it neither reuses the earlier notice nor leaves an unconsumable terminal
+flag holding runtime cleanup open.
 
 Foreground replacement stages inactive prompt and notice registrations under
 the same aggregate capacity bounds as live registrations. A staged successor

@@ -100,6 +100,7 @@ struct Child {
     assistant_truncated: bool,
     tools: Vec<(ToolCallId, String)>,
     notice: Option<WorkNoticeRef>,
+    notice_attempt: Option<std::num::NonZeroU64>,
     closing: bool,
     control: Option<ManagedMailboxJob>,
     control_operation: Option<String>,

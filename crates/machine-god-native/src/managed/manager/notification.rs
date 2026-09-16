@@ -84,12 +84,10 @@ impl ManagedManager {
             return Ok(true);
         }
         let child = &self.children[index];
-        let Some(run) = child.prepared.owner.run() else {
-            return Ok(false);
-        };
-        let Some(work_generation) = run.work_generation() else {
-            return Ok(false);
-        };
+        // The confirmed start revision identifies this durable attempt before
+        // skill/readiness work can fail. A notice is not a core-turn witness.
+        // Retries of the same work have strictly newer journal revisions.
+        let work_generation = child.notice_attempt.ok_or(ManagedRuntimeError::Invalid)?;
         let parent = self.notice_parent(index);
         let identity = WorkNoticeIdentity {
             source: NoticePrincipal {

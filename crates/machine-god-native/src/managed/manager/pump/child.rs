@@ -14,7 +14,7 @@ impl ManagedManager {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Result<bool, ManagedRuntimeError> {
-        if self.children[index].turn.is_some() && !self.register_notice(index)? {
+        if self.children[index].work.is_some() && !self.register_notice(index)? {
             return Ok(false);
         }
         let child = &mut self.children[index];

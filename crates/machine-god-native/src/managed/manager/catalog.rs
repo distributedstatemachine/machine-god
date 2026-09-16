@@ -159,6 +159,7 @@ pub(super) struct Request {
     filter: NativeManagedCatalogFilter,
     cursor: Option<JournalCatalogCursor>,
     limit: usize,
+    target: Option<NativeObservedManagedAgent>,
 }
 #[derive(Default)]
 pub(super) struct Catalog {
@@ -298,8 +299,23 @@ impl ManagedManager {
             filter,
             cursor: cursor.map(|cursor| cursor.inner),
             limit,
+            target: None,
         });
         self.catalog.notify();
+        Ok(token)
+    }
+    /// Re-observes one original conversation, including an archived target,
+    /// using the same bounded/fair read lane as catalog pages.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) fn request_catalog_target(
+        &mut self,
+        observed: NativeObservedManagedAgent,
+    ) -> Result<NativeManagedCatalogRequest, NativeManagedCatalogError> {
+        if !self.owns_observation(&observed) {
+            return Err(NativeManagedCatalogError::InvalidCursor);
+        }
+        let token = self.request_catalog(NativeManagedCatalogFilter::All, None, 1)?;
+        self.catalog.pending.as_mut().expect("reserved read").target = Some(observed);
         Ok(token)
     }
     pub(crate) fn take_catalog_outcome(&mut self) -> Option<NativeManagedCatalogOutcome> {
@@ -318,7 +334,32 @@ impl ManagedManager {
         let Some(request) = self.catalog.pending.take() else {
             return false;
         };
-        let future = self.journal.catalog(request.cursor.clone(), request.limit);
+        let future = if let Some(target) = &request.target {
+            let target = target.clone();
+            let future = self.journal.inspect(target.id.clone());
+            Box::pin(async move {
+                let snapshot = future.await?;
+                if snapshot.head.id != target.id || snapshot.head.generation != target.generation {
+                    return Err(JournalError::Conflict);
+                }
+                let recovery_required = snapshot.recovery_required();
+                let head = snapshot.head;
+                Ok(JournalCatalogPage {
+                    entries: vec![crate::managed::store::JournalCatalogEntry {
+                        id: head.id,
+                        generation: head.generation,
+                        revision: head.revision,
+                        name: head.configuration.name,
+                        parent_id: head.parent_id,
+                        status: head.status,
+                        recovery_required,
+                    }],
+                    next: None,
+                })
+            }) as machine_god_core::BoxFuture<'static, _>
+        } else {
+            self.journal.catalog(request.cursor.clone(), request.limit)
+        };
         self.catalog.in_flight = true;
         self.catalog.last_read = true;
         self.active = Some(Active::Catalog { request, future });

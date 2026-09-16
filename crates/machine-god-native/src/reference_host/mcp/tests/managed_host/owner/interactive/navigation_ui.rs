@@ -171,6 +171,14 @@ fn successful_close_retires_confirmation_and_displays_the_original_receipt() {
             Some(child.as_str())
         );
         assert_eq!(
+            view.result.unwrap().status,
+            machine_god_core::ManagedResultStatus::LifecycleChanged
+        );
+        assert_eq!(
+            view.target.unwrap().state,
+            machine_god_core::ManagedAgentState::Archived
+        );
+        assert_eq!(
             owner.act_on_managed_frame(&confirmation, Action::ConfirmClose),
             Err(Error::StaleFrame)
         );

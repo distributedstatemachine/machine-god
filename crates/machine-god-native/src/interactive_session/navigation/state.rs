@@ -1,6 +1,7 @@
 //! Native page ownership and bounded asynchronous navigation work.
 mod models;
 mod skills;
+mod target;
 use super::super::agent_form::Form;
 use super::{
     NativeInteractiveSession,
@@ -32,16 +33,12 @@ type Error = NativeManagedNavigationError;
 type Action = NativeManagedNavigationAction;
 type Route = NativeManagedNavigationRoute;
 
-fn mutation_receipt(
-    result: &Result<ManagedSubagentResult, machine_god_core::ManagedSubagentError>,
-) -> bool {
-    result.as_ref().is_ok_and(|result| {
-        result.ok
-            && matches!(
-                result.requested,
-                Some(machine_god_core::ManagedRequested::Receipt(_))
-            )
-    })
+fn mutation_receipt(result: &ManagedSubagentResult) -> bool {
+    result.ok
+        && matches!(
+            result.requested,
+            Some(machine_god_core::ManagedRequested::Receipt(_))
+        )
 }
 
 enum Pending {
@@ -57,6 +54,7 @@ enum Pending {
     Catalog {
         request: NativeManagedCatalogRequest,
         epoch: u64,
+        targeted: bool,
     },
     Command {
         response: NativeManagedCommandResponse,
@@ -71,6 +69,7 @@ enum Refresh {
     Inspect(ManagedInspectSection),
     History,
     Catalog,
+    Target,
 }
 
 pub(in crate::interactive_session) struct Navigation {
@@ -303,6 +302,7 @@ impl Navigation {
         self.pending = Some(Pending::Catalog {
             request,
             epoch: self.epoch,
+            targeted: false,
         });
         Ok(())
     }
@@ -627,7 +627,11 @@ impl Navigation {
                         Ok(())
                     }
                     Route::Processes(scope) => self.processes(owner, scope),
-                    _ => self.catalog(owner),
+                    Route::Catalog(_) => self.catalog(owner),
+                    _ => {
+                        self.result = None;
+                        self.refresh_target(owner)
+                    }
                 }
             }
             Action::Processes(scope) => self.processes(owner, scope),
@@ -684,6 +688,7 @@ impl Navigation {
                     self.route = Route::Catalog(self.filter);
                     self.result = None;
                     self.form = None;
+                    return self.catalog(owner);
                 }
                 Ok(())
             }
@@ -776,7 +781,7 @@ impl Navigation {
                 } else if self.open && epoch == self.epoch {
                     refresh = self
                         .accept_history(owner, outcome.result)
-                        .then_some(Refresh::Catalog);
+                        .then_some(Refresh::Target);
                 }
                 epoch
             }
@@ -801,25 +806,23 @@ impl Navigation {
                 }
                 epoch
             }
-            Pending::Catalog { request, epoch } => {
+            Pending::Catalog {
+                request,
+                epoch,
+                targeted,
+            } => {
                 let Some(outcome) = owner.take_managed_catalog_outcome() else {
-                    self.pending = Some(Pending::Catalog { request, epoch });
+                    self.pending = Some(Pending::Catalog {
+                        request,
+                        epoch,
+                        targeted,
+                    });
                     return;
                 };
                 if outcome.request != request {
                     self.error = Some(Error::Unavailable);
                 } else if self.open && epoch == self.epoch {
-                    match outcome.result {
-                        Ok(page) => {
-                            self.replace_page(page);
-                            refresh = match self.route {
-                                Route::Agent(section) => Some(Refresh::Inspect(section)),
-                                Route::Conversation => Some(Refresh::History),
-                                _ => None,
-                            };
-                        }
-                        Err(_) => self.error = Some(Error::Unavailable),
-                    }
+                    refresh = self.accept_catalog(outcome.result, targeted);
                 }
                 epoch
             }
@@ -838,12 +841,17 @@ impl Navigation {
                     });
                     return;
                 };
-                if mutation_receipt(&result) {
-                    // A successful mutation advances the durable head. Never
-                    // acknowledge another command against the pre-mutation row.
-                    refresh = Some(Refresh::Catalog);
-                }
+                let mutated = result.as_ref().is_ok_and(mutation_receipt);
                 editor_changed = self.accept_command(result, draft, epoch);
+                if mutated {
+                    // Refresh the original conversation, not its old catalog
+                    // position: close/rename may move it out of that page.
+                    refresh = Some(if matches!(self.route, Route::Catalog(_)) {
+                        Refresh::Catalog
+                    } else {
+                        Refresh::Target
+                    });
+                }
                 epoch
             }
         };
@@ -868,6 +876,7 @@ impl Navigation {
             Some(Refresh::Inspect(section)) => self.inspect(owner, section, None),
             Some(Refresh::History) => self.history(owner),
             Some(Refresh::Catalog) => self.catalog(owner),
+            Some(Refresh::Target) => self.refresh_target(owner),
             None => Ok(()),
         };
         if let Err(error) = result {
@@ -896,7 +905,7 @@ impl Navigation {
             self.history_retry = None;
             if self
                 .change(false)
-                .and_then(|()| self.catalog(owner))
+                .and_then(|()| self.refresh_target(owner))
                 .is_err()
             {
                 self.error = Some(Error::Unavailable);
@@ -975,7 +984,7 @@ impl Navigation {
             .target()
             .ok()
             .map(|target| (target.id.clone(), target.generation));
-        self.result = None;
+        self.result = self.result.take().filter(mutation_receipt);
         self.rows = page.entries;
         self.next = page.next;
         self.selected = previous

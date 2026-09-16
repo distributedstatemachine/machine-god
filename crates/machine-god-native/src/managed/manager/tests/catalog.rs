@@ -1,6 +1,94 @@
 use super::super::catalog::{NativeManagedCatalogError, NativeManagedCatalogFilter};
 use super::*;
 
+fn read_page(
+    fixture: &mut Fixture,
+) -> Result<crate::NativeManagedCatalogPage, NativeManagedCatalogError> {
+    block_on(std::future::poll_fn(|cx| {
+        let progress = fixture.manager.poll_progress(cx, 100);
+        assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");
+        if let Some(outcome) = fixture.manager.take_catalog_outcome() {
+            return Poll::Ready(outcome.result);
+        }
+        if progress.is_ready() {
+            cx.waker().wake_by_ref();
+        }
+        Poll::Pending
+    }))
+}
+
+#[test]
+fn targeted_catalog_refresh_shares_capacity_and_preserves_the_original_generation() {
+    let mut fixture = Fixture::new(vec![]);
+    let mut foreign = Fixture::new(vec![]);
+    assert!(
+        fixture
+            .command(serde_json::json!({"create":{"name":"worker","mode":"persistent"}}))
+            .ok
+    );
+    fixture
+        .manager
+        .request_catalog(NativeManagedCatalogFilter::Current, None, 1)
+        .unwrap();
+    let observed = read_page(&mut fixture)
+        .unwrap()
+        .entries
+        .remove(0)
+        .observation;
+    assert_eq!(
+        foreign
+            .manager
+            .request_catalog_target(observed.clone())
+            .unwrap_err(),
+        NativeManagedCatalogError::InvalidCursor
+    );
+    assert!(
+        fixture
+            .command(serde_json::json!({"configure":{"id":"child-1","name":"renamed"}}))
+            .ok
+    );
+    fixture
+        .manager
+        .request_catalog_target(observed.clone())
+        .unwrap();
+    assert_eq!(
+        fixture
+            .manager
+            .request_catalog(NativeManagedCatalogFilter::All, None, 1)
+            .unwrap_err(),
+        NativeManagedCatalogError::Busy
+    );
+    let refreshed = read_page(&mut fixture).unwrap();
+    assert_eq!(refreshed.scanned, 1);
+    assert!(refreshed.next.is_none());
+    assert_eq!(refreshed.entries[0].name, "renamed");
+    assert!(refreshed.entries[0].revision > observed.revision);
+    assert!(observed.same_conversation(&refreshed.entries[0].observation));
+    assert!(
+        fixture
+            .command(serde_json::json!({"lifecycle":{"id":"child-1","action":"close"}}))
+            .ok
+    );
+    fixture
+        .manager
+        .request_catalog_target(observed.clone())
+        .unwrap();
+    assert_eq!(
+        read_page(&mut fixture).unwrap().entries[0].state,
+        ManagedAgentState::Archived
+    );
+    assert!(
+        fixture
+            .command(serde_json::json!({"lifecycle":{"id":"child-1","action":"reopen"}}))
+            .ok
+    );
+    fixture.manager.request_catalog_target(observed).unwrap();
+    assert!(matches!(
+        read_page(&mut fixture),
+        Err(NativeManagedCatalogError::InvalidCursor)
+    ));
+}
+
 #[test]
 fn observed_runtime_selection_rejects_foreign_and_replaced_generations() {
     let mut fixture = Fixture::new(vec![]);

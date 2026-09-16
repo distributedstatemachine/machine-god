@@ -342,6 +342,13 @@ impl NativeManagedAgents {
         self.manager.take_catalog_outcome()
     }
 
+    pub(crate) fn request_catalog_target(
+        &mut self,
+        observed: crate::NativeObservedManagedAgent,
+    ) -> Result<crate::NativeManagedCatalogRequest, crate::NativeManagedCatalogError> {
+        self.manager.request_catalog_target(observed)
+    }
+
     pub(crate) fn request_observed_human_command(
         &mut self,
         selection: &ManagedForegroundSelection,

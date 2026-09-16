@@ -161,6 +161,8 @@ impl ManagedManager {
                         WriteAfter::Observe => {}
                         WriteAfter::Start(work) => {
                             let work = *work;
+                            child.notice_attempt =
+                                std::num::NonZeroU64::new(child.snapshot.head.revision);
                             if let Some(notice) = child.notice.take() {
                                 let _ = self.notices.stop_work(&notice);
                                 self.retained_notices.push(notice);
@@ -175,6 +177,7 @@ impl ManagedManager {
                         }
                         WriteAfter::Terminal => {
                             child.work.take();
+                            child.notice_attempt = None;
                             child.assistant.clear();
                             child.tools.clear();
                         }
@@ -291,6 +294,7 @@ impl ManagedManager {
                     control_requested: false,
                     notice_started: false,
                     notice_terminal: None,
+                    notice_attempt: None,
                 });
             }
         }

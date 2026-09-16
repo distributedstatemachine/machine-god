@@ -145,6 +145,16 @@ fn rejected_skill(available: bool) {
         send(&mut owner, &child, reference).await;
         state(&mut owner, &child, ManagedAgentState::Failed).await;
         assert!(fixture.transport.requests.lock().unwrap().is_empty());
+        let retried = submit(
+            &mut owner,
+            command(serde_json::json!({
+                "lifecycle":{"id":child,"action":"resume"}
+            })),
+        )
+        .await;
+        assert!(retried.ok, "{retried:?}");
+        state(&mut owner, &child, ManagedAgentState::Failed).await;
+        assert!(fixture.transport.requests.lock().unwrap().is_empty());
         // Failure belongs to this head. The manager and independent sibling
         // remain usable without dropping the failed work or silently retrying it.
         let sibling = submit(&mut owner, create()).await.child_id.unwrap();
@@ -165,7 +175,53 @@ fn rejected_skill(available: bool) {
                 .any(|agent| agent.id == child && agent.state == ManagedAgentState::Failed)
         );
         close(owner, completion).await;
+        assert_failed_attempt_notices(&fixture, &child).await;
     });
+}
+
+async fn assert_failed_attempt_notices(fixture: &Fixture, child: &str) {
+    use crate::managed::{
+        notices::{NoticeEvent, NoticeTerminal},
+        store::JournalRecord,
+    };
+    let workers = NativeOwnedWorkerScope::new();
+    let journal = ManagedJournal::open(
+        directory(&fixture.state.join("managed-journal")),
+        workers.clone(),
+        JournalLimits::default(),
+    )
+    .await
+    .unwrap();
+    let snapshot = journal.inspect(child.to_owned()).await.unwrap();
+    let page = journal.history(snapshot, None, 100).await.unwrap();
+    assert!(page.next.is_none());
+    let notices = page
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            JournalRecord::Notice(notice) => Some(notice),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        notices.len(),
+        2,
+        "each rejected attempt publishes its failure"
+    );
+    assert!(notices.iter().all(|notice| matches!(
+        notice.event,
+        NoticeEvent::Terminal {
+            outcome: NoticeTerminal::Failed
+        }
+    )));
+    assert_eq!(notices[0].source.work_id, notices[1].source.work_id);
+    assert_ne!(
+        notices[0].source.work_generation,
+        notices[1].source.work_generation
+    );
+    drop(journal);
+    workers.close();
+    workers.completion().wait().await;
 }
 
 #[test]
