@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34954002729` (`GREEN`)
 - Active branch: `agent/m65-managed-subagents`
 - Active phase: `M05 complete managed-agent tool and CLI implementation`
-- Next gate: `complete full Linux/macOS feature gates, then three fresh whole-feature reviews; managed release-CLI restart and composed PTY conversation scenarios pass`
+- Next gate: `verify macOS shared-TTY write-history fix with fresh release CLI, rerun complete Linux/macOS feature gates, then three fresh whole-feature reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills, MCP and ACP are delivered.

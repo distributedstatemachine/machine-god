@@ -423,6 +423,58 @@ fn shared_tty_master_cannot_reopen_as_an_unrelated_clone() {
 }
 
 #[test]
+fn status_flags_reject_every_change_except_macos_write_history() {
+    let original = OFlags::RDWR;
+    assert!(same_status_flags(original, original));
+    for bit in 0..u32::BITS {
+        let changed = OFlags::from_bits_retain(original.bits() ^ (1 << bit));
+        let history_only = cfg!(target_os = "macos") && bit == 16;
+        assert_eq!(
+            same_status_flags(original, changed),
+            history_only,
+            "bit {bit}"
+        );
+        assert_eq!(
+            same_status_flags(changed, original),
+            history_only,
+            "bit {bit}"
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn tty_reopen_accepts_first_shared_output_write_without_mutating_status() {
+    let (_master, source) = pty();
+    let mut output = source.try_clone().unwrap();
+    let original = rustix::fs::fstat(&source).unwrap();
+    let settings = rustix::termios::tcgetattr(&source).unwrap();
+    let original_flags = flags(&source);
+    let name = rustix::termios::ttyname(&source, Vec::new()).unwrap();
+    let path = Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()));
+
+    // Deterministically put the first prompt write between the reader's
+    // snapshot and its admission check, without scheduler-dependent racing.
+    output.write_all(b"> ").unwrap();
+    let after_write = flags(&source);
+    assert_eq!(original_flags.bits() ^ after_write.bits(), 0x0001_0000);
+    let reopened = reopen_terminal(&source, path, &original, &settings, original_flags).unwrap();
+    assert!(flags(&reopened).contains(OFlags::NONBLOCK));
+    assert_eq!(flags(&source), after_write);
+    assert!(same_settings(
+        &settings,
+        &rustix::termios::tcgetattr(&source).unwrap()
+    ));
+
+    // A genuine shared status mutation must still reject acquisition.
+    rustix::fs::fcntl_setfl(&source, after_write | OFlags::NONBLOCK).unwrap();
+    assert_eq!(
+        reopen_terminal(&source, path, &original, &settings, original_flags).unwrap_err(),
+        Error::Unavailable
+    );
+}
+
+#[test]
 fn shared_zero_minimum_tty_waits_for_bytes_and_stops_with_full_slot() {
     let (mut master, slave) = pty();
     let alias = slave.try_clone().unwrap();

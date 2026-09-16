@@ -27,6 +27,11 @@ without changing its status flags. On first poll, a verified TTY is reopened by
 its actual terminal name with a fresh nonblocking open-file description; device
 identity and unchanged termios/source flags are checked before use. PTY master
 clone descriptors are rejected rather than reopened as a different terminal.
+On macOS, the kernel's `FWASWRITTEN` history bit is excluded from the status
+comparison: the first prompt write through a shared output alias can set it
+without changing input status. Every other bit, including unknown bits, is
+still compared; Linux excludes no bits. The adapter does not write or restore
+the shared descriptor's flags to accommodate output.
 Descriptor aliases such as `/dev/fd` are not independent terminal acquisition. Terminal
 settings and input consumption remain caller-reserved; the adapter never changes
 or restores them. Already-nonblocking pipes use direct reads. Blocking pipes use

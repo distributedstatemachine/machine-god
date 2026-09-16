@@ -171,6 +171,18 @@ fn same_identity(left: &rustix::fs::Stat, right: &rustix::fs::Stat) -> bool {
         && left.st_mode == right.st_mode
 }
 
+fn same_status_flags(left: OFlags, right: OFlags) -> bool {
+    // Darwin F_GETFL exposes FWASWRITTEN (bsd/sys/fcntl.h), a kernel-only
+    // history bit set by the first write through any alias. A prompt on shared
+    // stdout may set it during acquisition; it is not a status-flag mutation.
+    // Ignore only that bit, only on macOS. Unknown bits stay fail-closed.
+    #[cfg(target_os = "macos")]
+    let history_mask = 0x0001_0000;
+    #[cfg(not(target_os = "macos"))]
+    let history_mask = 0;
+    (left.bits() ^ right.bits()) & !history_mask == 0
+}
+
 fn same_settings(left: &rustix::termios::Termios, right: &rustix::termios::Termios) -> bool {
     left.input_modes == right.input_modes && left.output_modes == right.output_modes
         && left.control_modes == right.control_modes && left.local_modes == right.local_modes
@@ -210,7 +222,10 @@ fn reopen_terminal(
     let current = rustix::fs::fstat(input).map_err(|_| Error::Unavailable)?;
     if !same_identity(original, &reopened)
         || !same_identity(original, &current)
-        || rustix::fs::fcntl_getfl(input).map_err(|_| Error::Unavailable)? != flags
+        || !same_status_flags(
+            flags,
+            rustix::fs::fcntl_getfl(input).map_err(|_| Error::Unavailable)?,
+        )
         || !same_settings(
             settings,
             &rustix::termios::tcgetattr(&fresh).map_err(|_| Error::Unavailable)?,
