@@ -116,6 +116,11 @@ fn managed_children_reuse_host_preparation_but_isolate_runtime_contexts_and_clos
     let fixture = fixture();
     let host = fixture.host();
     let seed = host.services.managed_mcp_seed.as_ref().unwrap();
+    assert!(host.managed.is_none());
+    assert!(
+        !host.managed_agents_selected(),
+        "an inert child MCP seed must not select the managed host lifecycle"
+    );
     let permissions = host.services.permission_preparation.as_ref().unwrap();
     let workers = host.services.control_workers.as_ref().unwrap();
     let first = seed

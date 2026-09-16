@@ -74,6 +74,9 @@ the newly prepared workspace and state descriptors against the existing host's
 retained scope. Canonical spelling alone is insufficient. A checked reuse token
 is weakly bound to that exact host allocation and request spelling; a different
 domain requires a fresh host and permission registry.
+The reuse path requires an actual managed host owner. An inert child MCP
+preparation seed on an unmanaged embedding host does not select that lifecycle;
+such a host still uses fresh composition and explicit ephemeral-peer settlement.
 
 Same-domain replacement stages a fresh parent-only MCP instance under the
 existing manager's residency budget. It captures only the new selection's needed

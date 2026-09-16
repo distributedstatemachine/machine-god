@@ -56,11 +56,26 @@ fn run(future: impl std::future::Future<Output = ()>) {
         });
 }
 async fn outcome(owner: &mut NativeAcpSelectionOwner) -> NativeAcpSelectionOutcome {
-    futures_util::future::poll_fn(|cx| {
+    let outcome = futures_util::future::poll_fn(|cx| {
         let _ = owner.poll_progress(cx, 200);
         owner.take_outcome().map_or(Poll::Pending, Poll::Ready)
     })
-    .await
+    .await;
+    match &outcome {
+        NativeAcpSelectionOutcome::Rejected {
+            error,
+            old_preserved,
+            candidate_may_have_persisted,
+            ..
+        } => eprintln!(
+            "selection rejected: {error:?}, preserved={old_preserved}, persisted={candidate_may_have_persisted}"
+        ),
+        NativeAcpSelectionOutcome::Indeterminate { error, .. } => {
+            eprintln!("selection indeterminate: {error:?}");
+        }
+        _ => {}
+    }
+    outcome
 }
 
 #[test]
@@ -199,6 +214,7 @@ fn resume_replaces_owned_host_without_replaying_history() {
         let _ = outcome(&mut owner).await;
         let id = owner.current().unwrap().id();
         let old_host = Arc::downgrade(owner.current_host().unwrap());
+        assert!(!owner.current_host().unwrap().managed_agents_selected());
         owner
             .request(
                 NativeAcpSessionSelection::Resume(id.clone()),
@@ -215,6 +231,7 @@ fn resume_replaces_owned_host_without_replaying_history() {
             }
         ));
         assert!(old_host.upgrade().is_none());
+        assert_eq!(factory.preparations.load(Ordering::Acquire), 2);
         assert!(owner.current_mut().unwrap().take_loaded_history().is_none());
         assert_eq!(owner.current().unwrap().id(), id);
         owner.request_shutdown();

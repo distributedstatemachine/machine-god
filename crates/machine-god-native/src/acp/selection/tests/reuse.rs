@@ -38,20 +38,32 @@ fn managed_replacement_reuses_host_and_load_alone_replays_history() {
             (NativeAcpSessionSelection::Load(first.clone()), true),
             (NativeAcpSessionSelection::Resume(first), false),
         ] {
+            let previous_runtime = Arc::downgrade(owner.current().unwrap().runtime());
             owner
                 .request(selection, factory.workspace.clone(), empty(), 2)
                 .unwrap();
+            let selected = outcome(&mut owner).await;
+            match &selected {
+                NativeAcpSelectionOutcome::Rejected { error, .. }
+                | NativeAcpSelectionOutcome::Indeterminate { error, .. } => {
+                    panic!("managed replacement failed (load={replay}): {error:?}");
+                }
+                _ => {}
+            }
             assert!(matches!(
-                outcome(&mut owner).await,
+                selected,
                 NativeAcpSelectionOutcome::Selected { .. }
             ));
             assert!(host.ptr_eq(&Arc::downgrade(owner.current_host().unwrap())));
+            assert!(!previous_runtime.ptr_eq(&Arc::downgrade(owner.current().unwrap().runtime())));
             assert_eq!(
                 owner.current_mut().unwrap().take_loaded_history().is_some(),
                 replay
             );
         }
-        assert_ne!(owner.current().unwrap().principal(), original);
+        // Resume preserves the durable transcript incarnation, while the exact
+        // runtime allocation and its ephemeral MCP selection must be replaced.
+        assert_eq!(owner.current().unwrap().principal(), original);
         assert_eq!(factory.preparations.load(Ordering::Acquire), 1);
         assert!(!factory.provider_started.load(Ordering::Acquire));
         close(&mut owner).await;

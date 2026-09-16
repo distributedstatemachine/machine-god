@@ -112,9 +112,11 @@ impl fmt::Debug for NativeManagedAgents {
 }
 
 impl NativeReferenceHost {
+    /// Whether this host selected an actual managed-agent owner. MCP preparation
+    /// seeds also exist on unmanaged hosts and do not select that lifecycle.
     #[must_use]
     pub fn managed_agents_selected(&self) -> bool {
-        self.services.managed_mcp_seed.is_some()
+        self.managed.is_some()
     }
 
     fn validate_managed_open(&self) -> Result<(), NativeManagedAgentsError> {
