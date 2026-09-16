@@ -1,5 +1,6 @@
 //! Bounded sanitized terminal projection. Clipped previews never become authority.
 mod detail;
+mod forms;
 #[cfg(test)]
 mod tests;
 use machine_god_core::ManagedSubagentResult;
@@ -37,6 +38,18 @@ pub(super) fn render(
         lines.push("Resize to navigate agents; Ctrl-X closes")?;
         return lines.finish(false);
     }
+    if !matches!(
+        view.route,
+        Route::Form(machine_god_native::NativeManagedFormKind::Create)
+    ) && let Some(target) = view.target
+    {
+        let required = identity_rows(&target.id, columns)
+            .and_then(|id_rows| id_rows.checked_add(9 + usize::from(view.error.is_some())));
+        if required.is_none_or(|required| required > lines.limit) {
+            lines.push("Resize to display the complete target identity")?;
+            return lines.finish(false);
+        }
+    }
     lines.push("Agents & processes · clipped previews")?;
     lines.push(&format!(
         "{:?}{}",
@@ -51,30 +64,19 @@ pub(super) fn render(
         Route::Catalog(_) => catalog(&mut lines, view, content_limit)?,
         Route::Agent(_) | Route::ConfirmClose => {
             let target = view.target.ok_or(())?;
-            lines.push(&format!(
-                "{} — generation {}",
-                prefix(&target.name),
-                target.generation
-            ))?;
-            lines.push(&format!("id: {}", prefix(&target.id)))?;
+            target_heading(&mut lines, target)?;
             if view.route == Route::ConfirmClose {
                 lines.push("Close and archive this agent? Enter confirms; Esc goes back.")?;
             } else {
                 details(&mut lines, view.result, content_limit, detail_offset)?;
             }
         }
+        Route::Form(_) => forms::render(&mut lines, view, content_limit)?,
     }
     if let Some(error) = view.error {
         lines.push(&error.to_string())?;
     }
-    lines.push(if view.has_next {
-        "/next page · /refresh · /current /archived /all"
-    } else {
-        "/refresh · /current /archived /all"
-    })?;
-    lines.push("Enter opens/sends · /status /messages /tools /close · Ctrl-X exits")?;
-    lines.push("Arrows select/scroll · /create {JSON} /configure {JSON}")?;
-    lines.push("")?;
+    footer(&mut lines, view)?;
     let mut frame = lines.finish(true)?;
     let editor = super::super::composer_view::render(draft.0, draft.1, columns).map_err(|_| ())?;
     if frame.bytes.len() + editor.len() > 64 * 1024 {
@@ -84,11 +86,41 @@ pub(super) fn render(
     Ok(frame)
 }
 
+fn footer(lines: &mut Lines, view: &NativeManagedNavigationView<'_>) -> Result<(), ()> {
+    lines.push(if matches!(view.route, Route::Form(_)) {
+        "Tab/arrows fields · Space toggles · Ctrl-R refresh target"
+    } else if view.has_next {
+        "/next page · /refresh · /current /archived /all"
+    } else {
+        "/refresh · /current /archived /all"
+    })?;
+    lines.push(if matches!(view.route, Route::Form(_)) {
+        "Enter submits displayed form · Esc discards/back · Ctrl-X closes"
+    } else {
+        "Enter opens/sends · /status /messages /tools /close · Ctrl-X exits"
+    })?;
+    lines.push(if matches!(view.route, Route::Form(_)) {
+        "Values are intent only; native admission enforces permission policy"
+    } else {
+        "Arrows select/scroll · /create · /configure"
+    })?;
+    lines.push("")
+}
+
 fn catalog(
     lines: &mut Lines,
     view: &NativeManagedNavigationView<'_>,
     limit: usize,
 ) -> Result<(), ()> {
+    if let Some(target) = view.target {
+        target_heading(lines, target)?;
+    }
+    if let Some(result) = view.result {
+        lines.push(&format!(
+            "{:?} · /refresh to reload the catalog",
+            result.status
+        ))?;
+    }
     let capacity = limit.saturating_sub(lines.count).max(1);
     let start = view
         .selected
@@ -153,6 +185,40 @@ fn details(
 
 fn prefix(text: &str) -> &str {
     &text[..text.floor_char_boundary(text.len().min(512))]
+}
+
+fn identity_rows(id: &str, columns: u16) -> Option<usize> {
+    if id.is_empty()
+        || id.len() > 255
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    {
+        return None;
+    }
+    let width = usize::from(columns.checked_sub(1)?);
+    (width != 0).then(|| (id.len() + 4).div_ceil(width))
+}
+
+fn write_identity(lines: &mut Lines, id: &str) -> Result<(), ()> {
+    identity_rows(id, lines.columns).ok_or(())?;
+    let text = format!("id: {id}");
+    for chunk in text.as_bytes().chunks(usize::from(lines.columns - 1)) {
+        lines.push(std::str::from_utf8(chunk).map_err(|_| ())?)?;
+    }
+    Ok(())
+}
+
+fn target_heading(
+    lines: &mut Lines,
+    target: &machine_god_native::NativeManagedCatalogEntry,
+) -> Result<(), ()> {
+    lines.push(&format!(
+        "generation {} · {}",
+        target.generation,
+        prefix(&target.name)
+    ))?;
+    write_identity(lines, &target.id)
 }
 struct Lines {
     bytes: Vec<u8>,

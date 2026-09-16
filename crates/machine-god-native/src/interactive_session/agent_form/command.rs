@@ -19,6 +19,9 @@ impl Form {
     }
 
     fn build(&self) -> Result<ManagedSubagentCommand, Error> {
+        if let Some(error) = self.rejected_edit {
+            return Err(error);
+        }
         let mut command = match self.kind {
             Kind::Create => ManagedSubagentCommand::Create(ManagedCreate {
                 name: self.required(Field::Name)?.to_owned(),

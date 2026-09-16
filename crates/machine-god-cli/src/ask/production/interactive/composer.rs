@@ -23,6 +23,7 @@ pub(super) struct ComposerContext {
     pub active_response: bool,
     pub session_picker: bool,
     pub agents: bool,
+    pub agent_form: Option<machine_god_native::NativeManagedFormField>,
     pub skills: Option<machine_god_native::NativeSkillPickerMode>,
 }
 
@@ -53,6 +54,7 @@ pub(super) enum ComposerEvent {
     ExitRequested,
     SessionPickerRequested,
     AgentsRequested,
+    FormRefreshRequested,
     PickerPrevious,
     PickerNext,
     PickerToggleScope,
@@ -70,6 +72,7 @@ impl fmt::Debug for ComposerEvent {
             Self::ExitRequested => f.write_str("ExitRequested"),
             Self::SessionPickerRequested => f.write_str("SessionPickerRequested"),
             Self::AgentsRequested => f.write_str("AgentsRequested"),
+            Self::FormRefreshRequested => f.write_str("FormRefreshRequested"),
             Self::PickerPrevious => f.write_str("PickerPrevious"),
             Self::PickerNext => f.write_str("PickerNext"),
             Self::PickerToggleScope => f.write_str("PickerToggleScope"),
@@ -380,6 +383,14 @@ impl Composer {
 
     fn key(&mut self, byte: u8, context: ComposerContext) -> Option<ComposerEvent> {
         match byte {
+            18 if context.agent_form.is_some() => Some(ComposerEvent::FormRefreshRequested),
+            9 if context.agent_form.is_some() => Some(ComposerEvent::PickerNext),
+            b' ' if context
+                .agent_form
+                .is_some_and(|field| field.byte_limit().is_none()) =>
+            {
+                Some(ComposerEvent::PickerToggleScope)
+            }
             24 => Some(ComposerEvent::AgentsRequested),
             b'\r' | b'\n' if context.agents => {
                 self.skip_lf = byte == b'\r';
@@ -408,7 +419,7 @@ impl Composer {
                 Some(ComposerEvent::Submit(std::mem::take(&mut self.text)))
             }
             3 => {
-                if !context.active_response {
+                if context.agent_form.is_some() || !context.active_response {
                     self.reset();
                 }
                 Some(ComposerEvent::CancelRequested)
@@ -655,7 +666,11 @@ fn picker_escape(bytes: &[u8], context: ComposerContext) -> Option<EscapeKey> {
         return None;
     }
     if body == b"Z" {
-        return Some(EscapeKey::Event(ComposerEvent::PickerToggleScope));
+        return Some(EscapeKey::Event(if context.agent_form.is_some() {
+            ComposerEvent::PickerPrevious
+        } else {
+            ComposerEvent::PickerToggleScope
+        }));
     }
     if body == b"27;2;13~" {
         return Some(EscapeKey::Consumed);
@@ -680,8 +695,16 @@ fn picker_escape(bytes: &[u8], context: ComposerContext) -> Option<EscapeKey> {
 }
 
 fn printable(byte: u8, context: ComposerContext) -> bool {
-    byte == b'\t' && !context.session_picker && context.skills.is_none()
-        || byte >= 32 && byte != 127
+    byte == b'\t'
+        && !context.session_picker
+        && context.skills.is_none()
+        && context.agent_form.is_none()
+        || byte >= 32
+            && byte != 127
+            && !(byte == b' '
+                && context
+                    .agent_form
+                    .is_some_and(|field| field.byte_limit().is_none()))
 }
 
 fn next_end(text: &str, start: usize) -> usize {

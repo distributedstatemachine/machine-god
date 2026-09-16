@@ -7,7 +7,7 @@ use crate::{
 };
 use machine_god_core::{ManagedFailureCode, ManagedLifecycleAction as Lifecycle};
 
-async fn ready(owner: &mut NativeInteractiveSession) -> NativeManagedFrameIdentity {
+pub(super) async fn ready(owner: &mut NativeInteractiveSession) -> NativeManagedFrameIdentity {
     poll_fn(|cx| {
         let progress = owner.poll_progress(cx, 10);
         assert!(

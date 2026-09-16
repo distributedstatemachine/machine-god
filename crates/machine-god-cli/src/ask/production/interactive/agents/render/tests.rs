@@ -1,4 +1,4 @@
-use super::{Lines, detail, detail_count, details};
+use super::{Lines, detail, detail_count, details, identity_rows, write_identity};
 use machine_god_core::{
     ManagedAgentState, ManagedConfiguration, ManagedEvent, ManagedEventKind, ManagedHistoryItem,
     ManagedHistoryKind, ManagedInspection, ManagedInspectionSourceError, ManagedNotifications,
@@ -187,4 +187,26 @@ fn scrolling_reaches_every_row_with_a_bounded_sanitized_window() {
     assert!(!lines.bytes.contains(&7));
     assert!(lines.bytes.len() < 64 * 1024);
     assert!(lines.count <= 64);
+}
+
+#[test]
+fn identity_wrapping_never_omits_the_distinguishing_suffix() {
+    for columns in [40, 41, 80, 256, u16::MAX] {
+        for length in [1, 36, 128, 255] {
+            let id = format!("{}Z", "a".repeat(length - 1));
+            let mut lines = Lines {
+                bytes: Vec::new(),
+                columns,
+                limit: 64,
+                count: 0,
+            };
+            write_identity(&mut lines, &id).unwrap();
+            assert_eq!(lines.count, identity_rows(&id, columns).unwrap());
+            let rendered = String::from_utf8(lines.bytes).unwrap();
+            assert_eq!(rendered.replace("\r\n", ""), format!("id: {id}"));
+        }
+    }
+    for invalid in ["", "bad\nidentity", "control\x1b", "非ascii"] {
+        assert_eq!(identity_rows(invalid, 40), None);
+    }
 }

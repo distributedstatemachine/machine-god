@@ -1,5 +1,8 @@
 //! Allocation-bound presentation identities; none retains execution authority.
-use crate::{NativeManagedCatalogEntry, NativeManagedCatalogFilter};
+use crate::{
+    NativeManagedCatalogEntry, NativeManagedCatalogFilter, NativeManagedFormError,
+    NativeManagedFormKind, NativeManagedFormView,
+};
 use machine_god_core::{
     ManagedConfigure, ManagedCreate, ManagedInspectSection, ManagedLifecycleAction,
     ManagedRelationshipAction, ManagedSubagentResult,
@@ -46,6 +49,7 @@ pub enum NativeManagedNavigationRoute {
     Catalog(NativeManagedCatalogFilter),
     Agent(ManagedInspectSection),
     ConfirmClose,
+    Form(NativeManagedFormKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,9 +61,13 @@ pub enum NativeManagedNavigationError {
     NoSelection,
     InvalidAction,
     Exhausted,
+    Form(NativeManagedFormError),
 }
 impl fmt::Display for NativeManagedNavigationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::Form(error) = self {
+            return fmt::Display::fmt(error, f);
+        }
         f.write_str(match self {
             Self::Unavailable => "agent navigation unavailable",
             Self::Busy => "agent navigation operation pending",
@@ -68,6 +76,7 @@ impl fmt::Display for NativeManagedNavigationError {
             Self::NoSelection => "agent navigation selection unavailable",
             Self::InvalidAction => "agent navigation action invalid",
             Self::Exhausted => "agent navigation identity exhausted",
+            Self::Form(_) => unreachable!("handled above"),
         })
     }
 }
@@ -93,6 +102,9 @@ pub enum NativeManagedNavigationAction {
     },
     Lifecycle(ManagedLifecycleAction),
     ConfirmClose,
+    OpenForm(NativeManagedFormKind),
+    CycleFormField,
+    SubmitForm,
 }
 
 impl fmt::Debug for NativeManagedNavigationAction {
@@ -112,6 +124,9 @@ impl fmt::Debug for NativeManagedNavigationAction {
             Self::Relationship { .. } => "Relationship",
             Self::Lifecycle(_) => "Lifecycle",
             Self::ConfirmClose => "ConfirmClose",
+            Self::OpenForm(_) => "OpenForm",
+            Self::CycleFormField => "CycleFormField",
+            Self::SubmitForm => "SubmitForm",
         };
         f.debug_struct("NativeManagedNavigationAction")
             .field("action", &action)
@@ -132,6 +147,7 @@ pub struct NativeManagedNavigationView<'a> {
     pub busy: bool,
     pub result: Option<&'a ManagedSubagentResult>,
     pub error: Option<NativeManagedNavigationError>,
+    pub form: Option<NativeManagedFormView<'a>>,
 }
 
 impl fmt::Debug for NativeManagedNavigationView<'_> {
@@ -180,6 +196,7 @@ mod tests {
             busy: false,
             result: None,
             error: None,
+            form: None,
         };
         let debug = format!("{view:?} {:?} {:?}", view.frame, view.editor);
         assert!(!debug.contains("567890"));

@@ -258,6 +258,7 @@ impl Driver {
                 InputBinding::Agents { editor, .. } => Some(editor),
                 _ => None,
             });
+            self.sync_agent_form_editor(&binding);
         } else {
             self.sync_skills_input_owner(&binding);
         }
@@ -347,6 +348,11 @@ impl Driver {
             active_response: status.active || status.queued_jobs != 0,
             session_picker: self.picker_open(),
             agents: self.owner.managed_navigation().is_some() && self.modal.is_none(),
+            agent_form: self
+                .owner
+                .managed_navigation()
+                .filter(|_| self.modal.is_none() && self.saved_rule.is_none())
+                .and_then(|view| view.form.map(|form| form.fields[form.selected])),
             skills: if self.agents.is_some() {
                 None
             } else if self.skills_query_open() {

@@ -160,6 +160,7 @@ pub(super) struct Form {
     notices: ManagedNotifications,
     notices_changed: bool,
     error: Option<NativeManagedFormError>,
+    rejected_edit: Option<NativeManagedFormError>,
 }
 impl fmt::Debug for Form {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -182,6 +183,7 @@ impl Form {
             notices: ManagedNotifications::default(),
             notices_changed: false,
             error: None,
+            rejected_edit: None,
         }
     }
 
@@ -272,14 +274,29 @@ impl Form {
     pub(super) fn current(&self) -> NativeManagedFormField {
         self.fields()[self.selected]
     }
-    pub(super) fn select(&mut self, previous: bool) {
+    pub(super) fn select(&mut self, previous: bool) -> Result<(), NativeManagedFormError> {
+        self.can_leave_field()?;
         self.selected = if previous {
             self.selected.saturating_sub(1)
         } else {
             (self.selected + 1).min(self.fields().len() - 1)
         };
+        Ok(())
+    }
+    pub(super) fn can_leave_field(&self) -> Result<(), NativeManagedFormError> {
+        self.rejected_edit.map_or(Ok(()), Err)
     }
     pub(super) fn replace(
+        &mut self,
+        field: NativeManagedFormField,
+        value: &str,
+    ) -> Result<(), NativeManagedFormError> {
+        let result = self.replace_text(field, value);
+        self.rejected_edit = result.as_ref().err().copied();
+        self.error = self.rejected_edit;
+        result
+    }
+    fn replace_text(
         &mut self,
         field: NativeManagedFormField,
         value: &str,
@@ -297,8 +314,11 @@ impl Form {
         {
             return Err(NativeManagedFormError::TooLarge(field));
         }
+        if value.contains('\0') {
+            return Err(NativeManagedFormError::InvalidValue(field));
+        }
         if self.text[index] != value {
-            self.text[index] = value.to_owned();
+            value.clone_into(&mut self.text[index]);
             self.changed[index] = true;
             self.error = None;
         }
@@ -306,6 +326,9 @@ impl Form {
     }
     pub(super) fn cycle(&mut self) -> Result<(), NativeManagedFormError> {
         use NativeManagedFormField as Field;
+        if let Some(error) = self.rejected_edit {
+            return Err(error);
+        }
         match self.current() {
             Field::Mode => {
                 self.mode = match self.mode {
@@ -315,7 +338,6 @@ impl Form {
             }
             Field::Permission => {
                 self.permission = match self.permission {
-                    None => Some(ManagedPermissionMode::Ask),
                     Some(ManagedPermissionMode::Ask) => Some(ManagedPermissionMode::Auto),
                     Some(ManagedPermissionMode::Auto) => Some(ManagedPermissionMode::Yolo),
                     Some(ManagedPermissionMode::Yolo)
@@ -323,7 +345,7 @@ impl Form {
                     {
                         None
                     }
-                    Some(ManagedPermissionMode::Yolo) => Some(ManagedPermissionMode::Ask),
+                    None | Some(ManagedPermissionMode::Yolo) => Some(ManagedPermissionMode::Ask),
                 };
                 self.permission_changed = true;
             }

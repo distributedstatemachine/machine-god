@@ -15,6 +15,26 @@ pub use view::{
 };
 
 impl NativeInteractiveSession {
+    /// Replaces only the current form field under its original editor identity.
+    /// This cannot execute a command or change the selected target. Submission
+    /// still requires acknowledgement of the resulting frame.
+    /// # Errors
+    /// Rejects retired editors, pending work, non-form routes and invalid fields.
+    pub fn edit_managed_form(
+        &mut self,
+        editor: &NativeManagedEditorIdentity,
+        value: &str,
+    ) -> Result<(), NativeManagedNavigationError> {
+        self.navigation_available()?;
+        let result = self
+            .navigation
+            .as_mut()
+            .ok_or(NativeManagedNavigationError::Unavailable)?
+            .edit_form(editor, value);
+        self.notify();
+        result
+    }
+
     /// Requests up to 64 raw heads, including nonresident/archived histories.
     /// Filtering can yield an empty page with a continuation; it never causes
     /// an unbounded scan. Drive this owner and then consume the exact outcome.

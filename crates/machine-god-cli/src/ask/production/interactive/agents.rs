@@ -1,4 +1,5 @@
 //! Thin native-navigation adapter. This owns only rendering/flush and editor custody.
+mod forms;
 mod render;
 use super::{Driver, InputBinding, Render, composer::ComposerEvent, principal};
 use machine_god_core::{
@@ -6,8 +7,9 @@ use machine_god_core::{
     ManagedRelationshipAction, ManagedSubagentCommand,
 };
 use machine_god_native::{
-    NativeManagedCatalogFilter as Filter, NativeManagedFrameIdentity,
-    NativeManagedNavigationAction as Action, NativeManagedNavigationRoute as Route,
+    NativeManagedCatalogFilter as Filter, NativeManagedEditorIdentity, NativeManagedFormKind,
+    NativeManagedFrameIdentity, NativeManagedNavigationAction as Action,
+    NativeManagedNavigationRoute as Route,
 };
 
 pub(super) struct Ui {
@@ -17,6 +19,7 @@ pub(super) struct Ui {
     draft_dirty: bool,
     detail_offset: usize,
     detail_source: Option<NativeManagedFrameIdentity>,
+    form_editor: Option<NativeManagedEditorIdentity>,
 }
 
 impl Driver {
@@ -54,6 +57,7 @@ impl Driver {
             draft_dirty: true,
             detail_offset: 0,
             detail_source: None,
+            form_editor: None,
         });
     }
 
@@ -138,7 +142,14 @@ impl Driver {
             return true;
         }
         let action = match event {
-            ComposerEvent::Changed => {
+            ComposerEvent::Changed | ComposerEvent::CancelRequested
+                if matches!(event, ComposerEvent::Changed)
+                    || self
+                        .owner
+                        .managed_navigation()
+                        .is_some_and(|view| view.form.is_some()) =>
+            {
+                self.edit_agent_form(editor);
                 if let Some(ui) = &mut self.agents {
                     ui.draft_dirty = true;
                 }
@@ -146,6 +157,8 @@ impl Driver {
             }
             ComposerEvent::PickerPrevious => Action::Previous,
             ComposerEvent::PickerNext => Action::Next,
+            ComposerEvent::PickerToggleScope => Action::CycleFormField,
+            ComposerEvent::FormRefreshRequested => Action::Refresh,
             ComposerEvent::EscapeRequested => Action::Back,
             ComposerEvent::CancelRequested => Action::Lifecycle(Lifecycle::Cancel),
             ComposerEvent::Submit(line) => {
@@ -157,6 +170,7 @@ impl Driver {
                 }
             }
             ComposerEvent::InputError(_) => {
+                self.invalidate_agents();
                 self.note(b"\n[agent input rejected; draft retained]\n");
                 return true;
             }
@@ -226,6 +240,9 @@ impl Driver {
 
     fn agent_line_action(&self, line: &str) -> Result<Action, ()> {
         let view = self.owner.managed_navigation().ok_or(())?;
+        if matches!(view.route, Route::Form(_)) {
+            return Ok(Action::SubmitForm);
+        }
         let text = line.trim();
         Ok(match text {
             "" if view.route == Route::ConfirmClose => Action::ConfirmClose,
@@ -242,6 +259,8 @@ impl Driver {
             "/events" => Action::Inspect(Section::Events),
             "/configuration" => Action::Inspect(Section::Configuration),
             "/relationship" => Action::Inspect(Section::Relationship),
+            "/create" => Action::OpenForm(NativeManagedFormKind::Create),
+            "/configure" => Action::OpenForm(NativeManagedFormKind::Configure),
             "/cancel" => Action::Lifecycle(Lifecycle::Cancel),
             "/resume" => Action::Lifecycle(Lifecycle::Resume),
             "/reopen" => Action::Lifecycle(Lifecycle::Reopen),
@@ -297,6 +316,14 @@ impl Driver {
     }
 
     pub(super) fn prepare_agents_render(&mut self) -> bool {
+        // A route can change during the input poll. Seed its new field before
+        // drawing, rather than acknowledging a frame with the old field's text.
+        if let Some(binding @ InputBinding::Agents { .. }) = self.agents_binding() {
+            if let InputBinding::Agents { editor, .. } = &binding {
+                self.input.sync_managed_editor(Some(editor));
+            }
+            self.sync_agent_form_editor(&binding);
+        }
         let Some(ui) = &mut self.agents else {
             return false;
         };
@@ -328,8 +355,10 @@ impl Driver {
         ui.drawn = Some(view.frame.clone());
         ui.draft_dirty = false;
         let confirm = Some(InputBinding::Agents {
+            frame: (frame.selectable
+                && (view.form.is_none() || ui.form_editor.as_ref() == Some(&view.editor)))
+            .then_some(view.frame),
             editor: view.editor,
-            frame: frame.selectable.then_some(view.frame),
         });
         frontend.menu_height = Some(frame.height);
         self.render = Some(Render {

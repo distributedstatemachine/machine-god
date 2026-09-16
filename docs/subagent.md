@@ -491,7 +491,12 @@ Ctrl-X routes the raw CLI to these native catalog/detail projections. Current,
 archived and all filters, bounded next-page traversal, inspection and typed human
 commands share that route. The renderer escapes terminal text, bounds visible
 rows and labels clipped previews. Narrow terminals cannot acknowledge a selectable
-frame (at least 40 columns and 11 rows are required). Inspection projects retained
+frame (at least 40 columns and 11 rows are required). Selected target IDs appear
+in full, wrapping rather than clipping a distinguishing suffix. More
+rows are required when the full ID, generation and controls do not fit; such a
+frame cannot acknowledge a consequential action. Catalog commands show the
+selected target identity too; a clipped name is not the only visible target.
+Inspection projects retained
 status, messages, conversation/tool history, events, relationships and notification
 configuration, including gap and source-error evidence. Arrow scrolling visits
 only the retained page, keeps the selected target visible and invalidates the old
@@ -535,6 +540,20 @@ model/effort fields as an unsupported reset operation. Clearing duration removes
 its derived duration-stop condition while preserving other notification settings.
 These draft objects contain no runtime, journal or process authority; execution
 still requires the owning navigation's exact frame and observed-target checks.
+Bare `/create` and `/configure` select the form route. Tab/Shift-Tab or arrows
+move between fields, Space cycles typed controls, Enter submits and Escape
+discards. Each field has a distinct editor epoch; atomic input captured for an
+old field cannot edit the next one. Edits invalidate the prior frame ACK and
+oversized rejected input blocks submission of the previous valid field value.
+The new field is seeded before rendering; while an old atomic decoder is still
+draining, its replacement field cannot receive a selectable-frame acknowledgement.
+After a queued command settles, its input epoch retires even on rejection.
+Ctrl-C clears the active text field without cancelling the selected child.
+Decoder-rejected input also invalidates the displayed frame, so a trailing
+Enter in the same received chunk cannot submit the retained earlier value.
+Configuration rejection retains the native draft; Ctrl-R explicitly refreshes
+the observed head without substituting another ID/generation. A replacement
+generation or absent target returns to the catalog instead of retargeting a form.
 
 ## Durable journal
 

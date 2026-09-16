@@ -105,6 +105,208 @@ fn displayed(driver: &Driver) -> bool {
 }
 
 #[test]
+fn create_form_uses_native_fields_and_restores_the_parent_draft() {
+    use native::NativeManagedFormField as Field;
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        harness.input_writer.write_all(b"parent draft").unwrap();
+        input_until(&mut harness, |driver| {
+            driver.input.raw_draft() == Some(("parent draft", 12))
+        })
+        .await;
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"/create\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.owner.managed_navigation().unwrap().form.is_some()
+        })
+        .await;
+        harness
+            .input_writer
+            .write_all("UI child é".as_bytes())
+            .unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && driver
+                    .owner
+                    .managed_navigation()
+                    .unwrap()
+                    .form
+                    .unwrap()
+                    .values[0]
+                    == "UI child é"
+        })
+        .await;
+        harness.input_writer.write_all(b"\t").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && driver
+                    .owner
+                    .managed_navigation()
+                    .unwrap()
+                    .form
+                    .is_some_and(|form| form.fields[form.selected] == Field::Mode)
+        })
+        .await;
+        assert_eq!(harness.driver.input.raw_draft(), Some(("", 0)));
+        for mode in ["one-off", "persistent"] {
+            harness.input_writer.write_all(b" ").unwrap();
+            pump_until(&mut harness, |driver| {
+                displayed(driver)
+                    && driver
+                        .owner
+                        .managed_navigation()
+                        .unwrap()
+                        .form
+                        .is_some_and(|form| form.values[form.selected] == mode)
+            })
+            .await;
+        }
+        harness.input_writer.write_all(b"\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && driver
+                    .owner
+                    .managed_navigation()
+                    .unwrap()
+                    .result
+                    .is_some_and(|result| {
+                        result.ok && result.status == machine_god_core::ManagedResultStatus::Created
+                    })
+        })
+        .await;
+        assert!(
+            harness
+                .driver
+                .owner
+                .managed_navigation()
+                .unwrap()
+                .form
+                .is_none()
+        );
+        assert!(fixture.transport.requests().is_empty());
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, |driver| {
+            driver.agents.is_none() && presentation_idle(driver)
+        })
+        .await;
+        assert_eq!(harness.driver.input.raw_draft(), Some(("parent draft", 12)));
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
+fn rejected_form_paste_cannot_submit_old_values_and_ctrl_c_clears_native_draft() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"/create\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.owner.managed_navigation().unwrap().form.is_some()
+        })
+        .await;
+        harness.input_writer.write_all(b"retained name").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.input.raw_draft() == Some(("retained name", 13))
+        })
+        .await;
+        let old_frame = harness.driver.owner.managed_navigation().unwrap().frame;
+        // The paste decoder rejects NUL before the native field sees an edit.
+        harness
+            .input_writer
+            .write_all(b"\x1b[200~\0\x1b[201~\r")
+            .unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.owner.managed_navigation().unwrap().frame != old_frame
+        })
+        .await;
+        assert_eq!(harness.driver.owner.managed_agents().len(), 1);
+        assert_eq!(
+            harness
+                .driver
+                .owner
+                .managed_navigation()
+                .unwrap()
+                .form
+                .unwrap()
+                .values[0],
+            "retained name"
+        );
+        harness.input_writer.write_all(b"\x03").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && driver
+                    .owner
+                    .managed_navigation()
+                    .unwrap()
+                    .form
+                    .is_some_and(|form| form.values[0].is_empty())
+        })
+        .await;
+        assert_eq!(harness.driver.input.raw_draft(), Some(("", 0)));
+        assert_eq!(harness.driver.owner.managed_agents().len(), 1);
+        assert!(fixture.transport.requests().is_empty());
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
+fn a_partial_form_edit_cannot_be_relabelled_or_acknowledge_the_next_field() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"/create\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.owner.managed_navigation().unwrap().form.is_some()
+        })
+        .await;
+        harness.input_writer.write_all(b"\xf0").unwrap();
+        input_until(&mut harness, |driver| driver.input.has_pending_raw_input()).await;
+        let frame = harness.driver.owner.managed_navigation().unwrap().frame;
+        harness
+            .driver
+            .owner
+            .act_on_managed_frame(&frame, native::NativeManagedNavigationAction::Next)
+            .unwrap();
+        pump_until(&mut harness, presentation_idle).await;
+        assert!(matches!(
+            harness.driver.agents_binding(),
+            Some(InputBinding::Agents { frame: None, .. })
+        ));
+        harness.input_writer.write_all(b"\x9f\x98\x80 \r").unwrap();
+        pump_until(&mut harness, displayed).await;
+        let form = harness
+            .driver
+            .owner
+            .managed_navigation()
+            .unwrap()
+            .form
+            .unwrap();
+        assert_eq!(
+            form.fields[form.selected],
+            native::NativeManagedFormField::Mode
+        );
+        assert_eq!(form.values[form.selected], "persistent");
+        assert_eq!(form.values[0], "");
+        assert_eq!(harness.driver.input.raw_draft(), Some(("", 0)));
+        assert_eq!(harness.driver.owner.managed_agents().len(), 1);
+        assert!(fixture.transport.requests().is_empty());
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
 fn ctrl_x_preserves_parent_draft_and_a_same_chunk_enter_cannot_confirm_close() {
     let runtime = executor();
     let (fixture, mut harness) = runtime.block_on(prepared());
@@ -245,6 +447,28 @@ fn scrolling_invalidates_the_display_ack_without_replacing_the_editor_or_target(
             .try_send(OutputAcknowledgement::Succeeded)
             .unwrap();
         pump_until(&mut harness, displayed).await;
+        assert!(fixture.transport.requests().is_empty());
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
+fn narrow_catalog_displays_the_full_selected_identity_before_acknowledgement() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        let frontend = harness.driver.frontend.as_mut().unwrap();
+        frontend.columns = 40;
+        frontend.rows = 11;
+        harness.input_writer.write_all(b"\x18").unwrap();
+        let output = pump_until(&mut harness, displayed).await;
+        let view = harness.driver.owner.managed_navigation().unwrap();
+        let target = view.target.unwrap();
+        let text = String::from_utf8(output).unwrap().replace("\r\n", "");
+        assert!(text.contains(&format!("id: {}", target.id)), "{text}");
+        assert!(text.contains(&format!("generation {}", target.generation)));
         assert!(fixture.transport.requests().is_empty());
         finish_signal(&mut harness).await
     });

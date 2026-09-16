@@ -30,7 +30,7 @@ fn focus(form: &mut Form, field: Field) {
         .position(|candidate| *candidate == field)
         .unwrap();
     while form.view().selected != index {
-        form.select(form.view().selected > index);
+        form.select(form.view().selected > index).unwrap();
     }
 }
 

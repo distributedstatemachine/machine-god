@@ -16,6 +16,9 @@ use std::{
 };
 
 mod agent_form;
+pub use agent_form::{
+    NativeManagedFormError, NativeManagedFormField, NativeManagedFormKind, NativeManagedFormView,
+};
 mod clipboard;
 mod controls;
 pub use clipboard::{

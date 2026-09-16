@@ -1,4 +1,5 @@
 //! Native page ownership and bounded asynchronous navigation work.
+use super::super::agent_form::Form;
 use super::{
     NativeInteractiveSession,
     view::{
@@ -11,6 +12,7 @@ use crate::{
     NativeManagedCatalogCursor, NativeManagedCatalogEntry, NativeManagedCatalogFilter,
     NativeManagedCatalogPage, NativeManagedCatalogRequest, NativeManagedCommandResponse,
 };
+use crate::{NativeManagedEditorIdentity, NativeManagedFormKind};
 use machine_god_core::{
     CancellationToken, ManagedInspect, ManagedInspectSection, ManagedLifecycle,
     ManagedLifecycleAction, ManagedMessage, ManagedRelationship, ManagedSend,
@@ -52,6 +54,7 @@ pub(in crate::interactive_session) struct Navigation {
     pending: Option<Pending>,
     result: Option<ManagedSubagentResult>,
     error: Option<Error>,
+    form: Option<Form>,
 }
 
 impl Default for Navigation {
@@ -71,6 +74,7 @@ impl Default for Navigation {
             pending: None,
             result: None,
             error: None,
+            form: None,
         }
     }
 }
@@ -97,12 +101,15 @@ impl Navigation {
                 self.result
                     .as_ref()
                     .is_some_and(|result| result.cursor.is_some())
-            } else {
+            } else if matches!(self.route, Route::Catalog(_)) {
                 self.next.is_some()
+            } else {
+                false
             },
             busy: self.pending.is_some(),
             result: self.result.as_ref(),
             error: self.error,
+            form: self.form.as_ref().map(Form::view),
         })
     }
     fn change(&mut self, editor_changed: bool) -> Result<(), Error> {
@@ -140,6 +147,7 @@ impl Navigation {
         self.next = None;
         self.result = None;
         self.error = None;
+        self.form = None;
         if let Some(Pending::Command { cancellation, .. }) = &self.pending {
             cancellation.cancel();
         }
@@ -153,6 +161,7 @@ impl Navigation {
         self.open = true;
         self.filter = NativeManagedCatalogFilter::Current;
         self.route = Route::Catalog(self.filter);
+        self.form = None;
         self.rows.clear();
         self.selected = None;
         self.start = None;
@@ -216,6 +225,27 @@ impl Navigation {
             }),
         )
     }
+
+    pub(super) fn edit_form(
+        &mut self,
+        identity: &NativeManagedEditorIdentity,
+        value: &str,
+    ) -> Result<(), Error> {
+        if !self.open || *identity != self.frame().editor {
+            return Err(Error::StaleFrame);
+        }
+        if self.pending.is_some() {
+            return Err(Error::Busy);
+        }
+        let form = self.form.as_mut().ok_or(Error::InvalidAction)?;
+        if form.current().byte_limit().is_none() {
+            return Err(Error::InvalidAction);
+        }
+        let result = form.replace(form.current(), value).map_err(Error::Form);
+        self.change(false)?;
+        self.error = result.as_ref().err().copied();
+        result
+    }
     #[allow(clippy::too_many_lines)] // Exhaustive routing; all effects use the existing bounded native admissions.
     pub(super) fn action(
         &mut self,
@@ -240,7 +270,8 @@ impl Navigation {
             | Action::Configure(_)
             | Action::Relationship { .. }
             | Action::Lifecycle(_)
-            | Action::ConfirmClose => {
+            | Action::ConfirmClose
+            | Action::OpenForm(NativeManagedFormKind::Configure) => {
                 self.target()?;
             }
             _ => {}
@@ -253,16 +284,55 @@ impl Navigation {
         {
             return Err(Error::InvalidAction);
         }
+        if matches!(self.route, Route::Form(_))
+            && !matches!(
+                action,
+                Action::Previous
+                    | Action::Next
+                    | Action::CycleFormField
+                    | Action::SubmitForm
+                    | Action::Back
+                    | Action::Refresh
+            )
+        {
+            return Err(Error::InvalidAction);
+        }
+        let form_command = if matches!(action, Action::SubmitForm) {
+            match self.form.as_mut().ok_or(Error::InvalidAction)?.command() {
+                Ok(command) => Some(command),
+                Err(error) => {
+                    self.change(false)?;
+                    self.error = Some(Error::Form(error));
+                    return Err(Error::Form(error));
+                }
+            }
+        } else {
+            None
+        };
+        if matches!(
+            action,
+            Action::Previous | Action::Next | Action::CycleFormField
+        ) && let Some(form) = &self.form
+        {
+            form.can_leave_field().map_err(Error::Form)?;
+        }
         if let Action::Configure(configuration) = &action
             && configuration.id != self.target()?.id
         {
             return Err(Error::InvalidAction);
         }
-        let editor_changed = !matches!(action, Action::Previous | Action::Next | Action::Refresh);
+        let editor_changed = !matches!(action, Action::Previous | Action::Next | Action::Refresh)
+            || (matches!(self.route, Route::Form(_))
+                && matches!(action, Action::Previous | Action::Next));
         self.change(editor_changed)?;
         self.error = None;
         let result = match action {
             Action::Previous | Action::Next => {
+                if let Some(form) = &mut self.form {
+                    return form
+                        .select(matches!(action, Action::Previous))
+                        .map_err(Error::Form);
+                }
                 if !matches!(self.route, Route::Catalog(_)) {
                     return Err(Error::InvalidAction);
                 }
@@ -297,7 +367,7 @@ impl Navigation {
                         .ok_or(Error::NoSelection)?;
                     self.inspect(owner, section, Some(cursor))
                 }
-                Route::ConfirmClose => Err(Error::InvalidAction),
+                Route::ConfirmClose | Route::Form(_) => Err(Error::InvalidAction),
             },
             Action::Select | Action::Inspect(ManagedInspectSection::Status) => {
                 self.route = Route::Agent(ManagedInspectSection::Status);
@@ -313,10 +383,29 @@ impl Navigation {
                 } else {
                     self.route = Route::Catalog(self.filter);
                     self.result = None;
+                    self.form = None;
                 }
                 Ok(())
             }
             Action::Create(create) => self.command(owner, ManagedSubagentCommand::Create(create)),
+            Action::OpenForm(kind) => {
+                self.route = Route::Form(kind);
+                self.result = None;
+                if kind == NativeManagedFormKind::Create {
+                    self.form = Some(Form::create());
+                    Ok(())
+                } else {
+                    self.form = None;
+                    self.inspect(owner, ManagedInspectSection::Configuration, None)
+                }
+            }
+            Action::CycleFormField => self
+                .form
+                .as_mut()
+                .ok_or(Error::InvalidAction)?
+                .cycle()
+                .map_err(Error::Form),
+            Action::SubmitForm => self.command(owner, form_command.ok_or(Error::InvalidAction)?),
             Action::Configure(configure) => {
                 self.command(owner, ManagedSubagentCommand::Configure(configure))
             }
@@ -405,6 +494,7 @@ impl Navigation {
                         Ok(result) => self.result = Some(result),
                         Err(_) => self.error = Some(Error::Unavailable),
                     }
+                    editor_changed = self.finish_form_command();
                     // Confirmation is a single submission, not a reusable button.
                     // Show its receipt/rejection on the detail route and retire
                     // any bytes captured for the confirmation editor.
@@ -441,18 +531,57 @@ impl Navigation {
             .and_then(|(id, _)| self.rows.iter().position(|row| &row.id == id))
             .or_else(|| (!self.rows.is_empty()).then_some(0));
         // An absent target never substitutes another agent in a retained detail view.
-        if !matches!(self.route, Route::Catalog(_))
-            && self
-                .target()
-                .ok()
-                .map(|target| (&target.id, target.generation))
-                != previous.as_ref().map(|(id, generation)| (id, *generation))
+        if matches!(
+            self.route,
+            Route::Agent(_) | Route::ConfirmClose | Route::Form(NativeManagedFormKind::Configure)
+        ) && self
+            .target()
+            .ok()
+            .map(|target| (&target.id, target.generation))
+            != previous.as_ref().map(|(id, generation)| (id, *generation))
         {
             self.route = Route::Catalog(self.filter);
             self.result = None;
+            self.form = None;
             if self.change(true).is_err() {
                 self.close();
             }
         }
+    }
+
+    fn finish_form_command(&mut self) -> bool {
+        let Route::Form(kind) = self.route else {
+            return false;
+        };
+        if self.form.is_none() {
+            let configuration = self
+                .result
+                .as_ref()
+                .filter(|result| result.ok)
+                .and_then(|result| result.requested.as_ref())
+                .and_then(|requested| match requested {
+                    machine_god_core::ManagedRequested::Inspection(inspection) => {
+                        inspection.configuration.clone()
+                    }
+                    _ => None,
+                });
+            match configuration.and_then(|configuration| {
+                self.target()
+                    .ok()
+                    .and_then(|target| Form::configure(target.id.clone(), configuration).ok())
+            }) {
+                Some(form) => self.form = Some(form),
+                None => self.route = Route::Agent(ManagedInspectSection::Configuration),
+            }
+        } else if self.result.as_ref().is_some_and(|result| result.ok) {
+            self.form = None;
+            self.route = match kind {
+                NativeManagedFormKind::Create => Route::Catalog(self.filter),
+                NativeManagedFormKind::Configure => Route::Agent(ManagedInspectSection::Status),
+            };
+        }
+        // Input received while a submitted command was pending cannot become
+        // edits in its settled/retry editor, including rejected commands.
+        true
     }
 }

@@ -35,6 +35,42 @@ fn agent_submission_preserves_the_draft_until_native_admission() {
 }
 
 #[test]
+fn form_field_keys_do_not_turn_pasted_space_or_tab_into_actions() {
+    use machine_god_native::NativeManagedFormField;
+    let mut editor = Composer::default();
+    let context = ComposerContext {
+        agents: true,
+        agent_form: Some(NativeManagedFormField::Permission),
+        ..ComposerContext::default()
+    };
+    assert!(matches!(
+        editor.feed(b" ", context).1,
+        Some(ComposerEvent::PickerToggleScope)
+    ));
+    assert!(matches!(
+        editor.feed(b"\t", context).1,
+        Some(ComposerEvent::PickerNext)
+    ));
+    assert!(matches!(
+        editor.feed(b"\x1b[Z", context).1,
+        Some(ComposerEvent::PickerPrevious)
+    ));
+    assert!(matches!(
+        editor.feed(b"\x12", context).1,
+        Some(ComposerEvent::FormRefreshRequested)
+    ));
+    let (_, event) = editor.feed(b"\x1b[200~ \t\x12\x1b[201~", context);
+    assert!(!matches!(
+        event,
+        Some(
+            ComposerEvent::PickerToggleScope
+                | ComposerEvent::PickerNext
+                | ComposerEvent::FormRefreshRequested
+        )
+    ));
+}
+
+#[test]
 fn external_replacement_is_atomic_and_never_echoed_as_received_input() {
     let mut editor = Composer::default();
     observed_feed(&mut editor, "before $s éafter".as_bytes());
@@ -588,6 +624,25 @@ fn byte_corpus_keeps_cursor_and_draft_bounds_and_reset_recovers() {
             editor.reset();
             assert_eq!(submitted(&feed(&mut editor, b"safe\n", false)), ["safe"]);
         }
+    }
+}
+
+#[test]
+fn clearing_a_form_field_is_independent_of_a_hidden_parent_response() {
+    for active_response in [false, true] {
+        let context = ComposerContext {
+            agents: true,
+            active_response,
+            agent_form: Some(machine_god_native::NativeManagedFormField::Name),
+            ..ComposerContext::default()
+        };
+        let mut editor = Composer::default();
+        editor.feed(b"form draft", context);
+        assert!(matches!(
+            editor.feed(b"\x03", context).1,
+            Some(ComposerEvent::CancelRequested)
+        ));
+        assert!(editor.is_empty());
     }
 }
 

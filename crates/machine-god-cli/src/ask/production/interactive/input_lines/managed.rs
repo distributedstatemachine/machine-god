@@ -21,6 +21,29 @@ pub(super) struct Retired {
 }
 
 impl InputLines {
+    pub(in crate::ask::production::interactive) fn seed_managed_form(
+        &mut self,
+        editor: &NativeManagedEditorIdentity,
+        text: &str,
+    ) -> Result<bool, ()> {
+        if self
+            .managed_editors
+            .as_ref()
+            .and_then(|editors| editors.active.as_ref())
+            != Some(editor)
+            || self
+                .composer
+                .as_ref()
+                .is_none_or(Composer::has_pending_input)
+        {
+            return Ok(false);
+        }
+        let composer = self.composer.as_mut().ok_or(())?;
+        composer
+            .replace(0..composer.text().len(), text, text.len())
+            .map_err(|_| ())?;
+        Ok(true)
+    }
     pub(super) fn managed_atomic_binding(&self, binding: InputBinding) -> InputBinding {
         // A modal/route transfer cannot split a paste or UTF-8 sequence.
         // Finish it under the original editor before changing owners.
