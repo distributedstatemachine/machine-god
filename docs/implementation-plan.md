@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34954002729` (`GREEN`)
 - Active branch: `agent/m65-managed-subagents`
 - Active phase: `M05 complete managed-agent tool and CLI implementation`
-- Next gate: `verify original-target receipt refresh and durable pre-turn failure notices with fresh binaries; run complete feature gates before three fresh reviews`
+- Next gate: `verify open-form retirement after external archive with fresh binaries, retaining the now-passing receipt and pre-turn failure regressions; run complete feature gates before three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills, MCP and ACP are delivered.

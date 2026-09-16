@@ -3,6 +3,7 @@ use super::{
     Error, NativeInteractiveSession, Navigation, Pending, Refresh, Route, mutation_receipt,
 };
 use crate::NativeManagedCatalogPage;
+use machine_god_core::ManagedAgentState;
 
 impl Navigation {
     pub(super) fn accept_catalog(
@@ -41,11 +42,17 @@ impl Navigation {
 
     pub(super) fn accept_target(&mut self, page: NativeManagedCatalogPage) -> Option<Refresh> {
         let entry = page.entries.into_iter().next();
-        let same = entry.as_ref().is_some_and(|entry| {
-            self.target()
-                .is_ok_and(|old| old.observation.same_conversation(&entry.observation))
+        let usable = entry.as_ref().is_some_and(|entry| {
+            self.target().is_ok_and(|old| {
+                // Successful mutation receipts already retired their form. An
+                // open form cannot adopt a target archived by another command.
+                let archived_form = self.form.is_some()
+                    && old.state != ManagedAgentState::Archived
+                    && entry.state == ManagedAgentState::Archived;
+                old.observation.same_conversation(&entry.observation) && !archived_form
+            })
         });
-        if !same {
+        if !usable {
             self.reject_catalog(true);
             return None;
         }

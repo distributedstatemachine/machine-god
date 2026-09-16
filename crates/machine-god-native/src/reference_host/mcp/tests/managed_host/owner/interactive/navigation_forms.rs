@@ -169,6 +169,8 @@ fn refreshing_a_form_never_retargets_a_missing_or_replaced_generation() {
             let view = owner.managed_navigation().unwrap();
             assert!(matches!(view.route, Route::Catalog(_)));
             assert!(view.form.is_none());
+            assert!(view.target.is_none());
+            assert!(view.rows.is_empty());
             assert_ne!(view.editor, editor);
             assert_eq!(
                 owner.edit_managed_form(&editor, "retargeted edit"),

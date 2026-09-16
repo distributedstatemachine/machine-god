@@ -200,7 +200,10 @@ after archive or rename moves it outside the displayed list page. It does not
 substitute a different generation, scan later pages, or load a runtime. Returning
 to the list reapplies its filter. The next command therefore uses a fresh
 observation, not the pre-mutation journal revision; editor changes do not skip
-that refresh.
+that refresh. If another command archives the child while its form is still
+open, refresh retires that form and its selection instead of adopting the
+archived target. A successful close already retires its own confirmation, so
+its archived-target receipt remains visible.
 
 Notice attempt identity uses the confirmed journal start revision, independently
 of the later core-turn witness. Registration precedes first polling of accepted
