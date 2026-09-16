@@ -15,6 +15,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+mod agent_form;
 mod clipboard;
 mod controls;
 pub use clipboard::{

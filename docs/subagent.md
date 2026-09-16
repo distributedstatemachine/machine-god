@@ -516,6 +516,26 @@ Confirmed source acknowledgements remove exact replayed originals before an
 outbox clear permits another snapshot. Parent registration restarts this bounded
 scan so an absent or retired target never requires an unbounded in-memory queue.
 
+## Native management form drafts
+
+The native create/configure form model retains one bounded draft with separate
+name, model, standalone prompt, reasoning effort, milestones and timer fields.
+Create also selects persistent/one-off mode; permission and notification toggles
+are typed values. Creation defaults to persistent mode and inherited permission,
+with completion/failure/cancellation notices enabled. Selecting a permission
+value is intent, not a grant; actual foreground admission still enforces policy.
+
+Fields enforce their core byte bounds before replacement. Milestones use a
+bounded JSON string array so punctuation, commas and Unicode round-trip without
+changing names. Timers are checked positive integer milliseconds and retain the
+core duration/interval constraints. Invalid edits or submission preserve the
+draft; errors and Debug output do not expose its content. Configuration captures
+one immutable target ID and emits only edited fields, without treating blank
+model/effort fields as an unsupported reset operation. Clearing duration removes
+its derived duration-stop condition while preserving other notification settings.
+These draft objects contain no runtime, journal or process authority; execution
+still requires the owning navigation's exact frame and observed-target checks.
+
 ## Durable journal
 
 The native managed control journal is separate from `FileSessionStore`, which
