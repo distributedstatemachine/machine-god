@@ -22,10 +22,9 @@ use std::sync::{
 mod permission;
 #[path = "mcp/tool.rs"]
 mod tool;
-pub(crate) use permission::{
-    NativePrincipalMcpPermissionInputs, NativePrincipalMcpPermissionRouter,
-    NativePrincipalMcpPermissions,
-};
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) use permission::NativePrincipalMcpPermissionInputs;
+pub(crate) use permission::{NativePrincipalMcpPermissionRouter, NativePrincipalMcpPermissions};
 pub(crate) use tool::NativePrincipalMcpTool;
 #[cfg(test)]
 #[path = "mcp/tests.rs"]

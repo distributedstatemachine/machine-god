@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 pub(super) fn settle_failed_startup(
     inner: Weak<Inner>,
     deadline: Instant,

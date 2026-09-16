@@ -12,9 +12,10 @@ use std::task::{Context, Poll, Waker};
 
 mod run;
 pub use run::NativeOwnedWorkerRun;
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) use run::promote_current_worker_to_service;
 pub(crate) use run::{
     NativeOwnedWorkerAttribution, NativeOwnedWorkerServiceHandoff, current_service_handoff,
-    promote_current_worker_to_service,
 };
 use run::{RunAttribution, RunEnrollment, TicketWitness};
 

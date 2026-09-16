@@ -172,6 +172,7 @@ impl NativeMcpController {
 
     /// Settles only an unpublished failed initial activation. It preserves the
     /// open controller and credential service for explicit interactive repair.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
     pub(crate) fn settle_failed_startup(
         &self,
         deadline: Instant,

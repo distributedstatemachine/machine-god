@@ -3,6 +3,10 @@ use std::fmt;
 use std::sync::Arc;
 
 mod initial;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
 pub(crate) use initial::NativeInitialSession;
 
 use machine_god_core::{
