@@ -3,6 +3,38 @@ use super::*;
 type EditReceipt = (Range<usize>, String, usize);
 
 #[test]
+fn ctrl_x_is_navigation_only_outside_an_atomic_paste() {
+    let mut editor = Composer::default();
+    feed(&mut editor, b"parent", false);
+    assert!(matches!(
+        feed(&mut editor, b"\x18", false).as_slice(),
+        [ComposerEvent::AgentsRequested]
+    ));
+    assert_eq!(editor.text(), "parent");
+    let pasted = feed(&mut editor, b"\x1b[200~\x18/close\r\x1b[201~", false);
+    assert!(!pasted.iter().any(|event| matches!(
+        event,
+        ComposerEvent::AgentsRequested | ComposerEvent::Submit(_)
+    )));
+    assert!(editor.text().contains("/close\n"));
+}
+
+#[test]
+fn agent_submission_preserves_the_draft_until_native_admission() {
+    let mut editor = Composer::default();
+    feed(&mut editor, "message é".as_bytes(), false);
+    let context = ComposerContext {
+        agents: true,
+        ..ComposerContext::default()
+    };
+    let (_, event) = editor.feed(b"\r", context);
+    assert!(matches!(event, Some(ComposerEvent::Submit(ref text)) if text == "message é"));
+    assert_eq!(editor.text(), "message é");
+    let (_, previous) = editor.feed(b"\x1b[A", context);
+    assert!(matches!(previous, Some(ComposerEvent::PickerPrevious)));
+}
+
+#[test]
 fn external_replacement_is_atomic_and_never_echoed_as_received_input() {
     let mut editor = Composer::default();
     observed_feed(&mut editor, "before $s éafter".as_bytes());

@@ -27,6 +27,7 @@ const HELP: &[u8] = b"\nCommands implemented in this host:\n\
 Model selection and /fast request native session and available user-default saves;\n\
 their independent results are reported separately. /resume has no arguments.\n\
 Cmd/Super+R opens the all-workspace session picker.\n\
+Ctrl-X opens the native managed-agent catalog; Ctrl-X returns to the parent draft.\n\
 /allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]\n\
 /workspace [list|add PATH|remove PATH|clear]\n\
 /background [open|logs|stop [terminal-id|last]]\n\

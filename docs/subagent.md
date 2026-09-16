@@ -472,8 +472,34 @@ and checks the selected manager, target, generation and revision again after its
 queued journal load, before recovery or mutation. A changed head rejects with
 `StaleGeneration`; observations grant no model-call or process-control authority.
 Parent replacement retains the outer catalog identity while retiring the old
-foreground admission. This observation boundary does not itself constitute a
-displayed-frame receipt or implement the CLI navigation/editor protocol.
+foreground admission. This observation boundary is separate from displayed-frame
+receipts and editor ownership.
+
+The native interactive owner retains management navigation, catalog selection,
+inspection results and pending commands without replacing its parent runtime.
+Editor identities and rendered frame revisions are distinct. A typed navigation
+action requires the exact current frame's successful flush acknowledgement;
+resize, replacement, retirement and a different owner's frame cannot authorize
+an action. Close first opens a separate confirmation frame. Its confirmed command
+still checks the original observed journal head. Closing a view cancels pending
+preacceptance intent and retains the original request through settlement, without
+turning view closure into durable child cancellation.
+Settled close confirmation retires its editor and displays the original receipt
+or rejection on the detail route; buffered confirmation input cannot submit twice.
+
+Ctrl-X routes the raw CLI to these native catalog/detail projections. Current,
+archived and all filters, bounded next-page traversal, inspection and typed human
+commands share that route. The renderer escapes terminal text, bounds visible
+rows and labels clipped previews. Narrow terminals cannot acknowledge a selectable
+frame (at least 40 columns and 11 rows are required). Inspection projects retained
+status, messages, conversation/tool history, events, relationships and notification
+configuration, including gap and source-error evidence. Arrow scrolling visits
+only the retained page, keeps the selected target visible and invalidates the old
+flush acknowledgement; `/next` alone requests another native page. Parent, agent
+and prompt editors have separate bounded storage. An atomic
+paste or partial UTF-8 sequence keeps its original editor until decoding finishes;
+retired input is drained, not reinterpreted as a new prompt or command. Human prompts
+invalidate the obscured frame and keep their exact multi-owner inbox tokens.
 
 Restore explicitly repairs a saved original notice outbox before child execution;
 factory preparation itself never performs delivery recovery. Close waits for the

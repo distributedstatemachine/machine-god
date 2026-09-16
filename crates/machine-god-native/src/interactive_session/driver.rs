@@ -17,6 +17,7 @@ impl NativeInteractiveSession {
     pub(super) fn drive(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
         self.wake = Some(cx.waker().clone());
         self.poll_managed(cx, now_ms);
+        self.poll_navigation(cx);
         if self.foreground_is_closed() {
             return self.readiness();
         }

@@ -14,11 +14,16 @@ use std::{
 use tokio::time::Sleep;
 
 const ESCAPE_TIMEOUT: Duration = Duration::from_millis(50);
+mod managed;
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) enum InputBinding {
     Command,
     AwaitingPrompt,
+    Agents {
+        editor: machine_god_native::NativeManagedEditorIdentity,
+        frame: Option<machine_god_native::NativeManagedFrameIdentity>,
+    },
     Skills {
         epoch: NativeSkillDraftIdentity,
         frame: Option<NativeSkillFrameIdentity>,
@@ -65,6 +70,9 @@ impl InputBinding {
 
     fn same_editor(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::Agents { editor: left, .. }, Self::Agents { editor: right, .. }) => {
+                left == right
+            }
             (
                 Self::Skills {
                     epoch: left,
@@ -77,7 +85,8 @@ impl InputBinding {
                     ..
                 },
             ) => left == right && lq == rq,
-            (Self::Skills { .. }, _) | (_, Self::Skills { .. }) => false,
+            (Self::Agents { .. } | Self::Skills { .. }, _)
+            | (_, Self::Agents { .. } | Self::Skills { .. }) => false,
             _ => true,
         }
     }
@@ -106,6 +115,8 @@ pub(super) struct InputLines {
     framer: InteractiveInputFramer,
     composer: Option<Composer>,
     parked_composer: Option<Composer>,
+    managed_editors: Option<managed::Editors>,
+    retired_editor: Option<managed::Retired>,
     chunk: Option<NativeInteractiveInputChunk>,
     offset: usize,
     chunk_binding: InputBinding,
@@ -122,6 +133,8 @@ impl InputLines {
             framer: InteractiveInputFramer::default(),
             composer: None,
             parked_composer: None,
+            managed_editors: None,
+            retired_editor: None,
             chunk: None,
             offset: 0,
             chunk_binding: InputBinding::Command,
@@ -146,6 +159,17 @@ impl InputLines {
         self.composer
             .as_ref()
             .map(|composer| (composer.text(), composer.cursor()))
+    }
+
+    #[cfg(test)]
+    pub fn has_pending_raw_input(&self) -> bool {
+        self.composer
+            .as_ref()
+            .is_some_and(Composer::has_pending_input)
+    }
+    #[cfg(test)]
+    pub fn draining_managed_editor(&self) -> bool {
+        self.retired_editor.is_some()
     }
 
     #[cfg(test)]
@@ -338,11 +362,15 @@ impl InputLines {
     pub fn poll_event_observed(
         &mut self,
         cx: &mut Context<'_>,
-        mut binding: InputBinding,
+        binding: InputBinding,
         context: ComposerContext,
         mut received: impl FnMut(&[u8]),
         mut edited: impl FnMut(&InputBinding, Range<usize>, &str, usize),
     ) -> Poll<Option<Result<(ComposerEvent, InputBinding), LineError>>> {
+        if self.retired_editor.is_some() {
+            return self.drain_retired_editor(cx, &mut received);
+        }
+        let binding = self.managed_atomic_binding(binding);
         let editor = binding.clone();
         if self.composer.is_none() {
             return Poll::Ready(Some(Err(LineError::Input(
@@ -356,26 +384,11 @@ impl InputLines {
             return Poll::Ready(Some(Ok(event)));
         }
         if self.chunk.is_none() {
-            match self.input.poll_chunk(cx) {
+            match self.poll_raw_chunk(cx, binding, &mut received) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => {
-                    self.ended = true;
-                    return Poll::Ready(Some(Err(LineError::Input(error))));
-                }
-                Poll::Ready(Ok(None)) => {
-                    self.ended = true;
-                    return Poll::Ready(None);
-                }
-                Poll::Ready(Ok(Some(chunk))) => {
-                    received(chunk.as_bytes());
-                    binding.revoke_mixed_deferred_selection(chunk.as_bytes());
-                    if let Some(partial) = &mut self.line_binding {
-                        partial.revoke_mixed_deferred_selection(chunk.as_bytes());
-                    }
-                    self.chunk = Some(chunk);
-                    self.offset = 0;
-                    self.chunk_binding = binding;
-                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Some(Err(error))),
+                Poll::Ready(Ok(false)) => return Poll::Ready(None),
+                Poll::Ready(Ok(true)) => {}
             }
         }
         self.line_binding
@@ -397,6 +410,7 @@ impl InputLines {
         }
         let composer = self.composer.as_mut().expect("raw mode checked");
         let effective_context = ComposerContext {
+            agents: matches!(self.line_binding, Some(InputBinding::Agents { .. })),
             session_picker: self
                 .line_binding
                 .as_ref()
@@ -439,14 +453,50 @@ impl InputLines {
             event,
             ComposerEvent::Submit(_) | ComposerEvent::ExitRequested
         ) || matches!(event, ComposerEvent::CancelRequested) && !context.active_response
-            || (binding.picker_view().is_some() || matches!(binding, InputBinding::Skills { .. }))
+            || (binding.picker_view().is_some()
+                || matches!(
+                    binding,
+                    InputBinding::Skills { .. } | InputBinding::Agents { .. }
+                ))
                 && !composer.has_pending_input()
-            || matches!(event, ComposerEvent::SessionPickerRequested)
-                && matches!(binding, InputBinding::Command)
+            || matches!(
+                event,
+                ComposerEvent::SessionPickerRequested | ComposerEvent::AgentsRequested
+            ) && matches!(binding, InputBinding::Command)
         {
             self.line_binding = None;
         }
         Poll::Ready(Some(Ok((event, binding))))
+    }
+
+    fn poll_raw_chunk(
+        &mut self,
+        cx: &mut Context<'_>,
+        mut binding: InputBinding,
+        received: &mut impl FnMut(&[u8]),
+    ) -> Poll<Result<bool, LineError>> {
+        match self.input.poll_chunk(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => {
+                self.ended = true;
+                Poll::Ready(Err(LineError::Input(error)))
+            }
+            Poll::Ready(Ok(None)) => {
+                self.ended = true;
+                Poll::Ready(Ok(false))
+            }
+            Poll::Ready(Ok(Some(chunk))) => {
+                received(chunk.as_bytes());
+                binding.revoke_mixed_deferred_selection(chunk.as_bytes());
+                if let Some(partial) = &mut self.line_binding {
+                    partial.revoke_mixed_deferred_selection(chunk.as_bytes());
+                }
+                self.chunk = Some(chunk);
+                self.offset = 0;
+                self.chunk_binding = binding;
+                Poll::Ready(Ok(true))
+            }
+        }
     }
 
     fn poll_expired_escape(
@@ -471,7 +521,12 @@ impl InputLines {
             .as_ref()
             .expect("escape has an input binding")
             .clone();
-        if binding.picker_view().is_some() || matches!(binding, InputBinding::Skills { .. }) {
+        if binding.picker_view().is_some()
+            || matches!(
+                binding,
+                InputBinding::Skills { .. } | InputBinding::Agents { .. }
+            )
+        {
             self.line_binding = None;
         }
         Some((event, binding))

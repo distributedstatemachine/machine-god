@@ -6,6 +6,7 @@ fn bounded_output() -> crate::bounded_output::BoundedOutput {
     crate::bounded_output::BoundedOutput::with_capacity(MAX_PRESENTATION_OUTPUT_BYTES, 1024)
 }
 
+mod agents;
 mod allowlist_view;
 pub(super) mod background_open;
 mod clipboard;
@@ -611,6 +612,7 @@ struct Driver {
     picker_request: Option<machine_god_native::NativeInteractiveRequestId>,
     picker_rejection: Option<machine_god_native::NativeInteractiveRequestId>,
     skills: Option<skills_driver::SkillsUi>,
+    agents: Option<agents::Ui>,
 }
 
 struct Frontend {
@@ -708,6 +710,7 @@ impl Driver {
             picker_request: None,
             picker_rejection: None,
             skills,
+            agents: None,
         })
     }
     fn with_resources(

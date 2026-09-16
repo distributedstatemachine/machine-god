@@ -2,6 +2,7 @@ use super::*;
 mod acp;
 mod human;
 mod navigation;
+mod navigation_ui;
 mod preselection;
 mod prompts;
 #[cfg(feature = "mcp-http")]

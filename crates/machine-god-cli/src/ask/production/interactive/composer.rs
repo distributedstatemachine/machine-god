@@ -22,6 +22,7 @@ const PASTE_END: &[u8] = b"\x1b[201~";
 pub(super) struct ComposerContext {
     pub active_response: bool,
     pub session_picker: bool,
+    pub agents: bool,
     pub skills: Option<machine_god_native::NativeSkillPickerMode>,
 }
 
@@ -51,6 +52,7 @@ pub(super) enum ComposerEvent {
     CancelRequested,
     ExitRequested,
     SessionPickerRequested,
+    AgentsRequested,
     PickerPrevious,
     PickerNext,
     PickerToggleScope,
@@ -67,6 +69,7 @@ impl fmt::Debug for ComposerEvent {
             Self::CancelRequested => f.write_str("CancelRequested"),
             Self::ExitRequested => f.write_str("ExitRequested"),
             Self::SessionPickerRequested => f.write_str("SessionPickerRequested"),
+            Self::AgentsRequested => f.write_str("AgentsRequested"),
             Self::PickerPrevious => f.write_str("PickerPrevious"),
             Self::PickerNext => f.write_str("PickerNext"),
             Self::PickerToggleScope => f.write_str("PickerToggleScope"),
@@ -377,6 +380,11 @@ impl Composer {
 
     fn key(&mut self, byte: u8, context: ComposerContext) -> Option<ComposerEvent> {
         match byte {
+            24 => Some(ComposerEvent::AgentsRequested),
+            b'\r' | b'\n' if context.agents => {
+                self.skip_lf = byte == b'\r';
+                Some(ComposerEvent::Submit(self.text.clone()))
+            }
             b'\r' | b'\n' | 9 if context.skills.is_some() => {
                 self.skip_lf = byte == b'\r';
                 Some(ComposerEvent::SkillSelected)
@@ -509,10 +517,10 @@ impl Composer {
             b"\x1b[H" | b"\x1bOH" | b"\x1b[1~" | b"\x1b[7~" => self.move_to(0),
             b"\x1b[F" | b"\x1bOF" | b"\x1b[4~" | b"\x1b[8~" => self.move_to(self.text.len()),
             b"\x1b[3~" => self.delete_forward(),
-            b"\x1bOA" if context.session_picker || context.skills.is_some() => {
+            b"\x1bOA" if context.session_picker || context.skills.is_some() || context.agents => {
                 Some(ComposerEvent::PickerPrevious)
             }
-            b"\x1bOB" if context.session_picker || context.skills.is_some() => {
+            b"\x1bOB" if context.session_picker || context.skills.is_some() || context.agents => {
                 Some(ComposerEvent::PickerNext)
             }
             b"\x1b[200~" => {
@@ -643,7 +651,7 @@ fn picker_escape(bytes: &[u8], context: ComposerContext) -> Option<EscapeKey> {
             return Some(EscapeKey::Consumed);
         }
     }
-    if !context.session_picker && context.skills.is_none() {
+    if !context.session_picker && context.skills.is_none() && !context.agents {
         return None;
     }
     if body == b"Z" {

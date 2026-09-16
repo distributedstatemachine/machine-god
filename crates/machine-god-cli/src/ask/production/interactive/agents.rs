@@ -1,0 +1,346 @@
+//! Thin native-navigation adapter. This owns only rendering/flush and editor custody.
+mod render;
+use super::{Driver, InputBinding, Render, composer::ComposerEvent, principal};
+use machine_god_core::{
+    BackgroundOutputOwner, ManagedInspectSection as Section, ManagedLifecycleAction as Lifecycle,
+    ManagedRelationshipAction, ManagedSubagentCommand,
+};
+use machine_god_native::{
+    NativeManagedCatalogFilter as Filter, NativeManagedFrameIdentity,
+    NativeManagedNavigationAction as Action, NativeManagedNavigationRoute as Route,
+};
+
+pub(super) struct Ui {
+    parent: BackgroundOutputOwner,
+    drawn: Option<NativeManagedFrameIdentity>,
+    acknowledged: Option<NativeManagedFrameIdentity>,
+    draft_dirty: bool,
+    detail_offset: usize,
+    detail_source: Option<NativeManagedFrameIdentity>,
+}
+
+impl Driver {
+    fn open_agents(&mut self) {
+        if self.frontend.is_none()
+            || self.modal.is_some()
+            || self.saved_rule.is_some()
+            || self.picker_open()
+            || self.skills_query_open()
+            || self.shutting_down
+        {
+            self.note(b"\n[agent navigation unavailable in this input view]\n");
+            return;
+        }
+        self.reset_skills();
+        if self.owner.open_managed_navigation().is_err() {
+            self.owner.close_managed_navigation();
+            self.note(b"\n[agent navigation unavailable or still settling]\n");
+            return;
+        }
+        let editor = self
+            .owner
+            .managed_navigation()
+            .expect("opened navigation")
+            .editor;
+        if self.input.open_managed_editor(editor).is_err() {
+            self.owner.close_managed_navigation();
+            self.note(b"\n[agent editor unavailable]\n");
+            return;
+        }
+        self.agents = Some(Ui {
+            parent: principal(&self.owner),
+            drawn: None,
+            acknowledged: None,
+            draft_dirty: true,
+            detail_offset: 0,
+            detail_source: None,
+        });
+    }
+
+    pub(super) fn sync_agents(&mut self) {
+        if self.owner.managed_navigation().is_none()
+            && let Some(ui) = self.agents.take()
+        {
+            self.input
+                .close_managed_editor(!self.shutting_down && ui.parent == principal(&self.owner));
+            self.reset_skills();
+            if let Some(frontend) = &mut self.frontend {
+                frontend.dirty = true;
+            }
+        }
+    }
+
+    pub(super) fn agents_binding(&self) -> Option<InputBinding> {
+        if self.modal.is_some() || self.saved_rule.is_some() {
+            return None;
+        }
+        let view = self.owner.managed_navigation()?;
+        let ui = self.agents.as_ref()?;
+        Some(InputBinding::Agents {
+            editor: view.editor,
+            frame: ui
+                .acknowledged
+                .as_ref()
+                .filter(|frame| **frame == view.frame)
+                .cloned(),
+        })
+    }
+
+    pub(super) fn acknowledge_agents(&mut self, binding: &InputBinding) {
+        if let InputBinding::Agents {
+            frame: Some(frame), ..
+        } = binding
+            && self.owner.acknowledge_managed_frame(frame).is_ok()
+            && let Some(ui) = &mut self.agents
+        {
+            ui.acknowledged = Some(frame.clone());
+        }
+    }
+
+    pub(super) fn invalidate_agents(&mut self) {
+        if let Some(ui) = &mut self.agents {
+            ui.drawn = None;
+            ui.acknowledged = None;
+            if self.owner.invalidate_managed_frame().is_err() {
+                self.owner.close_managed_navigation();
+            }
+        }
+    }
+
+    pub(super) fn agents_event(&mut self, event: &ComposerEvent, binding: &InputBinding) -> bool {
+        if matches!(event, ComposerEvent::AgentsRequested) {
+            if let InputBinding::Agents { editor, .. } = binding
+                && self
+                    .owner
+                    .managed_navigation()
+                    .is_some_and(|view| view.editor == *editor)
+            {
+                self.owner.close_managed_navigation();
+                self.sync_agents();
+            } else if matches!(binding, InputBinding::Command)
+                || self.skills_command_binding(binding)
+            {
+                self.open_agents();
+            }
+            return true;
+        }
+        let InputBinding::Agents { editor, frame } = binding else {
+            return false;
+        };
+        if self
+            .owner
+            .managed_navigation()
+            .is_none_or(|view| view.editor != *editor)
+        {
+            return true;
+        }
+        if self.scroll_agents(event, frame.as_ref()) {
+            return true;
+        }
+        let action = match event {
+            ComposerEvent::Changed => {
+                if let Some(ui) = &mut self.agents {
+                    ui.draft_dirty = true;
+                }
+                return true;
+            }
+            ComposerEvent::PickerPrevious => Action::Previous,
+            ComposerEvent::PickerNext => Action::Next,
+            ComposerEvent::EscapeRequested => Action::Back,
+            ComposerEvent::CancelRequested => Action::Lifecycle(Lifecycle::Cancel),
+            ComposerEvent::Submit(line) => {
+                if let Ok(action) = self.agent_line_action(line) {
+                    action
+                } else {
+                    self.note(b"\n[agent command rejected; use the displayed commands]\n");
+                    return true;
+                }
+            }
+            ComposerEvent::InputError(_) => {
+                self.note(b"\n[agent input rejected; draft retained]\n");
+                return true;
+            }
+            ComposerEvent::ExitRequested => {
+                self.shutdown();
+                return true;
+            }
+            _ => return true,
+        };
+        let result = frame.as_ref().ok_or(()).and_then(|frame| {
+            self.owner
+                .act_on_managed_frame(frame, action)
+                .map_err(|_| ())
+        });
+        if result.is_err() {
+            self.note(
+                b"\n[agent view changed, is busy, or has not been displayed; input retained]\n",
+            );
+        }
+        self.sync_agents();
+        true
+    }
+
+    fn scroll_agents(
+        &mut self,
+        event: &ComposerEvent,
+        frame: Option<&NativeManagedFrameIdentity>,
+    ) -> bool {
+        let previous = matches!(event, ComposerEvent::PickerPrevious);
+        if !previous && !matches!(event, ComposerEvent::PickerNext) {
+            return false;
+        }
+        let Some(view) = self.owner.managed_navigation() else {
+            return false;
+        };
+        if !matches!(view.route, Route::Agent(_)) {
+            return false;
+        }
+        let Some(ui) = &mut self.agents else {
+            return true;
+        };
+        if frame != Some(&view.frame) || ui.acknowledged.as_ref() != frame || view.busy {
+            return true;
+        }
+        let offset = if ui.detail_source.as_ref() == Some(&view.frame) {
+            ui.detail_offset
+        } else {
+            0
+        };
+        let count = render::detail_count(view.result);
+        let next = if previous {
+            offset.saturating_sub(1)
+        } else {
+            offset.saturating_add(1).min(count.saturating_sub(1))
+        };
+        if next != offset {
+            self.invalidate_agents();
+            if let Some(view) = self.owner.managed_navigation()
+                && let Some(ui) = &mut self.agents
+            {
+                ui.detail_offset = next;
+                ui.detail_source = Some(view.frame);
+            }
+        }
+        true
+    }
+
+    fn agent_line_action(&self, line: &str) -> Result<Action, ()> {
+        let view = self.owner.managed_navigation().ok_or(())?;
+        let text = line.trim();
+        Ok(match text {
+            "" if view.route == Route::ConfirmClose => Action::ConfirmClose,
+            "" => Action::Select,
+            "/back" => Action::Back,
+            "/next" => Action::NextPage,
+            "/refresh" => Action::Refresh,
+            "/archived" => Action::Filter(Filter::Archived),
+            "/current" => Action::Filter(Filter::Current),
+            "/all" => Action::Filter(Filter::All),
+            "/status" => Action::Inspect(Section::Status),
+            "/messages" => Action::Inspect(Section::Messages),
+            "/tools" => Action::Inspect(Section::ToolActivity),
+            "/events" => Action::Inspect(Section::Events),
+            "/configuration" => Action::Inspect(Section::Configuration),
+            "/relationship" => Action::Inspect(Section::Relationship),
+            "/cancel" => Action::Lifecycle(Lifecycle::Cancel),
+            "/resume" => Action::Lifecycle(Lifecycle::Resume),
+            "/reopen" => Action::Lifecycle(Lifecycle::Reopen),
+            "/close" => Action::Lifecycle(Lifecycle::Close),
+            "/confirm" => Action::ConfirmClose,
+            "/detach" => Action::Relationship {
+                action: ManagedRelationshipAction::Detach,
+                parent_id: None,
+            },
+            _ if text.starts_with("/attach ") => Action::Relationship {
+                action: ManagedRelationshipAction::Attach,
+                parent_id: Some(text[8..].trim().to_owned()),
+            },
+            _ if text.starts_with("/reparent ") => Action::Relationship {
+                action: ManagedRelationshipAction::Reparent,
+                parent_id: Some(text[10..].trim().to_owned()),
+            },
+            _ if text.starts_with("/create ") => {
+                let create: serde_json::Value = serde_json::from_str(&text[8..]).map_err(|_| ())?;
+                match ManagedSubagentCommand::decode(
+                    serde_json::json!({"command":{"create":create}}),
+                )
+                .map_err(|_| ())?
+                {
+                    ManagedSubagentCommand::Create(create) => Action::Create(create),
+                    _ => return Err(()),
+                }
+            }
+            _ if text.starts_with("/configure ") => {
+                let mut configure: serde_json::Map<String, serde_json::Value> =
+                    serde_json::from_str(&text[11..]).map_err(|_| ())?;
+                if configure.contains_key("id") {
+                    return Err(());
+                }
+                configure.insert(
+                    "id".into(),
+                    serde_json::Value::String(view.target.ok_or(())?.id.clone()),
+                );
+                match ManagedSubagentCommand::decode(
+                    serde_json::json!({"command":{"configure":configure}}),
+                )
+                .map_err(|_| ())?
+                {
+                    ManagedSubagentCommand::Configure(configure) => Action::Configure(configure),
+                    _ => return Err(()),
+                }
+            }
+            _ if !text.starts_with('/') && matches!(view.route, Route::Agent(_)) => {
+                Action::Message(line.to_owned())
+            }
+            _ => return Err(()),
+        })
+    }
+
+    pub(super) fn prepare_agents_render(&mut self) -> bool {
+        let Some(ui) = &mut self.agents else {
+            return false;
+        };
+        let Some(view) = self.owner.managed_navigation() else {
+            return false;
+        };
+        if ui.drawn.as_ref() == Some(&view.frame) && !ui.draft_dirty {
+            return true;
+        }
+        let Some(frontend) = &mut self.frontend else {
+            return false;
+        };
+        let draft = self.input.raw_draft().unwrap_or(("", 0));
+        if ui.detail_source.as_ref() != Some(&view.frame) {
+            ui.detail_offset = 0;
+            ui.detail_source = Some(view.frame.clone());
+        }
+        let Ok(frame) = render::render(
+            &view,
+            draft,
+            frontend.columns,
+            frontend.rows,
+            ui.detail_offset,
+        ) else {
+            self.native_failed = true;
+            self.shutdown();
+            return true;
+        };
+        ui.drawn = Some(view.frame.clone());
+        ui.draft_dirty = false;
+        let confirm = Some(InputBinding::Agents {
+            editor: view.editor,
+            frame: frame.selectable.then_some(view.frame),
+        });
+        frontend.menu_height = Some(frame.height);
+        self.render = Some(Render {
+            bytes: frame.bytes,
+            offset: 0,
+            history: false,
+            clear_row: false,
+            confirm,
+            receipt: None,
+            model_text: false,
+        });
+        true
+    }
+}

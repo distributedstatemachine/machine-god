@@ -28,6 +28,10 @@ pub use controls::{
 mod driver;
 mod managed;
 mod navigation;
+pub use navigation::{
+    NativeManagedEditorIdentity, NativeManagedFrameIdentity, NativeManagedNavigationAction,
+    NativeManagedNavigationError, NativeManagedNavigationRoute, NativeManagedNavigationView,
+};
 mod startup;
 pub use startup::NativeManagedInteractiveStartup;
 #[cfg(test)]
@@ -274,6 +278,7 @@ pub struct NativeInteractiveSession {
     options: NativeInteractiveSessionOptions,
     current: Arc<NativeConversationRuntime>,
     managed: Option<Box<managed::Owner>>,
+    navigation: Option<Box<navigation::Navigation>>,
     admission: Option<
         BoxFuture<
             'static,
@@ -460,6 +465,7 @@ impl NativeInteractiveSession {
             options,
             current,
             managed,
+            navigation: None,
             admission: None,
             turn: None,
             transition: None,
@@ -602,6 +608,7 @@ impl NativeInteractiveSession {
                 .map(|transition| transition.request.id)
         });
         self.pending = Some(Request { id, kind, now_ms });
+        self.close_managed_navigation();
         if let Some(transition) = &self.transition {
             transition.cancel_preparation();
         }
@@ -611,6 +618,7 @@ impl NativeInteractiveSession {
         Ok(NativeInteractiveRequestReceipt { id, superseded })
     }
     pub fn request_shutdown(&mut self) {
+        self.close_managed_navigation();
         self.cancel_copy();
         self.cancel_background_control();
         self.shutting_down = true;

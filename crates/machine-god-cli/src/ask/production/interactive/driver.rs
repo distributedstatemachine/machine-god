@@ -47,6 +47,7 @@ impl Driver {
         // continue even when every presentation slot is occupied.
         let _ = self.owner.poll_progress(cx, now_ms);
         self.observe_outcomes();
+        self.sync_agents();
         self.poll_skills_refresh(now_ms);
         if self.owner.shutdown_error().is_some() {
             self.native_failed = true;
@@ -214,6 +215,7 @@ impl Driver {
                 {
                     self.reset_skills();
                     self.revoke_pending_picker_selection();
+                    self.invalidate_agents();
                     self.modal = Some(Modal::new(view));
                 }
             }
@@ -221,6 +223,7 @@ impl Driver {
                 if self.modal.take().is_some() {
                     self.reset_skills();
                     self.revoke_pending_picker_selection();
+                    self.invalidate_agents();
                 }
             }
             Poll::Ready(None) => {
@@ -235,6 +238,7 @@ impl Driver {
             .saved_rule
             .as_ref()
             .map(super::saved_rules::Confirmation::binding)
+            .or_else(|| self.agents_binding())
             .or_else(|| self.picker_binding())
             .or_else(|| self.skills_binding())
             .unwrap_or_else(|| {
@@ -249,7 +253,14 @@ impl Driver {
                     Modal::binding,
                 )
             });
-        self.sync_skills_input_owner(&binding);
+        if self.agents.is_some() {
+            self.input.sync_managed_editor(match &binding {
+                InputBinding::Agents { editor, .. } => Some(editor),
+                _ => None,
+            });
+        } else {
+            self.sync_skills_input_owner(&binding);
+        }
         // A context transfer creates a new draft epoch; bind only bytes not yet
         // received to it. Retained chunks still carry their previous owner.
         if matches!(binding, InputBinding::Skills { .. }) {
@@ -320,6 +331,7 @@ impl Driver {
                     picker.resize(frontend.rows);
                 }
                 self.invalidate_skills_frame();
+                self.invalidate_agents();
             }
             Poll::Ready(Err(())) => {
                 self.native_failed = true;
@@ -334,7 +346,10 @@ impl Driver {
         super::composer::ComposerContext {
             active_response: status.active || status.queued_jobs != 0,
             session_picker: self.picker_open(),
-            skills: if self.skills_query_open() {
+            agents: self.owner.managed_navigation().is_some() && self.modal.is_none(),
+            skills: if self.agents.is_some() {
+                None
+            } else if self.skills_query_open() {
                 Some(machine_god_native::NativeSkillPickerMode::Menu)
             } else {
                 self.skills_open()
@@ -419,6 +434,9 @@ impl Driver {
         frontend.dirty = true;
         if !matches!(event.0, ComposerEvent::CancelRequested) {
             frontend.cancel_armed = None;
+        }
+        if self.agents_event(&event.0, &event.1) {
+            return;
         }
         if self.picker_event(&event.0, &event.1, now_ms) {
             return;
@@ -557,6 +575,7 @@ impl Driver {
                 self.acknowledge_picker(binding);
                 self.acknowledge_skills(binding);
                 self.acknowledge_saved_rule(binding);
+                self.acknowledge_agents(binding);
             }
             if let (Some(binding), Some(modal)) = (confirm, &mut self.modal)
                 && modal.presentation_binding() == binding
@@ -602,10 +621,15 @@ impl Driver {
                 {
                     picker.redraw();
                 }
-                if !matches!(render.confirm, Some(InputBinding::Skills { .. })) {
+                let skills_frame = matches!(render.confirm, Some(InputBinding::Skills { .. }));
+                let agents_frame = matches!(render.confirm, Some(InputBinding::Agents { .. }));
+                if !skills_frame {
                     self.invalidate_skills_frame();
                 }
-            } else if self.picker_open() || self.skills_open() {
+                if !agents_frame {
+                    self.invalidate_agents();
+                }
+            } else if self.picker_open() || self.skills_open() || self.agents.is_some() {
                 self.frontend.as_mut().expect("menu frontend").menu_height = Some(height);
                 return;
             } else {
@@ -625,7 +649,7 @@ impl Driver {
                 });
             }
         }
-        let picker_open = self.picker_open() || self.skills_open();
+        let picker_open = self.picker_open() || self.skills_open() || self.agents.is_some();
         let Some(frontend) = &mut self.frontend else {
             return;
         };
@@ -695,6 +719,9 @@ impl Driver {
             }
             (modal.render(), Some(modal.presentation_binding()), None)
         } else if !self.shutting_down {
+            if self.prepare_agents_render() {
+                return;
+            }
             if self.prepare_picker_render() {
                 return;
             }

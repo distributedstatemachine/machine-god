@@ -20,6 +20,8 @@ mod mcp_eof;
 #[path = "driver_tests/skills_ack.rs"]
 mod skills_ack;
 
+#[path = "driver_tests/agents.rs"]
+mod agents;
 #[path = "driver_tests/picker_ack.rs"]
 mod picker_ack;
 
