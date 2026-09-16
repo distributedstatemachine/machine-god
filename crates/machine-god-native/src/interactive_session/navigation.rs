@@ -1,4 +1,5 @@
 //! Native managed observation/admission. UI pages never replace the parent runtime.
+mod drafts;
 mod processes;
 mod state;
 mod view;
@@ -8,6 +9,7 @@ use crate::{
     NativeManagedCatalogOutcome, NativeManagedCatalogRequest, NativeManagedCommandResponse,
     NativeObservedManagedAgent,
 };
+pub use drafts::NativeManagedDraftView;
 use machine_god_core::{CancellationToken, ManagedSubagentCommand, ManagedSubagentError};
 pub(super) use state::Navigation;
 pub use view::{
@@ -17,6 +19,26 @@ pub use view::{
 };
 
 impl NativeInteractiveSession {
+    /// Retains unsent child text/cursor under the exact current editor identity.
+    /// It grants no command admission and never executes or persists a message.
+    /// # Errors
+    /// Rejects stale/non-child editors, invalid text/cursors and bounded capacity.
+    pub fn edit_managed_draft(
+        &mut self,
+        editor: &NativeManagedEditorIdentity,
+        value: &str,
+        cursor: usize,
+    ) -> Result<(), NativeManagedNavigationError> {
+        self.navigation_available()?;
+        let result = self
+            .navigation
+            .as_mut()
+            .ok_or(NativeManagedNavigationError::Unavailable)?
+            .edit_draft(editor, value, cursor);
+        self.notify();
+        result
+    }
+
     /// Replaces only the current form field under its original editor identity.
     /// This cannot execute a command or change the selected target. Submission
     /// still requires acknowledgement of the resulting frame.
@@ -179,12 +201,41 @@ impl NativeInteractiveSession {
         frame: &NativeManagedFrameIdentity,
         action: NativeManagedNavigationAction,
     ) -> Result<(), NativeManagedNavigationError> {
+        self.act_managed(frame, action, None)
+    }
+
+    /// Submits an editor line as typed native intent. Matching retained text is
+    /// consumed only after successful navigation or a confirmed command receipt.
+    /// Keyboard navigation should use `act_on_managed_frame` and preserve drafts.
+    /// # Errors
+    /// Uses the same exact-frame, target and lifecycle checks as other actions.
+    pub fn submit_managed_frame(
+        &mut self,
+        frame: &NativeManagedFrameIdentity,
+        action: NativeManagedNavigationAction,
+        text: &str,
+    ) -> Result<(), NativeManagedNavigationError> {
+        self.act_managed(frame, action, Some(text))
+    }
+
+    fn act_managed(
+        &mut self,
+        frame: &NativeManagedFrameIdentity,
+        action: NativeManagedNavigationAction,
+        submitted: Option<&str>,
+    ) -> Result<(), NativeManagedNavigationError> {
         self.navigation_available()?;
         let mut navigation = self
             .navigation
             .take()
             .ok_or(NativeManagedNavigationError::Unavailable)?;
+        let draft = submitted.and_then(|text| navigation.submitted_draft(text));
         let result = navigation.action(self, frame, action);
+        if result.is_ok()
+            && let Some(draft) = draft
+        {
+            navigation.retain_submission(draft);
+        }
         self.navigation = Some(navigation);
         self.notify();
         result

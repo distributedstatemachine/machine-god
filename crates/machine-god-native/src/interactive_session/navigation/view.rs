@@ -69,6 +69,7 @@ pub enum NativeManagedNavigationError {
     NoSelection,
     InvalidAction,
     Exhausted,
+    DraftCapacity,
     Form(NativeManagedFormError),
 }
 impl fmt::Display for NativeManagedNavigationError {
@@ -84,6 +85,7 @@ impl fmt::Display for NativeManagedNavigationError {
             Self::NoSelection => "agent navigation selection unavailable",
             Self::InvalidAction => "agent navigation action invalid",
             Self::Exhausted => "agent navigation identity exhausted",
+            Self::DraftCapacity => "retained agent drafts exceed capacity",
             Self::Form(_) => unreachable!("handled above"),
         })
     }
@@ -147,6 +149,7 @@ impl fmt::Debug for NativeManagedNavigationAction {
 /// Borrowed unsanitized display values. The renderer must escape terminal text.
 /// A retained frame identity does not retain this projection or a child runtime.
 pub struct NativeManagedNavigationView<'a> {
+    pub draft: Option<super::drafts::NativeManagedDraftView<'a>>,
     pub editor: NativeManagedEditorIdentity,
     pub frame: NativeManagedFrameIdentity,
     pub route: NativeManagedNavigationRoute,
@@ -198,6 +201,7 @@ mod tests {
             revision: 456_789,
         };
         let view = NativeManagedNavigationView {
+            draft: None,
             editor,
             frame,
             route: NativeManagedNavigationRoute::Catalog(NativeManagedCatalogFilter::Current),

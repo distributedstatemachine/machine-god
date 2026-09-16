@@ -517,6 +517,23 @@ paste or partial UTF-8 sequence keeps its original editor until decoding finishe
 retired input is drained, not reinterpreted as a new prompt or command. Human prompts
 invalidate the obscured frame and keep their exact multi-owner inbox tokens.
 
+Unsent child text and UTF-8 cursor offsets belong to the native navigation owner,
+keyed by the original manager allocation and child generation, not row position,
+journal revision or editor epoch. Sibling selection, Escape and Ctrl-X closure
+retain independent drafts; a replaced child generation cannot inherit them.
+At most 128 nonempty drafts retain 4 MiB of text in aggregate, with a 256 KiB
+per-draft bound. A replacement may temporarily allocate one additional bounded
+draft; cursor-only edits allocate no new text. Capacity/invalid-edit rejection
+preserves existing text and never evicts another nonempty draft. These are
+unsent presentation bounds, not a child-count or accepted-message-size limit.
+Drafts are not persisted. A confirmed message acceptance clears only its exact
+submitted draft revision; rejection, ambiguity and newer edits preserve text.
+Submitted local-command text is likewise consumed only after successful
+navigation or a confirmed command receipt; keyboard navigation preserves drafts.
+Restoring a draft seeds text/cursor only, never a previous input chunk or frame
+acknowledgement. The CLI cannot acknowledge a child frame until its corresponding
+draft has been restored without interrupting an atomic decoder.
+
 The process page is a read-only snapshot of the selected runtime's terminal access,
 bounded by the terminal service's 128 rows and 1 MiB command/path-text budget.
 `/processes` observes the parent from the catalog and the selected child from an

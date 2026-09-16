@@ -34,9 +34,9 @@ mod managed;
 pub(crate) use managed::staged::Failure as NativeManagedStageFailure;
 mod navigation;
 pub use navigation::{
-    NativeManagedEditorIdentity, NativeManagedFrameIdentity, NativeManagedNavigationAction,
-    NativeManagedNavigationError, NativeManagedNavigationRoute, NativeManagedNavigationView,
-    NativeManagedProcessScope,
+    NativeManagedDraftView, NativeManagedEditorIdentity, NativeManagedFrameIdentity,
+    NativeManagedNavigationAction, NativeManagedNavigationError, NativeManagedNavigationRoute,
+    NativeManagedNavigationView, NativeManagedProcessScope,
 };
 mod startup;
 pub use startup::NativeManagedInteractiveStartup;

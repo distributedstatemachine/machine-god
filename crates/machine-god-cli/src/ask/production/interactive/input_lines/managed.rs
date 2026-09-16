@@ -26,6 +26,15 @@ impl InputLines {
         editor: &NativeManagedEditorIdentity,
         text: &str,
     ) -> Result<bool, ()> {
+        self.seed_managed_draft(editor, text, text.len())
+    }
+
+    pub(in crate::ask::production::interactive) fn seed_managed_draft(
+        &mut self,
+        editor: &NativeManagedEditorIdentity,
+        text: &str,
+        cursor: usize,
+    ) -> Result<bool, ()> {
         if self
             .managed_editors
             .as_ref()
@@ -40,7 +49,7 @@ impl InputLines {
         }
         let composer = self.composer.as_mut().ok_or(())?;
         composer
-            .replace(0..composer.text().len(), text, text.len())
+            .replace(0..composer.text().len(), text, cursor)
             .map_err(|_| ())?;
         Ok(true)
     }

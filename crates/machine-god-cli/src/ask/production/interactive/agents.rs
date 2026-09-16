@@ -1,4 +1,5 @@
 //! Thin native-navigation adapter. This owns only rendering/flush and editor custody.
+mod drafts;
 mod forms;
 mod render;
 use super::{Driver, InputBinding, Render, composer::ComposerEvent, principal};
@@ -20,6 +21,7 @@ pub(super) struct Ui {
     detail_offset: usize,
     detail_source: Option<NativeManagedFrameIdentity>,
     form_editor: Option<NativeManagedEditorIdentity>,
+    draft_editor: Option<(NativeManagedEditorIdentity, u64)>,
 }
 
 impl Driver {
@@ -58,6 +60,7 @@ impl Driver {
             detail_offset: 0,
             detail_source: None,
             form_editor: None,
+            draft_editor: None,
         });
     }
 
@@ -181,9 +184,12 @@ impl Driver {
             _ => return true,
         };
         let result = frame.as_ref().ok_or(()).and_then(|frame| {
-            self.owner
-                .act_on_managed_frame(frame, action)
-                .map_err(|_| ())
+            if let ComposerEvent::Submit(text) = event {
+                self.owner.submit_managed_frame(frame, action, text)
+            } else {
+                self.owner.act_on_managed_frame(frame, action)
+            }
+            .map_err(|_| ())
         });
         if result.is_err() {
             self.note(
@@ -371,7 +377,12 @@ impl Driver {
         ui.draft_dirty = false;
         let confirm = Some(InputBinding::Agents {
             frame: (frame.selectable
-                && (view.form.is_none() || ui.form_editor.as_ref() == Some(&view.editor)))
+                && (view.form.is_none() || ui.form_editor.as_ref() == Some(&view.editor))
+                && view.draft.is_none_or(|draft| {
+                    ui.draft_editor.as_ref().is_some_and(|(editor, revision)| {
+                        editor == &view.editor && *revision == draft.revision
+                    })
+                }))
             .then_some(view.frame),
             editor: view.editor,
         });

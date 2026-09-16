@@ -105,6 +105,68 @@ fn displayed(driver: &Driver) -> bool {
 }
 
 #[test]
+fn child_unicode_draft_and_cursor_survive_closing_and_reopening_navigation() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        harness.input_writer.write_all(b"parent").unwrap();
+        input_until(&mut harness, |driver| {
+            driver.input.raw_draft() == Some(("parent", 6))
+        })
+        .await;
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && matches!(
+                    driver.owner.managed_navigation().unwrap().route,
+                    Route::Agent(_)
+                )
+        })
+        .await;
+        harness
+            .input_writer
+            .write_all("\x1b[200~α\nbeta\x1b[201~\x1b[D\x1b[D".as_bytes())
+            .unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.input.raw_draft() == Some(("α\nbeta", 5))
+        })
+        .await;
+        let draft = harness
+            .driver
+            .owner
+            .managed_navigation()
+            .unwrap()
+            .draft
+            .unwrap();
+        assert_eq!((draft.text, draft.cursor), ("α\nbeta", 5));
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, |driver| {
+            driver.agents.is_none() && presentation_idle(driver)
+        })
+        .await;
+        assert_eq!(harness.driver.input.raw_draft(), Some(("parent", 6)));
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && matches!(
+                    driver.owner.managed_navigation().unwrap().route,
+                    Route::Agent(_)
+                )
+        })
+        .await;
+        assert_eq!(harness.driver.input.raw_draft(), Some(("α\nbeta", 5)));
+        assert!(fixture.transport.requests().is_empty());
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
 fn process_navigation_preserves_parent_draft_and_rejects_agent_lifecycle_intent() {
     use native::NativeManagedProcessScope as Scope;
     let runtime = executor();

@@ -43,6 +43,7 @@ enum Pending {
         response: NativeManagedCommandResponse,
         cancellation: CancellationToken,
         epoch: u64,
+        draft: Option<super::drafts::Submission>,
     },
 }
 
@@ -64,6 +65,7 @@ pub(in crate::interactive_session) struct Navigation {
     form: Option<Form>,
     process_owner: Option<machine_god_core::BackgroundOutputOwner>,
     processes: Option<crate::NativeTerminalBackgroundSnapshot>,
+    drafts: super::drafts::Drafts,
 }
 
 impl Default for Navigation {
@@ -86,11 +88,30 @@ impl Default for Navigation {
             form: None,
             process_owner: None,
             processes: None,
+            drafts: super::drafts::Drafts::default(),
         }
     }
 }
 
 impl Navigation {
+    pub(super) fn submitted_draft(&self, text: &str) -> Option<super::drafts::Submission> {
+        if !matches!(self.route, Route::Agent(_)) {
+            return None;
+        }
+        self.drafts
+            .submission(&self.target().ok()?.observation, text)
+    }
+
+    pub(super) fn retain_submission(&mut self, submission: super::drafts::Submission) {
+        if let Some(Pending::Command { draft, .. }) = &mut self.pending {
+            if draft.is_none() {
+                *draft = Some(submission);
+            }
+        } else {
+            self.drafts.accepted(&submission);
+        }
+    }
+
     pub(super) fn owns_catalog(&self) -> bool {
         matches!(self.pending, Some(Pending::Catalog { .. }))
     }
@@ -102,6 +123,13 @@ impl Navigation {
     }
     pub(super) fn view(&self) -> Option<NativeManagedNavigationView<'_>> {
         self.open.then(|| NativeManagedNavigationView {
+            draft: matches!(self.route, Route::Agent(_))
+                .then(|| {
+                    self.target()
+                        .ok()
+                        .map(|target| self.drafts.view(&target.observation))
+                })
+                .flatten(),
             editor: editor(&self.identity, self.epoch),
             frame: self.frame(),
             route: self.route,
@@ -213,6 +241,12 @@ impl Navigation {
         owner: &mut NativeInteractiveSession,
         command: ManagedSubagentCommand,
     ) -> Result<(), Error> {
+        let draft = match &command {
+            ManagedSubagentCommand::Message(ManagedMessage::Send(message)) => self
+                .drafts
+                .submission(&self.target()?.observation, &message.content),
+            _ => None,
+        };
         let cancellation = CancellationToken::new();
         let response = if matches!(command, ManagedSubagentCommand::Create(_)) {
             owner.request_managed_command(command, cancellation.clone())
@@ -229,6 +263,7 @@ impl Navigation {
             response,
             cancellation,
             epoch: self.epoch,
+            draft,
         });
         Ok(())
     }
@@ -268,6 +303,22 @@ impl Navigation {
             epoch: self.epoch,
         });
         Ok(())
+    }
+
+    pub(super) fn edit_draft(
+        &mut self,
+        identity: &NativeManagedEditorIdentity,
+        value: &str,
+        cursor: usize,
+    ) -> Result<(), Error> {
+        if !self.open || *identity != self.frame().editor {
+            return Err(Error::StaleFrame);
+        }
+        if !matches!(self.route, Route::Agent(_)) {
+            return Err(Error::InvalidAction);
+        }
+        let target = self.target()?.observation.clone();
+        self.drafts.replace(&target, value, cursor)
     }
 
     pub(super) fn edit_form(
@@ -566,15 +617,24 @@ impl Navigation {
                 mut response,
                 cancellation,
                 epoch,
+                draft,
             } => {
                 let Poll::Ready(result) = response.as_mut().poll(cx) else {
                     self.pending = Some(Pending::Command {
                         response,
                         cancellation,
                         epoch,
+                        draft,
                     });
                     return;
                 };
+                if result.as_ref().is_ok_and(|result| result.ok)
+                    && let Some(draft) = draft
+                {
+                    // Closing or changing presentation does not undo durable
+                    // acceptance. A newer unsent edit is never cleared here.
+                    self.drafts.accepted(&draft);
+                }
                 if self.open && epoch == self.epoch {
                     match result {
                         Ok(result) => self.result = Some(result),

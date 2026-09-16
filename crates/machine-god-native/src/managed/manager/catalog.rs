@@ -86,6 +86,27 @@ impl fmt::Debug for NativeObservedManagedAgent {
     }
 }
 impl NativeObservedManagedAgent {
+    #[cfg(test)]
+    pub(crate) fn test_observations(count: usize) -> Vec<Self> {
+        let identity = Arc::new(Identity);
+        (0..count)
+            .map(|index| Self {
+                identity: Arc::downgrade(&identity),
+                id: format!("observed-{index}"),
+                generation: 1,
+                revision: 1,
+            })
+            .collect()
+    }
+
+    /// Presentation retention follows the conversation generation, not each
+    /// journal head revision. This comparison grants no command admission.
+    pub(crate) fn same_conversation(&self, other: &Self) -> bool {
+        self.identity.ptr_eq(&other.identity)
+            && self.id == other.id
+            && self.generation == other.generation
+    }
+
     pub(crate) fn matches_command(&self, command: &ManagedSubagentCommand) -> bool {
         let target = match command {
             ManagedSubagentCommand::Inspect(value) => &value.id,

@@ -12,6 +12,7 @@ impl Driver {
             return;
         };
         let Some(form) = view.form else {
+            self.sync_agent_draft_editor(binding);
             return;
         };
         let Some(ui) = &mut self.agents else {
@@ -43,6 +44,7 @@ impl Driver {
             return;
         };
         let Some(form) = view.form else {
+            self.edit_agent_draft(editor);
             return;
         };
         if view.busy {
