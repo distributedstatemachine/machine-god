@@ -814,7 +814,19 @@ not execution or process authority. Native run admission remains separate.
 
 Every head publication appends typed immutable control evidence. Accepted work,
 state transitions/resolutions, configuration, history, events and tool activity
-are pageable. Milestone operation labels retain core's bounded non-whitespace,
+are pageable. Create, enqueue, configuration, relationships, work transitions,
+lifecycle changes/recovery and accepted milestones also publish one typed event
+atomically with their originating mutation. Its sequence is the original journal
+page sequence, its revision is that publication's head revision, and its timestamp
+is native publication wall time. Event sequences can therefore have gaps where
+intervening pages contain only history, notice or acknowledgement maintenance.
+Receipts name the last persisted event, not an unrelated later maintenance page;
+retention may prune it and is reported through ordinary cursor/gap evidence.
+`MilestoneRecorded` distinguishes acceptance from notice emission: its optional
+target is absent for a detached child, and `notice_emitted` is false when
+notifications are suppressed or the milestone notice was already recorded.
+Repeated accepted milestone commands retain their own event without replaying
+the notice. Milestone operation labels retain core's bounded non-whitespace,
 non-control syntax rather than being narrowed to child-ID syntax.
 FIFO state changes name the exact first work item; interrupted,
 failed or approval-blocked heads require explicit resolution. Cancellation intent
@@ -910,8 +922,10 @@ still-required terminal event notice.
 Notice identity combines the original source principal ID/generation, work
 ID/generation, supplied durable source-event sequence and typed notice kind;
 interval identity includes its exact tick range. A source sequence means the
-manager's exact persisted event sequence, not a page number that can contain
-multiple records. Bounded opaque history references identify journal records,
+manager's exact persisted source occurrence, not an arbitrary record offset.
+The native journal permits only one notice occurrence at that page sequence,
+even when the page also contains control or typed event evidence.
+Bounded opaque history references identify journal records,
 not filesystem read authority. Reparent/detach changes the relationship used by
 future emissions. Each already-pending notice keeps its original parent and
 relationship revision; parent retirement invalidates only that target's pending
@@ -1145,6 +1159,16 @@ settles the original candidate before permitting an explicit retry with the same
 manager. An unsuccessful cleanup instead retains the candidate behind a startup
 fence and cannot produce a successful shutdown receipt. Cancelling an unpolled
 staged open settles the ready peers without creating a transcript.
+Ordinary managed selection uses the same custody rule: configuration or
+enrollment rejection must settle the original prepared runtime and residency
+ticket before releasing the old selection fence or permitting startup retry.
+Cleanup failure retains both behind a fence; later worker completion cannot
+rewrite that failed cleanup receipt as success. The convenience
+`NativeInteractiveSession::open_managed` returns
+`NativeManagedInteractiveOpenFailure` on error, with the startup owner when a
+manager was opened. Callers retain that owner and request/poll its shutdown;
+dropping the error's owner is abandonment, not a cleanup receipt. No owner is
+returned only when failure preceded opening the manager.
 ACP selection can retain this pre-selection owner directly through managed host
 preparation, reservation, peer readiness and initial opening. Readiness precedes
 cancellation of the previous foreground. Failed selection settles the original
@@ -1254,6 +1278,13 @@ actual future destruction; a ready runtime is handed off only after this exact
 cohort settles, including an explicitly reconciled creation. Pre-turn readiness/checkpoint work and actual turns
 use their exact existing admission/run cohorts. Resource settlement observes those
 actual worker/TLS/reap receipts, not the global host scope or a completed stream.
+When pre-turn admission ends without a turn, its principal owner cancels and
+drives retained shared MCP refresh before waiting for that admission's workers.
+Deferred activation instead finishes its original configured attempt because
+its outcome belongs to the published generation. Cancelling an individual refresh observer still does
+not cancel the shared job. Owner settlement releases unpublished peer custody
+without closing the published MCP runtime or authentication service, so a
+persistent child can accept subsequent work after cancellation.
 MCP close owns independent cancellation and a separately bounded cleanup cohort.
 It drives retained startup/peer settlement concurrently with original admission
 completion, so retained startup cannot wait on its own undriven receipt. Exact

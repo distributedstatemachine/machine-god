@@ -61,12 +61,13 @@ fn inspection() -> ManagedInspection {
             revision: 11,
             id: "event-id".into(),
             timestamp_ms: 14,
-            kind: ManagedEventKind::MilestoneEmitted {
+            kind: ManagedEventKind::MilestoneRecorded {
                 operation_id: "operation".into(),
                 source_child_id: "milestone-child".into(),
-                target_parent_id: "milestone-parent".into(),
+                target_parent_id: Some("milestone-parent".into()),
                 work_item_id: "milestone-work".into(),
                 name: "milestone-name".into(),
+                notice_emitted: true,
             },
         }],
         ..ManagedInspection::default()
@@ -108,9 +109,32 @@ fn details_include_selected_sources_failures_and_retained_gap_evidence() {
         "milestone-child",
         "milestone-parent",
         "milestone-work",
+        "Notice emitted: yes",
     ] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
+}
+
+#[test]
+fn detached_milestone_does_not_claim_a_parent_or_notice() {
+    let mut selected = inspection();
+    let ManagedEventKind::MilestoneRecorded {
+        target_parent_id,
+        notice_emitted,
+        ..
+    } = &mut selected.events[0].kind
+    else {
+        panic!("milestone fixture");
+    };
+    *target_parent_id = None;
+    *notice_emitted = false;
+    let result = envelope(selected);
+    let mut rows = Vec::new();
+    detail::visit(Some(&result), |row| rows.push(row.to_owned()));
+    let text = rows.join("\n");
+    assert!(text.contains("To: none"));
+    assert!(text.contains("Notice emitted: no"));
+    assert!(!text.contains("milestone-parent"));
 }
 
 #[test]

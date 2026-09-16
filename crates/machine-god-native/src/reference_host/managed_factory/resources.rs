@@ -185,7 +185,19 @@ impl ManagedRuntimeResources for Resources {
         if self.admission.is_none() {
             let completion = self.binding.admission_completion();
             let preparation = self.preparation.clone();
+            let controller = self
+                .binding
+                .has_unsettled_untransferred_admission()
+                .then(|| self.mcp.instance.controller.clone())
+                .flatten();
             self.admission = Some(Box::pin(async move {
+                // A cancelled observer may leave a shared refresh holding an
+                // unpublished peer in this admission cohort. Drive its cutoff
+                // before awaiting that cohort; closing the entire controller
+                // would incorrectly disable a persistent child's next message.
+                if let Some(controller) = controller {
+                    controller.settle_abandoned_admission().await;
+                }
                 preparation.wait().await;
                 if let Some(completion) = completion {
                     completion.wait().await;

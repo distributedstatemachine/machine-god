@@ -5,8 +5,89 @@ use super::super::records::{
 use super::super::{JournalError as Error, JournalLimits};
 use super::validation;
 use machine_god_core::{
-    ManagedAgentMode as Mode, ManagedAgentState as State, ManagedQueueStatus as Status,
+    ManagedAgentMode as Mode, ManagedAgentState as State, ManagedEvent, ManagedEventKind,
+    ManagedQueueStatus as Status,
 };
+
+pub(super) fn event(head: &JournalHead, kind: ManagedEventKind) -> Result<JournalRecord, Error> {
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| Error::Invalid)?
+        .as_millis()
+        .try_into()
+        .map_err(|_| Error::Exhausted)?;
+    Ok(JournalRecord::Event(ManagedEvent {
+        sequence: head.next_sequence,
+        revision: head.revision,
+        id: format!("event-{}", head.next_sequence),
+        timestamp_ms,
+        kind,
+    }))
+}
+
+pub(super) fn apply(
+    head: &mut JournalHead,
+    mutation: JournalMutation,
+    limits: JournalLimits,
+) -> Result<Vec<JournalRecord>, Error> {
+    let mut kind = match &mutation {
+        JournalMutation::Enqueue(work) => Some(ManagedEventKind::MessageQueued {
+            message_id: work.id.clone(),
+        }),
+        JournalMutation::HeadState {
+            work_id,
+            status,
+            failure,
+        } => Some(ManagedEventKind::WorkTransition {
+            work_item_id: work_id.clone(),
+            previous: head.queue.first().map(|work| work.status),
+            current: *status,
+            reason: failure.clone(),
+        }),
+        JournalMutation::Configure(_) => Some(ManagedEventKind::Configured),
+        JournalMutation::Milestone {
+            operation_id,
+            work_id,
+            name,
+            notice,
+            ..
+        } => Some(ManagedEventKind::MilestoneRecorded {
+            operation_id: operation_id.clone(),
+            source_child_id: head.id.clone(),
+            target_parent_id: notice
+                .as_ref()
+                .map(|notice| notice.target.parent.id.clone())
+                .or_else(|| head.parent_id.clone()),
+            notice_emitted: notice.is_some(),
+            work_item_id: work_id.clone(),
+            name: name.clone(),
+        }),
+        JournalMutation::Relationship { parent_id, .. } => {
+            Some(ManagedEventKind::RelationshipChanged {
+                previous_parent_id: head.parent_id.clone(),
+                parent_id: parent_id.clone(),
+            })
+        }
+        JournalMutation::Intent(_)
+        | JournalMutation::CancelIdle
+        | JournalMutation::ResolveHead { .. }
+        | JournalMutation::Archive
+        | JournalMutation::Reopen(_)
+        | JournalMutation::Recover => Some(ManagedEventKind::LifecycleChanged {
+            previous: head.status,
+            current: head.status,
+        }),
+        JournalMutation::SuppressedNotice(_) | JournalMutation::AppendHistory(_) => None,
+    };
+    let mut records = apply_inner(head, mutation, limits)?;
+    if let Some(ManagedEventKind::LifecycleChanged { current, .. }) = &mut kind {
+        *current = head.status;
+    }
+    if let Some(kind) = kind {
+        records.insert(0, event(head, kind)?);
+    }
+    Ok(records)
+}
 
 pub(super) fn enqueue(
     head: &mut JournalHead,
@@ -48,7 +129,7 @@ pub(super) fn enqueue(
 }
 
 #[allow(clippy::too_many_lines)] // Exhaustive typed transaction validation without effects.
-pub(super) fn apply(
+fn apply_inner(
     head: &mut JournalHead,
     mutation: JournalMutation,
     limits: JournalLimits,
@@ -123,6 +204,37 @@ pub(super) fn apply(
                 return Err(Error::Conflict);
             }
             head.notice_cursor = sequence;
+        }
+        JournalMutation::Milestone {
+            notice,
+            consume_sequence,
+            work_id,
+            name,
+            ..
+        } => {
+            if head.queue.first().is_none_or(|work| {
+                work.id != work_id
+                    || !matches!(work.status, Status::Running | Status::AwaitingApproval)
+            }) {
+                return Err(Error::Conflict);
+            }
+            if let Some(notice) = notice {
+                if !consume_sequence
+                    || notice.source.work_id != work_id
+                    || notice.event != (crate::managed::notices::NoticeEvent::Milestone { name })
+                {
+                    return Err(Error::Invalid);
+                }
+                return apply_inner(
+                    head,
+                    JournalMutation::AppendHistory(vec![JournalRecord::Notice(notice)]),
+                    limits,
+                );
+            }
+            if consume_sequence {
+                let sequence = head.next_sequence;
+                return apply_inner(head, JournalMutation::SuppressedNotice(sequence), limits);
+            }
         }
         JournalMutation::AppendHistory(records) => {
             validate_history(&records)?;

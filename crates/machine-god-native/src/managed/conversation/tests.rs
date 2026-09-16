@@ -181,6 +181,65 @@ fn completed() -> ModelProviderStep {
 }
 
 #[test]
+fn abandoned_admission_detection_excludes_idle_and_transferred_turn_cohorts() {
+    let fixture = Fixture::new(vec![]);
+    let (conversation, owner) = fixture.conversation("admission-custody");
+    let workers = crate::NativeOwnedWorkerScope::new();
+    owner
+        .configure_worker_binding(workers.clone(), Arc::new(()))
+        .unwrap();
+    let binding = owner.binding();
+    assert!(!binding.has_unsettled_untransferred_admission());
+    let runtime = crate::NativeConversationRuntime::new(
+        conversation,
+        NativeModelPreferences::new("selected-model", NativeReasoningEffort::default(), false)
+            .unwrap(),
+        None,
+    )
+    .unwrap();
+    runtime.enqueue("an actual turn".into()).unwrap();
+    let turn = block_on(runtime.start_next(100)).unwrap().unwrap();
+    let run = owner.run().unwrap();
+    let cleanup = owner.cleanup_for(&run).unwrap();
+    let (release, receive) = std::sync::mpsc::channel::<()>();
+    cleanup
+        .with_poll(|| {
+            workers.spawn(move || {
+                let _ = receive.recv();
+            })
+        })
+        .unwrap();
+    assert!(!binding.has_unsettled_untransferred_admission());
+    drop(turn);
+    assert!(!cleanup.completion().is_complete());
+    assert!(!binding.has_unsettled_untransferred_admission());
+    release.send(()).unwrap();
+    block_on(cleanup.completion().wait());
+    owner.take_settlement().unwrap().1.complete().unwrap();
+    assert!(!binding.has_unsettled_untransferred_admission());
+
+    // A later failed pre-turn admission must not be confused with the retained
+    // previous run metadata, even on this same persistent principal.
+    let admission = binding.prepare_admission().unwrap();
+    let (release, receive) = std::sync::mpsc::channel::<()>();
+    admission
+        .cohort()
+        .unwrap()
+        .with_poll(|| {
+            workers.spawn(move || {
+                let _ = receive.recv();
+            })
+        })
+        .unwrap();
+    drop(admission);
+    assert!(binding.has_unsettled_untransferred_admission());
+    release.send(()).unwrap();
+    block_on(binding.admission_completion().unwrap().wait());
+    assert!(!binding.has_unsettled_untransferred_admission());
+    assert!(fixture.provider.requests().is_empty());
+}
+
+#[test]
 fn actual_conversation_provider_pending_holds_quota_and_finalization_releases_execution_only() {
     let fixture = Fixture::new(vec![ModelProviderStep::pending(), completed()]);
     let (a, a_owner) = fixture.conversation("a");

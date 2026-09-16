@@ -183,12 +183,17 @@ pub(super) fn create(
         notice_cursor: 0,
         history_tail: None,
         next_sequence: 1,
+        last_event_sequence: 0,
     };
-    let records = if let Some(work) = create.initial_work {
+    let mut records = if let Some(work) = create.initial_work {
         mutation::enqueue(&mut head, work, shared.limits)?
     } else {
         Vec::new()
     };
+    records.insert(
+        0,
+        mutation::event(&head, machine_god_core::ManagedEventKind::Created)?,
+    );
     publish(shared, reservation, None, None, head, records)
 }
 pub(super) fn mutate(
@@ -220,6 +225,21 @@ pub(super) fn mutate(
     )
 }
 
+fn bind_event_sequence(head: &mut JournalHead, records: &[JournalRecord]) -> Result<(), Error> {
+    let mut event_seen = false;
+    for record in records {
+        if let JournalRecord::Event(event) = record {
+            if event_seen || event.sequence != head.next_sequence || event.revision != head.revision
+            {
+                return Err(Error::Invalid);
+            }
+            event_seen = true;
+            head.last_event_sequence = event.sequence;
+        }
+    }
+    Ok(())
+}
+
 fn publish(
     shared: &Arc<Shared>,
     mut reservation: Reservation,
@@ -229,6 +249,7 @@ fn publish(
     mut records: Vec<JournalRecord>,
 ) -> Result<JournalPublication, Error> {
     let previous = head.history_tail.clone();
+    bind_event_sequence(&mut head, &records)?;
     records.push(JournalRecord::Control(JournalControl {
         revision: head.revision,
         status: head.status,

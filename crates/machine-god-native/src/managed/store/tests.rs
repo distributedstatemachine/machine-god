@@ -8,6 +8,7 @@ use rustix::fs::{Mode, OFlags};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::AtomicU64;
 
+mod events;
 mod skills;
 mod workspace;
 
@@ -545,14 +546,15 @@ fn milestone_operation_labels_preserve_the_core_contract() {
     let mut snapshot = confirmed(block_on(journal.create(create("child"))).unwrap());
     for operation_id in ["host:call/7", "invalid operation", "invalid\toperation"] {
         let event = JournalRecord::Event(machine_god_core::ManagedEvent {
-            sequence: 1,
-            revision: snapshot.head.revision,
+            sequence: snapshot.head.next_sequence,
+            revision: snapshot.head.revision + 1,
             id: "event-1".into(),
             timestamp_ms: 0,
-            kind: machine_god_core::ManagedEventKind::MilestoneEmitted {
+            kind: machine_god_core::ManagedEventKind::MilestoneRecorded {
                 operation_id: operation_id.into(),
                 source_child_id: "child".into(),
-                target_parent_id: "parent".into(),
+                target_parent_id: Some("parent".into()),
+                notice_emitted: true,
                 work_item_id: "work-1".into(),
                 name: "ready".into(),
             },
@@ -658,7 +660,7 @@ fn paging_is_bounded_continues_whole_history_and_rejects_stale_cursor() {
         count += page.records.len();
         next = page.next;
     }
-    assert_eq!(count, 10);
+    assert_eq!(count, 19);
     let newer = mutate(&journal, snapshot, detach());
     assert_eq!(
         block_on(journal.history(newer, Some(stale), 2)).unwrap_err(),

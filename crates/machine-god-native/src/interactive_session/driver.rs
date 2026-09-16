@@ -433,7 +433,11 @@ impl NativeInteractiveSession {
                 return Poll::Pending;
             }
             Poll::Ready((failure, Ok(()))) => {
-                self.reject(transition, failure.error);
+                if !transition.external_stage && (self.pending.is_some() || self.shutting_down) {
+                    self.supersede(transition, None, Some(failure.error));
+                } else {
+                    self.reject(transition, failure.error);
+                }
                 return Poll::Ready(());
             }
             Poll::Ready((failure, Err(error))) => {
@@ -598,24 +602,15 @@ impl NativeInteractiveSession {
                             transition.managed_candidate = selection;
                             Ok(runtime)
                         }
-                        Err((error, mut prepared, reservation)) => {
-                            if transition.external_stage {
-                                transition.phase =
-                                    Phase::SettlingStaged(super::managed::staged::settle_owned(
-                                        super::managed::staged::Failure::prepared(
-                                            error,
-                                            prepared,
-                                            reservation,
-                                        ),
-                                    ));
-                                self.transition = Some(transition);
-                                return Poll::Ready(());
-                            }
-                            transition.phase = Phase::Composing(Box::pin(async move {
-                                let _reservation = reservation;
-                                super::managed::close_prepared(&mut prepared).await?;
-                                Err(error)
-                            }));
+                        Err((error, prepared, reservation)) => {
+                            transition.phase =
+                                Phase::SettlingStaged(super::managed::staged::settle_owned(
+                                    super::managed::staged::Failure::prepared(
+                                        error,
+                                        prepared,
+                                        reservation,
+                                    ),
+                                ));
                             self.transition = Some(transition);
                             return Poll::Ready(());
                         }

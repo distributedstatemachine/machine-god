@@ -41,6 +41,16 @@ pub use navigation::{
 };
 mod startup;
 pub use startup::NativeManagedInteractiveStartup;
+/// Failed managed opening, retaining any manager and unresolved candidate.
+/// Dropping this value is abandonment, not a successful cleanup receipt.
+#[derive(Debug)]
+#[must_use = "retain startup custody and explicitly poll shutdown after an opening failure"]
+pub struct NativeManagedInteractiveOpenFailure {
+    pub error: NativeInteractiveError,
+    /// Present once the manager was opened. Request and poll its shutdown;
+    /// cleanup failure permanently fences it rather than proving settlement.
+    pub startup: Option<Box<NativeManagedInteractiveStartup>>,
+}
 #[cfg(test)]
 pub(crate) mod tests;
 mod transition;
@@ -337,17 +347,10 @@ impl NativeInteractiveSession {
         initial: NativeInteractiveInitialSession,
         now_ms: i64,
     ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
-        Self::open_with_agents(host, options, initial, now_ms, None)
-    }
-
-    fn open_with_agents(
-        host: Arc<NativeReferenceHost>,
-        options: NativeInteractiveSessionOptions,
-        initial: NativeInteractiveInitialSession,
-        now_ms: i64,
-        mut agents: Option<Box<managed::Owner>>,
-    ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
         Box::pin(async move {
+            // Only the unmanaged path may flatten a failure to a plain error.
+            // Managed startup always retains the original owner and custody.
+            let mut agents = None;
             Self::try_open_with_agents(
                 host,
                 options,
@@ -357,6 +360,7 @@ impl NativeInteractiveSession {
                 machine_god_core::CancellationToken::new(),
             )
             .await
+            .map_err(|failure| failure.error)
         })
     }
 
@@ -367,9 +371,9 @@ impl NativeInteractiveSession {
         now_ms: i64,
         agents: &mut Option<Box<managed::Owner>>,
         cancellation: machine_god_core::CancellationToken,
-    ) -> Result<Self, NativeInteractiveError> {
+    ) -> Result<Self, managed::staged::Failure> {
         if cancellation.is_cancelled() {
-            return Err(NativeInteractiveError::Closed);
+            return Err(NativeInteractiveError::Closed.into());
         }
         options.validate_for_host(&host)?;
         let conversation = transition::prepare(
@@ -385,7 +389,7 @@ impl NativeInteractiveSession {
         )
         .await?;
         if cancellation.is_cancelled() {
-            return Err(NativeInteractiveError::Closed);
+            return Err(NativeInteractiveError::Closed.into());
         }
         let prepared = match agents {
             Some(agents) => {
@@ -423,9 +427,12 @@ impl NativeInteractiveSession {
         };
         let (current, foreground) = match managed::enroll(agents, prepared) {
             Ok(value) => value,
-            Err((error, mut prepared, _reservation)) => {
-                managed::close_prepared(&mut prepared).await?;
-                return Err(error);
+            Err((error, prepared, reservation)) => {
+                return Err(managed::staged::Failure::prepared(
+                    error,
+                    prepared,
+                    reservation,
+                ));
             }
         };
         managed::activate_initial(&host, &current, agents, now_ms).await?;

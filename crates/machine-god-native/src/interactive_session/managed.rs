@@ -4,7 +4,8 @@ use super::{
     Arc, BoxFuture, Context, NativeConversation, NativeConversationRuntime,
     NativeConversationRuntimeError, NativeInteractiveError, NativeInteractiveInitialSession,
     NativeInteractiveOutcome, NativeInteractiveSession, NativeInteractiveSessionOptions,
-    NativeModelCatalog, NativeReferenceHost, NativeRuntimeQuiescence, Poll, Transition,
+    NativeManagedInteractiveOpenFailure, NativeModelCatalog, NativeReferenceHost,
+    NativeRuntimeQuiescence, Poll, Transition,
 };
 use crate::managed::manager::{
     ManagedForegroundReservation, ManagedForegroundSelection, factory::PreparedManagedRuntime,
@@ -171,8 +172,8 @@ impl NativeInteractiveSession {
                 },
             )));
         }
-        Ok(super::transition::Phase::Composing(match &self.managed {
-            Some(owner) => prepare(
+        Ok(match &self.managed {
+            Some(owner) => super::transition::Phase::ComposingStaged(prepare(
                 &owner.agents,
                 host,
                 &options,
@@ -193,8 +194,8 @@ impl NativeInteractiveSession {
                     now_ms,
                     cancellation: transition.preparation_cancel.clone(),
                 },
-            ),
-            None => Box::pin(async move {
+            )),
+            None => super::transition::Phase::Composing(Box::pin(async move {
                 super::transition::compose(
                     &host,
                     &options,
@@ -206,13 +207,17 @@ impl NativeInteractiveSession {
                 )
                 .await
                 .map(Prepared::Ordinary)
-            }),
-        }))
+            })),
+        })
     }
 
     /// Opens a managed interactive owner from this exact host and an explicitly
     /// opened private journal directory. No child is restored or started merely
     /// by opening. The owner co-polls child work independently of presentation.
+    /// Failure after opening the manager returns its startup owner alongside the
+    /// error. Retain that owner and request/poll shutdown; cleanup failure fences
+    /// it permanently and cannot be converted into a successful shutdown receipt.
+    /// Dropping it is abandonment, not settlement. `startup: None` means no manager opened.
     #[must_use]
     pub fn open_managed(
         mut host: NativeReferenceHost,
@@ -220,21 +225,46 @@ impl NativeInteractiveSession {
         options: NativeInteractiveSessionOptions,
         initial: NativeInteractiveInitialSession,
         now_ms: i64,
-    ) -> BoxFuture<'static, Result<Self, NativeInteractiveError>> {
+    ) -> BoxFuture<'static, Result<Self, NativeManagedInteractiveOpenFailure>> {
         Box::pin(async move {
-            options.validate_for_host(&host)?;
+            options.validate_for_host(&host).map_err(|error| {
+                NativeManagedInteractiveOpenFailure {
+                    error,
+                    startup: None,
+                }
+            })?;
             let agents = host
                 .open_managed_agents(directory, options.defaults.clone(), options.origin)
                 .await
-                .map_err(NativeInteractiveError::Managed)?;
-            Self::open_with_agents(
+                .map_err(|error| NativeManagedInteractiveOpenFailure {
+                    error: NativeInteractiveError::Managed(error),
+                    startup: None,
+                })?;
+            // Construction was validated above against this exact host. Keep the
+            // startup owner in the error so failed cleanup cannot be discarded by
+            // converting an opening error into an ordinary retryable value.
+            let mut startup = Box::new(super::NativeManagedInteractiveStartup::from_owner(
                 Arc::new(host),
                 options,
-                initial,
-                now_ms,
-                Some(Owner::new(agents)),
-            )
-            .await
+                Owner::new(agents),
+            ));
+            if let Err(error) = startup.request_open(initial, now_ms) {
+                return Err(NativeManagedInteractiveOpenFailure {
+                    error,
+                    startup: Some(startup),
+                });
+            }
+            match futures_util::future::poll_fn(|cx| startup.poll_open(cx, now_ms)).await {
+                Ok(Some(session)) => Ok(session),
+                Ok(None) => Err(NativeManagedInteractiveOpenFailure {
+                    error: NativeInteractiveError::Closed,
+                    startup: Some(startup),
+                }),
+                Err(error) => Err(NativeManagedInteractiveOpenFailure {
+                    error,
+                    startup: Some(startup),
+                }),
+            }
         })
     }
 
@@ -475,7 +505,7 @@ pub(super) fn prepare(
     options: &NativeInteractiveSessionOptions,
     conversation: NativeConversation,
     selection: Selection,
-) -> BoxFuture<'static, Result<Prepared, NativeInteractiveError>> {
+) -> BoxFuture<'static, Result<Prepared, staged::Failure>> {
     let Selection {
         reservation,
         workspace,
@@ -495,7 +525,7 @@ pub(super) fn prepare(
     let process_model = initial.then(|| options.process_model.clone()).flatten();
     let phase = options.mcp_startup_phase;
     Box::pin(async move {
-        let mut prepared = Box::new(preparation.await.map_err(NativeInteractiveError::Managed)?);
+        let prepared = Box::new(preparation.await.map_err(NativeInteractiveError::Managed)?);
         let startup = start_parent_mcp(&prepared, phase, cancellation.clone());
         let runtime = prepared.runtime.clone();
         let configure = async {
@@ -512,11 +542,15 @@ pub(super) fn prepare(
         }
         .await;
         if let Err(error) = configure {
-            close_prepared(&mut prepared).await?;
-            if cancellation.is_cancelled() {
-                return Err(NativeInteractiveError::Closed);
-            }
-            return Err(error);
+            return Err(staged::Failure::prepared(
+                if cancellation.is_cancelled() {
+                    NativeInteractiveError::Closed
+                } else {
+                    error
+                },
+                prepared,
+                reservation,
+            ));
         }
         Ok(Prepared::Managed(prepared, reservation))
     })
@@ -648,18 +682,6 @@ pub(super) async fn reserve_initial(
     }
     ready.map_err(NativeInteractiveError::Managed)?;
     Ok(reservation)
-}
-
-pub(super) async fn close_prepared(
-    prepared: &mut PreparedManagedRuntime,
-) -> Result<(), NativeInteractiveError> {
-    prepared.owner.retire();
-    prepared.resources.begin_close();
-    futures_util::future::poll_fn(|cx| prepared.resources.poll_closed(cx))
-        .await
-        .map_err(|error| {
-            NativeInteractiveError::Managed(crate::reference_host::managed_error(error))
-        })
 }
 
 pub(super) async fn activate_initial(

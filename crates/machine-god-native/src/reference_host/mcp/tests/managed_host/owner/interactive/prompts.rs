@@ -210,12 +210,22 @@ fn dropped_inbox_rejects_managed_preparation_before_any_provider_execution() {
             1,
         )
         .await;
+        let failure = result.unwrap_err();
+        let error = failure.error;
+        let startup = failure.startup;
         assert!(matches!(
-            result,
-            Err(NativeInteractiveError::Managed(
-                NativeManagedAgentsError::Unavailable
-            ))
+            error,
+            NativeInteractiveError::Managed(NativeManagedAgentsError::Unavailable)
         ));
+        let mut startup = startup.expect("failed selection retains the manager");
+        startup.request_shutdown();
+        assert!(
+            poll_fn(|cx| startup.poll_open(cx, 2))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(startup);
         assert!(fixture.transport.requests.lock().unwrap().is_empty());
         completion.wait().await;
     });

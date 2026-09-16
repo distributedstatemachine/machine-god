@@ -80,6 +80,8 @@ pub(crate) struct JournalHead {
     pub notice_cursor: u64,
     pub history_tail: Option<JournalPageRef>,
     pub next_sequence: u64,
+    /// Last inspectable event, independent of later transcript/notice maintenance pages.
+    pub last_event_sequence: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +168,14 @@ pub(crate) enum JournalMutation {
     },
     /// Consume the exact next source sequence without emitting a visible notice.
     SuppressedNotice(u64),
+    /// Record accepted milestone calls independently of notification suppression/deduplication.
+    Milestone {
+        operation_id: String,
+        work_id: String,
+        name: String,
+        notice: Option<crate::managed::notices::ManagedNotice>,
+        consume_sequence: bool,
+    },
     AppendHistory(Vec<JournalRecord>),
     Archive,
     Reopen(JournalTranscript),

@@ -383,6 +383,40 @@ impl NativeMcpController {
         )
     }
 
+    /// The principal owner calls this only after its admission future has ended
+    /// without producing a turn. Cancelling a public refresh observer alone must
+    /// not cancel a shared job; this owner boundary instead retires that abandoned
+    /// preparation and drives its original future so private peer custody drops.
+    /// The published runtime and authentication service remain usable.
+    pub(crate) fn settle_abandoned_admission(&self) -> BoxFuture<'static, ()> {
+        let inner = Arc::downgrade(&self.inner);
+        Box::pin(async move {
+            let Some(inner) = inner.upgrade() else {
+                return;
+            };
+            let running = {
+                let state = state::lock(&inner.state);
+                state
+                    .running
+                    .as_ref()
+                    .filter(|job| matches!(job.kind, state::Kind::Refresh | state::Kind::Deferred))
+                    .cloned()
+            };
+            if let Some(running) = running {
+                if running.kind == state::Kind::Refresh {
+                    running.cancellation.cancel();
+                }
+                // Deferred activation belongs to the published generation and
+                // caches its result. Drive its configured attempt to completion
+                // rather than poisoning later work with an owner-made cancel.
+                // Poll outside the state lock: cancellation and future drops
+                // may wake caller code or release process/TLS ownership.
+                let _ = running.future.await;
+                inner.release_completed();
+            }
+        })
+    }
+
     /// Irrevocable cutoff, not a reap/socket-completion receipt. No locks are
     /// held while cancellation or runtime retirement wakes caller code.
     pub fn close(&self) {

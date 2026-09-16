@@ -1,5 +1,5 @@
 //! Adopt an already-ready parent MCP instance without starting it a second time.
-//! Every failure returns original cleanup custody, including its residency charge.
+//! Shared foreground failure custody includes each candidate's residency charge.
 use super::{
     Arc, BoxFuture, ManagedForegroundReservation, NativeConversation, NativeInteractiveError,
     NativeInteractiveSessionOptions, NativeModelCatalog, NativeReferenceHost, Prepared,
@@ -123,6 +123,7 @@ pub(in crate::interactive_session) struct Selection {
 }
 
 enum Custody {
+    None,
     Stage(Box<NativeManagedStagedParent>),
     Runtime {
         prepared: Box<PreparedManagedRuntime>,
@@ -171,6 +172,7 @@ impl Failure {
                 return result;
             }
             let result = match &mut self.custody {
+                Custody::None => Ok(()),
                 Custody::Stage(candidate) => candidate.settle().await,
                 Custody::Runtime { prepared, .. } => {
                     prepared.owner.retire();
@@ -185,9 +187,18 @@ impl Failure {
         })
     }
 }
+impl From<NativeInteractiveError> for Failure {
+    fn from(error: NativeInteractiveError) -> Self {
+        Self {
+            error,
+            custody: Custody::None,
+            settled: None,
+        }
+    }
+}
 impl std::fmt::Debug for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("StagedForegroundFailure { .. }")
+        f.write_str("ForegroundFailure { .. }")
     }
 }
 

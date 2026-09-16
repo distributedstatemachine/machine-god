@@ -2,6 +2,7 @@ use super::super::store;
 use super::*;
 mod catalog;
 mod delivery;
+mod events;
 mod fixture;
 mod foreground;
 mod observation;

@@ -307,7 +307,16 @@ fn failed_initial_http_discovery(required_only: bool) {
                 result.is_err(),
                 "one-shot selection must not retain a repair UI"
             );
-            drop(result);
+            let startup = result.unwrap_err().startup;
+            let mut startup = startup.expect("selection error retains the manager");
+            startup.request_shutdown();
+            assert!(
+                poll_fn(|cx| startup.poll_open(cx, 2))
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            drop(startup);
             completion.wait().await;
             assert!(fixture.transport.requests.lock().unwrap().is_empty());
             return;

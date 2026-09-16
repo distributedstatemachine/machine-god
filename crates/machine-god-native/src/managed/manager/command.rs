@@ -484,7 +484,7 @@ pub(super) fn receipt(
         requested: Some(ManagedRequested::Receipt(ManagedReceipt {
             outcome,
             generation: snapshot.head.generation,
-            event_sequence: snapshot.head.next_sequence - 1,
+            event_sequence: snapshot.head.last_event_sequence,
         })),
         cursor: None,
     }

@@ -313,10 +313,11 @@ pub enum ManagedEventKind {
         current: ManagedQueueStatus,
         reason: Option<String>,
     },
-    MilestoneEmitted {
+    MilestoneRecorded {
         operation_id: String,
         source_child_id: String,
-        target_parent_id: String,
+        target_parent_id: Option<String>,
+        notice_emitted: bool,
         work_item_id: String,
         name: String,
     },

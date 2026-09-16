@@ -8,7 +8,7 @@ use super::{
     ManagedMailboxJob, ManagedManager, ManagedQueueStatus, ManagedRuntimeError, Poll, Weak,
     WriteAfter, command,
 };
-use machine_god_core::{ManagedFailureCode, ManagedOutcome};
+use machine_god_core::ManagedFailureCode;
 use std::{future::Future, num::NonZeroU64, pin::Pin};
 
 impl ManagedManager {
@@ -283,33 +283,38 @@ impl ManagedManager {
             record_id: format!("notice-{}", sequence.get()),
             source_sequence: sequence,
         };
+        let milestone = |notice, consume_sequence| JournalMutation::Milestone {
+            operation_id: operation.clone(),
+            work_id: child.work.as_ref().unwrap().id.clone(),
+            name: name.to_owned(),
+            notice,
+            consume_sequence,
+        };
         match self
             .notices
             .prepare_milestone(work, sequence, name, Some(&history))
         {
             Ok(PreparedNotice::Staged(stage)) => child.pending.push_back(ChildWrite {
-                mutation: JournalMutation::AppendHistory(vec![JournalRecord::Notice(
-                    stage.notice().clone(),
-                )]),
+                mutation: milestone(Some(stage.notice().clone()), true),
                 after: WriteAfter::Notice {
                     stage: Some(stage),
                     reply: Some((job, operation)),
                 },
             }),
             Ok(PreparedNotice::Suppressed) => child.pending.push_back(ChildWrite {
-                mutation: JournalMutation::SuppressedNotice(sequence.get()),
+                mutation: milestone(None, true),
                 after: WriteAfter::Notice {
                     stage: None,
                     reply: Some((job, operation)),
                 },
             }),
-            Ok(PreparedNotice::AlreadyRecorded) => {
-                job.complete(Ok(command::receipt(
-                    &operation,
-                    &child.snapshot,
-                    ManagedOutcome::MilestoneEmitted,
-                )));
-            }
+            Ok(PreparedNotice::AlreadyRecorded) => child.pending.push_back(ChildWrite {
+                mutation: milestone(None, false),
+                after: WriteAfter::Notice {
+                    stage: None,
+                    reply: Some((job, operation)),
+                },
+            }),
             Err(error) => job.complete(Ok(command::rejected(
                 &operation,
                 if error == NoticeError::UndeclaredMilestone {

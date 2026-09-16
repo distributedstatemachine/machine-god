@@ -61,6 +61,26 @@ impl ManagedConversationBinding {
             .as_ref()
             .map(|run| run.completion())
     }
+
+    /// Called only after the runtime's admission future has ended. An idle
+    /// foreground is polled repeatedly, including during unrelated MCP controls;
+    /// only an unfinished cohort that never transferred to a turn owns abandoned
+    /// preparation. An earlier turn's cleanup must not authorize cancelling it.
+    pub(crate) fn has_unsettled_untransferred_admission(&self) -> bool {
+        let Some(owner) = self.0.upgrade() else {
+            return false;
+        };
+        let Ok(active) = owner.active.lock() else {
+            return false;
+        };
+        active.admission.as_ref().is_some_and(|admission| {
+            !admission.completion().is_complete()
+                && active
+                    .cleanup
+                    .as_ref()
+                    .is_none_or(|cleanup| !Arc::ptr_eq(admission, &cleanup.cohort))
+        })
+    }
 }
 
 impl ManagedAdmission {

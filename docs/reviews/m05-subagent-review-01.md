@@ -41,3 +41,56 @@ artifacts whose names identify the exact accepted behavior SHA.
 This review seal makes no package, release, or comparative-performance claim.
 The implementation plan remains the sole live source for delivery and workflow
 gates.
+
+## Complete managed-agent feature: first reviewed candidate
+
+Candidate `437a19b06e862b973716b6f344ef052a03185fc4` was reviewed against
+`6d6364c6ee3b1540505749b10b2527df39ddf5be` after its complete local gate.
+This is a rejected product candidate, not a delivery or performance claim.
+
+Exact Rust 1.94.1 Linux and macOS formatting, warnings-denied workspace Clippy,
+fresh locked release builds, workspace and doc tests passed. Linux ran with
+default concurrency under unprivileged UID 10001 and a reaping init; macOS
+process tests ran serially. Focused production-helper input, managed/MCP PTY and
+agent-driver tests passed on both platforms. Repository Python tests (269),
+documentation policy, upstream/Unicode drift, dependency deny/audit, FreeBSD/WASI
+checks and both Apple ABI compilations plus the native arm64 ABI probe passed.
+
+Logs remain under `/tmp/mg-managed-implementation.V0ZGg1/`, notably
+`managed-full-runtime-linux-437a19b0-r2.log`,
+`managed-full-runtime-macos-437a19b0.log`, and
+`managed-focused-macos-437a19b0.log`. The initial Linux invocation failed before
+tests because the container lacked `rg`; the corrected diagnostic used `grep`.
+The initial audit invocation omitted its `audit` subcommand and was corrected.
+Both failed invocations remain retained; neither is a product-test failure.
+
+The preceding macOS release-PTY failure on `e00da357` was traced to XNU setting
+the shared TTY descriptor's `FWASWRITTEN` bookkeeping bit on its first output
+write. Candidate `437a19b0` ignores only that macOS bit when comparing status
+flags; all other bits remain exact. New regressions cover every status bit and
+the real first-write/reopen sequence. Diagnostic logs and rejected runtime
+evidence remain retained; temporary diagnostic source was removed.
+
+Three fresh general review agents inspected the entire feature, read-only,
+without executing tests or performance measurements:
+
+| Track | Reviewer | Result |
+| --- | --- | --- |
+| Correctness/API | `m65_r1_correctness` | P2: production never writes the typed events selected by event inspection; receipt sequences identify journal pages without public events. |
+| Lifecycle/platform | `m65_r1_lifecycle` | P1: abandoned shared MCP refresh can retain a private peer in the admission cohort while cleanup waits for that cohort. P2: ordinary foreground preparation/enrollment drops candidate custody and its reservation after cleanup failure instead of fencing. |
+| Performance/resources | `m65_r1_resources` | No concrete introduced findings; reviewed budgets, scheduling/dependencies, notices, paging, undo, blocked output and weak ownership. |
+
+These findings reject the candidate. Passing local tests did not establish
+coverage of the identified scenarios. No remote delivery was attempted for it.
+
+The remediation combines isolated event-history and foreground-custody work with
+principal-owned abandoned-admission settlement. Event mutations and receipts now
+share durable typed evidence, including truthful suppressed/duplicate milestone
+records. Ordinary foreground failures use the retained settlement/fence path;
+the public opening failure carries any untransferred startup owner. MCP admission
+settlement drives original preparation without closing a persistent child's
+publication, and excludes idle or already-transferred turn cohorts. Added
+regressions cover command-level event paging/recovery, exact worker custody,
+cleanup timeouts, public failure ownership, and non-emitting milestone rendering.
+These implementation changes still require replacement local gates and reviews;
+the rejected candidate's passing tests do not verify them.

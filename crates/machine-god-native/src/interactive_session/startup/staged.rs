@@ -3,7 +3,7 @@ use super::{
     Arc, BoxFuture, CancellationToken, Context, NativeInteractiveError,
     NativeInteractiveInitialSession, NativeInteractiveSession, NativeInteractiveSessionOptions,
     NativeManagedInteractiveStartup, NativeReferenceHost, OpenFailure, OpenResult, Poll, State,
-    managed,
+    managed, rejected,
 };
 use crate::managed::manager::ManagedForegroundReservation;
 use crate::reference_host::NativeManagedStagedParent;
@@ -98,24 +98,6 @@ impl NativeManagedInteractiveStartup {
         };
         self.notify();
         Ok(())
-    }
-}
-
-async fn rejected(
-    owner: Box<managed::Owner>,
-    mut failure: managed::staged::Failure,
-) -> OpenFailure {
-    match failure.settle().await {
-        Ok(()) => OpenFailure {
-            error: failure.error,
-            owner,
-            cleanup: None,
-        },
-        Err(error) => OpenFailure {
-            error: NativeInteractiveError::Managed(error),
-            owner,
-            cleanup: Some(Box::new(failure)),
-        },
     }
 }
 

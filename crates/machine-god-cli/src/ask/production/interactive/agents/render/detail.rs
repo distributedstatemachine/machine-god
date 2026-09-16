@@ -210,16 +210,25 @@ fn event_rows(value: &ManagedEventKind, emit: &mut impl FnMut(&str)) {
                 emit(&format!("Reason: {}", prefix(reason)));
             }
         }
-        ManagedEventKind::MilestoneEmitted {
+        ManagedEventKind::MilestoneRecorded {
             source_child_id,
             target_parent_id,
             work_item_id,
             name,
+            notice_emitted,
             ..
         } => {
             emit(&format!("Milestone: {}", prefix(name)));
             emit(&format!("From: {}", prefix(source_child_id)));
-            emit(&format!("To: {}", prefix(target_parent_id)));
+            emit(&format!(
+                "To: {}",
+                target_parent_id.as_deref().map_or("none", prefix)
+            ));
+            emit(if *notice_emitted {
+                "Notice emitted: yes"
+            } else {
+                "Notice emitted: no"
+            });
             emit(&format!("Work: {}", prefix(work_item_id)));
         }
     }

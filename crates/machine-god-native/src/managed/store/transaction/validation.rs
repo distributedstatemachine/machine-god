@@ -77,6 +77,8 @@ pub(super) fn head(head: &JournalHead, limits: JournalLimits) -> Result<(), Erro
         || head.generation == 0
         || head.revision == 0
         || head.next_sequence == 0
+        || head.last_event_sequence == 0
+        || head.last_event_sequence >= head.next_sequence
         || head.queue.len() > limits.queue_entries
         || head.parent_id.is_some() != head.parent_owner.is_some()
     {
@@ -219,6 +221,9 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
             }
             JournalRecord::Event(value) => {
                 id(&value.id)?;
+                if value.sequence == 0 || value.revision == 0 {
+                    return Err(Error::Invalid);
+                }
                 match &value.kind {
                     ManagedEventKind::Created
                     | ManagedEventKind::Configured
@@ -242,12 +247,13 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
                             text(reason, 4096, true)?;
                         }
                     }
-                    ManagedEventKind::MilestoneEmitted {
+                    ManagedEventKind::MilestoneRecorded {
                         operation_id,
                         source_child_id,
                         target_parent_id,
                         work_item_id,
                         name,
+                        notice_emitted,
                     } => {
                         text(operation_id, 128, false)?;
                         if operation_id
@@ -256,7 +262,13 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
                         {
                             return Err(Error::Invalid);
                         }
-                        for id_value in [source_child_id, target_parent_id, work_item_id] {
+                        if *notice_emitted && target_parent_id.is_none() {
+                            return Err(Error::Invalid);
+                        }
+                        if let Some(parent) = target_parent_id {
+                            id(parent)?;
+                        }
+                        for id_value in [source_child_id, work_item_id] {
                             id(id_value)?;
                         }
                         text(name, 128, false)?;

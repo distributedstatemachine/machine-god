@@ -1,5 +1,7 @@
 //! Native pre-selection custody, including retryable opens and cancelled startup.
 mod staged;
+#[cfg(test)]
+mod tests;
 use super::{
     Arc, BoxFuture, Context, NativeInteractiveError, NativeInteractiveInitialSession,
     NativeInteractiveSession, NativeInteractiveSessionOptions, NativeReferenceHost, Poll, fmt,
@@ -9,7 +11,7 @@ use crate::NativeManagedAgents;
 use machine_god_core::CancellationToken;
 
 type OpenResult = Result<NativeInteractiveSession, OpenFailure>;
-struct OpenFailure {
+pub(super) struct OpenFailure {
     error: NativeInteractiveError,
     owner: Box<managed::Owner>,
     cleanup: Option<Box<managed::staged::Failure>>,
@@ -24,7 +26,7 @@ async fn open_owned(
     cancellation: CancellationToken,
 ) -> OpenResult {
     let mut owner = Some(owner);
-    NativeInteractiveSession::try_open_with_agents(
+    match NativeInteractiveSession::try_open_with_agents(
         host,
         options,
         initial,
@@ -33,11 +35,32 @@ async fn open_owned(
         cancellation,
     )
     .await
-    .map_err(|error| OpenFailure {
-        error,
-        owner: owner.expect("failed opening retains original manager"),
-        cleanup: None,
-    })
+    {
+        Ok(session) => Ok(session),
+        Err(failure) => Err(rejected(
+            owner.expect("failed opening retains original manager"),
+            failure,
+        )
+        .await),
+    }
+}
+
+pub(super) async fn rejected(
+    owner: Box<managed::Owner>,
+    mut failure: managed::staged::Failure,
+) -> OpenFailure {
+    match failure.settle().await {
+        Ok(()) => OpenFailure {
+            error: failure.error,
+            owner,
+            cleanup: None,
+        },
+        Err(error) => OpenFailure {
+            error: NativeInteractiveError::Managed(error),
+            owner,
+            cleanup: Some(Box::new(failure)),
+        },
+    }
 }
 enum State {
     Idle(Box<managed::Owner>),
@@ -98,14 +121,22 @@ impl NativeManagedInteractiveStartup {
         if let Err(error) = valid {
             return Err((error, Box::new(agents)));
         }
-        Ok(Self {
+        Ok(Self::from_owner(host, options, managed::Owner::new(agents)))
+    }
+
+    pub(super) fn from_owner(
+        host: Arc<NativeReferenceHost>,
+        options: NativeInteractiveSessionOptions,
+        owner: Box<managed::Owner>,
+    ) -> Self {
+        Self {
             host,
             options,
-            state: State::Idle(managed::Owner::new(agents)),
+            state: State::Idle(owner),
             closing: false,
             shutdown_failed: false,
             wake: None,
-        })
+        }
     }
 
     /// Records one initial selection without polling a session, provider or tool.
