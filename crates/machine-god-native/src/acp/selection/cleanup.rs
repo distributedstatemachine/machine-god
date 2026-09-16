@@ -5,6 +5,27 @@ use std::time::Duration;
 pub(super) struct Receipt {
     pub complete: bool,
     pub workers: Vec<NativeOwnedWorkerCompletion>,
+    // A failed pre-selection cleanup must retain the original manager and stage.
+    pub managed: Option<Box<super::managed::Preparation>>,
+}
+
+pub(super) fn reject(
+    mut host: super::NativeAcpPreparedHost,
+    session: Option<NativeAcpSession>,
+    now_ms: i64,
+) -> BoxFuture<'static, Receipt> {
+    Box::pin(async move {
+        if let Some(managed) = host.managed.take()
+            && let Err(managed) = managed.settle(now_ms).await
+        {
+            return Receipt {
+                complete: false,
+                workers: Vec::new(),
+                managed: Some(managed),
+            };
+        }
+        retire(host.host, session, false, now_ms).await
+    })
 }
 
 pub(super) fn retire(
@@ -56,6 +77,7 @@ pub(super) fn retire(
             return Receipt {
                 complete: false,
                 workers: Vec::new(),
+                managed: None,
             };
         };
         // Retirement must not need a fresh worker admission: the collector can
@@ -64,6 +86,7 @@ pub(super) fn retire(
         Receipt {
             complete: !failed && completion.is_complete(),
             workers: vec![completion],
+            managed: None,
         }
     })
 }

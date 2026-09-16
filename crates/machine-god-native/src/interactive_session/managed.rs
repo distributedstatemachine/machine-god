@@ -357,6 +357,21 @@ impl NativeInteractiveSession {
 
     /// ACP controls follow this foreground's ephemeral instance, never the
     /// host-global seed or a sibling's runtime.
+    pub(crate) fn acp_mcp_ready(&self) -> Result<(), NativeInteractiveError> {
+        let ephemeral = match &self.managed {
+            Some(owner) => owner
+                .foreground
+                .as_ref()
+                .and_then(|foreground| owner.agents.foreground_mcp_controls(foreground))
+                .and_then(|controls| controls.ephemeral),
+            None => self.host.mcp_ephemeral_owner(),
+        }
+        .ok_or(NativeInteractiveError::Unavailable)?;
+        ephemeral
+            .ready()
+            .map_err(|_| NativeInteractiveError::Unavailable)
+    }
+
     pub(crate) fn acp_mcp_runtime(&self) -> Option<Arc<crate::mcp::runtime::NativeMcpRuntime>> {
         match &self.managed {
             Some(owner) => {

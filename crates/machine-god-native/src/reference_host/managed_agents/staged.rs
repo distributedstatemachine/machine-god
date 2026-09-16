@@ -39,6 +39,10 @@ impl NativeManagedStagedParent {
 }
 
 impl NativeManagedAgents {
+    pub(crate) fn has_ephemeral_parent(&self) -> bool {
+        self.parent_mcp.is_ephemeral()
+    }
+
     pub(crate) fn validate_staged_foreground(
         &self,
         candidate: &NativeManagedStagedParent,

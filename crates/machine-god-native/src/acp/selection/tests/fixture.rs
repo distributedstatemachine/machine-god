@@ -13,6 +13,7 @@ pub(crate) struct Factory {
     pub wait: Arc<AtomicBool>,
     pub cancel_observed: Arc<AtomicBool>,
     pub provider_started: Arc<AtomicBool>,
+    pub managed: AtomicBool,
     pub mcp_contexts_override: std::sync::Mutex<Option<Arc<NativeMcpContexts>>>,
     pub transport_override: std::sync::Mutex<Option<Arc<dyn AiGatewayTransport>>>,
     pub prompt_bridge_override: std::sync::Mutex<Option<Arc<NativeInteractivePromptBridge>>>,
@@ -46,6 +47,7 @@ impl Factory {
             wait: Arc::new(AtomicBool::new(false)),
             cancel_observed: Arc::new(AtomicBool::new(false)),
             provider_started: Arc::new(AtomicBool::new(false)),
+            managed: AtomicBool::new(false),
             mcp_contexts_override: std::sync::Mutex::new(None),
             transport_override: std::sync::Mutex::new(None),
             prompt_bridge_override: std::sync::Mutex::new(None),
@@ -72,6 +74,7 @@ impl NativeAcpHostFactory for Factory {
         let wait = self.wait.clone();
         let observed = self.cancel_observed.clone();
         let provider_started = self.provider_started.clone();
+        let managed = self.managed.load(Ordering::Acquire);
         let transport = self
             .transport_override
             .lock()
@@ -100,6 +103,7 @@ impl NativeAcpHostFactory for Factory {
             .unwrap();
             let authority = workspace_authority(&roots);
             let identity = NativeAcpWorkspaceIdentity::capture(&roots, &authority).unwrap();
+            let state = roots.try_clone_skills_state().unwrap();
             let contexts = Arc::new(NativePermissionContexts::new());
             let clock = Arc::new(Clock);
             let mut mcp = NativeReferenceHostMcpOptions::new(mcp_contexts, clock.clone())
@@ -119,7 +123,7 @@ impl NativeAcpHostFactory for Factory {
             if let Some(presenter) = presenter {
                 mcp = mcp.with_form_responder(presenter);
             }
-            let options =
+            let mut options =
                 NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
                     .with_workspace(authority, Arc::new(NativeWorkspaceContexts::new()))
                     .with_model_routes(Arc::new(NativeConversationModelRoutes::new()))
@@ -137,6 +141,10 @@ impl NativeAcpHostFactory for Factory {
                         .unwrap(),
                     )
                     .with_mcp_runtime(mcp);
+            if managed {
+                options = options
+                    .with_managed_agents(NativeReferenceHostManagedOptions::new(Arc::new(Clock)));
+            }
             let config=crate::config::parse_config_bytes(br#"{"schema_version":5,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","credential_source":"environment","model":"fixture/main","effort":"auto","fast_mode":false}"#).unwrap();
             let defaults = config.model_preferences();
             let permission: Arc<dyn PermissionPrompter> = bridge.as_ref().map_or_else(
@@ -147,15 +155,9 @@ impl NativeAcpHostFactory for Factory {
                 Some(bridge) => bridge,
                 None => Arc::new(Prompter),
             };
-            let host=Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(LoadedNativeConfig::from_file(config),transport,
-                machine_god_core::NetworkTarget{scheme:"https".into(),host:"ai-gateway.vercel.sh".into(),port:None},roots,permission,question,Arc::new(Deadline),options).unwrap());
-            NativeAcpPreparedHost::new(
-                host.clone(),
-                NativeInteractiveSessionOptions::new(host.workspace_root().to_owned(), defaults)
-                    .unwrap(),
-                contexts,
-                identity,
-            )
+            let host=NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(LoadedNativeConfig::from_file(config),transport,
+                machine_god_core::NetworkTarget{scheme:"https".into(),host:"ai-gateway.vercel.sh".into(),port:None},roots,permission,question,Arc::new(Deadline),options).unwrap();
+            prepared(host, state, defaults, contexts, identity, managed).await
         })
     }
     fn list(
@@ -174,6 +176,37 @@ impl NativeAcpHostFactory for Factory {
         })
     }
 }
+
+async fn prepared(
+    mut host: NativeReferenceHost,
+    state: std::os::fd::OwnedFd,
+    defaults: NativeModelPreferences,
+    contexts: Arc<NativePermissionContexts>,
+    identity: NativeAcpWorkspaceIdentity,
+    managed: bool,
+) -> Result<NativeAcpPreparedHost, AcpSessionError> {
+    let options =
+        NativeInteractiveSessionOptions::new(host.workspace_root().to_owned(), defaults.clone())
+            .unwrap();
+    let agents = if managed {
+        Some(
+            host.open_workspace_managed_agents(state, defaults, NativeSessionOrigin::Acp)
+                .await
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+    let host = Arc::new(host);
+    match agents {
+        Some(agents) => {
+            NativeAcpPreparedHost::new_managed(host, options, contexts, identity, agents)
+                .map_err(|(error, _)| error)
+        }
+        None => NativeAcpPreparedHost::new(host, options, contexts, identity),
+    }
+}
+
 pub(super) fn workspace_authority(roots: &PreparedNativeRoots) -> NativeWorkspaceAuthority {
     let open = |path: &std::path::Path| std::fs::File::open(path).unwrap().into();
     NativeWorkspaceAuthority::open_blocking(

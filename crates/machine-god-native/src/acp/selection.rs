@@ -19,6 +19,7 @@ use std::{
 
 mod cleanup;
 mod driver;
+mod managed;
 mod rollback;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -52,6 +53,7 @@ pub struct NativeAcpPreparedHost {
     options: NativeInteractiveSessionOptions,
     permission_contexts: Arc<NativePermissionContexts>,
     workspace: NativeAcpWorkspaceIdentity,
+    managed: Option<Box<managed::Preparation>>,
 }
 
 /// A request spelling bound to the descriptor-checked primary used by composition.
@@ -108,23 +110,21 @@ impl NativeAcpPreparedHost {
             options,
             permission_contexts,
             workspace,
+            managed: None,
         };
         value.validate()?;
         Ok(value)
     }
     fn validate(&self) -> Result<(), AcpSessionError> {
-        self.options.validate_for_host(&self.host)?;
-        if self.workspace.scope.primary_identity() != self.host.workspace_root()
-            || !self.host.has_workspace_primary(&self.workspace.scope)
-        {
-            return Err(AcpSessionError::InvalidConfiguration);
+        self.validate_binding()?;
+        if self.managed.is_some() {
+            return if self.host.managed_agents_selected() {
+                Ok(())
+            } else {
+                Err(AcpSessionError::InvalidConfiguration)
+            };
         }
-        let contexts = self
-            .host
-            .permission_contexts()
-            .ok_or(AcpSessionError::InvalidConfiguration)?;
-        if !Arc::ptr_eq(&contexts, &self.permission_contexts)
-            || self.host.mcp_ephemeral_owner().is_none()
+        if self.host.mcp_ephemeral_owner().is_none()
             || self.host.mcp_management().is_some()
             || self.host.mcp_controller().is_some()
             || !self
@@ -135,6 +135,22 @@ impl NativeAcpPreparedHost {
                 .map_err(|_| AcpSessionError::Unavailable)?
                 .is_unpublished()
         {
+            return Err(AcpSessionError::InvalidConfiguration);
+        }
+        Ok(())
+    }
+    fn validate_binding(&self) -> Result<(), AcpSessionError> {
+        self.options.validate_for_host(&self.host)?;
+        if self.workspace.scope.primary_identity() != self.host.workspace_root()
+            || !self.host.has_workspace_primary(&self.workspace.scope)
+        {
+            return Err(AcpSessionError::InvalidConfiguration);
+        }
+        let contexts = self
+            .host
+            .permission_contexts()
+            .ok_or(AcpSessionError::InvalidConfiguration)?;
+        if !Arc::ptr_eq(&contexts, &self.permission_contexts) {
             return Err(AcpSessionError::InvalidConfiguration);
         }
         Ok(())
@@ -201,6 +217,7 @@ enum Phase {
         host: NativeAcpPreparedHost,
         future: BoxFuture<'static, Result<(), AcpSessionError>>,
     },
+    ManagedStarting(NativeAcpPreparedHost),
     Draining(Option<NativeAcpPreparedHost>),
     Quiescing {
         host: Option<NativeAcpPreparedHost>,
@@ -210,6 +227,10 @@ enum Phase {
         host: NativeAcpPreparedHost,
         guard: Option<NativeRuntimeQuiescence>,
         future: BoxFuture<'static, Result<NativeAcpSession, AcpSessionError>>,
+    },
+    ManagedOpening {
+        host: NativeAcpPreparedHost,
+        guard: Option<NativeRuntimeQuiescence>,
     },
     Retiring {
         candidate: Option<Box<Current>>,
@@ -402,8 +423,9 @@ impl NativeAcpSelectionOwner {
         self.shutdown
             && self.current.is_none()
             && self.pending.is_none()
-            // Even error receipts are constructed only after async worker
-            // settlement. Keep that invariant explicit at terminal cutoff.
+            // Failed managed startup retains actual cleanup custody and cannot
+            // masquerade as a settled connection merely because no session opened.
+            && self.retained_cleanup.iter().all(|receipt| receipt.managed.is_none())
             && self
                 .retained_cleanup
                 .iter()

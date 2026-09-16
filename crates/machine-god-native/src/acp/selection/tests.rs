@@ -124,6 +124,7 @@ fn cancelled_unpolled_selection_never_calls_factory_or_claims_publication() {
 
 mod cleanup_wait;
 pub(crate) mod fixture;
+mod managed;
 mod network_requirements;
 mod workspace_identity;
 use fixture::Factory;

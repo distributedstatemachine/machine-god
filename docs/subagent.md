@@ -924,6 +924,13 @@ settles the original candidate before permitting an explicit retry with the same
 manager. An unsuccessful cleanup instead retains the candidate behind a startup
 fence and cannot produce a successful shutdown receipt. Cancelling an unpolled
 staged open settles the ready peers without creating a transcript.
+ACP selection can retain this pre-selection owner directly through managed host
+preparation, reservation, peer readiness and initial opening. Readiness precedes
+cancellation of the previous foreground. Failed selection settles the original
+stage and manager before reporting rejection or releasing the workspace journal;
+failed settlement instead retains that owner and fences the connection. Managed
+opening adopts the ready parent without requiring or creating a global host MCP
+runtime. The ordinary explicitly unmanaged host constructor remains separate.
 
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted

@@ -62,6 +62,7 @@ impl NativeAcpSelectionOwner {
                                 let mut result = cleanup::Receipt {
                                     complete: false,
                                     workers: Vec::new(),
+                                    managed: None,
                                 };
                                 for current in [candidate, previous].into_iter().flatten() {
                                     let receipt = cleanup::retire(
@@ -121,7 +122,7 @@ impl NativeAcpSelectionOwner {
     }
 
     #[allow(clippy::too_many_lines)] // Exhaustive phase ownership transfer stays in one match.
-    fn advance(&mut self, mut pending: Pending, cx: &mut Context<'_>) -> bool {
+    pub(super) fn advance(&mut self, mut pending: Pending, cx: &mut Context<'_>) -> bool {
         let phase = std::mem::replace(&mut pending.phase, Phase::Requested);
         match phase {
             Phase::Requested => {
@@ -160,7 +161,7 @@ impl NativeAcpSelectionOwner {
                         future: None,
                     }
                 }
-                Poll::Ready(Ok(host)) => {
+                Poll::Ready(Ok(mut host)) => {
                     // An invalid factory alias is not an independently owned
                     // candidate: rejecting it must never close the active host.
                     if self
@@ -205,6 +206,18 @@ impl NativeAcpSelectionOwner {
                             .configuration
                             .take()
                             .expect("selection config");
+                        if let Some(managed) = &mut host.managed {
+                            pending.phase = match managed
+                                .start(configuration, pending.request.cancellation.clone())
+                            {
+                                Ok(()) => Phase::ManagedStarting(host),
+                                Err(error) => {
+                                    Self::reject_host(host, None, error, pending.request.now_ms)
+                                }
+                            };
+                            self.pending = Some(pending);
+                            return true;
+                        }
                         let selected = host.host.clone();
                         let cancellation = pending.request.cancellation.clone();
                         let future = Box::pin(async move {
@@ -250,6 +263,39 @@ impl NativeAcpSelectionOwner {
                     }
                 }
             },
+            Phase::ManagedStarting(mut host) => {
+                match host
+                    .managed
+                    .as_mut()
+                    .expect("managed startup")
+                    .poll_start(cx, pending.request.now_ms)
+                {
+                    Poll::Pending => {
+                        pending.phase = Phase::ManagedStarting(host);
+                        self.pending = Some(pending);
+                        return false;
+                    }
+                    Poll::Ready(result) => {
+                        let result = result.and_then(|()| {
+                            if pending.request.cancellation.is_cancelled() {
+                                Err(AcpSessionError::Cancelled)
+                            } else {
+                                Ok(())
+                            }
+                        });
+                        match result {
+                            Ok(()) => {
+                                pending.phase = Phase::Draining(Some(host));
+                                self.cancel_current();
+                            }
+                            Err(error) => {
+                                pending.phase =
+                                    Self::reject_host(host, None, error, pending.request.now_ms);
+                            }
+                        }
+                    }
+                }
+            }
             Phase::Draining(host) => {
                 if pending.request.cancellation.is_cancelled() && !self.shutdown {
                     pending.phase = match host {
@@ -380,49 +426,30 @@ impl NativeAcpSelectionOwner {
                     return false;
                 }
                 Poll::Ready(result) => {
-                    #[cfg(test)]
-                    if let Some(hook) = self.after_open.take() {
-                        hook(&host.host, &pending.request.cancellation);
-                    }
-                    let result = result.map_err(|error| (None, error)).and_then(|session| {
-                        if host
-                            .host
-                            .mcp_ephemeral_owner()
-                            .is_none_or(|owner| owner.ready().is_err())
-                        {
-                            Err((Some(Box::new(session)), AcpSessionError::Unavailable))
-                        } else if pending.request.cancellation.is_cancelled() {
-                            Err((Some(Box::new(session)), AcpSessionError::Cancelled))
-                        } else {
-                            Ok(session)
-                        }
-                    });
-                    match result {
-                        Ok(session) => {
-                            if !self.begin_retire(
-                                &mut pending,
-                                Some(Current {
-                                    session,
-                                    host: host.host,
-                                    permission_contexts: host.permission_contexts,
-                                }),
-                                guard,
-                            ) {
-                                return true;
-                            }
-                        }
-                        Err((session, error)) => {
-                            pending.request.rollback_guard = guard;
-                            pending.phase = Self::reject_host(
-                                host,
-                                session.map(|session| *session),
-                                error,
-                                pending.request.now_ms,
-                            );
-                        }
+                    if !self.finish_open(&mut pending, host, guard, result) {
+                        return true;
                     }
                 }
             },
+            Phase::ManagedOpening { mut host, guard } => {
+                match host
+                    .managed
+                    .as_mut()
+                    .expect("managed opening")
+                    .poll_open(cx, pending.request.now_ms)
+                {
+                    Poll::Pending => {
+                        pending.phase = Phase::ManagedOpening { host, guard };
+                        self.pending = Some(pending);
+                        return false;
+                    }
+                    Poll::Ready(result) => {
+                        if !self.finish_open(&mut pending, host, guard, result) {
+                            return true;
+                        }
+                    }
+                }
+            }
             Phase::Retiring {
                 candidate,
                 mut future,
@@ -535,6 +562,51 @@ impl NativeAcpSelectionOwner {
         });
     }
 
+    fn finish_open(
+        &mut self,
+        pending: &mut Pending,
+        host: NativeAcpPreparedHost,
+        guard: Option<NativeRuntimeQuiescence>,
+        result: Result<NativeAcpSession, AcpSessionError>,
+    ) -> bool {
+        #[cfg(test)]
+        if let Some(hook) = self.after_open.take() {
+            hook(&host.host, &pending.request.cancellation);
+        }
+        let result = result.map_err(|error| (None, error)).and_then(|session| {
+            // Recheck the actual adopted foreground after asynchronous opening;
+            // managed hosts deliberately have no global MCP owner to query.
+            if session.selection_ready().is_err() {
+                Err((Some(Box::new(session)), AcpSessionError::Unavailable))
+            } else if pending.request.cancellation.is_cancelled() {
+                Err((Some(Box::new(session)), AcpSessionError::Cancelled))
+            } else {
+                Ok(session)
+            }
+        });
+        match result {
+            Ok(session) => self.begin_retire(
+                pending,
+                Some(Current {
+                    session,
+                    host: host.host,
+                    permission_contexts: host.permission_contexts,
+                }),
+                guard,
+            ),
+            Err((session, error)) => {
+                pending.request.rollback_guard = guard;
+                pending.phase = Self::reject_host(
+                    host,
+                    session.map(|session| *session),
+                    error,
+                    pending.request.now_ms,
+                );
+                true
+            }
+        }
+    }
+
     fn cancel_current(&mut self) {
         if let Some(current) = &mut self.current {
             let _ = current.session.request_cancel(&current.session.id());
@@ -549,19 +621,15 @@ impl NativeAcpSelectionOwner {
     ) -> Phase {
         Phase::Rejecting {
             error,
-            future: Some(cleanup::retire(host.host, session, false, now_ms)),
+            future: Some(cleanup::reject(host, session, now_ms)),
         }
     }
     fn begin_open(
         pending: &mut Pending,
-        host: NativeAcpPreparedHost,
+        mut host: NativeAcpPreparedHost,
         guard: Option<NativeRuntimeQuiescence>,
     ) {
-        if host
-            .host
-            .mcp_ephemeral_owner()
-            .is_none_or(|owner| owner.ready().is_err())
-        {
+        if host.ready().is_err() {
             drop(guard);
             pending.phase = Self::reject_host(
                 host,
@@ -572,10 +640,21 @@ impl NativeAcpSelectionOwner {
             return;
         }
         pending.request.candidate_may_have_persisted = true;
+        let selection = pending.request.selection.take().expect("session selection");
+        if let Some(managed) = &mut host.managed {
+            pending.phase = match managed.open(selection, pending.request.now_ms) {
+                Ok(()) => Phase::ManagedOpening { host, guard },
+                Err(error) => {
+                    pending.request.rollback_guard = guard;
+                    Self::reject_host(host, None, error, pending.request.now_ms)
+                }
+            };
+            return;
+        }
         let future = NativeAcpSession::open(
             host.host.clone(),
             host.options.clone(),
-            pending.request.selection.take().expect("session selection"),
+            selection,
             pending.request.now_ms,
         );
         pending.phase = Phase::Opening {
@@ -628,6 +707,7 @@ impl NativeAcpSelectionOwner {
                     cleanup::Receipt {
                         complete: true,
                         workers: Vec::new(),
+                        managed: None,
                     }
                 }),
             };

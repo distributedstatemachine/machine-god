@@ -31,6 +31,7 @@ pub use controls::{
 };
 mod driver;
 mod managed;
+pub(crate) use managed::staged::Failure as NativeManagedStageFailure;
 mod navigation;
 pub use navigation::{
     NativeManagedEditorIdentity, NativeManagedFrameIdentity, NativeManagedNavigationAction,

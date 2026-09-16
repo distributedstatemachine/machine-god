@@ -178,6 +178,10 @@ impl NativeAcpSession {
         self.inner.foreground_turn_settled()
     }
 
+    pub(crate) fn selection_ready(&self) -> Result<(), AcpSessionError> {
+        self.inner.acp_mcp_ready().map_err(Into::into)
+    }
+
     pub(crate) fn close_retired(&mut self) -> Result<(), AcpSessionError> {
         self.inner.request_retired_shutdown()?;
         self.closing = true;

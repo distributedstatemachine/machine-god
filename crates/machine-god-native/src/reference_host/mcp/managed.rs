@@ -110,6 +110,10 @@ impl ManagedMcpSeed {
     }
 }
 impl ManagedParentMcpSeed {
+    pub(in crate::reference_host) fn is_ephemeral(&self) -> bool {
+        self.0.options.ephemeral.is_some()
+    }
+
     /// Reuse the captured workspace/helper/environment and host services while
     /// selecting explicitly supplied transport authority for a new parent.
     /// Never mutate the original parent or the configured-only child seed.
