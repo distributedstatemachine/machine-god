@@ -72,6 +72,16 @@ pub(super) enum McpSelection {
     Ephemeral(NativeMcpNetworkRequirement),
 }
 impl McpSelection {
+    pub(super) fn capture_state_descriptor(
+        self,
+        roots: &PreparedNativeRoots,
+    ) -> Result<Option<std::os::fd::OwnedFd>, ()> {
+        match self {
+            Self::Ephemeral(_) => roots.try_clone_state().map(Some).map_err(|_| ()),
+            Self::Profile => Ok(None),
+        }
+    }
+
     pub(super) fn capture_workspace_identity(
         self,
         roots: &PreparedNativeRoots,

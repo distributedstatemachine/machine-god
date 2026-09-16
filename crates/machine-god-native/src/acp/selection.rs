@@ -20,6 +20,9 @@ use std::{
 mod cleanup;
 mod driver;
 mod managed;
+mod reuse;
+mod reuse_driver;
+pub use reuse::NativeAcpHostReuse;
 mod rollback;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -33,6 +36,19 @@ type AfterOpenHook = Box<dyn FnOnce(&NativeReferenceHost, &CancellationToken) + 
 /// MCP selection, not another copy of its secret-bearing configuration. This
 /// requirement grants no authority and never replaces peer readiness checks.
 pub trait NativeAcpHostFactory: Send + Sync {
+    /// Checks explicit requested roots against an existing managed host before
+    /// preparing a new domain. `None` selects fresh composition, never a guessed
+    /// path-only reuse. The default is for explicitly unmanaged factories.
+    fn prepare_reuse(
+        &self,
+        _current: Arc<NativeReferenceHost>,
+        _workspace: PathBuf,
+        _network: NativeMcpNetworkRequirement,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<Option<NativeAcpHostReuse>, AcpSessionError>> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn prepare(
         &self,
         workspace: PathBuf,
@@ -84,7 +100,7 @@ impl NativeAcpWorkspaceIdentity {
             .try_clone_workspace()
             .map_err(|_| AcpSessionError::Unavailable)?;
         let state = roots
-            .try_clone_skills_state()
+            .try_clone_state()
             .map_err(|_| AcpSessionError::Unavailable)?;
         scope
             .validate_host_binding(&primary, roots.canonical_workspace_root(), &state)
@@ -212,6 +228,13 @@ struct Pending {
 }
 enum Phase {
     Requested,
+    CheckingReuse(BoxFuture<'static, Result<Option<NativeAcpHostReuse>, AcpSessionError>>),
+    ReuseStarting(Box<reuse::Stage>),
+    ReuseDraining(Box<reuse::Stage>),
+    ReuseTransition {
+        request: crate::NativeInteractiveRequestId,
+        replay: bool,
+    },
     Preparing(BoxFuture<'static, Result<NativeAcpPreparedHost, AcpSessionError>>),
     Starting {
         host: NativeAcpPreparedHost,
@@ -255,6 +278,7 @@ pub struct NativeAcpSelectionOwner {
     pending: Option<Pending>,
     outcome: Option<NativeAcpSelectionOutcome>,
     turn_outcome: Option<NativeAcpSelectionTurnOutcome>,
+    reuse_outcome: Option<crate::NativeInteractiveOutcome>,
     retained_cleanup: Vec<cleanup::Receipt>,
     fenced_candidate: Option<Current>,
     fenced_guard: Option<NativeRuntimeQuiescence>,
@@ -274,6 +298,7 @@ impl NativeAcpSelectionOwner {
             pending: None,
             outcome: None,
             turn_outcome: None,
+            reuse_outcome: None,
             retained_cleanup: Vec::new(),
             fenced_candidate: None,
             fenced_guard: None,
@@ -425,7 +450,9 @@ impl NativeAcpSelectionOwner {
             && self.pending.is_none()
             // Failed managed startup retains actual cleanup custody and cannot
             // masquerade as a settled connection merely because no session opened.
-            && self.retained_cleanup.iter().all(|receipt| receipt.managed.is_none())
+            && self.retained_cleanup.iter().all(|receipt| {
+                receipt.managed.is_none() && receipt.staged.is_none()
+            })
             && self
                 .retained_cleanup
                 .iter()

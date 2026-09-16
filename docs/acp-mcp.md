@@ -67,17 +67,32 @@ live publication, even when the authoritative server list is empty. This path
 does not call profile authentication refresh. `mcp_deadline_after` explicitly
 observes the selected MCP clock; callers do not substitute ambient clock values.
 
-Outer ACP session selection uses `NativeAcpSelectionOwner`, not a replacement
-inside the active host. Its injected factory prepares a distinct host and
-permission registry for every new/load/resume request. Candidate MCP readiness
-precedes cancellation of the old prompt; after that prompt's checkpoint settles,
-native candidate adoption and another readiness check precede old retirement.
-Only a successful owned retirement receipt permits the connection to activate the
-candidate registry. Candidate failure before retirement preserves old admission;
-uncertain retirement fences the connection instead of claiming rollback. The
-owner keeps accepted startup and cleanup futures through cancellation and EOF,
-closes and settles MCP before joining the exact host worker scope, and retains
-the old prompt completion under its original principal.
+Outer ACP session selection uses `NativeAcpSelectionOwner`. Production first
+prepares a managed host with the actual connection prompt inbox and a journal
+opened under the retained state descriptor. Later new/load/resume requests check
+the newly prepared workspace and state descriptors against the existing host's
+retained scope. Canonical spelling alone is insufficient. A checked reuse token
+is weakly bound to that exact host allocation and request spelling; a different
+domain requires a fresh host and permission registry.
+
+Same-domain replacement stages a fresh parent-only MCP instance under the
+existing manager's residency budget. It captures only the new selection's needed
+network inputs, retaining the original helper, environment and workspace
+authority. Candidate readiness precedes cancellation of the old prompt. Once its
+checkpoint and controls settle, the native transition adopts the original stage
+and retires only the old parent; children and their interactions remain owned by
+the same manager. Command services and load history then follow the actual new
+foreground. Load replays history; resume does not. Successful native commitment
+wins cancellation that arrives after commitment.
+
+Different-domain selection waits for complete old-host retirement before
+activating the candidate registry. Candidate failure before retirement preserves
+old admission after checkpoint revalidation; uncertain retirement fences the
+connection instead of claiming rollback. Both paths retain original staged
+cleanup and residency custody through cancellation and EOF. Failed staged cleanup
+keeps its owner fenced, prevents a settled-connection observation, and cannot
+release another principal's resources. Final host shutdown settles MCP before joining the exact
+worker scope, retaining old prompt completion under its original principal.
 
 `replace` reserves one mutation and one retained generation before startup's first
 effect. Every selected server must become ready and pass private runtime admission.

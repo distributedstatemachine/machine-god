@@ -29,6 +29,23 @@ enum CaptureOwner {
 }
 
 impl NativeReferenceHostMcpOptions {
+    /// Explicitly captures only replacement ACP transport authority on an owned
+    /// startup worker. Retained host helper/environment/workspace inputs do not
+    /// need recapturing. Empty and stdio selections acquire no network inputs.
+    /// # Errors
+    /// Invalid bundled trust or network configuration; unavailable capture stays
+    /// absent and required peers subsequently fail normal readiness admission.
+    pub fn capture_ephemeral_network(
+        requirement: NativeMcpNetworkRequirement,
+    ) -> Result<Option<Arc<NativeMcpNetwork>>, NativeReferenceHostBuildError> {
+        captured_network(
+            network_inputs(requirement),
+            Arc::new(TokioMcpClock),
+            CancellationToken::new(),
+            bundled_trust,
+        )
+    }
+
     /// Explicitly captures production startup authority on the caller's owned
     /// startup worker. Reads system DNS configuration and secure entropy, and
     /// duplicates the already retained workspace descriptor. The selected helper

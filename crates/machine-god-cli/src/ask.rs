@@ -1142,6 +1142,7 @@ mod production {
                         let Ok(PreparedConversationHost {
                             host,
                             acp_workspace: _,
+                            acp_state: _,
                             runtime,
                             workspace,
                             state_path,
@@ -1209,6 +1210,7 @@ mod production {
     struct PreparedConversationHost<R = machine_god_native::TokioWebSearchRuntime> {
         host: NativeReferenceHost,
         acp_workspace: Option<machine_god_native::acp::selection::NativeAcpWorkspaceIdentity>,
+        acp_state: Option<std::os::fd::OwnedFd>,
         runtime: R,
         workspace: std::path::PathBuf,
         state_path: std::path::PathBuf,
@@ -1333,6 +1335,7 @@ mod production {
         )?;
         let workspace = prepared_roots.workspace_root().to_owned();
         let state_path = prepared_roots.state_root().to_owned();
+        let acp_state = mcp.capture_state_descriptor(&prepared_roots)?;
         // Validate inference access before any catalog request.
         // Catalog loading precedes terminal-host acquisition:
         // setup signals can exit without abandoning native workers.
@@ -1392,6 +1395,7 @@ mod production {
         Ok(PreparedConversationHost {
             host,
             acp_workspace,
+            acp_state,
             runtime,
             workspace,
             state_path,

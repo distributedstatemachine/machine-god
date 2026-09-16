@@ -177,6 +177,7 @@ fn prepare(
     Ok(PreparedConversationHost {
         host,
         acp_workspace: None,
+        acp_state: None,
         runtime,
         workspace,
         state_path,

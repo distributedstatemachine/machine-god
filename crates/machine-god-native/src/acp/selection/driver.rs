@@ -13,19 +13,27 @@ impl NativeAcpSelectionOwner {
         self.wake = Some(cx.waker().clone());
         let mut ready = false;
         if let Some(current) = &mut self.current {
-            if self.turn_outcome.is_some() {
+            if self.turn_outcome.is_some() || self.reuse_outcome.is_some() {
                 // Retaining the parent's response applies presentation backpressure,
                 // not backpressure to independently owned child work or cleanup.
                 current.session.poll_background(cx, now_ms);
             } else {
                 ready = current.session.poll_progress(cx, now_ms).is_ready();
-                if let Some(NativeInteractiveOutcome::Turn(outcome)) =
-                    current.session.take_outcome()
-                {
-                    self.turn_outcome = Some(NativeAcpSelectionTurnOutcome {
-                        owner: current.session.principal(),
-                        outcome,
-                    });
+                match current.session.take_outcome() {
+                    Some(NativeInteractiveOutcome::Turn(outcome)) => {
+                        self.turn_outcome = Some(NativeAcpSelectionTurnOutcome {
+                            owner: current.session.principal(),
+                            outcome,
+                        });
+                    }
+                    Some(outcome)
+                        if self.pending.as_ref().is_some_and(|pending| {
+                            matches!(pending.phase, Phase::ReuseTransition { .. })
+                        }) =>
+                    {
+                        self.reuse_outcome = Some(outcome);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -63,6 +71,7 @@ impl NativeAcpSelectionOwner {
                                     complete: false,
                                     workers: Vec::new(),
                                     managed: None,
+                                    staged: None,
                                 };
                                 for current in [candidate, previous].into_iter().flatten() {
                                     let receipt = cleanup::retire(
@@ -135,19 +144,14 @@ impl NativeAcpSelectionOwner {
                         future: None,
                     };
                 } else {
-                    pending.phase = Phase::Preparing(
-                        self.factory.prepare(
-                            pending.request.workspace.clone(),
-                            pending
-                                .request
-                                .configuration
-                                .as_ref()
-                                .expect("selection configuration")
-                                .network_requirement(),
-                            pending.request.cancellation.clone(),
-                        ),
-                    );
+                    pending.phase = self.begin_preparation(&pending.request);
                 }
+            }
+            Phase::CheckingReuse(future) => return self.check_reuse(pending, future, cx),
+            Phase::ReuseStarting(stage) => return self.start_reuse(pending, stage, cx),
+            Phase::ReuseDraining(stage) => return self.drain_reuse(pending, stage),
+            Phase::ReuseTransition { request, replay } => {
+                return self.finish_reuse(pending, request, replay);
             }
             Phase::Preparing(mut future) => match future.as_mut().poll(cx) {
                 Poll::Pending => {
@@ -607,7 +611,7 @@ impl NativeAcpSelectionOwner {
         }
     }
 
-    fn cancel_current(&mut self) {
+    pub(super) fn cancel_current(&mut self) {
         if let Some(current) = &mut self.current {
             let _ = current.session.request_cancel(&current.session.id());
         }
@@ -708,6 +712,7 @@ impl NativeAcpSelectionOwner {
                         complete: true,
                         workers: Vec::new(),
                         managed: None,
+                        staged: None,
                     }
                 }),
             };

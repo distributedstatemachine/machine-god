@@ -120,7 +120,7 @@ fn compose(
     let mut budget = selection::Budget::new(cancellation);
     selection::validate_environment(environment, terminal)?;
     let workspace = budget.call(|| roots.try_clone_workspace())?;
-    let state = budget.call(|| roots.try_clone_skills_state())?;
+    let state = budget.call(|| roots.try_clone_state())?;
     let workspace = NativeSkillDirectoryAuthority::from_directory(
         Arc::new(File::from(workspace)),
         roots.canonical_workspace_root().to_owned(),

@@ -126,6 +126,7 @@ mod cleanup_wait;
 pub(crate) mod fixture;
 mod managed;
 mod network_requirements;
+mod reuse;
 mod workspace_identity;
 use fixture::Factory;
 

@@ -63,6 +63,35 @@ impl Drop for Factory {
     }
 }
 impl NativeAcpHostFactory for Factory {
+    fn prepare_reuse(
+        &self,
+        current: Arc<NativeReferenceHost>,
+        workspace: PathBuf,
+        _: NativeMcpNetworkRequirement,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<Option<NativeAcpHostReuse>, AcpSessionError>> {
+        let environment = self.environment.clone();
+        let wait = self.wait.clone();
+        let observed = self.cancel_observed.clone();
+        #[cfg(feature = "mcp-http")]
+        let network = self.network_override.lock().unwrap().clone();
+        Box::pin(async move {
+            if wait.load(Ordering::Acquire) {
+                cancellation.cancelled().await;
+                observed.store(true, Ordering::Release);
+                return Err(AcpSessionError::Cancelled);
+            }
+            let selected = NativeRootSelection::from_environment(&environment, &workspace)
+                .map_err(|_| AcpSessionError::InvalidConfiguration)?;
+            let roots =
+                PreparedNativeRoots::prepare(selected).map_err(|_| AcpSessionError::Unavailable)?;
+            let reuse = NativeAcpHostReuse::capture(&current, &roots)?;
+            #[cfg(feature = "mcp-http")]
+            let reuse = reuse.map(|reuse| reuse.with_network(network));
+            Ok(reuse)
+        })
+    }
+
     fn prepare(
         &self,
         workspace: PathBuf,
@@ -103,7 +132,7 @@ impl NativeAcpHostFactory for Factory {
             .unwrap();
             let authority = workspace_authority(&roots);
             let identity = NativeAcpWorkspaceIdentity::capture(&roots, &authority).unwrap();
-            let state = roots.try_clone_skills_state().unwrap();
+            let state = roots.try_clone_state().unwrap();
             let contexts = Arc::new(NativePermissionContexts::new());
             let clock = Arc::new(Clock);
             let mut mcp = NativeReferenceHostMcpOptions::new(mcp_contexts, clock.clone())

@@ -7,6 +7,26 @@ pub(super) struct Receipt {
     pub workers: Vec<NativeOwnedWorkerCompletion>,
     // A failed pre-selection cleanup must retain the original manager and stage.
     pub managed: Option<Box<super::managed::Preparation>>,
+    pub staged: Option<Box<super::reuse::Stage>>,
+}
+
+pub(super) fn reject_stage(stage: Box<super::reuse::Stage>) -> BoxFuture<'static, Receipt> {
+    Box::pin(async move {
+        match stage.settle().await {
+            Ok(()) => Receipt {
+                complete: true,
+                workers: Vec::new(),
+                managed: None,
+                staged: None,
+            },
+            Err(stage) => Receipt {
+                complete: false,
+                workers: Vec::new(),
+                managed: None,
+                staged: Some(stage),
+            },
+        }
+    })
 }
 
 pub(super) fn reject(
@@ -22,6 +42,7 @@ pub(super) fn reject(
                 complete: false,
                 workers: Vec::new(),
                 managed: Some(managed),
+                staged: None,
             };
         }
         retire(host.host, session, false, now_ms).await
@@ -78,6 +99,7 @@ pub(super) fn retire(
                 complete: false,
                 workers: Vec::new(),
                 managed: None,
+                staged: None,
             };
         };
         // Retirement must not need a fresh worker admission: the collector can
@@ -87,6 +109,7 @@ pub(super) fn retire(
             complete: !failed && completion.is_complete(),
             workers: vec![completion],
             managed: None,
+            staged: None,
         }
     })
 }

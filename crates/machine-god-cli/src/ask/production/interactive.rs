@@ -175,6 +175,7 @@ fn run_interactive(
     let Ok(PreparedConversationHost {
         host,
         acp_workspace: _,
+        acp_state: _,
         runtime,
         workspace,
         state_path,

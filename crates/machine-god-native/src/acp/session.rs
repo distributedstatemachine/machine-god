@@ -20,6 +20,7 @@ use std::{
 };
 
 mod history;
+mod selection;
 use super::prompt::NativeAcpPrompt;
 pub use history::NativeAcpHistory;
 

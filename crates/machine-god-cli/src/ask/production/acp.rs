@@ -98,6 +98,7 @@ fn run(
         Arc::new(deadline),
         clients.bridge(),
         clients.presenter(),
+        super::managed_startup::options(clients.prompt_inbox()),
         workers.clone(),
     );
     control.activate_turn()?;

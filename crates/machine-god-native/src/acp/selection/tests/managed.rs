@@ -235,6 +235,7 @@ fn retained_managed_cleanup_cannot_report_a_closed_connection() {
             complete: false,
             workers: Vec::new(),
             managed: prepared.managed.take(),
+            staged: None,
         });
         owner.request_shutdown();
         assert!(!owner.is_closed());

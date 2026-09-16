@@ -83,17 +83,16 @@ impl NativeReferenceHostMcpOptions {
         &self,
         has_management: bool,
     ) -> Result<(), NativeReferenceHostBuildError> {
-        if let Some(ephemeral) = &self.ephemeral {
-            if has_management
+        if let Some(ephemeral) = &self.ephemeral
+            && (has_management
                 || self.startup.is_some()
-                || !Arc::ptr_eq(&ephemeral.clock, &self.clock)
-            {
-                return Err(error());
-            }
-            #[cfg(feature = "mcp-http")]
-            if self.authentication.is_some() {
-                return Err(error());
-            }
+                || !Arc::ptr_eq(&ephemeral.clock, &self.clock))
+        {
+            return Err(error());
+        }
+        #[cfg(feature = "mcp-http")]
+        if self.ephemeral.is_some() && self.authentication.is_some() {
+            return Err(error());
         }
         if self
             .startup

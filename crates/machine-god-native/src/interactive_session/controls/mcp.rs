@@ -29,7 +29,7 @@ pub(super) fn prepare(
 ) -> Result<(CancellationToken, ControlFuture), NativeInteractiveError> {
     let token = CancellationToken::new();
     #[cfg(not(feature = "mcp-http"))]
-    let _ = browser;
+    drop(browser);
     let command = match command {
         #[cfg(feature = "mcp-http")]
         McpCommand::Authenticate {

@@ -931,6 +931,13 @@ stage and manager before reporting rejection or releasing the workspace journal;
 failed settlement instead retains that owner and fences the connection. Managed
 opening adopts the ready parent without requiring or creating a global host MCP
 runtime. The ordinary explicitly unmanaged host constructor remains separate.
+Production ACP binds that managed startup to the connection's actual inbox and
+retained state descriptor. Same-workspace selection reuses its manager after
+descriptor-checked workspace/state matching, not a path-equality shortcut or a
+second journal open. Readiness staging and cancellation preserve old parent
+admission until native replacement; successful replacement retires only that
+parent. Children, their prompt registrations and configured-only MCP owners stay
+live, while foreground command services and load history follow the new runtime.
 
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted

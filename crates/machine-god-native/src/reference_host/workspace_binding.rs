@@ -10,6 +10,10 @@ pub(crate) struct WorkspaceBinding {
 }
 
 impl super::NativeReferenceHost {
+    pub(crate) fn workspace_scope(&self) -> Option<crate::NativeWorkspaceScopeSnapshot> {
+        self.workspace_binding.as_ref()?.authority.snapshot().ok()
+    }
+
     pub(crate) fn workspace_service_for_runtime(
         &self,
         runtime: &crate::NativeConversationRuntime,

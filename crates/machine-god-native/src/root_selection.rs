@@ -434,7 +434,11 @@ impl PreparedNativeRoots {
     }
 
     #[cfg(feature = "ai-gateway-http")]
-    pub(crate) fn try_clone_skills_state(&self) -> io::Result<OwnedFd> {
+    /// Duplicates the already prepared state directory for another explicitly
+    /// selected native owner. Does not resolve or reopen its pathname.
+    /// # Errors
+    /// The operating system could not duplicate the retained descriptor.
+    pub fn try_clone_state(&self) -> io::Result<OwnedFd> {
         self.session_store.try_clone_root_descriptor()
     }
 
