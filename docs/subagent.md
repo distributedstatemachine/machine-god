@@ -981,6 +981,18 @@ admission until native replacement; successful replacement retires only that
 parent. Children, their prompt registrations and configured-only MCP owners stay
 live, while foreground command services and load history follow the new runtime.
 
+Same-transcript replacement reserves permission-policy, permission-context,
+workspace-context, file-observation and selected-model routes alongside the old
+runtime. Active routes and pending reservations share each table's existing
+64-entry limit; ordinary duplicates and a second pending successor are rejected.
+All candidate routes share one publication barrier. Preparation cannot queue work,
+acquire ordinary runtime controls or appear in shared lookups. A private native
+preparation permit allows only model selection/persistence and original notice
+outbox repair; it is not model/tool admission. The old runtime remains
+usable until its exact quiescence guard retires every route. Only then may the
+manager publish the candidate without re-admitting capacity. Failed preparation
+releases its own reservations; retained old handles cannot retire the replacement.
+
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted
 authority. It never reloads, replaces, starts, or republishes that transcript.

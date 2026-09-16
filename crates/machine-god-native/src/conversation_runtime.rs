@@ -255,7 +255,18 @@ impl NativeConversationRuntime {
         startup: NativeModelPreferences,
         process_model_override: Option<&str>,
     ) -> Result<Self, NativeConversationRuntimeError> {
-        let saved = conversation.model_preferences()?;
+        let publication = conversation.route_publication();
+        let saved = if publication.is_active() {
+            conversation.model_preferences()?
+        } else {
+            if conversation.is_busy() {
+                return Err(NativeConversationRuntimeError::Busy);
+            }
+            // Preparation may read its validated preferences, but may not
+            // acquire an execution/control permit or write the saved record.
+            NativeModelPreferences::from_metadata(&conversation.record_snapshot().metadata)
+                .map_err(NativeConversationRuntimeError::InvalidModelPreferences)?
+        };
         let mut preferences = saved.clone().unwrap_or(startup);
         if let Some(model) = process_model_override {
             preferences
@@ -265,6 +276,7 @@ impl NativeConversationRuntime {
         let saved_generation = (saved.as_ref() == Some(&preferences)).then_some(0);
         let lifecycle = LifecycleGate::new();
         conversation.bind_lifecycle(&lifecycle)?;
+        lifecycle.bind_publication(publication);
         Ok(Self {
             conversation: Arc::new(conversation),
             lifecycle,
@@ -304,14 +316,67 @@ impl NativeConversationRuntime {
         let source: Arc<dyn CurrentModel> = runtime.state.clone();
         runtime.model_route = Some(
             routes
-                .register(
+                .register_with_publication(
                     runtime.conversation.id(),
                     runtime.conversation.incarnation_id(),
                     Arc::downgrade(&source),
+                    runtime.conversation.route_publication(),
                 )
                 .map_err(NativeConversationRuntimeError::ModelRoute)?,
         );
         Ok(runtime)
+    }
+
+    pub(crate) fn routes_ready_to_publish(&self) -> bool {
+        self.lifecycle.phase() == LifecyclePhase::Open
+            && self.conversation.routes_ready_to_publish()
+            && self
+                .model_route
+                .as_ref()
+                .is_none_or(|route| route.ready_to_publish())
+    }
+
+    pub(crate) fn activate_routes(&self) -> bool {
+        self.routes_ready_to_publish() && self.lifecycle.publish_routes()
+    }
+
+    /// Private foreground preparation may set metadata and settle the original
+    /// outbox, but it never publishes routes or obtains model/tool admission.
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) async fn prepare_foreground_selection(
+        &self,
+        process_model: Option<String>,
+        catalog: Option<Arc<NativeModelCatalog>>,
+        now_ms: i64,
+        access: Arc<dyn machine_god_core::SessionStoreAccess>,
+    ) -> Result<(), NativeConversationRuntimeError> {
+        let permit = self.lifecycle.acquire_preparation()?;
+        if let Some(model) = process_model {
+            let mut preferences = self.model_preferences();
+            preferences
+                .set_model(&model)
+                .map_err(NativeConversationRuntimeError::InvalidModelPreferences)?;
+            self.select_model_preferences(preferences)?;
+        }
+        if let Some(catalog) = catalog {
+            let previous = self
+                .state
+                .lock()
+                .expect("runtime state poisoned")
+                .catalog
+                .replace(catalog);
+            drop(previous);
+        }
+        let lease = self.acquire_idle_with_permit(true, permit)?;
+        self.conversation
+            .recover_notice_delivery_admitted(&lease.permit)
+            .await?;
+        drop(lease);
+        let permit = self.lifecycle.acquire_preparation()?;
+        let (preferences, generation, save) = self.prepare_preference_save(permit);
+        self.save_preferences(preferences, generation, save, now_ms, Some(access))
+            .await?;
+        Ok(())
     }
 
     #[must_use]
@@ -643,6 +708,13 @@ impl NativeConversationRuntime {
         preferences: NativeModelPreferences,
     ) -> Result<u64, NativeConversationRuntimeError> {
         let _permit = self.lifecycle.acquire()?;
+        self.select_model_preferences(preferences)
+    }
+
+    fn select_model_preferences(
+        &self,
+        preferences: NativeModelPreferences,
+    ) -> Result<u64, NativeConversationRuntimeError> {
         let mut state = self.state.lock().expect("runtime state poisoned");
         let generation = state
             .generation

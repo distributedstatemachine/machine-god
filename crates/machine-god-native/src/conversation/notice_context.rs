@@ -32,17 +32,38 @@ impl NativeConversation {
     ) -> BoxFuture<'_, Result<Option<NoticeDelivery>, NativeConversationError>> {
         Box::pin(async move {
             let _lifecycle = self.acquire_lifecycle()?;
-            let _admission = self.acquire_workspace_control()?;
-            let owner = self
-                .notices
-                .as_ref()
-                .and_then(std::sync::Weak::upgrade)
-                .ok_or(NativeConversationError::ManagedAdmission)?;
-            owner
-                .recover_delivery(&self.session)
-                .await
-                .map_err(publication_error)
+            self.recover_notice_delivery_inner().await
         })
+    }
+
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) async fn recover_notice_delivery_admitted(
+        &self,
+        permit: &crate::conversation_lifecycle::LifecyclePermit,
+    ) -> Result<Option<NoticeDelivery>, NativeConversationError> {
+        if self
+            .lifecycle
+            .get()
+            .is_none_or(|gate| !permit.belongs_to(gate))
+        {
+            return Err(NativeConversationError::ManagedAdmission);
+        }
+        self.recover_notice_delivery_inner().await
+    }
+
+    async fn recover_notice_delivery_inner(
+        &self,
+    ) -> Result<Option<NoticeDelivery>, NativeConversationError> {
+        let _admission = self.acquire_workspace_control()?;
+        let owner = self
+            .notices
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or(NativeConversationError::ManagedAdmission)?;
+        owner
+            .recover_delivery(&self.session)
+            .await
+            .map_err(publication_error)
     }
 
     /// Clears only the original batch after all exact source ACKs are confirmed.

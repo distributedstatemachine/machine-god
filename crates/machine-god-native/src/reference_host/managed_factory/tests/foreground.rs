@@ -4,6 +4,113 @@ use crate::managed::{
     manager::{ManagedManager, ManagerLimits},
 };
 
+fn prepare_same_session_parent(
+    f: &FactoryFixture,
+    session: Session,
+) -> Result<PreparedManagedRuntime, ManagedRuntimeError> {
+    let selected = &f.factory.0.restoration;
+    let id = session.id().to_string();
+    block_on(f.factory.prepare_parent(
+        NativeConversation::from_session(session).unwrap(),
+        ManagedRestorationAuthority {
+            workspace: selected.workspace.clone(),
+            policy: selected.policy.clone(),
+            preferences: selected.preferences.clone(),
+        },
+        NoticePrincipal {
+            id,
+            generation: NonZeroU64::MIN,
+        },
+        f.journal.owner_lease(),
+        f.parent_mcp.clone(),
+    ))
+}
+
+#[test]
+fn same_session_candidate_reserves_all_routes_without_admitting_work_or_replacing_old_selection() {
+    let f = FactoryFixture::new();
+    let session = block_on(
+        f.factory
+            .0
+            .services
+            .session_lifecycle
+            .create_generated_with_metadata(
+                NativeSessionMetadata::new(&f.host.workspace, 3, NativeSessionOrigin::Cli).unwrap(),
+            ),
+    )
+    .unwrap();
+    let id = session.id();
+    let mut old = prepare_same_session_parent(&f, session).unwrap();
+    assert!(old.runtime.activate_routes());
+    let mut preferences = old.runtime.model_preferences();
+    preferences.set_model("fixture/old-selection").unwrap();
+    old.runtime.set_model_preferences(preferences).unwrap();
+    let context = machine_god_core::ToolContext {
+        session_id: old.runtime.id(),
+        session_incarnation_id: old.runtime.incarnation_id(),
+        turn_id: machine_god_core::TurnId::new("not-execution-authority").unwrap(),
+        call_id: machine_god_core::ToolCallId::new("observation").unwrap(),
+    };
+    let load = || {
+        block_on(f.factory.0.services.engine.load_session(id.clone()))
+            .unwrap()
+            .unwrap()
+    };
+    let mut candidate = prepare_same_session_parent(&f, load()).unwrap();
+    assert!(
+        candidate
+            .runtime
+            .enqueue("must remain inert".into())
+            .is_err()
+    );
+    assert!(candidate.runtime.permissions().unwrap().snapshot().is_err());
+    assert!(!candidate.runtime.activate_routes());
+    assert!(prepare_same_session_parent(&f, load()).is_err());
+    let routes = f.factory.0.services.model_routes.as_ref().unwrap();
+    assert_eq!(
+        routes.snapshot(&context).as_deref(),
+        Some("fixture/old-selection")
+    );
+    old.runtime.enqueue("old remains usable".into()).unwrap();
+    assert_eq!(old.runtime.clear_queued(), 1);
+
+    // Abandoning a candidate refunds only its own reservations, not the old
+    // runtime's routes. A later candidate gets distinct exact ownership.
+    block_on(poll_fn(|cx| candidate.resources.poll_closed(cx))).unwrap();
+    drop(candidate);
+    assert_eq!(
+        routes.snapshot(&context).as_deref(),
+        Some("fixture/old-selection")
+    );
+    let mut replacement = prepare_same_session_parent(&f, load()).unwrap();
+    let mut guard = old.runtime.begin_quiescence().unwrap();
+    block_on(guard.wait_idle()).unwrap();
+    guard.try_retire().unwrap();
+    assert!(routes.snapshot(&context).is_none());
+    assert!(replacement.runtime.activate_routes());
+    assert!(
+        replacement
+            .runtime
+            .permissions()
+            .unwrap()
+            .snapshot()
+            .is_ok()
+    );
+    assert_eq!(
+        routes.snapshot(&context).as_deref(),
+        Some("fixture/restoration")
+    );
+    drop(guard);
+    block_on(poll_fn(|cx| old.resources.poll_closed(cx))).unwrap();
+    drop(old);
+    assert_eq!(
+        routes.snapshot(&context).as_deref(),
+        Some("fixture/restoration")
+    );
+    block_on(poll_fn(|cx| replacement.resources.poll_closed(cx))).unwrap();
+    assert!(f.host.transport.requests.lock().unwrap().is_empty());
+}
+
 #[test]
 fn enrolled_parent_shutdown_waits_for_its_admission_worker_not_unrelated_host_work() {
     let f = FactoryFixture::new();
@@ -139,6 +246,7 @@ fn parent_enrollment_honors_saved_preferences_instead_of_child_override_rules() 
         )
     };
     let mut first = block_on(prepare(session)).unwrap();
+    assert!(first.runtime.activate_routes());
     let mut saved = first.runtime.model_preferences();
     saved.set_model("fixture/saved-parent").unwrap();
     saved.set_effort(NativeReasoningEffort::parse("low").unwrap());

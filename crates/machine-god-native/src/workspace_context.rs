@@ -48,7 +48,18 @@ impl NativeWorkspaceContexts {
         Self::default()
     }
 
+    #[cfg(test)]
     pub(crate) fn register(&self, session: &Session) -> Result<Arc<WorkspaceContextSession>> {
+        self.register_with_publication(
+            session,
+            crate::conversation_routes::RoutePublication::default(),
+        )
+    }
+    pub(crate) fn register_with_publication(
+        &self,
+        session: &Session,
+        publication: crate::conversation_routes::RoutePublication,
+    ) -> Result<Arc<WorkspaceContextSession>> {
         let mut routes = self
             .routes
             .lock()
@@ -57,14 +68,16 @@ impl NativeWorkspaceContexts {
         let id = session.id();
         let incarnation = session.incarnation_id();
         if routes.len() >= MAX_NATIVE_WORKSPACE_CONTEXT_SESSIONS
-            || routes
-                .iter()
-                .filter_map(Weak::upgrade)
-                .any(|owner| owner.id == id && owner.incarnation == incarnation)
+            || routes.iter().filter_map(Weak::upgrade).any(|owner| {
+                owner.id == id
+                    && owner.incarnation == incarnation
+                    && publication.conflicts_with(&owner.publication)
+            })
         {
             return Err(NativeWorkspaceContextError::Limit);
         }
         let owner = Arc::new(WorkspaceContextSession {
+            publication,
             id,
             incarnation,
             session: session.witness(),
@@ -116,7 +129,11 @@ impl NativeWorkspaceContexts {
             .map_err(|_| NativeWorkspaceContextError::Unavailable)?
             .iter()
             .filter_map(Weak::upgrade)
-            .find(|owner| &owner.id == id && &owner.incarnation == incarnation)
+            .find(|owner| {
+                owner.publication.is_active()
+                    && &owner.id == id
+                    && &owner.incarnation == incarnation
+            })
             .ok_or(NativeWorkspaceContextError::Unavailable)?;
         let state = owner
             .active
@@ -140,6 +157,7 @@ impl fmt::Debug for NativeWorkspaceContexts {
 }
 
 pub(crate) struct WorkspaceContextSession {
+    publication: crate::conversation_routes::RoutePublication,
     id: SessionId,
     incarnation: SessionIncarnationId,
     session: SessionWitness,
@@ -149,6 +167,21 @@ pub(crate) struct WorkspaceContextSession {
 }
 
 impl WorkspaceContextSession {
+    pub(crate) fn ready_to_publish(self: &Arc<Self>) -> bool {
+        self.routes.upgrade().is_some_and(|routes| {
+            let Ok(routes) = routes.lock() else {
+                return false;
+            };
+            routes
+                .iter()
+                .any(|route| route.ptr_eq(&Arc::downgrade(self)))
+                && !routes.iter().filter_map(Weak::upgrade).any(|owner| {
+                    !Arc::ptr_eq(&owner, self)
+                        && owner.id == self.id
+                        && owner.incarnation == self.incarnation
+                })
+        })
+    }
     pub(crate) fn begin(
         self: &Arc<Self>,
         turn: &Turn,
@@ -167,7 +200,8 @@ impl WorkspaceContextSession {
             .active
             .lock()
             .map_err(|_| NativeWorkspaceContextError::Unavailable)?;
-        if self.retired.load(Ordering::Acquire)
+        if !self.publication.is_active()
+            || self.retired.load(Ordering::Acquire)
             || active
                 .as_ref()
                 .and_then(Weak::upgrade)
@@ -191,6 +225,7 @@ impl WorkspaceContextSession {
     }
 
     pub(crate) fn retire(self: &Arc<Self>) {
+        self.publication.retire();
         self.retired.store(true, Ordering::Release);
         let active = self
             .active
@@ -225,7 +260,9 @@ impl WorkspaceContextTurn {
             && self.witness.is_live()
             && !self.handle.is_cancelled()
             && self.owner.upgrade().is_some_and(|owner| {
-                owner.session.is_live() && !owner.retired.load(Ordering::Acquire)
+                owner.publication.is_active()
+                    && owner.session.is_live()
+                    && !owner.retired.load(Ordering::Acquire)
             })
     }
 }

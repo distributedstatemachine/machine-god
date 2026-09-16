@@ -173,6 +173,7 @@ impl Checkpoint {
 /// provider or reexecutes a historical tool call. Other handles to the same core
 /// session still obey core's revision and turn leases.
 pub struct NativeConversation {
+    publication: crate::conversation_routes::RoutePublication,
     lifecycle: std::sync::OnceLock<Arc<LifecycleGate>>,
     session: Session,
     active: Arc<AtomicBool>,
@@ -210,6 +211,45 @@ impl fmt::Debug for NativeConversation {
 }
 
 impl NativeConversation {
+    /// Reserve shared routes without making this candidate executable. Only
+    /// the foreground owner publishes them after the exact predecessor retires.
+    pub(crate) fn with_staged_routes(mut self) -> Result<Self, NativeConversationError> {
+        if self.is_busy()
+            || self.lifecycle.get().is_some()
+            || self.permissions.is_some()
+            || self.permission_contexts.is_some()
+            || self.observations.is_some()
+            || self.workspace.is_some()
+            || self.managed.is_some()
+            || self.mcp_contexts.is_some()
+        {
+            return Err(NativeConversationError::Busy);
+        }
+        self.publication = crate::conversation_routes::RoutePublication::staged();
+        Ok(self)
+    }
+
+    pub(crate) fn route_publication(&self) -> crate::conversation_routes::RoutePublication {
+        self.publication.clone()
+    }
+
+    pub(crate) fn routes_ready_to_publish(&self) -> bool {
+        self.permissions
+            .as_ref()
+            .is_none_or(crate::NativePermissionSession::ready_to_publish)
+            && self
+                .permission_contexts
+                .as_ref()
+                .is_none_or(ContextSession::ready_to_publish)
+            && self
+                .observations
+                .as_ref()
+                .is_none_or(ObservationSession::ready_to_publish)
+            && self
+                .workspace
+                .as_ref()
+                .is_none_or(|binding| binding.owner.ready_to_publish())
+    }
     /// Actual session borrowed only for native allocation-bound enrollment.
     pub(crate) fn core_session(&self) -> &Session {
         &self.session
@@ -246,6 +286,7 @@ impl NativeConversation {
         {
             return;
         }
+        self.publication.retire();
         if let Some(owner) = &self.permissions {
             owner.retire();
         }
@@ -264,6 +305,9 @@ impl NativeConversation {
     }
 
     fn acquire_lifecycle(&self) -> Result<Option<LifecyclePermit>, NativeConversationError> {
+        if !self.publication.is_active() {
+            return Err(NativeConversationError::Busy);
+        }
         self.lifecycle
             .get()
             .map(|gate| gate.acquire().map_err(|_| NativeConversationError::Busy))
@@ -336,6 +380,7 @@ impl NativeConversation {
         NativeModelPreferences::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidModelPreferences)?;
         Ok(Self {
+            publication: crate::conversation_routes::RoutePublication::default(),
             lifecycle: std::sync::OnceLock::new(),
             session,
             active: Arc::new(AtomicBool::new(false)),
@@ -364,7 +409,11 @@ impl NativeConversation {
         }
         self.observations = Some(
             observations
-                .register(self.id(), self.incarnation_id())
+                .register_with_publication(
+                    self.id(),
+                    self.incarnation_id(),
+                    self.publication.clone(),
+                )
                 .map_err(NativeConversationError::Observation)?,
         );
         Ok(self)
@@ -383,7 +432,7 @@ impl NativeConversation {
         }
         self.permission_contexts = Some(
             contexts
-                .register(&self.session)
+                .register_with_publication(&self.session, self.publication.clone())
                 .map_err(NativeConversationError::PermissionContext)?,
         );
         Ok(self)
@@ -467,7 +516,7 @@ impl NativeConversation {
         self.workspace = Some(ConversationWorkspaceBinding {
             authority,
             owner: contexts
-                .register(&self.session)
+                .register_with_publication(&self.session, self.publication.clone())
                 .map_err(NativeConversationError::WorkspaceContext)?,
         });
         Ok(self)
@@ -541,7 +590,7 @@ impl NativeConversation {
         }
         self.permissions = Some(
             controller
-                .register(self.session.clone(), policy)
+                .register_with_publication(self.session.clone(), policy, self.publication.clone())
                 .map_err(|_| NativeConversationError::Engine)?,
         );
         Ok(self)
@@ -1189,6 +1238,9 @@ impl NativeConversation {
         cancellation: CancellationToken,
         cohort: Option<Arc<crate::owned_worker::NativeOwnedWorkerRun>>,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
+        if !self.publication.is_active() {
+            return Err(NativeConversationError::Busy);
+        }
         let lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);

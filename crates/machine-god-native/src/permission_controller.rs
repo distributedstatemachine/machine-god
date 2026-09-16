@@ -171,7 +171,9 @@ impl NativePermissionController {
             .iter()
             .filter_map(Weak::upgrade)
             .find(|owner| {
-                &owner.session.id() == session && &owner.session.incarnation_id() == incarnation
+                owner.publication.is_active()
+                    && &owner.session.id() == session
+                    && &owner.session.incarnation_id() == incarnation
             })
             .ok_or_else(unavailable)?;
         let state = lock(&owner.state);
@@ -211,6 +213,19 @@ impl NativePermissionController {
         session: Session,
         policy: NativePermissionPolicySnapshot,
     ) -> Result<Arc<NativePermissionSession>, PermissionError> {
+        self.register_with_publication(
+            session,
+            policy,
+            crate::conversation_routes::RoutePublication::default(),
+        )
+    }
+
+    pub(crate) fn register_with_publication(
+        &self,
+        session: Session,
+        policy: NativePermissionPolicySnapshot,
+        publication: crate::conversation_routes::RoutePublication,
+    ) -> Result<Arc<NativePermissionSession>, PermissionError> {
         read_rules(&session)?;
         let mut routes = lock(&self.routes);
         routes.retain(|route| route.strong_count() != 0);
@@ -218,11 +233,13 @@ impl NativePermissionController {
             || routes.iter().filter_map(Weak::upgrade).any(|route| {
                 route.session.id() == session.id()
                     && route.session.incarnation_id() == session.incarnation_id()
+                    && publication.conflicts_with(&route.publication)
             })
         {
             return Err(unavailable());
         }
         let owner = Arc::new(NativePermissionSession {
+            publication,
             session,
             preparer: Arc::clone(&self.preparer),
             #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -253,7 +270,8 @@ impl NativePermissionController {
             .iter()
             .filter_map(Weak::upgrade)
             .find(|owner| {
-                owner.session.id() == request.session_id
+                owner.publication.is_active()
+                    && owner.session.id() == request.session_id
                     && owner.session.incarnation_id() == request.session_incarnation_id
             })
             .ok_or_else(unavailable)
@@ -275,7 +293,8 @@ impl NativePermissionController {
             .iter()
             .filter_map(Weak::upgrade)
             .find(|owner| {
-                owner.session.id() == context.session_id
+                owner.publication.is_active()
+                    && owner.session.id() == context.session_id
                     && owner.session.incarnation_id() == context.session_incarnation_id
             })
             .ok_or_else(unavailable)?;
@@ -318,6 +337,7 @@ struct Grant {
 /// Session-local grant/rule owner. Cloning an Arc keeps ownership, not an active
 /// core turn lease. Direct core edits remain visible to each final rule check.
 pub struct NativePermissionSession {
+    publication: crate::conversation_routes::RoutePublication,
     session: Session,
     preparer: Arc<dyn NativePermissionActionPreparer>,
     state: Arc<Mutex<State>>,
@@ -333,6 +353,20 @@ impl fmt::Debug for NativePermissionSession {
 }
 
 impl NativePermissionSession {
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(crate) fn ready_to_publish(self: &Arc<Self>) -> bool {
+        self.routes.upgrade().is_some_and(|routes| {
+            let routes = lock(&routes);
+            routes
+                .iter()
+                .any(|route| route.ptr_eq(&Arc::downgrade(self)))
+                && !routes.iter().filter_map(Weak::upgrade).any(|owner| {
+                    !Arc::ptr_eq(&owner, self)
+                        && owner.session.id() == self.session.id()
+                        && owner.session.incarnation_id() == self.session.incarnation_id()
+                })
+        })
+    }
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(crate) fn bind_lifecycle(&self, gate: &Arc<LifecycleGate>) -> Result<(), PermissionError> {
         let _permit = gate.acquire().map_err(|_| unavailable())?;
@@ -354,7 +388,10 @@ impl NativePermissionSession {
 
     fn acquire_lifecycle(&self) -> Result<ControlPermit, PermissionError> {
         let mut state = lock(&self.state);
-        if state.retired || state.controls == MAX_CONTROL_OPERATIONS {
+        if !self.publication.is_active()
+            || state.retired
+            || state.controls == MAX_CONTROL_OPERATIONS
+        {
             return Err(unavailable());
         }
         let lifecycle = self
@@ -371,7 +408,8 @@ impl NativePermissionSession {
 
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     fn check_admitted(&self, permit: &LifecyclePermit) -> Result<(), PermissionError> {
-        if lock(&self.state).retired
+        if !self.publication.is_active()
+            || lock(&self.state).retired
             || self
                 .lifecycle
                 .get()
@@ -384,6 +422,7 @@ impl NativePermissionSession {
 
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(crate) fn retire(self: &Arc<Self>) {
+        self.publication.retire();
         let attempt = {
             let mut state = lock(&self.state);
             state.retired = true;
@@ -544,7 +583,11 @@ impl NativePermissionSession {
             cancellation: CancellationToken::new(),
         });
         let mut state = lock(&self.state);
-        if state.retired || state.active.is_some() || !self.session.has_active_turn() {
+        if !self.publication.is_active()
+            || state.retired
+            || state.active.is_some()
+            || !self.session.has_active_turn()
+        {
             return Err(unavailable());
         }
         state.active = Some(Arc::clone(&attempt));
@@ -557,7 +600,8 @@ impl NativePermissionSession {
 
     fn attempt(&self, turn: &TurnId) -> Result<(Arc<Attempt>, u64, u64), PermissionError> {
         let state = lock(&self.state);
-        if state.retired
+        if !self.publication.is_active()
+            || state.retired
             || self
                 .lifecycle
                 .get()

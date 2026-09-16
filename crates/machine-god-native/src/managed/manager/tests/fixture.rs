@@ -261,6 +261,18 @@ impl Fixture {
     }
 
     pub fn notified_foreground(&self, session: Session) -> PreparedManagedRuntime {
+        self.notified_foreground_with_staging(session, false)
+    }
+
+    pub fn staged_notified_foreground(&self, session: Session) -> PreparedManagedRuntime {
+        self.notified_foreground_with_staging(session, true)
+    }
+
+    fn notified_foreground_with_staging(
+        &self,
+        session: Session,
+        staged: bool,
+    ) -> PreparedManagedRuntime {
         use crate::managed::{notices::NoticePrincipal, prompt_context::ParentNoticeContext};
         let context = Arc::new(ParentNoticeContext::new(
             &session,
@@ -270,8 +282,13 @@ impl Fixture {
             },
             &self.manager.notices,
         ));
-        let (conversation, owner) = NativeConversation::from_session(session)
-            .unwrap()
+        let conversation = NativeConversation::from_session(session).unwrap();
+        let conversation = if staged {
+            conversation.with_staged_routes().unwrap()
+        } else {
+            conversation
+        };
+        let (conversation, owner) = conversation
             .with_permission_controller(
                 &self.factory.permissions,
                 NativePermissionPolicySnapshot::new(

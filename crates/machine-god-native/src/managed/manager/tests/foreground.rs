@@ -75,7 +75,7 @@ fn staged_same_principal_context_cannot_activate_or_admit_human_work_before_reti
     let runtime = original.runtime.clone();
     let context = original.notice_context.clone().unwrap();
     let original = enroll(&mut f, original);
-    let replacement = f.notified_foreground(f.notice_session());
+    let replacement = f.staged_notified_foreground(f.notice_session());
     let next_context = replacement.notice_context.clone().unwrap();
     let reservation = reserve(&mut f);
     let replacement = f

@@ -45,7 +45,18 @@ impl NativePermissionContexts {
     pub fn new() -> Self {
         Self::default()
     }
+    #[cfg(test)]
     pub(crate) fn register(&self, session: &Session) -> Result<Arc<ContextSession>, Error> {
+        self.register_with_publication(
+            session,
+            crate::conversation_routes::RoutePublication::default(),
+        )
+    }
+    pub(crate) fn register_with_publication(
+        &self,
+        session: &Session,
+        publication: crate::conversation_routes::RoutePublication,
+    ) -> Result<Arc<ContextSession>, Error> {
         provenance::validate(&session.record_snapshot())?;
         let mut routes = self
             .routes
@@ -56,11 +67,13 @@ impl NativePermissionContexts {
             || routes.iter().filter_map(Weak::upgrade).any(|owner| {
                 owner.session.id() == session.id()
                     && owner.session.incarnation_id() == session.incarnation_id()
+                    && publication.conflicts_with(&owner.publication)
             })
         {
             return Err(Error::Limit);
         }
         let owner = Arc::new(ContextSession {
+            publication,
             session: session.clone(),
             active: Mutex::new(None),
             retired: AtomicBool::new(false),
@@ -84,7 +97,8 @@ impl NativePermissionContexts {
             .iter()
             .filter_map(Weak::upgrade)
             .find(|owner| {
-                owner.session.id() == request.session_id
+                owner.publication.is_active()
+                    && owner.session.id() == request.session_id
                     && owner.session.incarnation_id() == request.session_incarnation_id
             })
             .ok_or(Error::Unavailable)?;
@@ -117,13 +131,30 @@ impl fmt::Debug for NativePermissionContexts {
 }
 
 pub(crate) struct ContextSession {
+    publication: crate::conversation_routes::RoutePublication,
     session: Session,
     active: Mutex<Option<Weak<ContextTurn>>>,
     retired: AtomicBool,
     routes: Weak<Mutex<Vec<Weak<Self>>>>,
 }
 impl ContextSession {
+    pub(crate) fn ready_to_publish(self: &Arc<Self>) -> bool {
+        self.routes.upgrade().is_some_and(|routes| {
+            let routes = routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            routes
+                .iter()
+                .any(|route| route.ptr_eq(&Arc::downgrade(self)))
+                && !routes.iter().filter_map(Weak::upgrade).any(|owner| {
+                    !Arc::ptr_eq(&owner, self)
+                        && owner.session.id() == self.session.id()
+                        && owner.session.incarnation_id() == self.session.incarnation_id()
+                })
+        })
+    }
     pub(crate) fn retire(self: &Arc<Self>) {
+        self.publication.retire();
         self.retired.store(true, Ordering::Release);
         let turn = self
             .active
@@ -158,7 +189,8 @@ impl ContextSession {
             .active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if self.retired.load(Ordering::Acquire)
+        if !self.publication.is_active()
+            || self.retired.load(Ordering::Acquire)
             || active
                 .as_ref()
                 .and_then(Weak::upgrade)
@@ -195,10 +227,9 @@ impl ContextTurn {
     fn live(&self) -> bool {
         self.open.load(Ordering::Acquire)
             && !self.handle.is_cancelled()
-            && self
-                .owner
-                .upgrade()
-                .is_some_and(|owner| !owner.retired.load(Ordering::Acquire))
+            && self.owner.upgrade().is_some_and(|owner| {
+                owner.publication.is_active() && !owner.retired.load(Ordering::Acquire)
+            })
     }
 }
 pub(crate) struct ContextRegistration {

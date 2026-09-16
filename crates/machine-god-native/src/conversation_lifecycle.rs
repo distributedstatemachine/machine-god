@@ -58,6 +58,7 @@ struct State {
 
 pub(crate) struct LifecycleGate {
     state: Mutex<State>,
+    publication: std::sync::OnceLock<crate::conversation_routes::RoutePublication>,
 }
 impl fmt::Debug for LifecycleGate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -68,6 +69,7 @@ impl LifecycleGate {
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
+            publication: std::sync::OnceLock::new(),
             state: Mutex::new(State {
                 phase: LifecyclePhase::Open,
                 generation: 0,
@@ -80,11 +82,34 @@ impl LifecycleGate {
         self.state.lock().expect("lifecycle poisoned").phase
     }
     pub(crate) fn acquire(self: &Arc<Self>) -> Result<LifecyclePermit, LifecycleError> {
+        self.acquire_inner(false)
+    }
+    #[cfg(all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos")
+    ))]
+    pub(crate) fn acquire_preparation(self: &Arc<Self>) -> Result<LifecyclePermit, LifecycleError> {
+        self.acquire_inner(true)
+    }
+    fn acquire_inner(
+        self: &Arc<Self>,
+        preparation: bool,
+    ) -> Result<LifecyclePermit, LifecycleError> {
         let mut state = self.state.lock().expect("lifecycle poisoned");
         match state.phase {
             LifecyclePhase::Quiescing => return Err(LifecycleError::Quiescing),
             LifecyclePhase::Retired => return Err(LifecycleError::Retired),
             LifecyclePhase::Open => {}
+        }
+        let available = self.publication.get().map_or(!preparation, |publication| {
+            if preparation {
+                publication.is_staged()
+            } else {
+                publication.is_active()
+            }
+        });
+        if !available {
+            return Err(LifecycleError::Quiescing);
         }
         if state.permits == MAX_PERMITS {
             return Err(LifecycleError::Busy);
@@ -95,6 +120,26 @@ impl LifecycleGate {
             #[cfg(any(target_os = "linux", target_os = "macos", test))]
             generation: state.generation,
         })
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn publish_routes(&self) -> bool {
+        let state = self.state.lock().expect("lifecycle poisoned");
+        state.phase == LifecyclePhase::Open
+            && state.permits == 0
+            && self
+                .publication
+                .get()
+                .is_some_and(crate::conversation_routes::RoutePublication::activate)
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn bind_publication(
+        &self,
+        publication: crate::conversation_routes::RoutePublication,
+    ) {
+        assert!(
+            self.publication.set(publication).is_ok(),
+            "one route publication per lifecycle"
+        );
     }
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(crate) fn begin_quiescence(

@@ -175,6 +175,9 @@ impl ManagedManager {
         if let Err(error) = validate() {
             return Err((error, prepared));
         }
+        if active && !prepared.runtime.routes_ready_to_publish() {
+            return Err((ManagedRuntimeError::Invalid, prepared));
+        }
         if active && let Err(error) = prepared.resources.activate_foreground() {
             return Err((error, prepared));
         }
@@ -187,6 +190,9 @@ impl ManagedManager {
             if let Err(error) = registered {
                 return Err((error, prepared));
             }
+        }
+        if active && !prepared.runtime.activate_routes() {
+            return Err((ManagedRuntimeError::Invalid, prepared));
         }
         let identity = Arc::new(Identity);
         if let Err(error) = self.consume_foreground_reservation(reservation) {
@@ -226,16 +232,23 @@ impl ManagedManager {
         if parent.admission == Admission::Active {
             return Ok(());
         }
+        if !parent.prepared.runtime.routes_ready_to_publish() {
+            return Err(ManagedRuntimeError::Invalid);
+        }
         parent.prepared.resources.activate_foreground()?;
         let context = parent.prepared.notice_context.clone();
         if let Some(context) = context {
             self.activate_parent_context(&context)?;
         }
-        self.foregrounds
+        let parent = self
+            .foregrounds
             .iter_mut()
             .find(|parent| parent.matches(selection))
-            .expect("retained foreground")
-            .admission = Admission::Active;
+            .expect("retained foreground");
+        if !parent.prepared.runtime.activate_routes() {
+            return Err(ManagedRuntimeError::Invalid);
+        }
+        parent.admission = Admission::Active;
         Ok(())
     }
 

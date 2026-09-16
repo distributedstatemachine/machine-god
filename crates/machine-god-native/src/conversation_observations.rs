@@ -39,24 +39,38 @@ impl NativeConversationObservations {
     pub fn new() -> Self {
         Self::default()
     }
+    #[cfg(test)]
     pub(crate) fn register(
         self: &Arc<Self>,
         session: SessionId,
         incarnation: SessionIncarnationId,
     ) -> Result<Arc<ObservationSession>, NativeObservationError> {
+        self.register_with_publication(
+            session,
+            incarnation,
+            crate::conversation_routes::RoutePublication::default(),
+        )
+    }
+    pub(crate) fn register_with_publication(
+        self: &Arc<Self>,
+        session: SessionId,
+        incarnation: SessionIncarnationId,
+        publication: crate::conversation_routes::RoutePublication,
+    ) -> Result<Arc<ObservationSession>, NativeObservationError> {
         let mut routes = lock(&self.routes);
         routes.retain(|route| route.strong_count() != 0);
-        if routes
-            .iter()
-            .filter_map(Weak::upgrade)
-            .any(|route| route.session == session && route.incarnation == incarnation)
-        {
+        if routes.iter().filter_map(Weak::upgrade).any(|route| {
+            route.session == session
+                && route.incarnation == incarnation
+                && publication.conflicts_with(&route.publication)
+        }) {
             return Err(NativeObservationError::Duplicate);
         }
         if routes.len() == MAX_ROUTES {
             return Err(NativeObservationError::Capacity);
         }
         let owner = Arc::new(ObservationSession {
+            publication,
             session,
             incarnation,
             state: Mutex::new(State::default()),
@@ -106,6 +120,7 @@ struct Entry {
     fact: FileObservation,
 }
 pub(crate) struct ObservationSession {
+    publication: crate::conversation_routes::RoutePublication,
     session: SessionId,
     incarnation: SessionIncarnationId,
     state: Mutex<State>,
@@ -139,7 +154,21 @@ impl ObservationBatch {
     }
 }
 impl ObservationSession {
+    pub(crate) fn ready_to_publish(self: &Arc<Self>) -> bool {
+        self.routes.upgrade().is_some_and(|routes| {
+            let routes = lock(&routes.routes);
+            routes
+                .iter()
+                .any(|route| route.ptr_eq(&Arc::downgrade(self)))
+                && !routes.iter().filter_map(Weak::upgrade).any(|owner| {
+                    !Arc::ptr_eq(&owner, self)
+                        && owner.session == self.session
+                        && owner.incarnation == self.incarnation
+                })
+        })
+    }
     pub(crate) fn retire(self: &Arc<Self>) {
+        self.publication.retire();
         {
             let mut state = lock(&self.state);
             state.retired = true;
@@ -152,7 +181,9 @@ impl ObservationSession {
         }
     }
     fn matches(&self, context: &ToolContext) -> bool {
-        self.session == context.session_id && self.incarnation == context.session_incarnation_id
+        self.publication.is_active()
+            && self.session == context.session_id
+            && self.incarnation == context.session_incarnation_id
     }
     pub(crate) fn begin_attempt(
         &self,
@@ -161,7 +192,8 @@ impl ObservationSession {
         sequence: u64,
     ) -> Result<(), NativeObservationError> {
         let mut state = lock(&self.state);
-        if state.retired
+        if !self.publication.is_active()
+            || state.retired
             || state.active.is_some()
             || sequence == 0
             || sequence <= state.last_sequence

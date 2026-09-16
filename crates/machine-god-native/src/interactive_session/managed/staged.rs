@@ -237,18 +237,14 @@ pub(in crate::interactive_session) fn compose(
             if cancellation.is_cancelled() {
                 return Err(NativeInteractiveError::Closed);
             }
-            if let Some(model) = process_model {
-                let mut preferences = runtime.model_preferences();
-                preferences
-                    .set_model(&model)
-                    .map_err(|_| NativeInteractiveError::Configuration)?;
-                runtime.set_model_preferences(preferences)?;
-            }
-            if let Some(catalog) = catalog {
-                runtime.set_model_catalog(catalog)?;
-            }
-            runtime.recover_notice_delivery().await?;
-            crate::session_resume::owned::flush_candidate(&host, runtime, now_ms).await?;
+            crate::session_resume::owned::prepare_managed_candidate(
+                &host,
+                runtime,
+                process_model,
+                catalog,
+                now_ms,
+            )
+            .await?;
             if cancellation.is_cancelled() {
                 return Err(NativeInteractiveError::Closed);
             }

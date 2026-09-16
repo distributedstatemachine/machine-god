@@ -320,6 +320,13 @@ impl SharedManagedRuntimeFactoryOptions {
             principal,
             &self.notices,
         ));
+        let conversation = if foreground {
+            conversation
+                .with_staged_routes()
+                .map_err(|_| ManagedRuntimeError::Invalid)?
+        } else {
+            conversation
+        };
         let conversation = self.conversation(conversation, selected.policy)?;
         let (conversation, owner) = conversation
             .with_managed_execution(

@@ -159,24 +159,56 @@ pub(crate) fn resume<'a>(
 }
 
 #[cfg(feature = "ai-gateway-http")]
+pub(crate) async fn prepare_managed_candidate(
+    host: &crate::NativeReferenceHost,
+    runtime: &crate::NativeConversationRuntime,
+    process_model: Option<String>,
+    catalog: Option<Arc<crate::NativeModelCatalog>>,
+    now_ms: i64,
+) -> Result<(), crate::NativeInteractiveError> {
+    let access = candidate_access(host)?;
+    let guard = CancelOnDrop(access.control.abandoned.clone());
+    let result = runtime
+        .prepare_foreground_selection(process_model, catalog, now_ms, access.clone())
+        .await;
+    drop(guard);
+    candidate_result(&access, result)
+}
+
+#[cfg(feature = "ai-gateway-http")]
 pub(crate) async fn flush_candidate(
     host: &crate::NativeReferenceHost,
     runtime: &crate::NativeConversationRuntime,
     now_ms: i64,
 ) -> Result<(), crate::NativeInteractiveError> {
-    let access = Arc::new(Access::new(
-        host.session_store().clone(),
-        host.control_workers()
-            .ok_or(crate::NativeInteractiveError::Configuration)?,
-        CancellationToken::new(),
-    ));
+    let access = candidate_access(host)?;
     let guard = CancelOnDrop(access.control.abandoned.clone());
     let result = runtime
         .flush_model_preferences_with_access(now_ms, Some(access.clone()))
         .await;
     drop(guard);
+    candidate_result(&access, result.map(|_| ()))
+}
+
+#[cfg(feature = "ai-gateway-http")]
+fn candidate_access(
+    host: &crate::NativeReferenceHost,
+) -> Result<Arc<Access>, crate::NativeInteractiveError> {
+    Ok(Arc::new(Access::new(
+        host.session_store().clone(),
+        host.control_workers()
+            .ok_or(crate::NativeInteractiveError::Configuration)?,
+        CancellationToken::new(),
+    )))
+}
+
+#[cfg(feature = "ai-gateway-http")]
+fn candidate_result(
+    access: &Access,
+    result: Result<(), crate::NativeConversationRuntimeError>,
+) -> Result<(), crate::NativeInteractiveError> {
     match result {
-        Ok(_) => Ok(()),
+        Ok(()) => Ok(()),
         Err(error) => match access.failure.load(Ordering::Acquire) {
             1 => Err(crate::NativeInteractiveError::Resume(Error::new(
                 Kind::Busy,

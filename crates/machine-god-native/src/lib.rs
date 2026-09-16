@@ -195,6 +195,7 @@ mod conversation_model_routes;
 mod conversation_observation_tests;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_observations;
+mod conversation_routes;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod file_history_tool;
 mod permission_controller;

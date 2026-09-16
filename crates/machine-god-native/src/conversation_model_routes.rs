@@ -27,6 +27,7 @@ pub(crate) trait CurrentModel: Send + Sync {
 }
 
 struct Entry {
+    publication: crate::conversation_routes::RoutePublication,
     identity: Arc<AtomicBool>,
     session: SessionId,
     incarnation: SessionIncarnationId,
@@ -61,34 +62,56 @@ impl NativeConversationModelRoutes {
     /// Panics if an earlier panic poisoned a routing or runtime mutex.
     #[must_use]
     pub fn snapshot(&self, context: &ToolContext) -> Option<String> {
-        let (source, identity) = {
+        let (source, identity, publication) = {
             let entries = self.entries.lock().expect("model routes poisoned");
             let entry = entries.iter().find(|entry| {
-                entry.session == context.session_id
+                entry.publication.is_active()
+                    && entry.session == context.session_id
                     && entry.incarnation == context.session_incarnation_id
             })?;
-            (entry.source.upgrade()?, Arc::clone(&entry.identity))
+            (
+                entry.source.upgrade()?,
+                Arc::clone(&entry.identity),
+                entry.publication.clone(),
+            )
         };
         // Never call a source or release its last strong reference under the
         // routing mutex. Runtime mutation needs only its own state mutex.
-        if !identity.load(Ordering::Acquire) {
+        if !identity.load(Ordering::Acquire) || !publication.is_active() {
             return None;
         }
         let model = source.current_model();
-        identity.load(Ordering::Acquire).then_some(model)
+        (identity.load(Ordering::Acquire) && publication.is_active()).then_some(model)
     }
 
+    #[cfg(test)]
     pub(crate) fn register(
         self: &Arc<Self>,
         session: SessionId,
         incarnation: SessionIncarnationId,
         source: Weak<dyn CurrentModel>,
     ) -> Result<Arc<ModelRouteRegistration>, NativeConversationModelRouteError> {
+        self.register_with_publication(
+            session,
+            incarnation,
+            source,
+            crate::conversation_routes::RoutePublication::default(),
+        )
+    }
+
+    pub(crate) fn register_with_publication(
+        self: &Arc<Self>,
+        session: SessionId,
+        incarnation: SessionIncarnationId,
+        source: Weak<dyn CurrentModel>,
+        publication: crate::conversation_routes::RoutePublication,
+    ) -> Result<Arc<ModelRouteRegistration>, NativeConversationModelRouteError> {
         let mut entries = self.entries.lock().expect("model routes poisoned");
-        if entries
-            .iter()
-            .any(|entry| entry.session == session && entry.incarnation == incarnation)
-        {
+        if entries.iter().any(|entry| {
+            entry.session == session
+                && entry.incarnation == incarnation
+                && publication.conflicts_with(&entry.publication)
+        }) {
             return Err(NativeConversationModelRouteError::Duplicate);
         }
         if entries.len() == MAX_NATIVE_CONVERSATION_MODEL_ROUTES {
@@ -96,12 +119,14 @@ impl NativeConversationModelRoutes {
         }
         let identity = Arc::new(AtomicBool::new(true));
         entries.push(Entry {
+            publication: publication.clone(),
             identity: Arc::clone(&identity),
             session: session.clone(),
             incarnation: incarnation.clone(),
             source,
         });
         Ok(Arc::new(ModelRouteRegistration {
+            publication,
             routes: Arc::clone(self),
             session,
             incarnation,
@@ -111,6 +136,7 @@ impl NativeConversationModelRoutes {
 }
 
 pub(crate) struct ModelRouteRegistration {
+    publication: crate::conversation_routes::RoutePublication,
     routes: Arc<NativeConversationModelRoutes>,
     session: SessionId,
     incarnation: SessionIncarnationId,
@@ -118,7 +144,19 @@ pub(crate) struct ModelRouteRegistration {
 }
 
 impl ModelRouteRegistration {
+    pub(crate) fn ready_to_publish(&self) -> bool {
+        let entries = self.routes.entries.lock().expect("model routes poisoned");
+        entries
+            .iter()
+            .any(|entry| Arc::ptr_eq(&entry.identity, &self.identity))
+            && !entries.iter().any(|entry| {
+                !Arc::ptr_eq(&entry.identity, &self.identity)
+                    && entry.session == self.session
+                    && entry.incarnation == self.incarnation
+            })
+    }
     pub(crate) fn retire(&self) {
+        self.publication.retire();
         self.identity.store(false, Ordering::Release);
         let removed = {
             let mut entries = self.routes.entries.lock().expect("model routes poisoned");
@@ -164,6 +202,74 @@ mod tests {
             turn_id: machine_god_core::TurnId::new("turn-1").unwrap(),
             call_id: machine_god_core::ToolCallId::new("call").unwrap(),
         }
+    }
+    #[test]
+    fn staged_routes_share_capacity_and_cannot_publish_before_exact_predecessor_removal() {
+        let routes = Arc::new(NativeConversationModelRoutes::new());
+        let context = context();
+        let source: Arc<dyn CurrentModel> = Arc::new(Source {
+            value: "old",
+            retire: Mutex::new(None),
+        });
+        let old = routes
+            .register(
+                context.session_id.clone(),
+                context.session_incarnation_id.clone(),
+                Arc::downgrade(&source),
+            )
+            .unwrap();
+        let publication = crate::conversation_routes::RoutePublication::staged();
+        let staged = routes
+            .register_with_publication(
+                context.session_id.clone(),
+                context.session_incarnation_id.clone(),
+                Arc::downgrade(&source),
+                publication.clone(),
+            )
+            .unwrap();
+        assert!(!staged.ready_to_publish());
+        assert_eq!(routes.snapshot(&context).as_deref(), Some("old"));
+        assert!(
+            routes
+                .register_with_publication(
+                    context.session_id.clone(),
+                    context.session_incarnation_id.clone(),
+                    Arc::downgrade(&source),
+                    crate::conversation_routes::RoutePublication::staged()
+                )
+                .is_err()
+        );
+        let mut others = Vec::new();
+        for index in 2..MAX_NATIVE_CONVERSATION_MODEL_ROUTES {
+            others.push(
+                routes
+                    .register(
+                        SessionId::new(format!("other-{index}")).unwrap(),
+                        context.session_incarnation_id.clone(),
+                        Arc::downgrade(&source),
+                    )
+                    .unwrap(),
+            );
+        }
+        assert!(
+            routes
+                .register(
+                    SessionId::new("over-capacity").unwrap(),
+                    context.session_incarnation_id.clone(),
+                    Arc::downgrade(&source)
+                )
+                .is_err()
+        );
+        old.retire();
+        assert!(staged.ready_to_publish());
+        assert!(routes.snapshot(&context).is_none());
+        assert!(publication.activate());
+        drop(old);
+        assert_eq!(routes.snapshot(&context).as_deref(), Some("old"));
+        staged.retire();
+        assert!(!publication.activate());
+        assert!(!staged.ready_to_publish());
+        assert!(routes.snapshot(&context).is_none());
     }
     #[test]
     fn retained_registration_retirement_and_drop_cannot_remove_replacement() {
