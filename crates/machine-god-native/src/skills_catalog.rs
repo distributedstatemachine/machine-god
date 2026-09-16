@@ -16,8 +16,11 @@ mod discovery;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "skills_catalog/io.rs"]
 mod io;
+#[path = "skills_catalog/reference.rs"]
+mod reference;
 #[path = "skills_catalog/snapshot.rs"]
 mod snapshot;
+pub use reference::NativeSkillReference;
 #[cfg(test)]
 #[path = "skills_catalog/tests.rs"]
 mod tests;

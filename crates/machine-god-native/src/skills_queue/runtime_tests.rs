@@ -150,6 +150,123 @@ fn complete(turn: NativeConversationRuntimeTurn) {
 }
 
 #[test]
+fn restored_references_are_inert_and_do_not_rematch_new_skills_for_accepted_work() {
+    let fixture = Fixture::new();
+    fixture.skill("selected", "selected", "ORIGINAL_REFERENCE");
+    let snapshot = fixture.snapshot();
+    let plan =
+        crate::NativeSkillInvocationPlan::resolve("$selected $later", &snapshot, &[]).unwrap();
+    let references = plan.references(&fixture.catalog).unwrap();
+    let encoded = serde_json::to_vec(&references).unwrap();
+    drop((plan, snapshot, references));
+    let references: Vec<crate::NativeSkillReference> = serde_json::from_slice(&encoded).unwrap();
+    let (runtime, store, provider) = setup([finished()]);
+    let id = runtime
+        .enqueue_with_skill_references(
+            "$selected $later".into(),
+            fixture.catalog.clone(),
+            &references,
+            fixture.workers.clone(),
+        )
+        .unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let observed = reads.clone();
+    runtime.set_skill_queue_test_hook(id, move |_| {
+        observed.fetch_add(1, Ordering::SeqCst);
+    });
+    drop(runtime.start_next(100));
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert!(store.calls().is_empty());
+    assert!(provider.requests().is_empty());
+    fixture.skill("later", "later", "MUST_NOT_JOIN_ACCEPTED_WORK");
+    let turn = block_on(runtime.start_next(100)).unwrap().unwrap();
+    assert_eq!(turn.queued_id(), id);
+    let record = runtime.record();
+    let context = record.metadata[NATIVE_SKILL_PROMPT_CONTEXT_KEY]["text"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("ORIGINAL_REFERENCE"));
+    assert!(!context.contains("MUST_NOT_JOIN_ACCEPTED_WORK"));
+    assert_eq!(
+        record.messages,
+        [Message::text(Role::User, "$selected $later")]
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    complete(turn);
+}
+
+#[test]
+fn restored_reference_failure_does_not_execute_or_discard_the_next_fifo_item() {
+    let fixture = Fixture::new();
+    fixture.skill("selected", "selected", "original");
+    let snapshot = fixture.snapshot();
+    let references = crate::NativeSkillInvocationPlan::resolve("$selected", &snapshot, &[])
+        .unwrap()
+        .references(&fixture.catalog)
+        .unwrap();
+    let (runtime, store, provider) = setup([finished()]);
+    runtime
+        .enqueue_with_skill_references(
+            "$selected".into(),
+            fixture.catalog.clone(),
+            &references,
+            fixture.workers.clone(),
+        )
+        .unwrap();
+    let next = runtime.enqueue("next plain item".into()).unwrap();
+    fixture.skill("selected", "selected", "replacement");
+    assert!(matches!(
+        block_on(runtime.start_next(100)),
+        Err(NativeConversationRuntimeError::Skills(
+            NativeSkillsQueueError::Catalog {
+                error: crate::NativeSkillCatalogError::StaleSelection,
+                ..
+            }
+        ))
+    ));
+    assert!(provider.requests().is_empty());
+    assert!(store.calls().is_empty());
+    assert_eq!(runtime.status().queued_jobs, 1);
+    let turn = block_on(runtime.start_next(101)).unwrap().unwrap();
+    assert_eq!(turn.queued_id(), next);
+    assert!(
+        !runtime
+            .record()
+            .metadata
+            .contains_key(NATIVE_SKILL_PROMPT_CONTEXT_KEY)
+    );
+    complete(turn);
+}
+
+#[test]
+fn restored_reference_count_is_checked_before_queue_insertion() {
+    let fixture = Fixture::new();
+    fixture.skill("selected", "selected", "body");
+    let snapshot = fixture.snapshot();
+    let reference = fixture
+        .catalog
+        .reference(snapshot.entries()[0].selection_ref())
+        .unwrap();
+    let (runtime, store, provider) = setup([]);
+    assert!(matches!(
+        runtime.enqueue_with_skill_references(
+            "$selected".into(),
+            fixture.catalog.clone(),
+            &vec![reference; 17],
+            fixture.workers.clone(),
+        ),
+        Err(NativeConversationRuntimeError::Skills(
+            NativeSkillsQueueError::Invocation(
+                crate::NativeSkillInvocationError::TooManySelections
+            )
+        ))
+    ));
+    assert_eq!(runtime.status().queued_jobs, 0);
+    assert!(provider.requests().is_empty());
+    assert!(store.calls().is_empty());
+}
+
+#[test]
 fn enqueue_and_unpolled_start_are_inert_and_fifo_pins_exact_skills() {
     let fixture = Fixture::new();
     fixture.skill("one", "one", "FIRST");

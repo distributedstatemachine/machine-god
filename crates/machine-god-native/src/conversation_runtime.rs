@@ -815,6 +815,28 @@ impl NativeConversationRuntime {
         })
     }
 
+    /// Queues a previously accepted exact skill list without discovery or reads.
+    /// First-polled FIFO admission rebinds it through the supplied catalog and
+    /// materializes under the original owned admission/cancellation scope.
+    /// No automatic prompt matching is rerun for restored work.
+    /// # Errors
+    /// Rejects reference/input/queue bounds and closed lifecycle admission.
+    pub fn enqueue_with_skill_references(
+        &self,
+        prompt: Prompt,
+        catalog: Arc<crate::NativeSkillCatalog>,
+        references: &[crate::NativeSkillReference],
+        workers: crate::NativeOwnedWorkerScope,
+    ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
+        let input = PendingInput::new(ConversationInput::Prompt(prompt));
+        let skills = crate::skills_queue::QueuedSkills::restore(catalog, references, workers)
+            .map_err(NativeConversationRuntimeError::Skills)?;
+        let bytes = input_bytes(&input)?
+            .checked_add(skills.retained_bytes())
+            .ok_or(NativeConversationRuntimeError::InputLimit)?;
+        self.insert(input, bytes, None, Some(skills), None)
+    }
+
     /// Queues explicit continuation only with an idle, empty queue and a valid
     /// paused checkpoint. The checkpoint identity is checked again when taken.
     ///

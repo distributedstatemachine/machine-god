@@ -61,6 +61,121 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn durable_reference_rebinds_only_through_independently_supplied_catalog_authority() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "skills/private-skill/SKILL.md",
+        "---\nname: private-name\n---\nbody",
+    );
+    let catalog = fixture.catalog();
+    let snapshot = catalog.discover(&CancellationToken::new()).unwrap();
+    let selection = snapshot.entries()[0].selection();
+    let reference = catalog.reference(&selection).unwrap();
+    assert!(!format!("{reference:?}").contains("private"));
+    assert_eq!(
+        reference.retained_bytes(),
+        reference.name().len() + reference.location().as_os_str().len()
+    );
+    let encoded = serde_json::to_vec(&reference).unwrap();
+    let reopened = fixture.catalog();
+    assert_eq!(
+        reopened.reference(&selection),
+        Err(NativeSkillCatalogError::WrongAuthority)
+    );
+    assert_eq!(
+        reopened.resolve_reference(&snapshot, &reference),
+        Err(NativeSkillCatalogError::WrongAuthority)
+    );
+    drop((catalog, snapshot, selection, reference));
+    let decoded: NativeSkillReference = serde_json::from_slice(&encoded).unwrap();
+    let fresh = reopened.discover(&CancellationToken::new()).unwrap();
+    let rebound = reopened.resolve_reference(&fresh, &decoded).unwrap();
+    assert!(
+        reopened
+            .materialize(&rebound, &CancellationToken::new())
+            .unwrap()
+            .text
+            .ends_with("body")
+    );
+}
+
+#[test]
+fn durable_reference_rejects_equal_byte_replacement_and_changed_source_policy() {
+    let fixture = Fixture::new();
+    let bytes = "---\nname: same\n---\nbody";
+    fixture.write("skills/first/SKILL.md", bytes);
+    fixture.write("skills/second/SKILL.md", bytes);
+    let catalog = fixture.catalog();
+    let snapshot = catalog.discover(&CancellationToken::new()).unwrap();
+    let reference = catalog
+        .reference(snapshot.entries()[0].selection_ref())
+        .unwrap();
+    let relabelled = NativeSkillCatalog::new(vec![fixture.root(
+        "skills",
+        NativeSkillSource::GlobalFx,
+        NativeSkillLinkPolicy::Contained,
+    )])
+    .unwrap();
+    let fresh = relabelled.discover(&CancellationToken::new()).unwrap();
+    assert_eq!(
+        relabelled.resolve_reference(&fresh, &reference),
+        Err(NativeSkillCatalogError::StaleSelection)
+    );
+    fixture.write("skills/first/replacement", bytes);
+    fs::rename(
+        fixture.0.join("skills/first/replacement"),
+        fixture.0.join("skills/first/SKILL.md"),
+    )
+    .unwrap();
+    let fresh = catalog.discover(&CancellationToken::new()).unwrap();
+    assert_eq!(
+        catalog.resolve_reference(&fresh, &reference),
+        Err(NativeSkillCatalogError::StaleSelection)
+    );
+    // A same-named candidate at another location cannot replace the original.
+    fs::remove_dir_all(fixture.0.join("skills/first")).unwrap();
+    let fresh = catalog.discover(&CancellationToken::new()).unwrap();
+    assert_eq!(
+        catalog.resolve_reference(&fresh, &reference),
+        Err(NativeSkillCatalogError::StaleSelection)
+    );
+}
+
+#[test]
+fn durable_reference_decoding_is_bounded_strict_and_never_opens_its_path() {
+    let fixture = Fixture::new();
+    fixture.write("skills/first/SKILL.md", "body");
+    let catalog = fixture.catalog();
+    let snapshot = catalog.discover(&CancellationToken::new()).unwrap();
+    let reference = catalog
+        .reference(snapshot.entries()[0].selection_ref())
+        .unwrap();
+    let value = serde_json::to_value(&reference).unwrap();
+    for (field, invalid) in [
+        ("version", serde_json::json!(2)),
+        ("name", serde_json::json!("x".repeat(257))),
+        ("location", serde_json::json!("relative/path")),
+        (
+            "location",
+            serde_json::json!(format!("/{}", "x".repeat(4096))),
+        ),
+        ("extra", serde_json::json!(true)),
+    ] {
+        let mut changed = value.clone();
+        changed[field] = invalid;
+        assert!(serde_json::from_value::<NativeSkillReference>(changed).is_err());
+    }
+    let mut absent = value;
+    absent["location"] = serde_json::json!(fixture.0.join("not-created"));
+    let decoded = serde_json::from_value::<NativeSkillReference>(absent).unwrap();
+    assert!(!decoded.location().exists());
+    assert_eq!(
+        catalog.resolve_reference(&snapshot, &decoded),
+        Err(NativeSkillCatalogError::StaleSelection)
+    );
+}
+
+#[test]
 fn cancelled_empty_catalog_is_inert() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();

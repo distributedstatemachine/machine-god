@@ -429,8 +429,8 @@ pub use skills_catalog::{
     MAX_NATIVE_SKILL_PATH_COMPONENTS, MAX_NATIVE_SKILL_QUERY_BYTES, MAX_NATIVE_SKILL_QUERY_ROWS,
     MAX_NATIVE_SKILL_ROOTS, MAX_NATIVE_SKILL_SNAPSHOT_BYTES, MAX_NATIVE_SKILL_VISITED_ENTRIES,
     NativeSkillCatalog, NativeSkillCatalogError, NativeSkillDiagnostic, NativeSkillEntry,
-    NativeSkillLinkPolicy, NativeSkillMaterialized, NativeSkillRoot, NativeSkillSelection,
-    NativeSkillSnapshot, NativeSkillSource,
+    NativeSkillLinkPolicy, NativeSkillMaterialized, NativeSkillReference, NativeSkillRoot,
+    NativeSkillSelection, NativeSkillSnapshot, NativeSkillSource,
 };
 pub use skills_commands::{
     MAX_NATIVE_SKILLS_COMMAND_BYTES, MAX_NATIVE_SKILLS_SELECTOR_BYTES, NativeSkillsCommand,

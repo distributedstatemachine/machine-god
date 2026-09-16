@@ -45,6 +45,26 @@ contents and obtain the appropriate owned admission.
 `NativeSkillRoot` values. Each root carries a retained directory, a relative
 discovery location, reporting labels, provenance and link policy. Construction
 validates these values without opening paths or consulting the environment.
+
+`NativeSkillReference` serializes an exact bounded source observation without
+retaining a directory capability or skill body. Its version-1 reference binds
+name/location, root provenance/link policy, directory/file identity, metadata and
+the observed prefix revision. Decoding grants no authority and performs no I/O.
+`NativeSkillCatalog::resolve_reference` requires an independently supplied catalog
+and matching snapshot; it never opens the saved path or substitutes a same-named
+skill elsewhere. Materialization still rechecks the original observed revision
+through retained descriptors. Equal-byte replacement and changed source policy
+invalidate the reference. Callers must retain enclosing message/collection bounds;
+individual names and paths keep the catalog's existing byte limits.
+
+`NativeSkillInvocationPlan::references` freezes its already resolved list.
+`NativeConversationRuntime::enqueue_with_skill_references` retains at most 16
+references and 64 KiB of variable reference data without discovery or source
+reads. Its first-polled FIFO admission discovers/rebinds and materializes under
+the same owned worker, runtime lease and cancellation boundary as ordinary skill
+prompts. It does not rerun automatic matching: newly installed skills cannot join
+already accepted work. A changed or missing selected source rejects that item
+before provider/session publication and does not discard later FIFO items.
 Directory-authority labels pass the existing catalog path policy on borrowed
 input before normalization or copying, including the 4,096-byte raw-path bound.
 Discovery scans one child-directory level per root. Missing ordinary roots are

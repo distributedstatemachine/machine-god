@@ -46,6 +46,20 @@ pub struct NativeSkillInvocationPlan {
 type Result<T> = std::result::Result<T, NativeSkillInvocationError>;
 
 impl NativeSkillInvocationPlan {
+    /// Freezes the already resolved list without serializing root capabilities.
+    /// Restoring references must not rerun automatic prompt matching.
+    /// # Errors
+    /// Rejects selections from a different catalog authority.
+    pub fn references(
+        &self,
+        catalog: &crate::NativeSkillCatalog,
+    ) -> std::result::Result<Vec<crate::NativeSkillReference>, crate::NativeSkillCatalogError> {
+        self.selections
+            .iter()
+            .map(|selection| catalog.reference(selection))
+            .collect()
+    }
+
     /// Preserves explicit order, then appends automatic matches in catalog order,
     /// deduplicating by exact location. Every explicit binding is validated even
     /// if a prior binding already selected the same location.

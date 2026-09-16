@@ -3,7 +3,7 @@
 use crate::{
     NativeOwnedWorkerScope, NativeQueuedJobId, NativeSkillCatalog, NativeSkillCatalogError,
     NativeSkillInvocationError, NativeSkillInvocationPlan, NativeSkillPromptContext,
-    NativeSkillSelection, NativeSkillSnapshot,
+    NativeSkillReference, NativeSkillSelection, NativeSkillSnapshot,
 };
 use machine_god_core::{BoxFuture, CancellationToken, MAX_SESSION_USER_CONTEXT_BYTES};
 use std::{fmt, sync::Arc};
@@ -40,12 +40,46 @@ type BeforeRead = Box<dyn FnOnce(&CancellationToken) + Send>;
 
 pub(crate) struct QueuedSkills {
     catalog: Arc<NativeSkillCatalog>,
-    plan: NativeSkillInvocationPlan,
+    plan: Plan,
     workers: NativeOwnedWorkerScope,
     #[cfg(test)]
     before_read: Option<BeforeRead>,
 }
+
+enum Plan {
+    Captured(NativeSkillInvocationPlan),
+    Restored(Vec<NativeSkillReference>),
+}
+
 impl QueuedSkills {
+    pub(crate) fn restore(
+        catalog: Arc<NativeSkillCatalog>,
+        references: &[NativeSkillReference],
+        workers: NativeOwnedWorkerScope,
+    ) -> Result<Self, NativeSkillsQueueError> {
+        if references.len() > crate::MAX_NATIVE_SKILL_INVOCATION_SELECTIONS {
+            return Err(NativeSkillsQueueError::Invocation(
+                NativeSkillInvocationError::TooManySelections,
+            ));
+        }
+        let bytes = references
+            .iter()
+            .map(NativeSkillReference::retained_bytes)
+            .sum::<usize>();
+        if bytes > crate::MAX_NATIVE_SKILL_INVOCATION_SELECTION_BYTES {
+            return Err(NativeSkillsQueueError::Invocation(
+                NativeSkillInvocationError::SelectionBytesExceeded,
+            ));
+        }
+        Ok(Self {
+            catalog,
+            plan: Plan::Restored(references.to_vec()),
+            workers,
+            #[cfg(test)]
+            before_read: None,
+        })
+    }
+
     pub(crate) fn resolve(
         prompt: &str,
         catalog: Arc<NativeSkillCatalog>,
@@ -65,7 +99,7 @@ impl QueuedSkills {
         }
         Ok(Self {
             catalog,
-            plan,
+            plan: Plan::Captured(plan),
             workers,
             #[cfg(test)]
             before_read: None,
@@ -78,10 +112,20 @@ impl QueuedSkills {
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        self.plan.retained_bytes()
+        match &self.plan {
+            Plan::Captured(plan) => plan.retained_bytes(),
+            Plan::Restored(references) => references
+                .iter()
+                .map(NativeSkillReference::retained_bytes)
+                .sum(),
+        }
     }
     pub(crate) fn incomplete(&self) -> bool {
-        self.plan.automatic_matching_incomplete()
+        match &self.plan {
+            Plan::Captured(plan) => plan.automatic_matching_incomplete(),
+            // Restoration uses only the previously frozen list, never matching.
+            Plan::Restored(_) => false,
+        }
     }
 
     pub(crate) fn materialize<L: Send + 'static>(
@@ -123,8 +167,18 @@ impl QueuedSkills {
         if let Some(hook) = self.before_read {
             hook(cancellation);
         }
+        let plan = match self.plan {
+            Plan::Captured(plan) => plan,
+            Plan::Restored(references) => {
+                if references.is_empty() {
+                    check_cancel(cancellation)?;
+                    return Ok(None);
+                }
+                restore_plan(&self.catalog, &references, cancellation)?
+            }
+        };
         let mut text = String::new();
-        for (selection_index, selection) in self.plan.selections().iter().enumerate() {
+        for (selection_index, selection) in plan.selections().iter().enumerate() {
             check_cancel(cancellation)?;
             let materialized =
                 self.catalog
@@ -147,13 +201,45 @@ impl QueuedSkills {
             append(&mut text, "\nEnd external skill advisory context\n\n")?;
         }
         check_cancel(cancellation)?;
-        if self.plan.selections().is_empty() {
+        if plan.selections().is_empty() {
             return Ok(None);
         }
         NativeSkillPromptContext::new(text)
             .map(Some)
             .map_err(|_| NativeSkillsQueueError::ContextLimit)
     }
+}
+
+fn restore_plan(
+    catalog: &NativeSkillCatalog,
+    references: &[NativeSkillReference],
+    cancellation: &CancellationToken,
+) -> Result<NativeSkillInvocationPlan, NativeSkillsQueueError> {
+    check_cancel(cancellation)?;
+    let snapshot =
+        catalog
+            .discover(cancellation)
+            .map_err(|error| NativeSkillsQueueError::Catalog {
+                selection_index: 0,
+                error,
+            })?;
+    let selections = references
+        .iter()
+        .enumerate()
+        .map(|(selection_index, reference)| {
+            check_cancel(cancellation)?;
+            catalog
+                .resolve_reference(&snapshot, reference)
+                .map_err(|error| NativeSkillsQueueError::Catalog {
+                    selection_index,
+                    error,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // The empty matching input is intentional: accepted work already froze its
+    // complete selection list. New same-named skills must never join that work.
+    NativeSkillInvocationPlan::resolve("", &snapshot, &selections)
+        .map_err(NativeSkillsQueueError::Invocation)
 }
 
 fn append(destination: &mut String, text: &str) -> Result<(), NativeSkillsQueueError> {
