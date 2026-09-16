@@ -187,7 +187,7 @@ impl ManagedRuntimeResources for Resources {
             let preparation = self.preparation.clone();
             let controller = self
                 .binding
-                .has_unsettled_untransferred_admission()
+                .take_untransferred_admission_preparation()
                 .then(|| self.mcp.instance.controller.clone())
                 .flatten();
             self.admission = Some(Box::pin(async move {

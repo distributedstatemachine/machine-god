@@ -65,6 +65,7 @@ struct Active {
     settlement: Option<RunSettlement>,
     cleanup: Option<ManagedRunCleanup>,
     admission: Option<Arc<NativeOwnedWorkerRun>>,
+    preparation_pending: bool,
 }
 
 /// The outer manager keeps this owner independently of the creating tool/turn.
@@ -287,6 +288,7 @@ impl ManagedConversationBinding {
         slot.run = Some(reference.clone());
         slot.settlement = Some(settlement);
         slot.cleanup.clone_from(&cleanup);
+        slot.preparation_pending = false;
         let registration = (|| {
             let principal = owner
                 .principal

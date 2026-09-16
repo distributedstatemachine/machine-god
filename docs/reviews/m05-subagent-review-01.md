@@ -94,3 +94,10 @@ regressions cover command-level event paging/recovery, exact worker custody,
 cleanup timeouts, public failure ownership, and non-emitting milestone rendering.
 These implementation changes still require replacement local gates and reviews;
 the rejected candidate's passing tests do not verify them.
+
+Coordinator inspection of `7b04dcf2` found that the initial repair inferred
+abandoned preparation from outstanding worker tickets and could miss a retained
+refresh before worker admission. Both platform Clippy checks passed, but the
+subsequent test builds were intentionally interrupted before runtime tests.
+The replacement consumes explicit preparation custody once per admission,
+including worker-free cancellation, without affecting later idle controls.

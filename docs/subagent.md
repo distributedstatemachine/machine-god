@@ -1280,6 +1280,8 @@ use their exact existing admission/run cohorts. Resource settlement observes tho
 actual worker/TLS/reap receipts, not the global host scope or a completed stream.
 When pre-turn admission ends without a turn, its principal owner cancels and
 drives retained shared MCP refresh before waiting for that admission's workers.
+Preparation custody is consumed once per admission even when no worker remains;
+subsequent idle polling cannot cancel an unrelated human controller operation.
 Deferred activation instead finishes its original configured attempt because
 its outcome belongs to the published generation. Cancelling an individual refresh observer still does
 not cancel the shared job. Owner settlement releases unpublished peer custody
