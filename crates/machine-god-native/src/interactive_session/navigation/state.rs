@@ -400,6 +400,7 @@ impl Navigation {
             Action::Select
             | Action::Conversation
             | Action::SeekHistory(_)
+            | Action::HistoryMode(_)
             | Action::Inspect(_)
             | Action::Message(_)
             | Action::Configure(_)
@@ -415,7 +416,9 @@ impl Navigation {
         if matches!(action, Action::ConfirmClose) && self.route != Route::ConfirmClose {
             return Err(Error::InvalidAction);
         }
-        if matches!(action, Action::SeekHistory(_)) && self.route != Route::Conversation {
+        if matches!(action, Action::SeekHistory(_) | Action::HistoryMode(_))
+            && self.route != Route::Conversation
+        {
             return Err(Error::InvalidAction);
         }
         if self.route == Route::ConfirmClose
@@ -472,7 +475,11 @@ impl Navigation {
         }
         let editor_changed = !matches!(
             action,
-            Action::Previous | Action::Next | Action::Refresh | Action::SeekHistory(_)
+            Action::Previous
+                | Action::Next
+                | Action::Refresh
+                | Action::SeekHistory(_)
+                | Action::HistoryMode(_)
         ) || (matches!(self.route, Route::Form(_))
             && matches!(action, Action::Previous | Action::Next));
         self.change(editor_changed)?;
@@ -493,7 +500,13 @@ impl Navigation {
             self.history.clear();
         }
         let result = match action {
+            Action::Exit => {
+                self.close();
+                owner.request_shutdown();
+                Ok(())
+            }
             Action::SeekHistory(position) => self.history.seek(position),
+            Action::HistoryMode(mode) => self.history.set_mode(mode),
             Action::Previous | Action::Next => {
                 if let Some(form) = &mut self.form {
                     return form

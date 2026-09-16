@@ -9,8 +9,9 @@ use machine_god_core::{
 };
 use machine_god_native::{
     NativeManagedCatalogFilter as Filter, NativeManagedEditorIdentity, NativeManagedFormKind,
-    NativeManagedFrameIdentity, NativeManagedNavigationAction as Action,
-    NativeManagedNavigationRoute as Route, NativeManagedProcessScope as Scope,
+    NativeManagedFrameIdentity, NativeManagedHistoryMode as HistoryMode,
+    NativeManagedNavigationAction as Action, NativeManagedNavigationRoute as Route,
+    NativeManagedProcessScope as Scope,
 };
 
 pub(super) struct Ui {
@@ -145,6 +146,12 @@ impl Driver {
             return true;
         }
         let action = match event {
+            ComposerEvent::HistoryToggle => match self.agent_history_toggle() {
+                Some(action) => action,
+                None => return true,
+            },
+            ComposerEvent::HistorySummary => Action::HistoryMode(HistoryMode::Transcript),
+            ComposerEvent::HistoryFull => Action::HistoryMode(HistoryMode::Full),
             ComposerEvent::Changed | ComposerEvent::CancelRequested
                 if matches!(event, ComposerEvent::Changed)
                     || self
@@ -183,6 +190,7 @@ impl Driver {
             }
             _ => return true,
         };
+        let exiting = matches!(action, Action::Exit);
         let result = frame.as_ref().ok_or(()).and_then(|frame| {
             if let ComposerEvent::Submit(text) = event {
                 self.owner.submit_managed_frame(frame, action, text)
@@ -195,9 +203,22 @@ impl Driver {
             self.note(
                 b"\n[agent view changed, is busy, or has not been displayed; input retained]\n",
             );
+        } else if exiting {
+            self.shutdown();
         }
         self.sync_agents();
         true
+    }
+
+    fn agent_history_toggle(&self) -> Option<Action> {
+        let history = self.owner.managed_navigation()?.history?;
+        Some(Action::HistoryMode(
+            if history.mode == HistoryMode::Conversation {
+                HistoryMode::Transcript
+            } else {
+                HistoryMode::Conversation
+            },
+        ))
     }
 
     fn scroll_agents(
@@ -282,6 +303,7 @@ impl Driver {
             "" if view.route == Route::ConfirmClose => Action::ConfirmClose,
             "" => Action::Select,
             "/back" => Action::Back,
+            "/quit" => Action::Exit,
             "/next" => Action::NextPage,
             "/refresh" => Action::Refresh,
             "/archived" => Action::Filter(Filter::Archived),

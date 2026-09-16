@@ -7,6 +7,7 @@ mod durability;
 pub(crate) mod factory;
 mod foreground;
 mod notification;
+mod observation;
 mod projection;
 mod pump;
 mod replay;
@@ -138,6 +139,7 @@ struct Retiring {
 }
 #[allow(clippy::large_enum_variant)] // Exactly one owned operation, never a resident-sized array.
 enum Active {
+    Observation(BoxFuture<'static, ()>),
     Catalog {
         request: catalog::Request,
         future: BoxFuture<
@@ -180,6 +182,7 @@ pub(crate) struct ManagedManager {
     foreground_reservations: Vec<Weak<reservation::State>>,
     reservation_wake: Arc<futures_util::task::AtomicWaker>,
     active: Option<Active>,
+    observation: Option<BoxFuture<'static, ()>>,
     waiters: Vec<waiting::Waiter>,
     approvals: Vec<waiting::Approval>,
     ready_jobs: VecDeque<(ManagedMailboxJob, bool, String)>,
@@ -234,6 +237,7 @@ impl ManagedManager {
             foreground_reservations: Vec::new(),
             reservation_wake: Arc::new(futures_util::task::AtomicWaker::new()),
             active: None,
+            observation: None,
             waiters: Vec::new(),
             approvals: Vec::new(),
             ready_jobs: VecDeque::new(),
@@ -304,6 +308,7 @@ impl ManagedManager {
             && self.foregrounds.is_empty()
             && !self.has_foreground_reservations()
             && self.active.is_none()
+            && self.observation.is_none()
             && self.waiters.is_empty()
             && self.approvals.is_empty()
             && self.ready_jobs.is_empty()

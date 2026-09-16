@@ -183,6 +183,9 @@ impl Catalog {
     pub(super) fn yield_to_work(&mut self) -> bool {
         std::mem::take(&mut self.last_read)
     }
+    pub(super) fn mark_read(&mut self) {
+        self.last_read = true;
+    }
     pub(super) fn close(&mut self) {
         self.closed = true;
         if let Some(request) = self.pending.take() {

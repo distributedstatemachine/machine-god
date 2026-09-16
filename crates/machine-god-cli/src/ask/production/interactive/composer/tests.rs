@@ -3,6 +3,57 @@ use super::*;
 type EditReceipt = (Range<usize>, String, usize);
 
 #[test]
+fn history_detail_keys_are_contextual_and_never_escape_atomic_paste() {
+    let mut editor = Composer::default();
+    feed(&mut editor, b"draft", false);
+    let normal = ComposerContext {
+        agents: true,
+        ..ComposerContext::default()
+    };
+    assert!(matches!(
+        editor.feed(b"\x1b[D", normal).1,
+        Some(ComposerEvent::Changed)
+    ));
+    assert_eq!(editor.cursor(), 4);
+    assert!(matches!(
+        editor.feed(b"\x0f", normal).1,
+        Some(ComposerEvent::HistoryToggle)
+    ));
+    let detail = ComposerContext {
+        agent_history: Some(machine_god_native::NativeManagedHistoryMode::Transcript),
+        ..normal
+    };
+    assert!(matches!(
+        editor.feed(b"\x1b[C", detail).1,
+        Some(ComposerEvent::HistoryFull)
+    ));
+    assert!(matches!(
+        editor.feed(b"\x1bOD", detail).1,
+        Some(ComposerEvent::HistorySummary)
+    ));
+    assert_eq!(editor.cursor(), 4);
+    let mut input = b"\x1b[200~\x0f\x1b[C\x1b[D\x1b[201~".as_slice();
+    while !input.is_empty() {
+        let (consumed, event) = editor.feed(input, detail);
+        assert!(consumed > 0);
+        assert!(!matches!(
+            event,
+            Some(
+                ComposerEvent::HistoryToggle
+                    | ComposerEvent::HistoryFull
+                    | ComposerEvent::HistorySummary
+            )
+        ));
+        input = &input[consumed..];
+    }
+    let form = ComposerContext {
+        agent_form: Some(machine_god_native::NativeManagedFormField::Name),
+        ..normal
+    };
+    assert!(editor.feed(b"\x0f", form).1.is_none());
+}
+
+#[test]
 fn agent_history_page_keys_do_not_escape_paste_or_change_drafts() {
     let mut editor = Composer::default();
     feed(&mut editor, b"draft", false);

@@ -12,7 +12,9 @@ use crate::{
     NativeObservedManagedAgent,
 };
 pub use drafts::NativeManagedDraftView;
-pub use history::{NativeManagedHistoryPosition, NativeManagedHistoryView};
+pub use history::{
+    NativeManagedHistoryMode, NativeManagedHistoryPosition, NativeManagedHistoryView,
+};
 use machine_god_core::{CancellationToken, ManagedSubagentCommand, ManagedSubagentError};
 pub(super) use state::Navigation;
 pub use view::{

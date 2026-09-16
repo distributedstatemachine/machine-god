@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34954002729` (`GREEN`)
 - Active branch: `agent/m65-managed-subagents`
 - Active phase: `M05 complete managed-agent tool and CLI implementation`
-- Next gate: `verify ACP host reuse and process navigation; finish independent child drafts/history and local model/skill navigation; then run the complete feature gate and three fresh reviews`
+- Next gate: `verify serialized canonical history reads and full-detail navigation; finish child-local model/skill navigation; then run the complete feature gate and three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills, MCP and ACP are delivered.

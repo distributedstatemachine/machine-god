@@ -4,6 +4,7 @@ mod catalog;
 mod delivery;
 mod fixture;
 mod foreground;
+mod observation;
 use fixture::Fixture;
 use futures_executor::block_on;
 use machine_god_core::{ManagedFailureCode, ManagedRequested, ManagedSubagentAuthority};

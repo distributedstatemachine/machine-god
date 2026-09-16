@@ -34,12 +34,14 @@ fn failed_later_permission_enrollment_unwinds_mcp_registration_before_returning(
         .build()
         .unwrap();
     let session = block_on(engine.load_session(id)).unwrap().unwrap();
-    let conversation = NativeConversation::from_session(session)
-        .unwrap()
-        .with_permission_contexts(&permissions)
+    let mut conversation = NativeConversation::from_session(session)
         .unwrap()
         .with_mcp_contexts(&contexts)
         .unwrap();
+    // This fixture injects a later permission-only admission failure. Ordinary
+    // conversation registrations share one publication barrier; retiring one
+    // of those correctly rejects before any turn/MCP enrollment can start.
+    conversation.permission_contexts = Some(permissions.register(&conversation.session).unwrap());
     conversation.permission_contexts.as_ref().unwrap().retire();
     let result = block_on(conversation.prompt("admission fails".into(), 200));
     assert!(matches!(

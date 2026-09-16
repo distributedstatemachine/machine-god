@@ -1,4 +1,5 @@
 use super::*;
+use crate::ask::production::interactive::composer::ComposerEvent;
 use crate::ask::production::managed_startup;
 use machine_god_core::ManagedSubagentCommand;
 use native::{NativeManagedInteractiveStartup, NativeManagedNavigationRoute as Route};
@@ -120,6 +121,68 @@ async fn enter_child(harness: &mut Harness) {
 fn full_child_history_updates_and_page_position_survives_both_reopen_paths() {
     let runtime = executor();
     let (fixture, mut harness) = runtime.block_on(prepared());
+    queue_history(&fixture);
+    let result = runtime.block_on(async {
+        enter_child(&mut harness).await;
+        let output = send_history(&mut harness).await;
+        assert!(String::from_utf8_lossy(&output).contains("CHILD_POSITION_090"));
+        let old = harness.driver.owner.managed_navigation().unwrap().frame;
+        let editor = harness.driver.owner.managed_navigation().unwrap().editor;
+        harness.input_writer.write_all(b"\x1b[5~").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && driver
+                    .owner
+                    .managed_navigation()
+                    .unwrap()
+                    .history
+                    .unwrap()
+                    .position
+                    .is_some()
+        })
+        .await;
+        let view = harness.driver.owner.managed_navigation().unwrap();
+        assert_eq!(view.editor, editor);
+        assert_ne!(view.frame, old);
+        let position = view.history.unwrap().position;
+        harness.input_writer.write_all(b"/back\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && matches!(
+                    driver.owner.managed_navigation().unwrap().route,
+                    Route::Catalog(_)
+                )
+        })
+        .await;
+        enter_child(&mut harness).await;
+        assert_eq!(
+            harness
+                .driver
+                .owner
+                .managed_navigation()
+                .unwrap()
+                .history
+                .unwrap()
+                .position,
+            position
+        );
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, |driver| {
+            driver.agents.is_none() && presentation_idle(driver)
+        })
+        .await;
+        enter_child(&mut harness).await;
+        let view = harness.driver.owner.managed_navigation().unwrap();
+        assert_eq!(view.history.unwrap().position, position);
+        assert_ne!(view.editor, editor);
+        assert_eq!(fixture.transport.requests().len(), 1);
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+fn queue_history(fixture: &support::Fixture) {
     let text = (1..=90)
         .map(|n| format!("CHILD_POSITION_{n:03} α🙂"))
         .collect::<Vec<_>>()
@@ -132,38 +195,148 @@ fn full_child_history_updates_and_page_position_survives_both_reopen_paths() {
         )
         .into_bytes(),
     );
-    let result = runtime.block_on(async {
-        enter_child(&mut harness).await;
-        harness.input_writer.write_all(b"generate history\r").unwrap();
-        let output = pump_until(&mut harness, |driver| displayed(driver)
+}
+
+async fn send_history(harness: &mut Harness) -> Vec<u8> {
+    harness
+        .input_writer
+        .write_all(b"generate history\r")
+        .unwrap();
+    pump_until(harness, |driver| displayed(driver)
             && driver.owner.managed_navigation().unwrap().history.is_some_and(|history| {
                 history.record.messages.iter().any(|message| message.content.iter().any(|block| {
                     matches!(block, machine_god_core::ContentBlock::Text { text } if text.contains("CHILD_POSITION_090"))
                 }))
-            })).await;
-        assert!(String::from_utf8_lossy(&output).contains("CHILD_POSITION_090"));
-        let old = harness.driver.owner.managed_navigation().unwrap().frame;
+            })).await
+}
+
+#[test]
+fn child_detail_modes_preserve_independent_positions_and_draft_without_execution() {
+    use native::NativeManagedHistoryMode as Mode;
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    queue_history(&fixture);
+    let result = runtime.block_on(async {
+        enter_child(&mut harness).await;
+        send_history(&mut harness).await;
+        harness.input_writer.write_all(b"retained draft").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.input.raw_draft() == Some(("retained draft", 14))
+        })
+        .await;
         let editor = harness.driver.owner.managed_navigation().unwrap().editor;
         harness.input_writer.write_all(b"\x1b[5~").unwrap();
-        pump_until(&mut harness, |driver| displayed(driver)
-            && driver.owner.managed_navigation().unwrap().history.unwrap().position.is_some()).await;
-        let view = harness.driver.owner.managed_navigation().unwrap();
-        assert_eq!(view.editor, editor);
-        assert_ne!(view.frame, old);
-        let position = view.history.unwrap().position;
-        harness.input_writer.write_all(b"/back\r").unwrap();
-        pump_until(&mut harness, |driver| displayed(driver)
-            && matches!(driver.owner.managed_navigation().unwrap().route, Route::Catalog(_))).await;
-        enter_child(&mut harness).await;
-        assert_eq!(harness.driver.owner.managed_navigation().unwrap().history.unwrap().position, position);
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && shown_history(driver).position.is_some()
+        })
+        .await;
+        let position = shown_history(&harness.driver).position;
+        history_mode(&mut harness, b"\x0f", Mode::Transcript).await;
+        assert!(shown_history(&harness.driver).position.is_none());
+        let output = history_mode(&mut harness, b"\x1b[C", Mode::Full).await;
+        assert!(String::from_utf8_lossy(&output).contains("Full detail"));
+        harness.input_writer.write_all(b"\x1b[5~").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && shown_history(driver).position.is_some()
+        })
+        .await;
+        let full_position = shown_history(&harness.driver).position;
+        history_mode(&mut harness, b"\x1b[D", Mode::Transcript).await;
+        assert!(shown_history(&harness.driver).position.is_none());
+        history_mode(&mut harness, b"\x1b[C", Mode::Full).await;
+        assert_eq!(shown_history(&harness.driver).position, full_position);
+        assert_eq!(
+            harness.driver.owner.managed_navigation().unwrap().editor,
+            editor
+        );
+        assert_eq!(
+            harness.driver.input.raw_draft(),
+            Some(("retained draft", 14))
+        );
         harness.input_writer.write_all(b"\x18").unwrap();
-        pump_until(&mut harness, |driver| driver.agents.is_none() && presentation_idle(driver)).await;
+        pump_until(&mut harness, |driver| {
+            driver.agents.is_none() && presentation_idle(driver)
+        })
+        .await;
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        // Keyboard selection does not replace the child's retained draft.
         enter_child(&mut harness).await;
         let view = harness.driver.owner.managed_navigation().unwrap();
-        assert_eq!(view.history.unwrap().position, position);
+        assert_eq!(view.history.unwrap().mode, Mode::Full);
+        assert_eq!(view.history.unwrap().position, full_position);
         assert_ne!(view.editor, editor);
+        history_mode(&mut harness, b"\x0f", Mode::Conversation).await;
+        assert_eq!(shown_history(&harness.driver).position, position);
+        assert_eq!(
+            harness.driver.input.raw_draft(),
+            Some(("retained draft", 14))
+        );
         assert_eq!(fixture.transport.requests().len(), 1);
         finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+fn shown_history(driver: &Driver) -> native::NativeManagedHistoryView<'_> {
+    driver.owner.managed_navigation().unwrap().history.unwrap()
+}
+
+async fn history_mode(
+    harness: &mut Harness,
+    keys: &[u8],
+    mode: native::NativeManagedHistoryMode,
+) -> Vec<u8> {
+    harness.input_writer.write_all(keys).unwrap();
+    pump_until(harness, |driver| {
+        displayed(driver)
+            && driver
+                .owner
+                .managed_navigation()
+                .unwrap()
+                .history
+                .is_some_and(|history| history.mode == mode)
+    })
+    .await
+}
+
+#[test]
+fn child_quit_requires_the_current_displayed_frame_and_never_sends_a_model_turn() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        enter_child(&mut harness).await;
+        let stale = harness.driver.agents_binding().unwrap();
+        harness.driver.invalidate_agents();
+        assert!(
+            harness
+                .driver
+                .agents_event(&ComposerEvent::Submit("/quit".into()), &stale)
+        );
+        assert!(!harness.driver.shutting_down);
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"/quit\r").unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                let result = harness.driver.poll(cx, &mut harness.signals);
+                if let Ok(work) = harness.work.try_recv() {
+                    assert!(matches!(work, OutputWork::Write(_) | OutputWork::Flush));
+                    harness
+                        .ack
+                        .try_send(OutputAcknowledgement::Succeeded)
+                        .unwrap();
+                    cx.waker().wake_by_ref();
+                }
+                result
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(harness.driver.shutting_down);
+        assert!(fixture.transport.requests().is_empty());
+        result
     });
     let mut tail = dispose(harness, fixture, result);
     runtime.block_on(finish_raw_tail(&mut tail));

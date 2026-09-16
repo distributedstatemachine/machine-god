@@ -2,7 +2,7 @@
 //! visible output are allocated; source coordinates, not terminal rows, persist.
 use super::{Lines, identity_rows};
 use crate::ask::production::interactive::composer_view::{Atom, label};
-use machine_god_core::{ContentBlock, Role, SessionRecord};
+use machine_god_core::{ContentBlock, Role};
 use machine_god_native::{
     NativeManagedHistoryPosition as Position, NativeManagedHistoryView as View,
     NativeManagedNavigationAction as Action, NativeManagedNavigationView,
@@ -18,7 +18,7 @@ pub(super) fn render(lines: &mut Lines, history: Option<View<'_>>, limit: usize)
     let (start, total) = window(history, lines.columns, capacity);
     let mut index = 0;
     let mut result = Ok(());
-    visit(history.record, lines.columns, |_, row| {
+    visit(history, lines.columns, |_, row| {
         if index >= start && index - start < capacity && result.is_ok() {
             result = lines.push_rendered(row);
         }
@@ -84,7 +84,7 @@ fn scroll_from(
     }
     let mut selected = None;
     let mut index = 0;
-    visit(history.record, columns, |position, _| {
+    visit(history, columns, |position, _| {
         if index == next {
             selected = Some(position);
         }
@@ -96,7 +96,7 @@ fn scroll_from(
 fn window(history: View<'_>, columns: u16, capacity: usize) -> (usize, usize) {
     let mut total: usize = 0;
     let mut anchored = 0;
-    visit(history.record, columns, |position, _| {
+    visit(history, columns, |position, _| {
         if history.position.is_some_and(|anchor| position <= anchor) {
             anchored = total;
         }
@@ -113,8 +113,8 @@ fn window(history: View<'_>, columns: u16, capacity: usize) -> (usize, usize) {
     )
 }
 
-fn visit(record: &SessionRecord, columns: u16, mut row: impl FnMut(Position, &[u8])) {
-    for (message_index, message) in record.messages.iter().enumerate() {
+fn visit(history: View<'_>, columns: u16, mut row: impl FnMut(Position, &[u8])) {
+    for (message_index, message) in history.record.messages.iter().enumerate() {
         if message.role == Role::System {
             continue;
         }
@@ -135,22 +135,33 @@ fn visit(record: &SessionRecord, columns: u16, mut row: impl FnMut(Position, &[u
         for (block_index, block) in message.content.iter().enumerate() {
             position.block = Some(block_index);
             position.byte = 0;
-            if let ContentBlock::Text { text } = block
-                && matches!(message.role, Role::User | Role::Assistant)
-            {
-                text_rows(text, columns, |byte, text| {
+            match history.block_text(message_index, block_index) {
+                Ok(Some(text)) => text_rows(&text, columns, |byte, text| {
                     position.byte = byte;
                     row(position, text);
-                });
-            } else {
-                let description = match block {
-                    ContentBlock::ToolCall { .. } => "[recorded tool call · /tools for activity]",
-                    ContentBlock::ToolResult { .. } => "[recorded tool result · detail collapsed]",
-                    ContentBlock::Json { .. } => "[structured detail collapsed]",
-                    ContentBlock::Text { .. } => "[non-conversation text collapsed]",
-                    _ => "[non-text content collapsed]",
-                };
-                row(position, &label(description, columns, ROW_BYTES));
+                }),
+                Err(_) => row(
+                    position,
+                    &label(
+                        "[detail unavailable: display bound exceeded]",
+                        columns,
+                        ROW_BYTES,
+                    ),
+                ),
+                Ok(None) => {
+                    let description = match block {
+                        ContentBlock::ToolCall { .. } => {
+                            "[recorded tool call · /tools for activity]"
+                        }
+                        ContentBlock::ToolResult { .. } => {
+                            "[recorded tool result · detail collapsed]"
+                        }
+                        ContentBlock::Json { .. } => "[structured detail collapsed]",
+                        ContentBlock::Text { .. } => "[non-conversation text collapsed]",
+                        _ => "[non-text content collapsed]",
+                    };
+                    row(position, &label(description, columns, ROW_BYTES));
+                }
             }
         }
     }
@@ -188,7 +199,56 @@ fn text_rows(text: &str, columns: u16, mut row: impl FnMut(usize, &[u8])) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use machine_god_core::{Message, SessionId, SessionIncarnationId};
+    use machine_god_core::{Message, SessionId, SessionIncarnationId, SessionRecord};
+
+    #[test]
+    fn full_detail_preserves_structured_evidence_without_loading_or_clipping_it() {
+        let mut record = record("answer");
+        let block = ContentBlock::Json {
+            value: serde_json::json!({"nested": {"payload": "α🙂line\n".repeat(9000), "end": "LAST_FIELD"}}),
+        };
+        record.messages.push(Message {
+            role: Role::Tool,
+            content: vec![block.clone()],
+        });
+        let full = View {
+            record: &record,
+            mode: machine_god_native::NativeManagedHistoryMode::Full,
+            position: None,
+        };
+        let mut output = Vec::new();
+        let mut positions = Vec::new();
+        visit(full, 60, |position, row| {
+            if position.message == 2 && position.block == Some(0) {
+                assert!(row.len() <= ROW_BYTES);
+                output.extend_from_slice(row);
+                positions.push(position);
+            }
+        });
+        assert!(output.len() > 64 * 1024);
+        // Terminal display escapes literal backslashes as well as controls.
+        // Compare the complete display projection, not JSON parsed a second time.
+        let expected = serde_json::to_string(&block).unwrap().replace('\\', "\\\\");
+        assert!(
+            output == expected.as_bytes(),
+            "complete escaped detail differs"
+        );
+        assert!(
+            positions
+                .windows(2)
+                .all(|positions| positions[0] < positions[1])
+        );
+        let mut summary = Vec::new();
+        visit(
+            View {
+                mode: machine_god_native::NativeManagedHistoryMode::Transcript,
+                ..full
+            },
+            60,
+            |_, row| summary.extend_from_slice(row),
+        );
+        assert!(!String::from_utf8(summary).unwrap().contains("LAST_FIELD"));
+    }
 
     fn record(text: &str) -> SessionRecord {
         let mut record = SessionRecord::empty(
@@ -228,12 +288,14 @@ mod tests {
         let record = record(&text);
         let tail = View {
             record: &record,
+            mode: machine_god_native::NativeManagedHistoryMode::Conversation,
             position: None,
         };
         assert_eq!(window(tail, 80, 10), (81, 91));
         let byte = text.find("CHILD_POSITION_040").unwrap();
         let anchored = View {
             record: &record,
+            mode: tail.mode,
             position: Some(Position {
                 message: 1,
                 block: Some(0),
@@ -244,7 +306,7 @@ mod tests {
             let (start, _) = window(anchored, columns, 10);
             assert_eq!(start, 40);
             let mut shown = Vec::new();
-            visit(&record, columns, |_, row| shown.extend_from_slice(row));
+            visit(anchored, columns, |_, row| shown.extend_from_slice(row));
             assert!(
                 !String::from_utf8(shown)
                     .unwrap()
@@ -253,7 +315,7 @@ mod tests {
         }
         let (start, _) = window(anchored, 12, 10);
         let mut index = 0;
-        visit(&record, 12, |position, _| {
+        visit(anchored, 12, |position, _| {
             if index == start {
                 assert_eq!(Some(position), anchored.position);
             }
@@ -289,6 +351,7 @@ mod tests {
         };
         let anchored = View {
             record: &record,
+            mode: machine_god_native::NativeManagedHistoryMode::Conversation,
             position: Some(position),
         };
         assert!(matches!(

@@ -96,8 +96,10 @@ impl std::error::Error for NativeManagedNavigationError {}
 /// Typed human intent. IDs in configuration are checked against the exact row;
 /// lifecycle Close is admitted only through a separately displayed confirmation.
 pub enum NativeManagedNavigationAction {
+    Exit,
     Conversation,
     SeekHistory(Option<super::NativeManagedHistoryPosition>),
+    HistoryMode(super::NativeManagedHistoryMode),
     Previous,
     Next,
     NextPage,
@@ -124,8 +126,10 @@ pub enum NativeManagedNavigationAction {
 impl fmt::Debug for NativeManagedNavigationAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let action = match self {
+            Self::Exit => "Exit",
             Self::Conversation => "Conversation",
             Self::SeekHistory(_) => "SeekHistory",
+            Self::HistoryMode(_) => "HistoryMode",
             Self::Previous => "Previous",
             Self::Next => "Next",
             Self::NextPage => "NextPage",

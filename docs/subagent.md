@@ -574,8 +574,8 @@ draft has been restored without interrupting an atomic decoder.
 
 Selecting a child opens its canonical conversation; `/history` or `/conversation`
 returns there from journal inspection. Complete user/assistant text is wrapped,
-not reduced to journal or 512-byte previews. System instructions and raw structured
-payloads remain collapsed; terminal controls use the same escaped Unicode display
+not reduced to journal or 512-byte previews. System instructions remain hidden;
+structured payloads are collapsed in conversation/transcript mode. Terminal controls use the same escaped Unicode display
 units as the composer. Display rows retain at most 768 bytes, with oversized
 indivisible clusters represented by an ellipsis. The complete frame remains
 bounded to 64 rows and 64 KiB; scrolling never executes or resumes the child.
@@ -590,9 +590,32 @@ messages only when its anchored canonical message is unchanged; changed or missi
 source messages reset to the tail. Navigation retains one charged canonical
 snapshot, releases it when leaving the conversation, and owns each pending read
 through actual cancellation settlement. External history callers cannot consume
-its outcome. Resident record changes trigger a fresh observed catalog/history
+its outcome. History reads share the manager's serialized journal admission with
+catalog reads and durable commands; they never race an independent journal
+worker against manager publication. Catalog/history reads share one fairness
+allowance before yielding to durable work. The manager continues polling child
+execution and cancellation while an admitted read settles, and shutdown drains
+the original read rather than dropping its worker custody.
+Resident record changes trigger a fresh observed catalog/history
 read; unavailable reads remain explicit and `/refresh` retries them. Rendering
 scans the bounded captured record without retaining an unbounded wrapped index.
+
+Ctrl-O opens transcript detail; Left/Right selects transcript/full detail and
+Ctrl-O returns to the conversation. Each child retains its selected mode and
+three independent source positions under the same 128-child reading budget.
+Mode changes require the exact acknowledged frame without replacing the draft
+editor. Full detail wraps complete recorded tool calls, results and structured
+blocks as canonical JSON, including IDs, errors and archive references; it never
+loads an archive or executes recorded work. Non-conversation text is also visible
+in full detail. Text remains borrowed; each structured block uses one temporary
+buffer bounded by the canonical record ceiling, released before the next block.
+Oversized/unavailable detail is explicitly labeled rather than silently clipped.
+Full-detail anchors refer to UTF-8 offsets in that deterministic serialized block
+and remain guarded by the original message digest. Paste and partial-input
+ownership are unchanged; detail navigation cannot become a model submission.
+`/quit` is likewise local: the exact displayed frame admits native shutdown and
+the CLI drains the original input/output and host cleanup. It sends no child or
+parent model turn, and host teardown does not become durable user cancellation.
 
 The process page is a read-only snapshot of the selected runtime's terminal access,
 bounded by the terminal service's 128 rows and 1 MiB command/path-text budget.

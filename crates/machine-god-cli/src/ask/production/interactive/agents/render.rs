@@ -59,11 +59,22 @@ pub(super) fn render(
     } else {
         "Agents & processes · clipped previews"
     })?;
-    lines.push(&format!(
-        "{:?}{}",
-        view.route,
-        if view.busy { " — pending" } else { "" }
-    ))?;
+    if let Some(history) = view.history {
+        use machine_god_native::NativeManagedHistoryMode;
+        lines.push(match history.mode {
+            NativeManagedHistoryMode::Conversation => {
+                "Conversation · Ctrl-O opens transcript detail"
+            }
+            NativeManagedHistoryMode::Transcript => "Transcript · ←/→ switch · Ctrl-O close",
+            NativeManagedHistoryMode::Full => "Full detail · ←/→ switch · Ctrl-O close",
+        })?;
+    } else {
+        lines.push(&format!(
+            "{:?}{}",
+            view.route,
+            if view.busy { " — pending" } else { "" }
+        ))?;
+    }
     // Keep target, error and editor visible independently of detail scrolling.
     let content_limit = lines
         .limit

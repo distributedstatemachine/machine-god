@@ -348,6 +348,11 @@ impl Driver {
             active_response: status.active || status.queued_jobs != 0,
             session_picker: self.picker_open(),
             agents: self.owner.managed_navigation().is_some() && self.modal.is_none(),
+            agent_history: self
+                .owner
+                .managed_navigation()
+                .and_then(|view| view.history)
+                .map(|history| history.mode),
             agent_form: self
                 .owner
                 .managed_navigation()

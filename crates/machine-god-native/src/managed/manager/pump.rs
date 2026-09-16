@@ -77,6 +77,12 @@ impl ManagedManager {
             return Ok(false);
         };
         match &mut active {
+            Active::Observation(future) => {
+                if future.as_mut().poll(cx).is_pending() {
+                    self.active = Some(active);
+                    return Ok(false);
+                }
+            }
             Active::Catalog { future, .. } => {
                 let Poll::Ready(result) = future.as_mut().poll(cx) else {
                     self.active = Some(active);

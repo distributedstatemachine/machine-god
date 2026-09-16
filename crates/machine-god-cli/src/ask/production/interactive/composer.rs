@@ -23,8 +23,18 @@ pub(super) struct ComposerContext {
     pub active_response: bool,
     pub session_picker: bool,
     pub agents: bool,
+    pub agent_history: Option<machine_god_native::NativeManagedHistoryMode>,
     pub agent_form: Option<machine_god_native::NativeManagedFormField>,
     pub skills: Option<machine_god_native::NativeSkillPickerMode>,
+}
+impl ComposerContext {
+    fn history_detail(self) -> bool {
+        self.agents
+            && self.agent_form.is_none()
+            && self.agent_history.is_some_and(|mode| {
+                mode != machine_god_native::NativeManagedHistoryMode::Conversation
+            })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,6 +69,9 @@ pub(super) enum ComposerEvent {
     PickerNext,
     HistoryPageUp,
     HistoryPageDown,
+    HistoryToggle,
+    HistorySummary,
+    HistoryFull,
     PickerToggleScope,
     SkillSelected,
     StaleInput,
@@ -79,6 +92,9 @@ impl fmt::Debug for ComposerEvent {
             Self::PickerNext => f.write_str("PickerNext"),
             Self::HistoryPageUp => f.write_str("HistoryPageUp"),
             Self::HistoryPageDown => f.write_str("HistoryPageDown"),
+            Self::HistoryToggle => f.write_str("HistoryToggle"),
+            Self::HistorySummary => f.write_str("HistorySummary"),
+            Self::HistoryFull => f.write_str("HistoryFull"),
             Self::PickerToggleScope => f.write_str("PickerToggleScope"),
             Self::SkillSelected => f.write_str("SkillSelected"),
             Self::StaleInput => f.write_str("StaleInput"),
@@ -387,6 +403,9 @@ impl Composer {
 
     fn key(&mut self, byte: u8, context: ComposerContext) -> Option<ComposerEvent> {
         match byte {
+            15 if context.agents && context.agent_form.is_none() => {
+                Some(ComposerEvent::HistoryToggle)
+            }
             18 if context.agent_form.is_some() => Some(ComposerEvent::FormRefreshRequested),
             9 if context.agent_form.is_some() => Some(ComposerEvent::PickerNext),
             b' ' if context
@@ -527,6 +546,10 @@ impl Composer {
             };
         }
         match sequence {
+            b"\x1b[D" | b"\x1bOD" if context.history_detail() => {
+                Some(ComposerEvent::HistorySummary)
+            }
+            b"\x1b[C" | b"\x1bOC" if context.history_detail() => Some(ComposerEvent::HistoryFull),
             b"\x1b[D" | b"\x1bOD" => self.move_to(previous_start(&self.text, self.cursor)),
             b"\x1b[C" | b"\x1bOC" => self.move_to(next_end(&self.text, self.cursor)),
             b"\x1b[H" | b"\x1bOH" | b"\x1b[1~" | b"\x1b[7~" => self.move_to(0),

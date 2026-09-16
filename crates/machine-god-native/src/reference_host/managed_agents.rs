@@ -437,10 +437,14 @@ impl NativeManagedAgents {
             self.request_shutdown();
         }
         self.history.poll(cx);
+        let settled = self.manager.poll_shutdown(cx, now_ms).map_err(map_error);
         if !self.history.settled() {
+            if let Poll::Ready(Err(error)) = settled {
+                return Poll::Ready(Err(error));
+            }
             return Poll::Pending;
         }
-        self.manager.poll_shutdown(cx, now_ms).map_err(map_error)
+        settled
     }
 
     pub(crate) fn selected_runtime(

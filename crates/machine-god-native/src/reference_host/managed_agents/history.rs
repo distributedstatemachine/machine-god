@@ -211,6 +211,12 @@ impl NativeManagedAgents {
             reservation,
             cancellation.clone(),
         );
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.manager
+            .request_observation(Box::pin(async move {
+                let _ = sender.send(future.await);
+            }))
+            .map_err(|_| Error::Busy)?;
         let request = NativeManagedHistoryRequest {
             cancellation: cancellation.clone(),
             identity: Arc::downgrade(&self.history.identity),
@@ -220,7 +226,7 @@ impl NativeManagedAgents {
         self.history.pending = Some(Pending {
             request: request.clone(),
             cancellation,
-            future,
+            future: Box::pin(async move { receiver.await.map_err(|_| Error::Closed)? }),
         });
         self.history.notify();
         Ok(request)
