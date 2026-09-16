@@ -102,7 +102,12 @@ fn mcp_commands_cancel_and_session_switch_record_observations_without_replay() {
     command(&mut terminal, "/new");
     terminal.wait_for(b": adopted]");
     terminal.wait_for(b"]\n> ");
-    assert_eq!(gateway.mcp_requests(), requests);
+    // Each replacement foreground owns fresh MCP contexts and peer readiness.
+    // Only the exact original discovery pair may repeat, never resource reads
+    // or the cancelled continuation from the saved conversation.
+    let mut expected = requests.clone();
+    expected.extend_from_slice(&requests[..2]);
+    assert_eq!(gateway.mcp_requests(), expected);
     command(&mut terminal, "/resume");
     // The ordinary turn makes the sole previous session resumable; it does not
     // rename it. The exact adopted identity is checked through /status below.
@@ -116,15 +121,16 @@ fn mcp_commands_cancel_and_session_switch_record_observations_without_replay() {
     command(&mut terminal, "/status");
     terminal.wait_for(format!("[session] {id}\n").as_bytes());
     terminal.wait_for(b" requested_fast=false\n> \n");
+    expected.extend_from_slice(&requests[..2]);
     assert_eq!(
         gateway.mcp_requests(),
-        requests,
-        "session history is data, not MCP dispatch"
+        expected,
+        "only fresh peer discovery repeats; session history is not MCP dispatch"
     );
     command(&mut terminal, "/quit");
     assert_eq!(terminal.finish().0.code(), Some(0));
     assert_eq!(gateway.inference.load(Ordering::Acquire), 1);
-    assert_no_command_replay(&fixture, &gateway, &requests);
+    assert_no_command_replay(&fixture, &gateway, &expected);
     let persisted: Value = serde_json::from_slice(&bounded_file(&saved[0])).unwrap();
     assert_eq!(
         persisted["record"]["messages"],
