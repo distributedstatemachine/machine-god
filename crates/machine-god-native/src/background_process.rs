@@ -3138,6 +3138,7 @@ impl LinuxTerminalPinCapture<'_> {
 
 impl OwnedBackgroundProcess {
     /// Successful handoff changes only run attribution, never native/host custody.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn promote_to_service(&mut self) {
         #[cfg(target_os = "macos")]
         if let Some(inventory) = self

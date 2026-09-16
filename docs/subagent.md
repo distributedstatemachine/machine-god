@@ -6,6 +6,13 @@ durable acceptance, scheduling, persistence and lifetime. Core performs no
 ambient filesystem, process, environment, network, clock or thread operations.
 The foreground-only API and its global counters are removed.
 
+Managed runtime composition is available on Linux and macOS; reference-host
+and interactive navigation additionally require `ai-gateway-http`. Internal
+staged prompt registrations, shared-host undo access and multi-draft accounting
+compile only with their owning host (or applicable tests). Portable prompt
+bridges and skill planning remain independent of those runtime-only helpers.
+Unsupported-platform process adapters do not perform service-run promotion.
+
 Factory preparation explicitly selects `Create` or `Restore`; the presence of
 captured caller authority never chooses between them. Create cannot reuse an
 existing transcript; restore cannot publish an empty replacement. Explicit

@@ -226,9 +226,15 @@ pub struct NativeInteractivePromptBridge {
 }
 
 mod registration;
-pub(crate) use registration::{
-    NativeInteractivePromptRegistration, NativeInteractivePromptReservation,
-};
+pub(crate) use registration::NativeInteractivePromptRegistration;
+#[cfg(any(
+    test,
+    all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos")
+    )
+))]
+pub(crate) use registration::NativeInteractivePromptReservation;
 
 #[derive(Clone)]
 struct PrincipalKey {
@@ -423,6 +429,13 @@ pub struct NativeInteractivePromptInbox {
 pub(crate) struct NativeInteractivePromptRegistrar(Weak<Shared>);
 
 impl NativeInteractivePromptRegistrar {
+    #[cfg(any(
+        test,
+        all(
+            feature = "ai-gateway-http",
+            any(target_os = "linux", target_os = "macos")
+        )
+    ))]
     pub(crate) fn reserve(
         &self,
         owner: BackgroundOutputOwner,
@@ -435,6 +448,10 @@ impl NativeInteractivePromptRegistrar {
         Ok(NativeInteractivePromptReservation::new(shared, key))
     }
 
+    #[cfg(all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos")
+    ))]
     pub(crate) fn matches(&self, inbox: &NativeInteractivePromptInbox) -> bool {
         self.0.ptr_eq(&Arc::downgrade(&inbox.shared))
     }

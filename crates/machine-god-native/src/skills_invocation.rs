@@ -45,6 +45,7 @@ pub struct NativeSkillInvocationPlan {
 
 type Result<T> = std::result::Result<T, NativeSkillInvocationError>;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_references(references: &[crate::NativeSkillReference]) -> Result<()> {
     if references.len() > MAX_NATIVE_SKILL_INVOCATION_SELECTIONS {
         return Err(NativeSkillInvocationError::TooManySelections);

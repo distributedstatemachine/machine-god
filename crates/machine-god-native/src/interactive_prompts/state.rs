@@ -180,6 +180,13 @@ impl Shared {
             .cloned()
     }
 
+    #[cfg(any(
+        test,
+        all(
+            feature = "ai-gateway-http",
+            any(target_os = "linux", target_os = "macos")
+        )
+    ))]
     pub(super) fn capture_owner(&self, owner: &BackgroundOutputOwner) -> Option<PrincipalKey> {
         let state = self.lock();
         if state.closed {
@@ -203,6 +210,13 @@ impl Shared {
 
     /// Reserve capacity without publishing an endpoint or obscuring the old
     /// registration. At most one successor may reserve a given durable owner.
+    #[cfg(any(
+        test,
+        all(
+            feature = "ai-gateway-http",
+            any(target_os = "linux", target_os = "macos")
+        )
+    ))]
     pub(super) fn reserve(&self, owner: BackgroundOutputOwner) -> Result<PrincipalKey, Error> {
         self.insert_principal(owner, true)
     }
@@ -238,6 +252,13 @@ impl Shared {
         Ok(key)
     }
 
+    #[cfg(any(
+        test,
+        all(
+            feature = "ai-gateway-http",
+            any(target_os = "linux", target_os = "macos")
+        )
+    ))]
     pub(super) fn activate_reserved(&self, key: &PrincipalKey) -> Result<(), Error> {
         let mut state = self.lock();
         if state.closed {
@@ -261,6 +282,13 @@ impl Shared {
         Ok(())
     }
 
+    #[cfg(any(
+        test,
+        all(
+            feature = "ai-gateway-http",
+            any(target_os = "linux", target_os = "macos")
+        )
+    ))]
     pub(super) fn release_reserved(&self, key: &PrincipalKey) {
         let removed = {
             let mut state = self.lock();

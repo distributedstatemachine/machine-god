@@ -2598,6 +2598,7 @@ impl CoreOwnedProcess for NativeOwned {
         }
         // Core immediately transfers this successful activation to its already
         // admitted retainer; no cancellation/async gap precedes that handoff.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         self.process
             .as_mut()
             .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?

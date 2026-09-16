@@ -237,6 +237,10 @@ impl NativeSkillPicker {
     }
 
     /// Variable-sized draft and selection data charged by a multi-draft owner.
+    #[cfg(all(
+        any(test, feature = "ai-gateway-http"),
+        any(target_os = "linux", target_os = "macos")
+    ))]
     pub(crate) fn retained_bytes(&self) -> usize {
         self.draft.len()
             + self
@@ -246,6 +250,10 @@ impl NativeSkillPicker {
                 .sum::<usize>()
     }
 
+    #[cfg(all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos")
+    ))]
     pub(crate) fn compact_draft_capacity(&mut self) {
         // Keep amortized append growth, but do not retain a formerly large
         // allocation after deleting most of a child draft. With the owner's

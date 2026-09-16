@@ -1063,6 +1063,10 @@ impl Drop for FileUndoClearReservation {
 }
 
 impl FileUndoTracker {
+    #[cfg(all(
+        feature = "ai-gateway-http",
+        any(target_os = "linux", target_os = "macos")
+    ))]
     pub(crate) fn shared_budget(&self) -> Arc<NativeUndoBudget> {
         self.budget.clone()
     }
