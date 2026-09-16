@@ -35,6 +35,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let root = fs::canonicalize(root).unwrap();
         let workspace = root.join("workspace");
         let state = root.join("state");
@@ -87,6 +88,40 @@ impl Fixture {
             "--nocapture",
             "--test-threads=1",
         ]);
+        self.configure_command(&mut command);
+        command.env("RECORDING_TEST_ROOT", &self.root);
+        command
+    }
+
+    pub fn release_command(&self) -> Command {
+        let executable = PathBuf::from(
+            std::env::var_os("MACHINE_GOD_CLI_TEST_BINARY")
+                .or_else(|| std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY"))
+                .expect("select the fresh release CLI before production PTY tests"),
+        );
+        assert!(executable.is_absolute() && executable.is_file());
+        let tmux = PathBuf::from(
+            std::env::var_os("MACHINE_GOD_TERMINAL_TMUX_BINARY")
+                .expect("select the canonical tmux prerequisite"),
+        );
+        assert!(tmux.is_absolute() && tmux.is_file());
+        let mut command = Command::new(executable);
+        self.configure_command(&mut command);
+        command.env(
+            "PATH",
+            std::env::join_paths([
+                tmux.parent().unwrap(),
+                Path::new("/usr/bin"),
+                Path::new("/bin"),
+                Path::new("/usr/sbin"),
+                Path::new("/sbin"),
+            ])
+            .unwrap(),
+        );
+        command
+    }
+
+    fn configure_command(&self, command: &mut Command) {
         command
             .env_clear()
             .current_dir(&self.workspace)
@@ -96,14 +131,12 @@ impl Fixture {
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .env("TERM", "xterm-256color")
             .env("AI_GATEWAY_API_KEY", "recording-local-fixture-key");
-        command.env("RECORDING_TEST_ROOT", &self.root);
         if let Some(tmux) = std::env::var_os("MACHINE_GOD_TERMINAL_TMUX_BINARY") {
             command.env("MACHINE_GOD_TERMINAL_TMUX_BINARY", tmux);
         }
         if let Some(helper) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
             command.env("MACHINE_GOD_TERMINAL_RELEASE_BINARY", helper);
         }
-        command
     }
 
     pub fn path(&self, name: &str) -> PathBuf {

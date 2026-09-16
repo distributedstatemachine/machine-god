@@ -1,5 +1,6 @@
 //! Production interactive flow under an owned PTY and injected local Gateway.
 
+mod agents;
 mod gateway;
 mod host;
 mod mcp;
