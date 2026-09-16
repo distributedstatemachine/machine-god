@@ -5,6 +5,10 @@ use crate::managed::{
 };
 use crate::{NativeOwnedWorkerCompletion, mcp::runtime::NativeMcpPeerCompletion};
 use std::{
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
     time::Instant,
 };
@@ -25,13 +29,49 @@ pub(super) struct CloseAuthority {
     pub journal_owner: crate::managed::store::JournalOwner,
     pub timeout: Duration,
 }
-struct McpLifetime {
-    instance: ManagedMcpInstance,
-    owner: Arc<NativePrincipalMcpOwner>,
+pub(super) struct McpLifetime {
+    pub(super) instance: ManagedMcpInstance,
+    owner: OnceLock<Arc<NativePrincipalMcpOwner>>,
+    closed: AtomicBool,
+    startup: Option<NativeOwnedWorkerCompletion>,
 }
 impl McpLifetime {
-    fn close(&self) {
-        self.owner.retire();
+    pub(super) fn new(
+        instance: ManagedMcpInstance,
+        startup: Option<NativeOwnedWorkerCompletion>,
+    ) -> Self {
+        Self {
+            instance,
+            owner: OnceLock::new(),
+            closed: AtomicBool::new(false),
+            startup,
+        }
+    }
+    /// A staged instance binds exactly once, without copying its publication.
+    /// Closing before or concurrently with binding cannot revive admission.
+    pub(super) fn bind(
+        &self,
+        owner: Arc<NativePrincipalMcpOwner>,
+    ) -> Result<(), ManagedRuntimeError> {
+        if self.closed.load(Ordering::Acquire) {
+            owner.retire();
+            return Err(ManagedRuntimeError::Unavailable);
+        }
+        if let Err(owner) = self.owner.set(owner) {
+            owner.retire();
+            return Err(ManagedRuntimeError::Invalid);
+        }
+        if self.closed.load(Ordering::Acquire) {
+            self.owner.get().expect("bound MCP owner").retire();
+            return Err(ManagedRuntimeError::Unavailable);
+        }
+        Ok(())
+    }
+    pub(super) fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        if let Some(owner) = self.owner.get() {
+            owner.retire();
+        }
         if let Some(controller) = &self.instance.controller {
             controller.close();
         }
@@ -54,15 +94,14 @@ enum Close {
 impl Resources {
     pub(super) fn new(
         binding: ManagedConversationBinding,
-        instance: ManagedMcpInstance,
-        owner: Arc<NativePrincipalMcpOwner>,
+        mcp: Arc<McpLifetime>,
         preparation: NativeOwnedWorkerCompletion,
         prompt: Option<crate::NativeInteractivePromptPrincipal>,
         close_authority: CloseAuthority,
     ) -> Self {
         Self {
             binding,
-            mcp: Arc::new(McpLifetime { instance, owner }),
+            mcp,
             preparation,
             turn: None,
             admission: None,
@@ -151,73 +190,18 @@ impl ManagedRuntimeResources for Resources {
         // Cut off exactly this principal's pending prompts and unconsumed
         // answers before waiting for any permission/elicitation cleanup.
         self.prompt.take();
-        let Some(deadline) = self
-            .mcp
-            .instance
-            .clock
-            .now()
-            .checked_add(self.close_authority.timeout)
-        else {
-            self.mcp.close();
-            self.closing = Close::Finished(Err(ManagedRuntimeError::Invalid));
-            return;
-        };
-        let mcp = self.mcp.clone();
         let preparation = self.preparation.clone();
         let admission = self.binding.admission_completion();
-        let authority = self.close_authority.clone();
-        let cohort = authority
-            .workers
-            .begin_cleanup_run_with_keepalive(Arc::new(authority.journal_owner.clone()))
-            .ok()
-            .map(Arc::new);
-        if let Some(cohort) = &cohort {
-            cohort.with_poll(|| mcp.close());
-        } else {
-            // Synchronous cutoff only: existing peers retain their original
-            // service/reap tickets. Capacity waiting cannot delay cancellation.
-            mcp.close();
-        }
-        self.closing = Close::Running(Box::pin(async move {
-            let owned = async {
-                let cohort = match cohort {
-                    Some(cohort) => cohort,
-                    None => reserve_close(&authority).await?,
-                };
-                let completion = cohort.completion();
-                let selected = mcp.clone();
-                let result = super::preparation::Attributed::new(
-                    cohort,
-                    Box::pin(async move {
-                        selected.close();
-                        let original = async {
-                            preparation.wait().await;
-                            if let Some(admission) = admission {
-                                admission.wait().await;
-                            }
-                        };
-                        // Retained startup may need settlement polls before its
-                        // original cohort can complete. Neither observer wins alone.
-                        let (result, ()) =
-                            futures_util::future::join(settle_mcp(&selected, deadline), original)
-                                .await;
-                        result
-                    }),
-                )
-                .await;
-                completion.wait().await;
-                result
-            };
-            match futures_util::future::select(
-                Box::pin(owned),
-                mcp.instance.clock.sleep_until(deadline),
-            )
-            .await
-            {
-                futures_util::future::Either::Left((result, _)) => result,
-                futures_util::future::Either::Right(_) => Err(ManagedRuntimeError::Unavailable),
-            }
-        }));
+        self.closing = Close::Running(close_mcp(
+            self.mcp.clone(),
+            self.close_authority.clone(),
+            Box::pin(async move {
+                preparation.wait().await;
+                if let Some(admission) = admission {
+                    admission.wait().await;
+                }
+            }),
+        ));
     }
     fn poll_closed(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ManagedRuntimeError>> {
         self.begin_close();
@@ -232,6 +216,69 @@ impl ManagedRuntimeResources for Resources {
         result
     }
 }
+
+/// Shared retirement for an unbound staged parent and an enrolled runtime.
+/// The original completion is observed alongside peer settlement, never instead
+/// of it. An active startup cohort is not a per-turn settlement prerequisite.
+pub(super) fn close_mcp(
+    mcp: Arc<McpLifetime>,
+    authority: CloseAuthority,
+    original: BoxFuture<'static, ()>,
+) -> BoxFuture<'static, Result<(), ManagedRuntimeError>> {
+    let Some(deadline) = mcp.instance.clock.now().checked_add(authority.timeout) else {
+        mcp.close();
+        return Box::pin(async { Err(ManagedRuntimeError::Invalid) });
+    };
+    let cohort = authority
+        .workers
+        .begin_cleanup_run_with_keepalive(Arc::new(authority.journal_owner.clone()))
+        .ok()
+        .map(Arc::new);
+    if let Some(cohort) = &cohort {
+        cohort.with_poll(|| mcp.close());
+    } else {
+        // Cutoff is immediate; the original peers still own their reap tickets.
+        mcp.close();
+    }
+    Box::pin(async move {
+        let owned = async {
+            let cohort = match cohort {
+                Some(cohort) => cohort,
+                None => reserve_close(&authority).await?,
+            };
+            let completion = cohort.completion();
+            let selected = mcp.clone();
+            let result = super::preparation::Attributed::new(
+                cohort,
+                Box::pin(async move {
+                    selected.close();
+                    let original = async {
+                        original.await;
+                        if let Some(startup) = &selected.startup {
+                            startup.wait().await;
+                        }
+                    };
+                    let (result, ()) =
+                        futures_util::future::join(settle_mcp(&selected, deadline), original).await;
+                    result
+                }),
+            )
+            .await;
+            completion.wait().await;
+            result
+        };
+        match futures_util::future::select(
+            Box::pin(owned),
+            mcp.instance.clock.sleep_until(deadline),
+        )
+        .await
+        {
+            futures_util::future::Either::Left((result, _)) => result,
+            futures_util::future::Either::Right(_) => Err(ManagedRuntimeError::Unavailable),
+        }
+    })
+}
+
 async fn reserve_close(
     authority: &CloseAuthority,
 ) -> Result<Arc<crate::owned_worker::NativeOwnedWorkerRun>, ManagedRuntimeError> {

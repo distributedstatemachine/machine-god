@@ -1,4 +1,5 @@
 //! Outer native driver ownership, deliberately excluded from shared engine services.
+mod staged;
 use super::{
     NativeReferenceHost,
     managed_factory::{

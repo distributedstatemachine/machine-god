@@ -887,6 +887,29 @@ selection with fresh contexts and owner cancellation; child preparation has no
 ephemeral selection to inherit. Parent teardown settles its optional ephemeral
 owner alongside actual admission/worker cleanup, without closing a sibling.
 
+The factory's staged-parent path retains one exact ephemeral instance and its
+startup-worker completion before a foreground conversation is attached. Startup
+failure retains that stage for explicit settlement; it does not return a receipt
+that loses the original peers. Adoption checks the original factory allocation,
+binds the existing instance once and transfers its publication unchanged. Closing
+before or concurrently with binding cannot reopen admission. The startup cohort
+is joined alongside peer settlement at retirement, not as a prerequisite for
+each foreground turn. Failed preparation returns the original stage for cleanup.
+This preparation primitive does not itself select an ACP workspace or replace a
+session; outer selection still owns residency reservation and candidate custody.
+The native manager wrapper consumes an already granted, manager-bound residency
+ticket and derives the new parent from the original seed's captured host inputs.
+Only explicitly supplied network authority changes; retained workspace, helper,
+environment, archive and presentation inputs are not replaced. The original
+parent and child seeds remain unchanged. The same ticket remains with a ready or
+rejected stage, and returns with the prepared runtime for exact enrollment.
+Admission is rechecked when preparation is first polled: shutdown invalidates a
+previously granted ticket without releasing its charged cleanup custody.
+Dropping a borrowed cleanup wrapper retains its accepted cleanup future in the
+stage; another poll resumes that operation instead of starting a second one.
+Terminal cleanup failure remains an explicit failure requiring outer selection
+fencing; a later observer cannot turn it into a successful retirement receipt.
+
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted
 authority. It never reloads, replaces, starts, or republishes that transcript.

@@ -49,19 +49,22 @@ fn directory(path: &Path) -> rustix::fd::OwnedFd {
     )
     .unwrap()
 }
-struct FactoryFixture {
-    factory: SharedManagedRuntimeFactory,
-    parent_mcp: Arc<crate::reference_host::mcp::ManagedParentMcpSeed>,
-    journal: ManagedJournal,
+pub(super) struct FactoryFixture {
+    pub(super) factory: SharedManagedRuntimeFactory,
+    pub(super) parent_mcp: Arc<crate::reference_host::mcp::ManagedParentMcpSeed>,
+    pub(super) journal: ManagedJournal,
     parent: Arc<crate::managed::principal::NativePrincipal>,
     parent_session: Session,
-    host: host_fixture::Fixture,
+    pub(super) host: host_fixture::Fixture,
 }
 impl FactoryFixture {
     fn new() -> Self {
         Self::with_clock(Arc::new(NoTimerClock))
     }
     fn with_clock(clock: Arc<dyn NativeMcpRuntimeClock>) -> Self {
+        Self::with_mcp(clock, false)
+    }
+    pub(super) fn with_mcp(clock: Arc<dyn NativeMcpRuntimeClock>, ephemeral: bool) -> Self {
         let parent_clock = clock.clone();
         let host = host_fixture::Fixture::with_options("auto", true, |options, _, _| {
             options
@@ -113,7 +116,7 @@ impl FactoryFixture {
             .with_worker_scope(services.control_workers.as_ref().unwrap().clone()),
         );
         let (_, parent_mcp) = crate::reference_host::mcp::seeds(
-            NativeReferenceHostMcpOptions::new(Arc::new(NativeMcpContexts::new()), parent_clock),
+            parent_options(parent_clock, ephemeral),
             None,
             archive.clone(),
             None,
@@ -198,6 +201,31 @@ impl FactoryFixture {
             ManagedPreparation::Ambiguous(_) => panic!("fixture publication must confirm"),
         }
     }
+}
+
+fn parent_options(
+    clock: Arc<dyn NativeMcpRuntimeClock>,
+    ephemeral: bool,
+) -> NativeReferenceHostMcpOptions {
+    let options =
+        NativeReferenceHostMcpOptions::new(Arc::new(NativeMcpContexts::new()), clock.clone());
+    if !ephemeral {
+        return options;
+    }
+    options
+        .with_ephemeral_startup(NativeReferenceHostMcpEphemeralStartupOptions {
+            captured_environment: vec![],
+            stdio: None,
+            clock,
+            catalog_epoch: Instant::now(),
+            owner_cancellation: CancellationToken::new(),
+            #[cfg(feature = "mcp-http")]
+            network: None,
+            peer_lifetime: crate::mcp::lifetime::McpPeerLifetime::OwnerControlled,
+            max_retained_bytes: 1024 * 1024,
+            max_retained_generations: 4,
+        })
+        .unwrap()
 }
 
 #[test]

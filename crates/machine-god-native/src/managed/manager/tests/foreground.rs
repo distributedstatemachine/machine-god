@@ -81,11 +81,30 @@ fn candidate_reservations_are_bounded_inert_and_cannot_be_reused_or_transferred(
             .is_pending()
     );
     assert_eq!(f.factory.prepared.load(Ordering::Acquire), 0);
+    assert_eq!(
+        reservation.validate_preparation(),
+        Err(ManagedRuntimeError::Invalid)
+    );
+    assert_eq!(
+        f.manager.validate_foreground_reservation(&reservation),
+        Err(ManagedRuntimeError::Invalid)
+    );
     assert!(matches!(
         f.manager.reserve_foreground(),
         Err(ManagedRuntimeError::Capacity)
     ));
     f.drive(|f| f.manager.reserved_foregrounds() == 1);
+    assert_eq!(reservation.validate_preparation(), Ok(()));
+    assert_eq!(
+        f.manager.validate_foreground_reservation(&reservation),
+        Ok(())
+    );
+    assert_eq!(
+        foreign
+            .manager
+            .validate_foreground_reservation(&reservation),
+        Err(ManagedRuntimeError::Invalid)
+    );
     assert!(!f.manager.has_capacity());
     assert_eq!(
         foreign
@@ -101,6 +120,14 @@ fn candidate_reservations_are_bounded_inert_and_cannot_be_reused_or_transferred(
     let selected = f.manager.enroll_foreground(prepared, &reservation).unwrap();
     assert!(f.manager.foreground_runtime(&selected).is_some());
     assert_eq!(f.manager.reserved_foregrounds(), 0);
+    assert_eq!(
+        reservation.validate_preparation(),
+        Err(ManagedRuntimeError::Invalid)
+    );
+    assert_eq!(
+        f.manager.validate_foreground_reservation(&reservation),
+        Err(ManagedRuntimeError::Invalid)
+    );
     assert_eq!(
         f.manager.poll_foreground_reservation(&reservation, &cx),
         std::task::Poll::Ready(Err(ManagedRuntimeError::Invalid))
@@ -127,6 +154,10 @@ fn pending_candidate_shutdown_waits_for_ticket_release_without_preparing_a_runti
             .is_pending()
     );
     assert!(f.manager.poll_shutdown(&mut cx, 3).is_pending());
+    assert_eq!(
+        f.manager.validate_foreground_reservation(&reservation),
+        Err(ManagedRuntimeError::Unavailable)
+    );
     assert_eq!(
         f.manager.poll_foreground_reservation(&reservation, &cx),
         std::task::Poll::Ready(Err(ManagedRuntimeError::Unavailable))
@@ -188,11 +219,17 @@ fn granted_preparation_custody_prevents_empty_manager_shutdown_receipt() {
     let reservation = reserve(&mut f);
     assert_eq!(f.manager.reserved_foregrounds(), 1);
     assert!(f.manager.foregrounds.is_empty());
+    assert_eq!(reservation.validate_preparation(), Ok(()));
     assert!(
         f.manager
             .poll_shutdown(&mut Context::from_waker(Waker::noop()), 2)
             .is_pending()
     );
+    assert_eq!(
+        reservation.validate_preparation(),
+        Err(ManagedRuntimeError::Unavailable)
+    );
+    assert_eq!(f.manager.reserved_foregrounds(), 1);
     drop(reservation);
     block_on(futures_util::future::poll_fn(|cx| {
         f.manager.poll_shutdown(cx, 2)

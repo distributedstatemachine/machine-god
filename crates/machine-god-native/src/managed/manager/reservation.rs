@@ -11,10 +11,24 @@ pub(super) struct State {
     phase: AtomicU8,
     ready: AtomicWaker,
     manager: Weak<AtomicWaker>,
+    cancellation: machine_god_core::CancellationToken,
 }
 
 /// Non-cloneable original allocation ticket. It owns no runtime or host service.
 pub(crate) struct ManagedForegroundReservation(Arc<State>);
+impl ManagedForegroundReservation {
+    /// Recheck at the first effectful poll, not only when a future is created.
+    /// Shutdown revokes admission without releasing the original charged ticket.
+    pub(crate) fn validate_preparation(&self) -> Result<(), ManagedRuntimeError> {
+        if self.0.cancellation.is_cancelled() || self.0.manager.strong_count() == 0 {
+            return Err(ManagedRuntimeError::Unavailable);
+        }
+        if self.0.phase.load(Ordering::Acquire) != GRANTED {
+            return Err(ManagedRuntimeError::Invalid);
+        }
+        Ok(())
+    }
+}
 impl Drop for ManagedForegroundReservation {
     fn drop(&mut self) {
         self.0.phase.store(CONSUMED, Ordering::Release);
@@ -43,6 +57,7 @@ impl ManagedManager {
             phase: AtomicU8::new(WAITING),
             ready: AtomicWaker::new(),
             manager: Arc::downgrade(&self.reservation_wake),
+            cancellation: self.cancellation.clone(),
         });
         self.foreground_reservations.push(Arc::downgrade(&state));
         self.reservation_wake.wake();
@@ -98,17 +113,19 @@ impl ManagedManager {
             .any(|state| state.phase.load(Ordering::Acquire) != CONSUMED)
     }
 
-    pub(super) fn validate_foreground_reservation(
+    pub(crate) fn validate_foreground_reservation(
         &self,
         reservation: &ManagedForegroundReservation,
     ) -> Result<(), ManagedRuntimeError> {
+        if self.closing {
+            return Err(ManagedRuntimeError::Unavailable);
+        }
         if reservation
             .0
             .manager
             .ptr_eq(&Arc::downgrade(&self.reservation_wake))
-            && reservation.0.phase.load(Ordering::Acquire) == GRANTED
         {
-            Ok(())
+            reservation.validate_preparation()
         } else {
             Err(ManagedRuntimeError::Invalid)
         }

@@ -4,6 +4,7 @@ use crate::managed::store::{JournalLimits, ManagedJournal};
 use futures_util::future::poll_fn;
 use std::{os::unix::fs::DirBuilderExt, pin::Pin, task::Poll};
 mod interactive;
+mod staged;
 
 fn directory(path: &std::path::Path) -> rustix::fd::OwnedFd {
     rustix::fs::open(

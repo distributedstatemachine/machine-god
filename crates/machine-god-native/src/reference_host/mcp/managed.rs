@@ -6,6 +6,8 @@ use super::{
     ToolName, controller, error,
 };
 use crate::reference_host::permissions::SharedPermissionPreparation;
+#[cfg(test)]
+mod tests;
 
 struct Inputs {
     management: Option<Arc<NativeMcpManagementService>>,
@@ -108,6 +110,29 @@ impl ManagedMcpSeed {
     }
 }
 impl ManagedParentMcpSeed {
+    /// Reuse the captured workspace/helper/environment and host services while
+    /// selecting explicitly supplied transport authority for a new parent.
+    /// Never mutate the original parent or the configured-only child seed.
+    pub(in crate::reference_host) fn select_ephemeral_network(
+        &self,
+        #[cfg(feature = "mcp-http")] network: Option<Arc<crate::mcp::network::NativeMcpNetwork>>,
+    ) -> Result<Arc<Self>, NativeReferenceHostBuildError> {
+        self.0
+            .options
+            .validate_controller(self.0.inputs.management.is_some())?;
+        let mut options = self.0.options.clone();
+        let startup = options.ephemeral.as_mut().ok_or_else(error)?;
+        startup.owner_cancellation = CancellationToken::new();
+        #[cfg(feature = "mcp-http")]
+        {
+            startup.network = network;
+        }
+        Ok(Arc::new(Self(Seed {
+            options,
+            inputs: self.0.inputs.clone(),
+        })))
+    }
+
     pub(in crate::reference_host) fn compose(
         &self,
         workers: &crate::NativeOwnedWorkerScope,

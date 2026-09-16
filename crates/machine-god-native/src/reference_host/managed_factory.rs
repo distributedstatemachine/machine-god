@@ -1,6 +1,8 @@
 //! Concrete shared-engine child construction; no parent runtime ownership edge.
 mod preparation;
 mod resources;
+mod staged;
+pub(super) use staged::StagedParentMcp;
 #[cfg(test)]
 mod tests;
 
@@ -48,7 +50,7 @@ pub(super) struct SharedManagedRuntimeFactory(Arc<SharedManagedRuntimeFactoryOpt
 struct RuntimeSelection {
     principal: NoticePrincipal,
     authority: ManagedRestorationAuthority,
-    parent_mcp: Option<ManagedMcpInstance>,
+    parent_mcp: Option<Arc<resources::McpLifetime>>,
 }
 impl SharedManagedRuntimeFactory {
     pub(super) fn manages_prompt_inbox(
@@ -132,7 +134,7 @@ impl SharedManagedRuntimeFactory {
                         RuntimeSelection {
                             principal,
                             authority,
-                            parent_mcp: Some(mcp),
+                            parent_mcp: Some(Arc::new(resources::McpLifetime::new(mcp, None))),
                         },
                         prepared_completion,
                     )
@@ -338,21 +340,25 @@ impl SharedManagedRuntimeFactoryOptions {
             .map_err(|_| ManagedRuntimeError::Unavailable)?;
         let mcp = match parent_mcp {
             Some(mcp) => mcp,
-            None => self.compose_mcp(workers)?,
+            None => Arc::new(resources::McpLifetime::new(
+                self.compose_mcp(workers)?,
+                None,
+            )),
         };
         let mcp_owner = self
             .mcp
             .register(
                 owner.principal(),
-                &mcp.runtime,
+                &mcp.instance.runtime,
                 None,
-                Some(&mcp.permissions),
+                Some(&mcp.instance.permissions),
             )
             .map_err(|_| ManagedRuntimeError::Capacity)?;
         owner
             .configure_mcp(&mcp_owner)
             .map_err(|_| ManagedRuntimeError::Invalid)?;
-        let conversation = bind_mcp(conversation, &mcp)?
+        mcp.bind(mcp_owner)?;
+        let conversation = bind_mcp(conversation, &mcp.instance)?
             .with_notice_context(&notice_context)
             .map_err(|_| ManagedRuntimeError::Invalid)?;
         let runtime = self.runtime(conversation, selected.preferences, foreground)?;
@@ -360,7 +366,6 @@ impl SharedManagedRuntimeFactoryOptions {
         let resources = resources::Resources::new(
             owner.binding(),
             mcp,
-            mcp_owner,
             preparation,
             prompt,
             resources::CloseAuthority {
