@@ -1,5 +1,6 @@
 use super::*;
 use crate::mcp::ephemeral::NativeMcpEphemeralConfiguration;
+mod startup;
 
 fn fixture() -> Fixture {
     Fixture::with_options("ask", true, |selected, directory, clock| {

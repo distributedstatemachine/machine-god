@@ -117,6 +117,7 @@ pub(in crate::interactive_session) struct Selection {
     pub workspace: NativeWorkspaceScopeSnapshot,
     pub policy: NativePermissionPolicySnapshot,
     pub catalog: Option<Arc<NativeModelCatalog>>,
+    pub process_model: Option<String>,
     pub now_ms: i64,
     pub cancellation: CancellationToken,
 }
@@ -202,6 +203,7 @@ pub(in crate::interactive_session) fn compose(
         workspace,
         policy,
         catalog,
+        process_model,
         now_ms,
         cancellation,
     } = selection;
@@ -234,6 +236,13 @@ pub(in crate::interactive_session) fn compose(
         let configure = async {
             if cancellation.is_cancelled() {
                 return Err(NativeInteractiveError::Closed);
+            }
+            if let Some(model) = process_model {
+                let mut preferences = runtime.model_preferences();
+                preferences
+                    .set_model(&model)
+                    .map_err(|_| NativeInteractiveError::Configuration)?;
+                runtime.set_model_preferences(preferences)?;
             }
             if let Some(catalog) = catalog {
                 runtime.set_model_catalog(catalog)?;

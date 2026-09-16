@@ -138,6 +138,7 @@ impl NativeInteractiveSession {
                     workspace,
                     policy,
                     catalog,
+                    process_model: None,
                     now_ms,
                     cancellation: transition.preparation_cancel.clone(),
                 },

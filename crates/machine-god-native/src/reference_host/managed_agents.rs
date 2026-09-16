@@ -178,31 +178,40 @@ impl NativeReferenceHost {
         policy: Option<NativePermissionPolicySnapshot>,
         preferences: NativeModelPreferences,
     ) -> BoxFuture<'static, Result<PreparedManagedRuntime, NativeManagedAgentsError>> {
-        let selection = (|| {
-            let workspace = match workspace {
-                Some(workspace) => workspace,
-                None => self
-                    .workspace_binding
-                    .as_ref()
-                    .ok_or(NativeManagedAgentsError::Configuration)?
-                    .authority
-                    .snapshot()
-                    .map_err(|_| NativeManagedAgentsError::Configuration)?,
-            };
-            let policy = match policy {
-                Some(policy) => policy,
-                None => super::configured_permission_policy(
-                    self.loaded_config.config(),
-                    &self.workspace_root,
-                )
-                .map_err(|_| NativeManagedAgentsError::Configuration)?,
-            };
-            Ok((workspace, policy))
-        })();
+        let selection = self.managed_foreground_authority(workspace, policy);
         let preparation = selection.map(|(workspace, policy)| {
             agents.prepare_foreground(conversation, workspace, policy, preferences)
         });
         Box::pin(async move { preparation?.await.map_err(map_error) })
+    }
+
+    pub(crate) fn managed_foreground_authority(
+        &self,
+        workspace: Option<NativeWorkspaceScopeSnapshot>,
+        policy: Option<NativePermissionPolicySnapshot>,
+    ) -> Result<
+        (NativeWorkspaceScopeSnapshot, NativePermissionPolicySnapshot),
+        NativeManagedAgentsError,
+    > {
+        let workspace = match workspace {
+            Some(workspace) => workspace,
+            None => self
+                .workspace_binding
+                .as_ref()
+                .ok_or(NativeManagedAgentsError::Configuration)?
+                .authority
+                .snapshot()
+                .map_err(|_| NativeManagedAgentsError::Configuration)?,
+        };
+        let policy = match policy {
+            Some(policy) => policy,
+            None => super::configured_permission_policy(
+                self.loaded_config.config(),
+                &self.workspace_root,
+            )
+            .map_err(|_| NativeManagedAgentsError::Configuration)?,
+        };
+        Ok((workspace, policy))
     }
 
     /// Opens one manager using this host's existing engine, workers and weak routes.

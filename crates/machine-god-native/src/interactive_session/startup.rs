@@ -1,4 +1,5 @@
 //! Native pre-selection custody, including retryable opens and cancelled startup.
+mod staged;
 use super::{
     Arc, BoxFuture, Context, NativeInteractiveError, NativeInteractiveInitialSession,
     NativeInteractiveSession, NativeInteractiveSessionOptions, NativeReferenceHost, Poll, fmt,
@@ -7,7 +8,12 @@ use super::{
 use crate::NativeManagedAgents;
 use machine_god_core::CancellationToken;
 
-type OpenResult = Result<NativeInteractiveSession, (NativeInteractiveError, Box<managed::Owner>)>;
+type OpenResult = Result<NativeInteractiveSession, OpenFailure>;
+struct OpenFailure {
+    error: NativeInteractiveError,
+    owner: Box<managed::Owner>,
+    cleanup: Option<Box<managed::staged::Failure>>,
+}
 
 async fn open_owned(
     host: Arc<NativeReferenceHost>,
@@ -27,11 +33,10 @@ async fn open_owned(
         cancellation,
     )
     .await
-    .map_err(|error| {
-        (
-            error,
-            owner.expect("failed opening retains original manager"),
-        )
+    .map_err(|error| OpenFailure {
+        error,
+        owner: owner.expect("failed opening retains original manager"),
+        cleanup: None,
     })
 }
 enum State {
@@ -41,6 +46,10 @@ enum State {
         cancellation: CancellationToken,
     },
     ClosingSession(Box<NativeInteractiveSession>),
+    Fenced {
+        owner: Box<managed::Owner>,
+        _cleanup: Box<managed::staged::Failure>,
+    },
     Finished,
 }
 
@@ -146,7 +155,7 @@ impl NativeManagedInteractiveStartup {
         }
         self.closing = true;
         match &mut self.state {
-            State::Idle(owner) => owner.agents.request_shutdown(),
+            State::Idle(owner) | State::Fenced { owner, .. } => owner.agents.request_shutdown(),
             State::Opening { cancellation, .. } => {
                 cancellation.cancel();
             }
@@ -203,7 +212,19 @@ impl NativeManagedInteractiveStartup {
                         self.state = State::Finished;
                         Poll::Ready(Ok(Some(session)))
                     }
-                    Err((error, owner)) => {
+                    Err(OpenFailure {
+                        error,
+                        owner,
+                        cleanup,
+                    }) => {
+                        if let Some(cleanup) = cleanup {
+                            self.state = State::Fenced {
+                                owner,
+                                _cleanup: cleanup,
+                            };
+                            self.shutdown_failed = true;
+                            return Poll::Ready(Err(error));
+                        }
                         self.state = State::Idle(owner);
                         if self.closing {
                             self.shutdown_failed |=
@@ -229,6 +250,14 @@ impl NativeManagedInteractiveStartup {
                 }
             }
             State::Finished => self.finished(),
+            State::Fenced { owner, .. } => {
+                if self.closing {
+                    let _ = owner.agents.poll_shutdown(cx, now_ms);
+                } else {
+                    let _ = owner.agents.poll_progress(cx, now_ms);
+                }
+                Poll::Ready(Err(NativeInteractiveError::Unavailable))
+            }
         }
     }
 

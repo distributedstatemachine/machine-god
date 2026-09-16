@@ -917,6 +917,13 @@ Preparation/configuration failure keeps the original stage or prepared runtime
 and ticket until settlement; a failed settlement fences selection with custody
 retained. Shutdown also settles a staged request accepted before its first driver
 poll. Child ownership stays in the existing manager throughout these phases.
+The pre-selection startup owner can reserve and stage the first parent before
+creating a conversation. Its staged open uses that ready instance directly;
+there is no temporary transcript or second MCP startup. A failed native resume
+settles the original candidate before permitting an explicit retry with the same
+manager. An unsuccessful cleanup instead retains the candidate behind a startup
+fence and cannot produce a successful shutdown receipt. Cancelling an unpolled
+staged open settles the ready peers without creating a transcript.
 
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted

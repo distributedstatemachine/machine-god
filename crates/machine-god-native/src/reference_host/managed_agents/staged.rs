@@ -59,11 +59,37 @@ impl NativeManagedAgents {
         configuration: NativeMcpEphemeralConfiguration,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<NativeManagedStagedParent, NativeManagedAgentsError>> {
-        let granted = self.manager.validate_foreground_reservation(&reservation);
         let seed = self.parent_mcp.select_ephemeral_network(
             #[cfg(feature = "mcp-http")]
             network,
         );
+        self.stage_foreground_from_seed(reservation, seed, configuration, cancellation)
+    }
+
+    /// The first parent keeps its factory's originally captured transport
+    /// authority; absence of a replacement is not a request to clear networking.
+    pub(crate) fn stage_captured_foreground_mcp(
+        &self,
+        reservation: ManagedForegroundReservation,
+        configuration: NativeMcpEphemeralConfiguration,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeManagedStagedParent, NativeManagedAgentsError>> {
+        self.stage_foreground_from_seed(
+            reservation,
+            Ok(self.parent_mcp.clone()),
+            configuration,
+            cancellation,
+        )
+    }
+
+    fn stage_foreground_from_seed(
+        &self,
+        reservation: ManagedForegroundReservation,
+        seed: Result<Arc<super::ManagedParentMcpSeed>, super::super::NativeReferenceHostBuildError>,
+        configuration: NativeMcpEphemeralConfiguration,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeManagedStagedParent, NativeManagedAgentsError>> {
+        let granted = self.manager.validate_foreground_reservation(&reservation);
         let startup = seed.map(|seed| {
             self.factory.stage_parent_mcp(
                 self.journal.owner_lease(),
