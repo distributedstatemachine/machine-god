@@ -370,6 +370,19 @@ fn ordinary_preparation_failure_fences_only_when_original_cleanup_fails() {
 
 #[test]
 fn ordinary_enrollment_rejection_retains_runtime_through_worker_tls_timeout() {
+    struct Tls {
+        entered: Option<tokio::sync::oneshot::Sender<()>>,
+        receiver: std::sync::mpsc::Receiver<()>,
+    }
+    impl Drop for Tls {
+        fn drop(&mut self) {
+            let _ = self.entered.take().unwrap().send(());
+            let _ = self
+                .receiver
+                .recv_timeout(std::time::Duration::from_secs(10));
+        }
+    }
+    thread_local! { static TLS: std::cell::RefCell<Option<Tls>> = const { std::cell::RefCell::new(None) }; }
     run(async {
         let (mut fixture, clock) = fixture();
         let mut owner = opened(&mut fixture).await;
@@ -391,19 +404,6 @@ fn ordinary_enrollment_rejection_retains_runtime_through_worker_tls_timeout() {
         let completion = admission.cohort().unwrap().completion();
         let (release, receiver) = std::sync::mpsc::channel();
         let (entered, waiting) = tokio::sync::oneshot::channel();
-        struct Tls {
-            entered: Option<tokio::sync::oneshot::Sender<()>>,
-            receiver: std::sync::mpsc::Receiver<()>,
-        }
-        impl Drop for Tls {
-            fn drop(&mut self) {
-                let _ = self.entered.take().unwrap().send(());
-                let _ = self
-                    .receiver
-                    .recv_timeout(std::time::Duration::from_secs(10));
-            }
-        }
-        thread_local! { static TLS: std::cell::RefCell<Option<Tls>> = const { std::cell::RefCell::new(None) }; }
         admission
             .cohort()
             .unwrap()
@@ -413,7 +413,7 @@ fn ordinary_enrollment_rejection_retains_runtime_through_worker_tls_timeout() {
                         *tls.borrow_mut() = Some(Tls {
                             entered: Some(entered),
                             receiver,
-                        })
+                        });
                     });
                 })
             })
