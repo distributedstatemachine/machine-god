@@ -233,6 +233,7 @@ impl fmt::Debug for StagedNotice {
         f.write_str("StagedNotice(..)")
     }
 }
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct NoticeUsage {
     pub(crate) trackers: usize,
@@ -255,9 +256,11 @@ impl NoticeBatch {
     pub(crate) fn entries(&self) -> &[NoticeBatchEntry] {
         &self.entries
     }
+    #[cfg(test)]
     pub(crate) fn encoded_bytes(&self) -> usize {
         self.bytes
     }
+    #[cfg(test)]
     pub(crate) fn has_more(&self) -> bool {
         self.more
     }
@@ -351,6 +354,7 @@ impl ManagedNotices {
         self.inner.observe(observation)
     }
     /// Recovers the same pending original after observer loss; never regenerates an event.
+    #[cfg(test)]
     pub(crate) fn pending_notice(
         &self,
         work: &WorkNoticeRef,
@@ -366,6 +370,7 @@ impl ManagedNotices {
         self.inner.confirm(notice)
     }
     /// Manager-only explicit `NotApplied` receipt. Ambiguity and token drop are not receipts.
+    #[cfg(test)]
     pub(super) fn discard_not_applied(&self, notice: &StagedNotice) -> Result<(), NoticeError> {
         self.inner.discard(notice)
     }
@@ -393,6 +398,7 @@ impl ManagedNotices {
     pub(crate) fn close_work(&self, work: &WorkNoticeRef) -> Result<(), NoticeError> {
         self.inner.stop(work, true)
     }
+    #[cfg(test)]
     pub(crate) fn retire_target(&self, target: &NoticePrincipal) -> Result<(), NoticeError> {
         self.inner.retire_target(target)
     }
@@ -443,6 +449,7 @@ impl ManagedNotices {
             cancellation,
         )
     }
+    #[cfg(test)]
     pub(crate) fn usage(&self) -> NoticeUsage {
         self.inner.usage()
     }

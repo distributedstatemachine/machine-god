@@ -1,9 +1,10 @@
+#[cfg(test)]
+use super::NoticeUsage;
 use super::{
     Arc, ManagedAgentState, ManagedNotice, ManagedNotifications, NativeMcpRuntimeClock, NonZeroU64,
     NoticeAckToken, NoticeBatch, NoticeBatchEntry, NoticeEmission, NoticeError, NoticeEvent,
     NoticeHistoryRef, NoticeLimits, NoticeObservation, NoticePrincipal, NoticeRelationship,
-    NoticeTarget, NoticeTerminal, NoticeUsage, PreparedNotice, StagedNotice, WorkNoticeIdentity,
-    WorkNoticeRef,
+    NoticeTarget, NoticeTerminal, PreparedNotice, StagedNotice, WorkNoticeIdentity, WorkNoticeRef,
 };
 use machine_god_core::ManagedStopCondition;
 use std::{
@@ -614,6 +615,7 @@ impl Inner {
             Ok(emission)
         })
     }
+    #[cfg(test)]
     pub(super) fn pending(
         self: &Arc<Self>,
         reference: &WorkNoticeRef,
@@ -658,6 +660,7 @@ impl Inner {
             }
         })
     }
+    #[cfg(test)]
     pub(super) fn discard(&self, stage: &StagedNotice) -> Result<(), NoticeError> {
         let removed = self.mutate(|state| {
             let id = self.validate_stage(stage, state)?;
@@ -699,6 +702,7 @@ impl Inner {
             Ok(())
         })
     }
+    #[cfg(test)]
     pub(super) fn retire_target(&self, target: &NoticePrincipal) -> Result<(), NoticeError> {
         valid_principal(target)?;
         self.mutate(|state| {
@@ -885,6 +889,7 @@ impl Inner {
             Ok(ids.len())
         })
     }
+    #[cfg(test)]
     pub(super) fn usage(&self) -> NoticeUsage {
         let state = self
             .state

@@ -109,6 +109,7 @@ impl NativePrincipalRegistry {
         Ok(principal)
     }
 
+    #[cfg(test)]
     pub(crate) fn claim(
         &self,
         invocation: &ManagedSubagentInvocation,
@@ -276,6 +277,7 @@ impl NativePrincipal {
     pub(crate) fn undo(&self) -> &Arc<FileUndoTracker> {
         &self.undo
     }
+    #[cfg(test)]
     pub(crate) fn requester(self: &Arc<Self>) -> NativePrincipalWeak {
         NativePrincipalWeak(Arc::downgrade(self))
     }
@@ -354,8 +356,10 @@ impl NativePrincipal {
 }
 
 /// Weak UI/native reverse route. Public IDs alone cannot upgrade it.
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct NativePrincipalWeak(Weak<NativePrincipal>);
+#[cfg(test)]
 impl NativePrincipalWeak {
     pub(crate) fn upgrade(
         &self,
@@ -411,6 +415,7 @@ impl NativePrincipalTurn {
             generation: self.state.principal.generation,
         }
     }
+    #[cfg(test)]
     pub(crate) fn witness(&self) -> &TurnWitness {
         &self.state.witness
     }
@@ -521,8 +526,9 @@ redacted_debug!(
     NativePrincipalRegistry,
     NativePrincipalRequester,
     NativePrincipal,
-    NativePrincipalWeak,
     NativePrincipalTurn,
     NativePrincipalTurnStamp,
     NativeManagedCallLease
 );
+#[cfg(test)]
+redacted_debug!(NativePrincipalWeak);

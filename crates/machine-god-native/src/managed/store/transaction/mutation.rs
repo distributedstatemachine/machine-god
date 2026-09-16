@@ -118,12 +118,6 @@ pub(super) fn apply(
             head.parent_id = parent_id;
             head.parent_owner = parent_owner;
         }
-        JournalMutation::NoticeCursor(cursor) => {
-            if cursor < head.notice_cursor || cursor >= head.next_sequence {
-                return Err(Error::Conflict);
-            }
-            head.notice_cursor = cursor;
-        }
         JournalMutation::SuppressedNotice(sequence) => {
             if sequence != head.next_sequence || sequence <= head.notice_cursor {
                 return Err(Error::Conflict);

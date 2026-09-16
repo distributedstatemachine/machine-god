@@ -10,6 +10,13 @@ use std::sync::atomic::AtomicU64;
 
 mod workspace;
 
+fn detach() -> JournalMutation {
+    JournalMutation::Relationship {
+        parent_id: None,
+        parent_owner: None,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FailurePoint {
     BeforePageRename,
@@ -385,19 +392,19 @@ fn stale_foreign_and_mutated_snapshots_cannot_publish() {
         },
     );
     assert_eq!(
-        block_on(journal.mutate(snapshot, JournalMutation::NoticeCursor(0))).unwrap_err(),
+        block_on(journal.mutate(snapshot, detach())).unwrap_err(),
         JournalError::Conflict
     );
     let mut forged = newer.clone();
     forged.head.configuration.name = "forged".into();
     assert_eq!(
-        block_on(journal.mutate(forged, JournalMutation::NoticeCursor(0))).unwrap_err(),
+        block_on(journal.mutate(forged, detach())).unwrap_err(),
         JournalError::Conflict
     );
     let other = Fixture::new();
     let foreign = other.open();
     assert_eq!(
-        block_on(foreign.mutate(newer, JournalMutation::NoticeCursor(0))).unwrap_err(),
+        block_on(foreign.mutate(newer, detach())).unwrap_err(),
         JournalError::Conflict
     );
 }
@@ -650,7 +657,7 @@ fn paging_is_bounded_continues_whole_history_and_rejects_stale_cursor() {
         next = page.next;
     }
     assert_eq!(count, 10);
-    let newer = mutate(&journal, snapshot, JournalMutation::NoticeCursor(1));
+    let newer = mutate(&journal, snapshot, detach());
     assert_eq!(
         block_on(journal.history(newer, Some(stale), 2)).unwrap_err(),
         JournalError::Conflict
@@ -685,7 +692,7 @@ fn equal_byte_inode_replacement_rejects_old_cas_observation() {
     std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
     std::fs::rename(replacement, path).unwrap();
     assert_eq!(
-        block_on(journal.mutate(snapshot, JournalMutation::NoticeCursor(0))).unwrap_err(),
+        block_on(journal.mutate(snapshot, detach())).unwrap_err(),
         JournalError::Conflict
     );
 }

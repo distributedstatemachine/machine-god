@@ -162,7 +162,6 @@ pub(crate) enum JournalMutation {
         parent_id: Option<String>,
         parent_owner: Option<JournalTranscript>,
     },
-    NoticeCursor(u64),
     /// Consume the exact next source sequence without emitting a visible notice.
     SuppressedNotice(u64),
     AppendHistory(Vec<JournalRecord>),

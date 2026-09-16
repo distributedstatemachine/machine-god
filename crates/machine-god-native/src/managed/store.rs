@@ -66,11 +66,21 @@ impl JournalLimits {
 
 /// A clone retains actual exclusive owner custody, not only a head CAS token.
 /// The outer manager retains this through child/control/worker settlement.
-#[derive(Clone)]
-pub(crate) struct JournalOwner(Arc<Shared>);
+pub(crate) struct JournalOwner {
+    // Keep the exclusive file lock alive through actual child/worker cleanup.
+    shared: Arc<Shared>,
+}
+impl Clone for JournalOwner {
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
 impl JournalOwner {
+    #[cfg(test)]
     pub(crate) fn belongs_to(&self, journal: &ManagedJournal) -> bool {
-        Arc::ptr_eq(&self.0, &journal.shared)
+        Arc::ptr_eq(&self.shared, &journal.shared)
     }
 }
 impl fmt::Debug for JournalOwner {
@@ -158,7 +168,9 @@ impl ManagedJournal {
         })
     }
     pub(crate) fn owner_lease(&self) -> JournalOwner {
-        JournalOwner(self.shared.clone())
+        JournalOwner {
+            shared: self.shared.clone(),
+        }
     }
 
     /// Conservative manager head/decode/work/presentation allowance. Runtime and
@@ -205,6 +217,7 @@ impl ManagedJournal {
     ) -> BoxFuture<'static, Result<JournalPublication, JournalError>> {
         self.run(move |shared| transaction::mutate(shared, snapshot, mutation))
     }
+    #[cfg(test)]
     pub(crate) fn recover(
         &self,
         snapshot: JournalSnapshot,
@@ -219,6 +232,7 @@ impl ManagedJournal {
     ) -> BoxFuture<'static, Result<JournalPublication, JournalError>> {
         self.run(move |shared| transaction::reconcile(shared, &receipt))
     }
+    #[cfg(test)]
     pub(crate) fn pending_receipt(&self) -> Option<JournalReceipt> {
         let state = self.shared.state.lock().ok()?;
         state

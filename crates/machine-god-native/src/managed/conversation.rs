@@ -145,6 +145,7 @@ impl ManagedConversationOwner {
             .map_err(|_| NativeConversationError::ManagedAdmission)
     }
 
+    #[cfg(test)]
     pub(crate) fn cleanup_for(&self, run: &RunRef) -> Result<ManagedRunCleanup> {
         self.binding().cleanup_for(run)
     }

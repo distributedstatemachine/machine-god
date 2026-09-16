@@ -158,9 +158,11 @@ impl ManagedMailbox {
         )?;
         Ok(Box::pin(response))
     }
+    #[cfg(test)]
     pub(crate) fn wake_handle(&self) -> ManagedMailboxWake {
         ManagedMailboxWake(Arc::downgrade(&self.shared))
     }
+    #[cfg(test)]
     pub(crate) fn usage(&self) -> MailboxUsage {
         *self
             .shared

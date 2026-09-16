@@ -488,6 +488,7 @@ impl NativeManagedAgents {
             .map_err(map_error)
     }
 
+    #[cfg(test)]
     pub(crate) fn foreground_runtime(
         &self,
         selected: &ManagedForegroundSelection,

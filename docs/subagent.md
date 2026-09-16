@@ -38,6 +38,8 @@ Suppressed start/milestone observations consume a control-only source checkpoint
 before a later occurrence can reuse the journal's next sequence; they create no
 visible notice. Confirmed manager writes invalidate replay's exact-head read
 cursor, without treating ordinary cursor staleness as ambiguous publication.
+The journal has no independent notice-cursor setter: cursor advancement belongs
+to confirmed notice history or an exact suppressed-occurrence mutation.
 Replay and source acknowledgements validate the parent transcript incarnation
 against the historical control record at the original relationship revision,
 not the current parent or a reused display ID/generation.

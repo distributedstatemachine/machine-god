@@ -1,4 +1,6 @@
-use super::{SchedulerError, SchedulerLimits, SchedulerSnapshot, TurnHandle, TurnWitness};
+#[cfg(test)]
+use super::SchedulerSnapshot;
+use super::{SchedulerError, SchedulerLimits, TurnHandle, TurnWitness};
 use std::{
     collections::{BTreeMap, VecDeque},
     num::NonZeroU64,
@@ -247,6 +249,7 @@ impl Inner {
                 matches!(slot.phase, Phase::Executing(_)) && !slot.handle.is_cancelled()
             })
     }
+    #[cfg(test)]
     pub(super) fn snapshot(&self) -> SchedulerSnapshot {
         let state = self
             .state

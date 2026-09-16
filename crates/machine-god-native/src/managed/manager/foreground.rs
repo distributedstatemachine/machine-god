@@ -1,7 +1,9 @@
 //! Foreground resource custody shares the outer driver, not the display lifetime.
+#[cfg(test)]
+use super::NativeConversationRuntime;
 use super::{
-    Arc, Context, ManagedManager, ManagedRuntimeError, NativeConversationRuntime, Poll,
-    PreparedManagedRuntime, RunRef, RunSettlement, Weak, fmt,
+    Arc, Context, ManagedManager, ManagedRuntimeError, Poll, PreparedManagedRuntime, RunRef,
+    RunSettlement, Weak, fmt,
 };
 
 struct Identity;
@@ -157,6 +159,7 @@ impl ManagedManager {
         Ok(selection)
     }
 
+    #[cfg(test)]
     pub(crate) fn foreground_runtime(
         &self,
         selection: &ManagedForegroundSelection,

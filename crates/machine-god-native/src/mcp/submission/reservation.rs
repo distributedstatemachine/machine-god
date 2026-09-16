@@ -89,6 +89,7 @@ impl McpPendingToolReservation {
             .retain(|pending| !matches!(pending, Pending::Manual(_)));
     }
 
+    #[cfg(any(test, feature = "mcp-http"))]
     pub(crate) fn matches(&self, id: &RpcId, lease: Option<&McpToolReservation>) -> bool {
         self.0.iter().any(|pending| pending.matches(id, lease))
     }

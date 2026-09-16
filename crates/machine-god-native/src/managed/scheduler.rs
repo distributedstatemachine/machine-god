@@ -78,6 +78,7 @@ impl fmt::Display for SchedulerError {
 impl std::error::Error for SchedulerError {}
 
 /// Only scalar observations; not execution authority.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SchedulerSnapshot {
     pub(crate) residents: usize,
@@ -139,6 +140,7 @@ impl ManagedScheduler {
             },
         ))
     }
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> SchedulerSnapshot {
         self.inner.snapshot()
     }
@@ -192,6 +194,7 @@ impl RunLease {
     }
     /// Requests actual-turn cancellation and gives finalization a settlement
     /// lane, independent of all occupied model execution slots.
+    #[cfg(test)]
     pub(crate) fn cancel(&self) {
         self.inner.stop(self.identity.id, None, true);
     }

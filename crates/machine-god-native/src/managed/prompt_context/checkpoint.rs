@@ -67,6 +67,7 @@ impl SavedNoticeContext {
     pub(crate) fn originals(&self) -> &[ManagedNotice] {
         &self.originals
     }
+    #[cfg(test)]
     pub(crate) fn identities(&self) -> &[NoticeIdentity] {
         &self.identities
     }

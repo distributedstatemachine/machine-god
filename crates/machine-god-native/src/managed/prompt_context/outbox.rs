@@ -102,6 +102,9 @@ pub(crate) fn saved_outbox(
     Ok(Some(outbox))
 }
 
+// Test instrumentation distinguishes the two valid receipt-construction paths.
+// Production custody is proved by the retained original record, not this label.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NoticeDeliveryProvenance {
     ConfirmedPublication,
@@ -109,6 +112,7 @@ pub(crate) enum NoticeDeliveryProvenance {
 }
 pub(super) struct DeliveryRecord {
     outbox: SavedNoticeOutbox,
+    #[cfg(test)]
     provenance: NoticeDeliveryProvenance,
     acknowledged: AtomicU64,
 }
@@ -116,6 +120,7 @@ impl DeliveryRecord {
     pub(super) fn confirmed(outbox: SavedNoticeOutbox) -> Arc<Self> {
         Arc::new(Self {
             outbox,
+            #[cfg(test)]
             provenance: NoticeDeliveryProvenance::ConfirmedPublication,
             acknowledged: AtomicU64::new(0),
         })
@@ -140,6 +145,7 @@ impl NoticeDelivery {
     pub(crate) fn checkpoint(&self) -> &NoticeCheckpoint {
         &self.record.outbox.checkpoint
     }
+    #[cfg(test)]
     pub(crate) fn provenance(&self) -> NoticeDeliveryProvenance {
         self.record.provenance
     }
@@ -299,6 +305,7 @@ impl ParentNoticeContext {
                     };
                     let original = Arc::new(DeliveryRecord {
                         outbox,
+                        #[cfg(test)]
                         provenance: NoticeDeliveryProvenance::RecoveredOriginal,
                         acknowledged: AtomicU64::new(0),
                     });
