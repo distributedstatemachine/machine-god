@@ -205,6 +205,57 @@ fn human_command() -> ManagedSubagentCommand {
 }
 
 #[test]
+fn human_skill_sidecar_is_bounded_and_only_valid_for_messages_before_actor_capture() {
+    let fixture = Fixture::new();
+    let mailbox = fixture.mailbox(1);
+    let reference: crate::NativeSkillReference = serde_json::from_value(serde_json::json!({
+        "version": 1, "name": "selected", "location": "/skills/selected/SKILL.md",
+        "revision": ([0; 32])
+    }))
+    .unwrap();
+    let command = || {
+        ManagedSubagentCommand::decode(serde_json::json!({
+            "command": {"message": {"send": {"id": "child", "content": "$selected"}}}
+        }))
+        .unwrap()
+    };
+    assert!(matches!(
+        mailbox.request_human(
+            command(),
+            &vec![reference.clone(); 17],
+            || panic!("over-limit capture"),
+            CancellationToken::new(),
+        ),
+        Err(Error::ResourceLimit)
+    ));
+    assert!(
+        mailbox
+            .request_human(
+                human_command(),
+                std::slice::from_ref(&reference),
+                || panic!("non-message capture"),
+                CancellationToken::new(),
+            )
+            .is_err()
+    );
+    let captured = std::cell::Cell::new(false);
+    assert!(matches!(
+        mailbox.request_human(
+            command(),
+            &[reference],
+            || {
+                captured.set(true);
+                Err(Error::Unavailable)
+            },
+            CancellationToken::new(),
+        ),
+        Err(Error::Unavailable)
+    ));
+    assert!(captured.get());
+    assert_eq!(mailbox.usage(), MailboxUsage::default());
+}
+
+#[test]
 fn human_capacity_is_shared_with_models_and_reserved_before_actor_capture() {
     let fixture = Fixture::new();
     let mailbox = fixture.mailbox(1);
@@ -215,6 +266,7 @@ fn human_capacity_is_shared_with_models_and_reserved_before_actor_capture() {
     assert!(matches!(
         mailbox.request_human(
             human_command(),
+            &[],
             || panic!("capture over capacity"),
             CancellationToken::new()
         ),
@@ -226,6 +278,7 @@ fn human_capacity_is_shared_with_models_and_reserved_before_actor_capture() {
     assert!(matches!(
         mailbox.request_human(
             human_command(),
+            &[],
             || {
                 captured.set(true);
                 assert_eq!(mailbox.usage().requests, 1);
@@ -246,7 +299,12 @@ fn cancelled_and_invalid_human_commands_do_not_capture_authority_or_leak_capacit
     let cancelled = CancellationToken::new();
     cancelled.cancel();
     assert!(matches!(
-        mailbox.request_human(human_command(), || panic!("cancelled capture"), cancelled),
+        mailbox.request_human(
+            human_command(),
+            &[],
+            || panic!("cancelled capture"),
+            cancelled
+        ),
         Err(Error::Cancelled)
     ));
     let mut invalid = human_command();
@@ -258,6 +316,7 @@ fn cancelled_and_invalid_human_commands_do_not_capture_authority_or_leak_capacit
         mailbox
             .request_human(
                 invalid,
+                &[],
                 || panic!("invalid capture"),
                 CancellationToken::new()
             )

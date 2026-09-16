@@ -190,6 +190,7 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
                     source_id: job.lease().principal().owner().session_id().to_string(),
                     source_owner: principal_owner(job.lease()),
                     content: request.content,
+                    skills: job.skill_references().to_vec(),
                     accepted_at_ms: env.now_ms,
                     configuration: snapshot.head.configuration.clone(),
                 };

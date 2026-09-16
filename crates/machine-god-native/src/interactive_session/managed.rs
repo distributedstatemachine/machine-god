@@ -67,6 +67,24 @@ impl NativeInteractiveSession {
         command: machine_god_core::ManagedSubagentCommand,
         cancellation: machine_god_core::CancellationToken,
     ) -> Result<crate::NativeManagedCommandResponse, machine_god_core::ManagedSubagentError> {
+        self.request_managed_command_with_skill_references(command, &[], cancellation)
+    }
+
+    /// Accepts a human message with a previously resolved, exact skill list.
+    /// References are inert observations, not filesystem authority. The native
+    /// child rebinds them using the host's explicit catalog only when this work
+    /// reaches the FIFO head; it never rematches the prompt against new skills.
+    /// The journal persists references alongside the unchanged message before
+    /// execution. A changed or unavailable source fails only that work item.
+    /// # Errors
+    /// Rejects non-message commands with selections, more than 16 references or
+    /// 64 KiB of retained reference text, and ordinary managed admission failures.
+    pub fn request_managed_command_with_skill_references(
+        &mut self,
+        command: machine_god_core::ManagedSubagentCommand,
+        references: &[crate::NativeSkillReference],
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<crate::NativeManagedCommandResponse, machine_god_core::ManagedSubagentError> {
         use machine_god_core::ManagedSubagentError;
         if self.shutting_down || self.closed || self.transition.is_some() || self.pending.is_some()
         {
@@ -80,9 +98,18 @@ impl NativeInteractiveSession {
             .foreground
             .as_ref()
             .ok_or(ManagedSubagentError::Unavailable)?;
-        let response = owner
-            .agents
-            .request_human_command(selected, command, cancellation)?;
+        let response = if references.is_empty() {
+            owner
+                .agents
+                .request_human_command(selected, command, cancellation)?
+        } else {
+            owner.agents.request_human_command_with_skills(
+                selected,
+                command,
+                references,
+                cancellation,
+            )?
+        };
         self.notify();
         Ok(response)
     }

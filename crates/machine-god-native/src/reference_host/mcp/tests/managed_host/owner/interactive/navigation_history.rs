@@ -51,7 +51,7 @@ async fn select_first(owner: &mut NativeInteractiveSession) {
         .unwrap();
 }
 
-async fn current_history(
+pub(super) async fn current_history(
     owner: &mut NativeInteractiveSession,
 ) -> crate::NativeManagedHistorySnapshot {
     let mut previous = None;

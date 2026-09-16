@@ -57,20 +57,8 @@ impl QueuedSkills {
         references: &[NativeSkillReference],
         workers: NativeOwnedWorkerScope,
     ) -> Result<Self, NativeSkillsQueueError> {
-        if references.len() > crate::MAX_NATIVE_SKILL_INVOCATION_SELECTIONS {
-            return Err(NativeSkillsQueueError::Invocation(
-                NativeSkillInvocationError::TooManySelections,
-            ));
-        }
-        let bytes = references
-            .iter()
-            .map(NativeSkillReference::retained_bytes)
-            .sum::<usize>();
-        if bytes > crate::MAX_NATIVE_SKILL_INVOCATION_SELECTION_BYTES {
-            return Err(NativeSkillsQueueError::Invocation(
-                NativeSkillInvocationError::SelectionBytesExceeded,
-            ));
-        }
+        crate::skills_invocation::validate_references(references)
+            .map_err(NativeSkillsQueueError::Invocation)?;
         Ok(Self {
             catalog,
             plan: Plan::Restored(references.to_vec()),

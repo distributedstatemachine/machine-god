@@ -36,6 +36,7 @@ pub(super) struct ManagedRestorationAuthority {
 }
 pub(super) struct SharedManagedRuntimeFactoryOptions {
     pub services: Arc<NativeHostServices>,
+    pub skills: Option<Arc<crate::NativeSkillCatalog>>,
     pub principals: Arc<NativePrincipalRegistry>,
     pub scheduler: ManagedScheduler,
     pub mcp: Arc<NativePrincipalMcpRegistry>,
@@ -387,6 +388,12 @@ impl SharedManagedRuntimeFactoryOptions {
             owner,
             resources: Box::new(resources),
             notice_context: Some(notice_context),
+            skills: self.skills.as_ref().map(|catalog| {
+                crate::managed::manager::factory::ManagedRuntimeSkills {
+                    catalog: catalog.clone(),
+                    workers: workers.clone(),
+                }
+            }),
         })
     }
 

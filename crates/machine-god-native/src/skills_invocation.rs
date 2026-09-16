@@ -45,6 +45,20 @@ pub struct NativeSkillInvocationPlan {
 
 type Result<T> = std::result::Result<T, NativeSkillInvocationError>;
 
+pub(crate) fn validate_references(references: &[crate::NativeSkillReference]) -> Result<()> {
+    if references.len() > MAX_NATIVE_SKILL_INVOCATION_SELECTIONS {
+        return Err(NativeSkillInvocationError::TooManySelections);
+    }
+    let bytes = references
+        .iter()
+        .map(crate::NativeSkillReference::retained_bytes)
+        .sum::<usize>();
+    if bytes > MAX_NATIVE_SKILL_INVOCATION_SELECTION_BYTES {
+        return Err(NativeSkillInvocationError::SelectionBytesExceeded);
+    }
+    Ok(())
+}
+
 impl NativeSkillInvocationPlan {
     /// Freezes the already resolved list without serializing root capabilities.
     /// Restoring references must not rerun automatic prompt matching.

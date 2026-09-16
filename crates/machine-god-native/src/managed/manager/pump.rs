@@ -160,6 +160,7 @@ impl ManagedManager {
                     match after {
                         WriteAfter::Observe => {}
                         WriteAfter::Start(work) => {
+                            let work = *work;
                             if let Some(notice) = child.notice.take() {
                                 let _ = self.notices.stop_work(&notice);
                                 self.retained_notices.push(notice);
@@ -227,7 +228,7 @@ impl ManagedManager {
                             status: ManagedQueueStatus::Running,
                             failure: None,
                         },
-                        after: WriteAfter::Start(work),
+                        after: WriteAfter::Start(Box::new(work)),
                     }),
                     Err(JournalError::Busy | JournalError::Limit) => {
                         return Err(ManagedRuntimeError::Capacity);

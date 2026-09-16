@@ -135,6 +135,7 @@ impl ManagedMailbox {
     pub(crate) fn request_human(
         &self,
         command: ManagedSubagentCommand,
+        skills: &[crate::NativeSkillReference],
         capture: impl FnOnce() -> Result<ManagedCommandActor, Error>,
         cancellation: CancellationToken,
     ) -> Result<ManagedCommandResponse, Error> {
@@ -142,6 +143,15 @@ impl ManagedMailbox {
             return Err(Error::Cancelled);
         }
         let reservation = self.shared.budget.reserve()?;
+        crate::skills_invocation::validate_references(skills).map_err(|_| Error::ResourceLimit)?;
+        if !skills.is_empty()
+            && !matches!(
+                command,
+                ManagedSubagentCommand::Message(machine_god_core::ManagedMessage::Send(_))
+            )
+        {
+            return Err(Error::Unavailable);
+        }
         let normalized = ManagedSubagentCommand::decode(command.to_arguments()?)?;
         // Release the caller's spare allocations before capturing native
         // resources; only the normalized payload enters queue custody.
@@ -151,7 +161,10 @@ impl ManagedMailbox {
             return Err(Error::Unavailable);
         }
         let response = self.shared.submit_admitted(
-            JobRequest::Human(Box::new(normalized)),
+            JobRequest::Human {
+                command: Box::new(normalized),
+                skills: skills.to_vec(),
+            },
             actor,
             cancellation,
             reservation,
@@ -329,19 +342,28 @@ pub(crate) struct ManagedMailboxJob {
 }
 enum JobRequest {
     Model(Box<ManagedSubagentInvocation>),
-    Human(Box<ManagedSubagentCommand>),
+    Human {
+        command: Box<ManagedSubagentCommand>,
+        skills: Vec<crate::NativeSkillReference>,
+    },
 }
 impl ManagedMailboxJob {
     pub(crate) fn command(&self) -> &ManagedSubagentCommand {
         match self.request.as_ref().expect("live job") {
             JobRequest::Model(invocation) => invocation.command(),
-            JobRequest::Human(command) => command,
+            JobRequest::Human { command, .. } => command,
+        }
+    }
+    pub(crate) fn skill_references(&self) -> &[crate::NativeSkillReference] {
+        match self.request.as_ref().expect("live job") {
+            JobRequest::Model(_) => &[],
+            JobRequest::Human { skills, .. } => skills,
         }
     }
     pub(crate) fn context(&self) -> Option<&ToolContext> {
         match self.request.as_ref().expect("live job") {
             JobRequest::Model(invocation) => Some(invocation.context()),
-            JobRequest::Human(_) => None,
+            JobRequest::Human { .. } => None,
         }
     }
     pub(crate) fn lease(&self) -> &ManagedCommandActor {

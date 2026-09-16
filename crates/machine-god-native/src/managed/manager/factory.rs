@@ -114,6 +114,12 @@ pub(crate) struct PreparedManagedRuntime {
     pub owner: ManagedConversationOwner,
     pub resources: Box<dyn ManagedRuntimeResources>,
     pub notice_context: Option<Arc<super::super::prompt_context::ParentNoticeContext>>,
+    pub skills: Option<ManagedRuntimeSkills>,
+}
+
+pub(crate) struct ManagedRuntimeSkills {
+    pub catalog: Arc<crate::NativeSkillCatalog>,
+    pub workers: crate::NativeOwnedWorkerScope,
 }
 
 /// Per-principal/run cleanup custody, not a shared global completion observer.

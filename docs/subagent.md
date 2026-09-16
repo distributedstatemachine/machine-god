@@ -155,6 +155,22 @@ policy. Explicit human attach/reparent commands need no second model-tool
 approval, but retain the same target, graph, generation and publication checks.
 Neither a child label nor a navigation projection constructs human admission.
 
+Human message acceptance can include a frozen list of exact skill references
+through `request_managed_command_with_skill_references`. This native-only
+sidecar does not widen the model tool schema. The shared mailbox reserves its
+operation budget before copying at most 16 references and 64 KiB of reference
+text. Non-message commands cannot carry selections. Journal work records require
+the bounded reference list and retain it beside the unchanged canonical prompt
+before execution; neither skill bodies nor filesystem capabilities are saved.
+
+At the FIFO head, the child uses the host's explicitly injected catalog and
+owned worker scope to rediscover and rebind only those exact references.
+It does not automatically match names against a newer catalog. Changed sources
+and missing catalog authority fail the accepted head before provider execution,
+leaving it available for explicit resolution; they do not fence the manager or
+affect siblings. Restart recovery still marks pending work interrupted and never
+starts a skill read or model turn merely because a reference was deserialized.
+
 Foreground replacement stages inactive prompt and notice registrations under
 the same aggregate capacity bounds as live registrations. A staged successor
 may share the old parent's durable session identity, but does not receive prompts,

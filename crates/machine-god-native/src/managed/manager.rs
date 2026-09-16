@@ -125,7 +125,7 @@ struct ChildWrite {
 }
 enum WriteAfter {
     Observe,
-    Start(JournalWork),
+    Start(Box<JournalWork>),
     Terminal,
     Archived,
     Notice {

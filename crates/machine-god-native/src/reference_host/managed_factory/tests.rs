@@ -129,6 +129,11 @@ impl FactoryFixture {
         let factory = SharedManagedRuntimeFactory::new(SharedManagedRuntimeFactoryOptions {
             prompts: None,
             services,
+            skills: host
+                .host()
+                .skills
+                .as_ref()
+                .map(|service| service.catalog().clone()),
             principals,
             scheduler: ManagedScheduler::new(SchedulerLimits::default()),
             mcp,

@@ -55,6 +55,7 @@ pub(super) fn work(work: &JournalWork) -> Result<(), Error> {
     id(&work.id)?;
     id(&work.source_id)?;
     text(&work.content, 65_536, false)?;
+    crate::skills_invocation::validate_references(&work.skills).map_err(|_| Error::Limit)?;
     configuration(&work.configuration)
 }
 pub(super) fn reference(value: &JournalPageRef, limits: JournalLimits) -> Result<(), Error> {

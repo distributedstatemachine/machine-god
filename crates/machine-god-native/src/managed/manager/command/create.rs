@@ -75,6 +75,7 @@ pub(super) async fn execute(
         source_id: parent.session_id.to_string(),
         source_owner: parent.clone(),
         content,
+        skills: Vec::new(),
         accepted_at_ms: env.now_ms,
         configuration: configuration.clone(),
     });

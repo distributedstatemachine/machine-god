@@ -215,13 +215,28 @@ impl ManagedManager {
                 .set_mode(mode)
                 .map_err(|_| ManagedRuntimeError::Unavailable)?;
         }
-        child
-            .prepared
-            .runtime
-            .enqueue(work.content.clone().into())
-            .map_err(|_| ManagedRuntimeError::Capacity)?;
+        // Keep enqueue synchronous so cancellation cannot race a deferred
+        // insertion. Admission errors settle through this work's owned start
+        // lane, not as an error that fences the entire manager.
+        let queued = if work.skills.is_empty() {
+            child.prepared.runtime.enqueue(work.content.clone().into())
+        } else if let Some(skills) = &child.prepared.skills {
+            child.prepared.runtime.enqueue_with_skill_references(
+                work.content.clone().into(),
+                skills.catalog.clone(),
+                &work.skills,
+                skills.workers.clone(),
+            )
+        } else {
+            Err(crate::NativeConversationRuntimeError::Skills(
+                crate::NativeSkillsQueueError::WorkerUnavailable,
+            ))
+        };
         let runtime = child.prepared.runtime.clone();
-        child.starting = Some(Box::pin(async move { runtime.start_next(now_ms).await }));
+        child.starting = Some(Box::pin(async move {
+            queued?;
+            runtime.start_next(now_ms).await
+        }));
         child.admission_pending = true;
         child.work = Some(work);
         child.actual_settled = false;

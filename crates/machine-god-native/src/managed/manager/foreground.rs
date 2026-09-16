@@ -84,7 +84,7 @@ impl ManagedManager {
         cancellation: machine_god_core::CancellationToken,
     ) -> Result<super::super::mailbox::ManagedCommandResponse, machine_god_core::ManagedSubagentError>
     {
-        self.request_observed_human_command(selection, None, command, cancellation)
+        self.request_observed_human_command(selection, None, command, &[], cancellation)
     }
 
     pub(crate) fn request_observed_human_command(
@@ -92,6 +92,7 @@ impl ManagedManager {
         selection: &ManagedForegroundSelection,
         observed: Option<super::catalog::NativeObservedManagedAgent>,
         command: machine_god_core::ManagedSubagentCommand,
+        skills: &[crate::NativeSkillReference],
         cancellation: machine_god_core::CancellationToken,
     ) -> Result<super::super::mailbox::ManagedCommandResponse, machine_god_core::ManagedSubagentError>
     {
@@ -116,6 +117,7 @@ impl ManagedManager {
         let selected_cancel = cancellation.clone();
         self.mailbox.request_human(
             command,
+            skills,
             || {
                 super::super::actor::ManagedCommandActor::human(
                     &parent.prepared.runtime,

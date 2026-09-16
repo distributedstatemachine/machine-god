@@ -252,6 +252,10 @@ impl NativeReferenceHost {
                 SharedManagedRuntimeFactory::new(SharedManagedRuntimeFactoryOptions {
                     prompts: assembly.prompts.clone(),
                     services: self.services.clone(),
+                    skills: self
+                        .skills
+                        .as_ref()
+                        .map(|service| service.catalog().clone()),
                     principals: assembly.principals.clone(),
                     scheduler: assembly.scheduler.clone(),
                     mcp: assembly.mcp.clone(),
@@ -349,8 +353,20 @@ impl NativeManagedAgents {
             selection,
             Some(observed),
             command,
+            &[],
             cancellation,
         )
+    }
+
+    pub(crate) fn request_human_command_with_skills(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+        command: machine_god_core::ManagedSubagentCommand,
+        skills: &[crate::NativeSkillReference],
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<NativeManagedCommandResponse, machine_god_core::ManagedSubagentError> {
+        self.manager
+            .request_observed_human_command(selection, None, command, skills, cancellation)
     }
 
     pub(crate) fn request_human_command(

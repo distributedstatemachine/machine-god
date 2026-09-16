@@ -8,6 +8,7 @@ use rustix::fs::{Mode, OFlags};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::AtomicU64;
 
+mod skills;
 mod workspace;
 
 fn detach() -> JournalMutation {
@@ -99,6 +100,7 @@ fn work(id: &str) -> JournalWork {
         source_id: "parent".into(),
         source_owner: transcript("parent"),
         content: "standalone task".into(),
+        skills: Vec::new(),
         accepted_at_ms: 1,
         configuration: config(),
     }

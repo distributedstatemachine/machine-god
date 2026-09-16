@@ -31,6 +31,8 @@ pub(crate) struct JournalWork {
     pub source_id: String,
     pub source_owner: JournalTranscript,
     pub content: String,
+    #[serde(deserialize_with = "skill_references")]
+    pub skills: Vec<crate::NativeSkillReference>,
     pub accepted_at_ms: i64,
     #[serde(deserialize_with = "configuration")]
     pub configuration: ManagedConfiguration,
@@ -271,6 +273,13 @@ fn bounded<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>, const N: usize
 }
 fn queue<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<JournalWorkRef>, D::Error> {
     bounded::<D, _, 256>(d)
+}
+fn skill_references<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<crate::NativeSkillReference>, D::Error> {
+    let values = bounded::<D, _, { crate::MAX_NATIVE_SKILL_INVOCATION_SELECTIONS }>(d)?;
+    crate::skills_invocation::validate_references(&values).map_err(serde::de::Error::custom)?;
+    Ok(values)
 }
 fn records<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<JournalRecord>, D::Error> {
     bounded::<D, _, 101>(d)

@@ -9,6 +9,7 @@ mod navigation_processes;
 mod navigation_ui;
 mod preselection;
 mod prompts;
+mod skills;
 #[cfg(feature = "mcp-http")]
 mod startup;
 mod workspace;

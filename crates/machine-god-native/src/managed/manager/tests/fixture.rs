@@ -137,6 +137,7 @@ impl ManagedRuntimeFactory for Arc<Factory> {
                 NativeConversationRuntime::new(conversation, preferences(), None).unwrap(),
             );
             let prepared = PreparedManagedRuntime {
+                skills: None,
                 notice_context: None,
                 runtime,
                 owner,
@@ -307,6 +308,7 @@ impl Fixture {
             .unwrap();
         let conversation = conversation.with_notice_context(&context).unwrap();
         PreparedManagedRuntime {
+            skills: None,
             runtime: Arc::new(
                 NativeConversationRuntime::new(conversation, preferences(), None).unwrap(),
             ),
