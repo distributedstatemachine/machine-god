@@ -654,6 +654,16 @@ scan so an absent or retired target never requires an unbounded in-memory queue.
 
 ## Native management form drafts
 
+`NativeModelPicker` owns a pure, bounded model-menu projection over one shared
+validated native catalog. Its 256-byte UTF-8 query reuses the native exact/fuzzy
+model scorer, with catalog order breaking ties. Cursor-only edits preserve the
+selection; query changes select the first match. Catalog replacement preserves
+the exact selected ID when still matched, otherwise selects the first remaining
+row. Selection movement clamps at the ends, and invalid edits preserve state.
+The picker has no fetch, timer, inference or configuration authority: selection
+is observation, and durable child configuration still requires the owning
+navigation's original target and exact displayed-frame checks.
+
 The native create/configure form model retains one bounded draft with separate
 name, model, standalone prompt, reasoning effort, milestones and timer fields.
 Create also selects persistent/one-off mode; permission and notification toggles

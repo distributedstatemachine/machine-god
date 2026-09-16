@@ -290,6 +290,7 @@ mod mcp_features;
 mod mcp_search_tools;
 mod mcp_select_tool;
 mod memory;
+mod model_picker;
 mod model_preferences;
 mod model_selection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -932,6 +933,10 @@ pub use model_catalog_cache::{
     NATIVE_MODEL_CATALOG_MAX_WAITERS, NATIVE_MODEL_CATALOG_RETRY_MS, NativeModelCatalogCache,
     NativeModelCatalogCacheError, NativeModelCatalogCacheFailure, NativeModelCatalogCacheSnapshot,
     NativeModelCatalogCacheState,
+};
+pub use model_picker::{
+    MAX_NATIVE_MODEL_PICKER_QUERY_BYTES, NativeModelPicker, NativeModelPickerError,
+    NativeModelPickerView,
 };
 pub use model_preferences::{
     MAX_NATIVE_REASONING_EFFORT_BYTES, MAX_NATIVE_REASONING_EFFORT_OPTIONS,

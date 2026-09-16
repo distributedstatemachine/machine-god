@@ -78,14 +78,14 @@ pub fn resolve_model_query(
     Ok(best.map(str::to_owned))
 }
 
-struct Query<'a> {
+pub(crate) struct Query<'a> {
     bytes: &'a [u8],
     tokens: [&'a [u8]; 16],
     token_count: usize,
 }
 
 impl<'a> Query<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         let mut query = Self {
             bytes,
             tokens: [&[]; 16],
@@ -102,7 +102,7 @@ impl<'a> Query<'a> {
         query
     }
 
-    fn score(&self, id: &[u8]) -> usize {
+    pub(crate) fn score(&self, id: &[u8]) -> usize {
         if id.is_empty() || self.bytes.is_empty() {
             return 0;
         }
