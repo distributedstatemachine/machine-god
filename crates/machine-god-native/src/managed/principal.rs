@@ -373,7 +373,9 @@ impl NativePrincipal {
     }
 
     pub(crate) fn retire(&self) {
-        self.publication.retire();
+        // Stop model/turn authority, not the conversation's lifecycle barrier.
+        // The outer owner may still need the original metadata-only admission
+        // to acknowledge and clear notice custody before exact route retirement.
         {
             let mut active = self
                 .active

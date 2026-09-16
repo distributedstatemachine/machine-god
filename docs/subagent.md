@@ -176,6 +176,10 @@ foreground successor may reserve a second slot for that allocation. It shares
 the conversation publication barrier and cannot register executable turns or
 issue invocation proofs before the exact predecessor's route retires. A second
 pending successor is rejected, and pending registrations count toward capacity.
+Retiring model admission does not retire the conversation publication barrier:
+the outer owner first settles the original notice acknowledgements and metadata
+cleanup. Only the exact lifecycle guard retires those shared routes. A retired
+principal still cannot mint turn proofs or become the published replacement.
 
 Each registration forks an independent workspace selection and creates a fresh
 owner/generation-bound undo history under the host domain's shared undo budget.

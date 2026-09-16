@@ -31,6 +31,7 @@ fn observed_runtime_selection_rejects_foreign_and_replaced_generations() {
     let observed = page.entries.into_iter().next().unwrap().observation;
     let selection = fixture.manager.observed_selection(&observed).unwrap();
     let runtime = fixture.manager.selected_runtime(&selection).unwrap();
+    let original_runtime = Arc::downgrade(runtime);
     let original = (runtime.id(), runtime.incarnation_id());
     assert!(foreign.manager.observed_selection(&observed).is_none());
     assert!(
@@ -52,7 +53,8 @@ fn observed_runtime_selection_rejects_foreign_and_replaced_generations() {
     assert!(fixture.manager.observed_selection(&observed).is_none());
     assert!(fixture.manager.selected_runtime(&selection).is_none());
     let replacement = &fixture.manager.children[0].prepared.runtime;
-    assert_ne!(original, (replacement.id(), replacement.incarnation_id()));
+    assert_eq!(original, (replacement.id(), replacement.incarnation_id()));
+    assert!(!original_runtime.ptr_eq(&Arc::downgrade(replacement)));
 }
 
 #[test]

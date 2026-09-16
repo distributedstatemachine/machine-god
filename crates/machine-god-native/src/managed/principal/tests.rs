@@ -147,7 +147,12 @@ fn staged_successor_is_capacity_charged_but_cannot_claim_the_predecessors_turn()
     assert!(replacement.stamp().is_live());
     assert!(sibling.is_live());
     candidate.retire();
-    assert!(!publication.activate());
+    assert!(!candidate.ready_to_publish());
+    assert!(
+        candidate
+            .begin_turn(&turn, policy(), preferences(), None)
+            .is_err()
+    );
     assert!(!replacement.stamp().is_live());
 }
 
