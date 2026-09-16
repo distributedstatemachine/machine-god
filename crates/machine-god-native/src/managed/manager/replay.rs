@@ -37,6 +37,7 @@ impl ManagedManager {
             let eligible = self
                 .parents
                 .iter()
+                .filter(|parent| parent.active)
                 .filter_map(|parent| parent.context.upgrade())
                 .any(|context| {
                     context.matches_transcript(transcript)
@@ -78,6 +79,7 @@ impl ManagedManager {
         let targets = self
             .parents
             .iter()
+            .filter(|parent| parent.active)
             .filter_map(|parent| parent.context.upgrade())
             .filter(|context| !context.is_retired())
             .map(|context| Arc::downgrade(&context))
@@ -105,6 +107,7 @@ impl ManagedManager {
             let targets = self
                 .parents
                 .iter()
+                .filter(|parent| parent.active)
                 .filter_map(|parent| parent.context.upgrade())
                 .filter(|context| !context.is_retired())
                 .map(|context| Arc::downgrade(&context))

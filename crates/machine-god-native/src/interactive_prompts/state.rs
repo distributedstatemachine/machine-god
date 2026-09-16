@@ -24,6 +24,7 @@ pub(super) struct Shared {
 pub(super) struct State {
     closed: bool,
     principals: Vec<PrincipalKey>,
+    reservations: Vec<PrincipalKey>,
     next_scope: u64,
     next_request: u64,
     bytes: usize,
@@ -37,6 +38,7 @@ impl Default for State {
         Self {
             closed: false,
             principals: Vec::new(),
+            reservations: Vec::new(),
             next_scope: 1,
             next_request: 1,
             bytes: 0,
@@ -196,12 +198,28 @@ impl Shared {
     }
 
     pub fn register(&self, owner: BackgroundOutputOwner) -> Result<PrincipalKey, Error> {
+        self.insert_principal(owner, false)
+    }
+
+    /// Reserve capacity without publishing an endpoint or obscuring the old
+    /// registration. At most one successor may reserve a given durable owner.
+    pub(super) fn reserve(&self, owner: BackgroundOutputOwner) -> Result<PrincipalKey, Error> {
+        self.insert_principal(owner, true)
+    }
+
+    fn insert_principal(
+        &self,
+        owner: BackgroundOutputOwner,
+        reserved: bool,
+    ) -> Result<PrincipalKey, Error> {
         let mut state = self.lock();
         if state.closed {
             return Err(Error::Closed);
         }
-        if state.principals.len() >= MAX_NATIVE_INTERACTIVE_PROMPT_PRINCIPALS
-            || state.principals.iter().any(|key| key.owner == owner)
+        if state.principals.len() + state.reservations.len()
+            >= MAX_NATIVE_INTERACTIVE_PROMPT_PRINCIPALS
+            || (!reserved && state.principals.iter().any(|key| key.owner == owner))
+            || state.reservations.iter().any(|key| key.owner == owner)
         {
             return Err(Error::Busy);
         }
@@ -209,11 +227,50 @@ impl Shared {
         let key = PrincipalKey {
             scope: Scope(state.next_scope),
             owner,
-            live: Arc::new(AtomicBool::new(true)),
+            live: Arc::new(AtomicBool::new(!reserved)),
         };
         state.next_scope = next;
-        state.principals.push(key.clone());
+        if reserved {
+            state.reservations.push(key.clone());
+        } else {
+            state.principals.push(key.clone());
+        }
         Ok(key)
+    }
+
+    pub(super) fn activate_reserved(&self, key: &PrincipalKey) -> Result<(), Error> {
+        let mut state = self.lock();
+        if state.closed {
+            return Err(Error::Closed);
+        }
+        let index = state
+            .reservations
+            .iter()
+            .position(|reserved| reserved == key)
+            .ok_or(Error::Stale)?;
+        if state
+            .principals
+            .iter()
+            .any(|active| active.owner == key.owner)
+        {
+            return Err(Error::Busy);
+        }
+        let key = state.reservations.remove(index);
+        key.live.store(true, Ordering::Release);
+        state.principals.push(key);
+        Ok(())
+    }
+
+    pub(super) fn release_reserved(&self, key: &PrincipalKey) {
+        let removed = {
+            let mut state = self.lock();
+            state
+                .reservations
+                .iter()
+                .position(|reserved| reserved == key)
+                .map(|index| state.reservations.remove(index))
+        };
+        drop(removed);
     }
 
     pub fn retire(&self, key: &PrincipalKey) {
@@ -245,7 +302,7 @@ impl Shared {
     }
 
     pub fn close(&self) {
-        let (old, principals, wake) = {
+        let (old, principals, reservations, wake) = {
             let mut state = self.lock();
             state.closed = true;
             for principal in &state.principals {
@@ -259,10 +316,12 @@ impl Shared {
             (
                 std::mem::take(&mut state.entries),
                 std::mem::take(&mut state.principals),
+                std::mem::take(&mut state.reservations),
                 state.ui_wake.take(),
             )
         };
         drop(principals);
+        drop(reservations);
         discard(old);
         notify(wake);
     }

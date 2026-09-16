@@ -1,6 +1,118 @@
 use super::*;
 
 #[test]
+fn reserved_successor_is_invisible_until_exact_old_registration_retires() {
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let registrar = inbox.registrar();
+    let mut original = inbox.register(owner()).unwrap();
+    let original_scope = original.scope();
+    let original_witness = inbox.registration_for_owner(&owner()).unwrap();
+    let original_bridge = original.bridge();
+    let future = pending(&original_bridge, &owner());
+    let reservation = registrar.reserve(owner()).unwrap();
+    assert!(original_witness.is_live());
+    let (error, reservation) = reservation.activate().unwrap_err();
+    assert_eq!(error, NativeInteractivePromptError::Busy);
+    assert!(original_witness.is_live());
+    let prompt = view(&mut inbox);
+    respond(&mut inbox, &prompt, PermissionPromptDecision::AllowOnce);
+    assert_eq!(block_on(future), Ok(PermissionPromptDecision::AllowOnce));
+
+    original.retire();
+    assert!(!original_witness.is_live());
+    assert!(inbox.registration_for_owner(&owner()).is_none());
+    assert!(block_on(permission(&inbox.router(), "not-active")).is_err());
+    let successor = reservation.activate().unwrap();
+    assert_ne!(successor.scope(), original_scope);
+    assert!(inbox.registration_for_owner(&owner()).unwrap().is_live());
+    assert!(block_on(permission(&original_bridge, "retired")).is_err());
+    drop(original);
+    let successor_bridge = successor.bridge();
+    let future = pending(&successor_bridge, &owner());
+    let prompt = view(&mut inbox);
+    respond(&mut inbox, &prompt, PermissionPromptDecision::AllowOnce);
+    assert_eq!(block_on(future), Ok(PermissionPromptDecision::AllowOnce));
+}
+
+#[test]
+fn dropping_successor_reservation_preserves_original_registration_and_answer() {
+    let (router, mut inbox, original) = bridge();
+    let future = pending(&router, original.owner());
+    let prompt = view(&mut inbox);
+    respond(&mut inbox, &prompt, PermissionPromptDecision::AllowSession);
+    let registrar = inbox.registrar();
+    let reservation = registrar.reserve(owner()).unwrap();
+    assert_eq!(
+        registrar.reserve(owner()).unwrap_err(),
+        NativeInteractivePromptError::Busy
+    );
+    drop(reservation);
+    assert_eq!(block_on(future), Ok(PermissionPromptDecision::AllowSession));
+    assert!(inbox.registration_for_owner(&owner()).unwrap().is_live());
+    assert_eq!(
+        inbox.register(owner()).unwrap_err(),
+        NativeInteractivePromptError::Busy
+    );
+    let _retry = registrar.reserve(owner()).unwrap();
+}
+
+#[test]
+fn reservations_share_registration_capacity_and_refund_only_their_own_slot() {
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let registrar = inbox.registrar();
+    let original = inbox.register(owner()).unwrap();
+    let mut reservations = (1..MAX_NATIVE_INTERACTIVE_PROMPT_PRINCIPALS)
+        .map(|index| {
+            registrar
+                .reserve(named_owner(&format!("reserved-{index}")))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        registrar.register(named_owner("overflow")).unwrap_err(),
+        NativeInteractivePromptError::Busy
+    );
+    assert_eq!(
+        registrar.reserve(named_owner("overflow")).unwrap_err(),
+        NativeInteractivePromptError::Busy
+    );
+    let reserved_owner = named_owner("reserved-1");
+    assert!(inbox.registration_for_owner(&reserved_owner).is_none());
+    drop(reservations.pop());
+    let _refunded = registrar.register(named_owner("refunded")).unwrap();
+    assert_eq!(
+        registrar.register(reserved_owner).unwrap_err(),
+        NativeInteractivePromptError::Busy
+    );
+    drop(reservations);
+    assert!(
+        inbox
+            .registration_for_owner(original.owner())
+            .unwrap()
+            .is_live()
+    );
+}
+
+#[test]
+fn closed_inbox_cannot_activate_a_retained_reservation() {
+    let mut inbox =
+        NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
+    let registrar = inbox.registrar();
+    let reservation = registrar.reserve(owner()).unwrap();
+    inbox.close();
+    let (error, reservation) = reservation.activate().unwrap_err();
+    assert_eq!(error, NativeInteractivePromptError::Closed);
+    assert!(inbox.registration_for_owner(&owner()).is_none());
+    drop(reservation);
+    assert_eq!(
+        registrar.reserve(owner()).unwrap_err(),
+        NativeInteractivePromptError::Closed
+    );
+}
+
+#[test]
 fn native_registrar_is_weak_and_cannot_reopen_a_dropped_inbox() {
     let inbox =
         NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();

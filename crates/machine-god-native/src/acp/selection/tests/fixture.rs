@@ -14,6 +14,7 @@ pub(crate) struct Factory {
     pub cancel_observed: Arc<AtomicBool>,
     pub provider_started: Arc<AtomicBool>,
     pub managed: AtomicBool,
+    managed_options: std::sync::Mutex<Option<NativeReferenceHostManagedOptions>>,
     pub mcp_contexts_override: std::sync::Mutex<Option<Arc<NativeMcpContexts>>>,
     pub transport_override: std::sync::Mutex<Option<Arc<dyn AiGatewayTransport>>>,
     pub prompt_bridge_override: std::sync::Mutex<Option<Arc<NativeInteractivePromptBridge>>>,
@@ -48,6 +49,7 @@ impl Factory {
             cancel_observed: Arc::new(AtomicBool::new(false)),
             provider_started: Arc::new(AtomicBool::new(false)),
             managed: AtomicBool::new(false),
+            managed_options: std::sync::Mutex::new(None),
             mcp_contexts_override: std::sync::Mutex::new(None),
             transport_override: std::sync::Mutex::new(None),
             prompt_bridge_override: std::sync::Mutex::new(None),
@@ -55,6 +57,13 @@ impl Factory {
             #[cfg(feature = "mcp-http")]
             network_override: std::sync::Mutex::new(None),
         }
+    }
+
+    pub fn select_managed_inbox(&self, inbox: &NativeInteractivePromptInbox) {
+        self.managed.store(true, Ordering::Release);
+        *self.managed_options.lock().unwrap() =
+            Some(NativeReferenceHostManagedOptions::new(Arc::new(Clock)).with_prompt_inbox(inbox));
+        *self.prompt_bridge_override.lock().unwrap() = Some(inbox.router());
     }
 }
 impl Drop for Factory {
@@ -104,6 +113,7 @@ impl NativeAcpHostFactory for Factory {
         let observed = self.cancel_observed.clone();
         let provider_started = self.provider_started.clone();
         let managed = self.managed.load(Ordering::Acquire);
+        let managed_options = self.managed_options.lock().unwrap().clone();
         let transport = self
             .transport_override
             .lock()
@@ -172,7 +182,9 @@ impl NativeAcpHostFactory for Factory {
                     .with_mcp_runtime(mcp);
             if managed {
                 options = options
-                    .with_managed_agents(NativeReferenceHostManagedOptions::new(Arc::new(Clock)));
+                    .with_managed_agents(managed_options.unwrap_or_else(|| {
+                        NativeReferenceHostManagedOptions::new(Arc::new(Clock))
+                    }));
             }
             let config=crate::config::parse_config_bytes(br#"{"schema_version":5,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","credential_source":"environment","model":"fixture/main","effort":"auto","fast_mode":false}"#).unwrap();
             let defaults = config.model_preferences();

@@ -226,7 +226,9 @@ pub struct NativeInteractivePromptBridge {
 }
 
 mod registration;
-pub(crate) use registration::NativeInteractivePromptRegistration;
+pub(crate) use registration::{
+    NativeInteractivePromptRegistration, NativeInteractivePromptReservation,
+};
 
 #[derive(Clone)]
 struct PrincipalKey {
@@ -421,6 +423,18 @@ pub struct NativeInteractivePromptInbox {
 pub(crate) struct NativeInteractivePromptRegistrar(Weak<Shared>);
 
 impl NativeInteractivePromptRegistrar {
+    pub(crate) fn reserve(
+        &self,
+        owner: BackgroundOutputOwner,
+    ) -> Result<NativeInteractivePromptReservation, NativeInteractivePromptError> {
+        let shared = self
+            .0
+            .upgrade()
+            .ok_or(NativeInteractivePromptError::Closed)?;
+        let key = shared.reserve(owner)?;
+        Ok(NativeInteractivePromptReservation::new(shared, key))
+    }
+
     pub(crate) fn matches(&self, inbox: &NativeInteractivePromptInbox) -> bool {
         self.0.ptr_eq(&Arc::downgrade(&inbox.shared))
     }

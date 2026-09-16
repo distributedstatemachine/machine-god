@@ -362,7 +362,7 @@ impl SharedManagedRuntimeFactoryOptions {
             .with_notice_context(&notice_context)
             .map_err(|_| ManagedRuntimeError::Invalid)?;
         let runtime = self.runtime(conversation, selected.preferences, foreground)?;
-        let prompt = self.register_prompt(&runtime)?;
+        let prompt = self.register_prompt(&runtime, foreground)?;
         let resources = resources::Resources::new(
             owner.binding(),
             mcp,
@@ -385,23 +385,21 @@ impl SharedManagedRuntimeFactoryOptions {
     fn register_prompt(
         &self,
         runtime: &NativeConversationRuntime,
-    ) -> Result<Option<crate::NativeInteractivePromptPrincipal>, ManagedRuntimeError> {
+        foreground: bool,
+    ) -> Result<Option<resources::Prompt>, ManagedRuntimeError> {
         self.prompts
             .as_ref()
             .map(|prompts| {
-                prompts
-                    .register(machine_god_core::BackgroundOutputOwner::new(
-                        runtime.id(),
-                        runtime.incarnation_id(),
-                    ))
-                    .map_err(|error| match error {
-                        crate::NativeInteractivePromptError::Busy
-                        | crate::NativeInteractivePromptError::Limit
-                        | crate::NativeInteractivePromptError::Exhausted => {
-                            ManagedRuntimeError::Capacity
-                        }
-                        _ => ManagedRuntimeError::Unavailable,
-                    })
+                let owner = machine_god_core::BackgroundOutputOwner::new(
+                    runtime.id(),
+                    runtime.incarnation_id(),
+                );
+                if foreground {
+                    prompts.reserve(owner).map(resources::Prompt::Reserved)
+                } else {
+                    prompts.register(owner).map(resources::Prompt::Active)
+                }
+                .map_err(prompt_error)
             })
             .transpose()
     }
@@ -448,6 +446,15 @@ impl SharedManagedRuntimeFactoryOptions {
                 .map_err(|_| ManagedRuntimeError::Invalid)?;
         }
         Ok(runtime)
+    }
+}
+
+fn prompt_error(error: crate::NativeInteractivePromptError) -> ManagedRuntimeError {
+    match error {
+        crate::NativeInteractivePromptError::Busy
+        | crate::NativeInteractivePromptError::Limit
+        | crate::NativeInteractivePromptError::Exhausted => ManagedRuntimeError::Capacity,
+        _ => ManagedRuntimeError::Unavailable,
     }
 }
 fn bind_mcp(

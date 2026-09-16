@@ -21,7 +21,11 @@ pub(super) struct Resources {
     admission: Option<BoxFuture<'static, ()>>,
     close_authority: CloseAuthority,
     closing: Close,
-    prompt: Option<crate::NativeInteractivePromptPrincipal>,
+    prompt: Option<Prompt>,
+}
+pub(super) enum Prompt {
+    Active(crate::NativeInteractivePromptPrincipal),
+    Reserved(crate::interactive_prompts::NativeInteractivePromptReservation),
 }
 #[derive(Clone)]
 pub(super) struct CloseAuthority {
@@ -96,7 +100,7 @@ impl Resources {
         binding: ManagedConversationBinding,
         mcp: Arc<McpLifetime>,
         preparation: NativeOwnedWorkerCompletion,
-        prompt: Option<crate::NativeInteractivePromptPrincipal>,
+        prompt: Option<Prompt>,
         close_authority: CloseAuthority,
     ) -> Self {
         Self {
@@ -112,6 +116,22 @@ impl Resources {
     }
 }
 impl ManagedRuntimeResources for Resources {
+    fn activate_foreground(&mut self) -> Result<(), ManagedRuntimeError> {
+        if !matches!(self.closing, Close::Open) {
+            return Err(ManagedRuntimeError::Unavailable);
+        }
+        self.prompt = match self.prompt.take() {
+            Some(Prompt::Reserved(reservation)) => match reservation.activate() {
+                Ok(principal) => Some(Prompt::Active(principal)),
+                Err((error, reservation)) => {
+                    self.prompt = Some(Prompt::Reserved(reservation));
+                    return Err(super::prompt_error(error));
+                }
+            },
+            current => current,
+        };
+        Ok(())
+    }
     fn mcp_controls(&self) -> Option<crate::managed::manager::factory::ManagedMcpControls> {
         if !matches!(self.closing, Close::Open) {
             return None;
@@ -189,7 +209,9 @@ impl ManagedRuntimeResources for Resources {
         }
         // Cut off exactly this principal's pending prompts and unconsumed
         // answers before waiting for any permission/elicitation cleanup.
-        self.prompt.take();
+        if let Some(Prompt::Active(mut principal)) = self.prompt.take() {
+            principal.retire();
+        }
         let preparation = self.preparation.clone();
         let admission = self.binding.admission_completion();
         self.closing = Close::Running(close_mcp(

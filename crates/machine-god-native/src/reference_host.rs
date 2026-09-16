@@ -543,6 +543,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
     managed: Option<managed_host::ManagedHostAssembly>,
+    managed_selected: bool,
     services: Arc<NativeHostServices>,
     background_opener:
         Option<Result<crate::NativeBackgroundUrlOpener, crate::NativeBackgroundOpenError>>,
@@ -1801,6 +1802,7 @@ impl NativeReferenceHost {
         .map(|mut host| {
             host.workspace_binding = workspace_binding;
             host.background_opener = background_opener;
+            host.managed_selected = managed.is_some();
             host.managed = managed;
             construction.transfer();
             host
@@ -1891,6 +1893,7 @@ impl NativeReferenceHost {
             credential_source,
             undo_tracker: None,
             managed: None,
+            managed_selected: false,
         })
     }
 }

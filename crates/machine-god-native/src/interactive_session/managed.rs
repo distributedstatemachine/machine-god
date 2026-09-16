@@ -552,9 +552,24 @@ fn start_parent_mcp(
     })
 }
 
+pub(super) fn stage(
+    agents: &mut Option<Box<Owner>>,
+    prepared: Prepared,
+) -> Result<Enrolled, EnrollmentError> {
+    retain(agents, prepared, false)
+}
+
 pub(super) fn enroll(
     agents: &mut Option<Box<Owner>>,
     prepared: Prepared,
+) -> Result<Enrolled, EnrollmentError> {
+    retain(agents, prepared, true)
+}
+
+fn retain(
+    agents: &mut Option<Box<Owner>>,
+    prepared: Prepared,
+    active: bool,
 ) -> Result<Enrolled, EnrollmentError> {
     match prepared {
         Prepared::Ordinary(runtime) => Ok((runtime, None)),
@@ -563,7 +578,12 @@ pub(super) fn enroll(
                 return Err((NativeInteractiveError::Configuration, prepared, reservation));
             };
             let runtime = prepared.runtime.clone();
-            match agents.agents.enroll_foreground(prepared, &reservation) {
+            let result = if active {
+                agents.agents.enroll_foreground(prepared, &reservation)
+            } else {
+                agents.agents.stage_foreground(prepared, &reservation)
+            };
+            match result {
                 Ok(selection) => Ok((runtime, Some(selection))),
                 Err((error, prepared)) => Err((
                     NativeInteractiveError::Managed(crate::reference_host::managed_error(error)),

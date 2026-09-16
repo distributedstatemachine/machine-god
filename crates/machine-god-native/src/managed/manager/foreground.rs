@@ -8,6 +8,12 @@ use super::{
 
 struct Identity;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Admission {
+    Staged,
+    Active,
+}
+
 /// Allocation-bound observation/retirement handle, never model-call authority.
 #[derive(Clone)]
 pub(crate) struct ManagedForegroundSelection(Weak<Identity>);
@@ -25,6 +31,7 @@ pub(super) struct Foreground {
     closed: bool,
     admission_waiting: bool,
     notice_drain: Option<crate::conversation_runtime::NativeNoticeDrain>,
+    admission: Admission,
 }
 impl Foreground {
     fn matches(&self, selected: &ManagedForegroundSelection) -> bool {
@@ -48,6 +55,14 @@ impl Foreground {
         let _ = self.prepared.runtime.request_active_cancel();
         let _ = self.prepared.runtime.clear_queued();
         self.prepared.resources.begin_close();
+        if self.prepared.runtime.status().phase == crate::NativeConversationRuntimePhase::Retired
+            && !self.prepared.runtime.notice_cleanup_pending()
+            && let Some(context) = &self.prepared.notice_context
+        {
+            // The exact runtime guard already confirmed its outbox is settled.
+            // Remaining MCP/worker cleanup does not own notice admission.
+            context.retire();
+        }
     }
 }
 impl Drop for Foreground {
@@ -91,7 +106,12 @@ impl ManagedManager {
         let parent = self
             .foregrounds
             .iter()
-            .find(|parent| !parent.closing && !parent.closed && parent.matches(selection))
+            .find(|parent| {
+                parent.admission == Admission::Active
+                    && !parent.closing
+                    && !parent.closed
+                    && parent.matches(selection)
+            })
             .ok_or(machine_god_core::ManagedSubagentError::Unavailable)?;
         let selected_cancel = cancellation.clone();
         self.mailbox.request_human(
@@ -116,6 +136,25 @@ impl ManagedManager {
         reservation: &super::ManagedForegroundReservation,
     ) -> Result<super::ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
     {
+        self.retain_foreground(prepared, reservation, true)
+    }
+
+    pub(crate) fn stage_foreground(
+        &mut self,
+        prepared: Box<PreparedManagedRuntime>,
+        reservation: &super::ManagedForegroundReservation,
+    ) -> Result<super::ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
+    {
+        self.retain_foreground(prepared, reservation, false)
+    }
+
+    fn retain_foreground(
+        &mut self,
+        mut prepared: Box<PreparedManagedRuntime>,
+        reservation: &super::ManagedForegroundReservation,
+        active: bool,
+    ) -> Result<super::ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
+    {
         let validate = || {
             if self.closing || !prepared.owner.principal().is_live() {
                 return Err(ManagedRuntimeError::Unavailable);
@@ -136,10 +175,18 @@ impl ManagedManager {
         if let Err(error) = validate() {
             return Err((error, prepared));
         }
-        if let Some(context) = &prepared.notice_context
-            && let Err(error) = self.register_parent_context(context)
-        {
+        if active && let Err(error) = prepared.resources.activate_foreground() {
             return Err((error, prepared));
+        }
+        if let Some(context) = &prepared.notice_context {
+            let registered = if active {
+                self.register_parent_context(context)
+            } else {
+                self.stage_parent_context(context)
+            };
+            if let Err(error) = registered {
+                return Err((error, prepared));
+            }
         }
         let identity = Arc::new(Identity);
         if let Err(error) = self.consume_foreground_reservation(reservation) {
@@ -155,8 +202,41 @@ impl ManagedManager {
             closed: false,
             admission_waiting: false,
             notice_drain: None,
+            admission: if active {
+                Admission::Active
+            } else {
+                Admission::Staged
+            },
         });
         Ok(selection)
+    }
+
+    pub(crate) fn activate_foreground(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+    ) -> Result<(), ManagedRuntimeError> {
+        if self.closing {
+            return Err(ManagedRuntimeError::Unavailable);
+        }
+        let parent = self
+            .foregrounds
+            .iter_mut()
+            .find(|parent| !parent.closing && parent.matches(selection))
+            .ok_or(ManagedRuntimeError::Invalid)?;
+        if parent.admission == Admission::Active {
+            return Ok(());
+        }
+        parent.prepared.resources.activate_foreground()?;
+        let context = parent.prepared.notice_context.clone();
+        if let Some(context) = context {
+            self.activate_parent_context(&context)?;
+        }
+        self.foregrounds
+            .iter_mut()
+            .find(|parent| parent.matches(selection))
+            .expect("retained foreground")
+            .admission = Admission::Active;
+        Ok(())
     }
 
     #[cfg(test)]

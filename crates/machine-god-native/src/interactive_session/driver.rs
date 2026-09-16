@@ -593,7 +593,7 @@ impl NativeInteractiveSession {
             }
             Poll::Ready(result) => {
                 let result = match result {
-                    Ok(prepared) => match super::managed::enroll(&mut self.managed, prepared) {
+                    Ok(prepared) => match super::managed::stage(&mut self.managed, prepared) {
                         Ok((runtime, selection)) => {
                             transition.managed_candidate = selection;
                             Ok(runtime)
@@ -775,16 +775,44 @@ impl NativeInteractiveSession {
                     return;
                 }
                 transition.guard.take();
-                if let Some(undo) = undo {
-                    undo.commit();
-                }
                 let source = principal(&self.current);
                 let destination = principal(&candidate);
                 if let Some(agents) = &mut self.managed {
-                    if let Some(selected) = agents.foreground.take() {
-                        agents.agents.retire_foreground(&selected);
+                    if let Some(selected) = &agents.foreground {
+                        agents.agents.retire_foreground(selected);
+                    }
+                    let activated = transition
+                        .managed_candidate
+                        .as_ref()
+                        .ok_or(NativeInteractiveError::Configuration)
+                        .and_then(|selected| {
+                            agents
+                                .agents
+                                .activate_foreground(selected)
+                                .map_err(NativeInteractiveError::Managed)
+                        });
+                    if let Err(error) = activated {
+                        // The original guard has retired admission and terminal
+                        // handoff committed. Keep both resource owners fenced;
+                        // activation failure is not a preserved-parent rejection.
+                        transition.phase = Phase::Fenced {
+                            candidate,
+                            undo,
+                            reset: result.reset,
+                            handoff: Some(handoff),
+                        };
+                        self.outcome = Some(NativeInteractiveOutcome::Indeterminate {
+                            request: transition.request.id,
+                            error,
+                            settled_turn: transition.terminal.take(),
+                        });
+                        self.transition = Some(transition);
+                        return;
                     }
                     agents.foreground = transition.managed_candidate.take();
+                }
+                if let Some(undo) = undo {
+                    undo.commit();
                 }
                 self.current = candidate;
                 self.outcome = Some(NativeInteractiveOutcome::Transition(

@@ -118,6 +118,11 @@ pub(crate) struct PreparedManagedRuntime {
 
 /// Per-principal/run cleanup custody, not a shared global completion observer.
 pub(crate) trait ManagedRuntimeResources: Send + 'static {
+    /// Publish an already-reserved foreground prompt endpoint. Construction may
+    /// reserve capacity, but must not replace an existing live registration.
+    fn activate_foreground(&mut self) -> Result<(), ManagedRuntimeError> {
+        Ok(())
+    }
     fn mcp_controls(&self) -> Option<ManagedMcpControls> {
         None
     }

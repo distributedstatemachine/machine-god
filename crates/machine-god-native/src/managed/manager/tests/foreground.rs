@@ -69,6 +69,48 @@ fn enroll(
 }
 
 #[test]
+fn staged_same_principal_context_cannot_activate_or_admit_human_work_before_retirement() {
+    let mut f = Fixture::new(vec![]);
+    let original = f.notified_foreground(f.notice_session());
+    let runtime = original.runtime.clone();
+    let context = original.notice_context.clone().unwrap();
+    let original = enroll(&mut f, original);
+    let replacement = f.notified_foreground(f.notice_session());
+    let next_context = replacement.notice_context.clone().unwrap();
+    let reservation = reserve(&mut f);
+    let replacement = f
+        .manager
+        .stage_foreground(Box::new(replacement), &reservation)
+        .unwrap();
+    assert_eq!(
+        f.manager.activate_foreground(&replacement),
+        Err(ManagedRuntimeError::Invalid)
+    );
+    assert!(!context.is_retired());
+    let command = machine_god_core::ManagedSubagentCommand::decode(
+        serde_json::json!({"command":{"inspect":{"id":"child-1","sections":["status"]}}}),
+    )
+    .unwrap();
+    assert!(
+        f.manager
+            .request_human_command(&replacement, command, CancellationToken::new())
+            .is_err()
+    );
+    let mut guard = runtime.begin_quiescence().unwrap();
+    block_on(guard.wait_idle()).unwrap();
+    guard.try_retire().unwrap();
+    assert!(f.manager.retire_foreground(&original));
+    assert!(context.is_retired());
+    f.manager.activate_foreground(&replacement).unwrap();
+    assert!(!next_context.is_retired());
+    assert!(
+        f.manager.parents.iter().any(|parent| {
+            parent.active && parent.context.ptr_eq(&Arc::downgrade(&next_context))
+        })
+    );
+}
+
+#[test]
 fn candidate_reservations_are_bounded_inert_and_cannot_be_reused_or_transferred() {
     let mut f = Fixture::new(vec![]);
     let mut foreign = Fixture::new(vec![]);

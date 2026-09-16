@@ -155,6 +155,15 @@ policy. Explicit human attach/reparent commands need no second model-tool
 approval, but retain the same target, graph, generation and publication checks.
 Neither a child label nor a navigation projection constructs human admission.
 
+Foreground replacement stages inactive prompt and notice registrations under
+the same aggregate capacity bounds as live registrations. A staged successor
+may share the old parent's durable session identity, but does not receive prompts,
+notice replay, or human commands. Only retirement of the exact original runtime
+allows its replacement registrations to activate. Dropping a candidate refunds
+only its own reservations; it does not retire the current parent or siblings.
+An activation failure after committed retirement fences retained resource owners
+and is reported as indeterminate rather than as a preserved-parent rejection.
+
 ## Principal isolation
 
 Native registers each principal from an actual session's weak allocation witness,

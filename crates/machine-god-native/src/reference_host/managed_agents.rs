@@ -112,11 +112,12 @@ impl fmt::Debug for NativeManagedAgents {
 }
 
 impl NativeReferenceHost {
-    /// Whether this host selected an actual managed-agent owner. MCP preparation
-    /// seeds also exist on unmanaged hosts and do not select that lifecycle.
+    /// Whether this host selected the managed-agent lifecycle, including after
+    /// its assembly transfers to the outer owner. An MCP seed alone does not
+    /// select that lifecycle.
     #[must_use]
     pub fn managed_agents_selected(&self) -> bool {
-        self.managed.is_some()
+        self.managed_selected
     }
 
     fn validate_managed_open(&self) -> Result<(), NativeManagedAgentsError> {
@@ -472,6 +473,24 @@ impl NativeManagedAgents {
     ) -> Result<ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
     {
         self.manager.enroll_foreground(prepared, reservation)
+    }
+
+    pub(crate) fn stage_foreground(
+        &mut self,
+        prepared: Box<PreparedManagedRuntime>,
+        reservation: &ManagedForegroundReservation,
+    ) -> Result<ManagedForegroundSelection, (ManagedRuntimeError, Box<PreparedManagedRuntime>)>
+    {
+        self.manager.stage_foreground(prepared, reservation)
+    }
+
+    pub(crate) fn activate_foreground(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+    ) -> Result<(), NativeManagedAgentsError> {
+        self.manager
+            .activate_foreground(selection)
+            .map_err(map_error)
     }
 
     pub(crate) fn reserve_foreground(

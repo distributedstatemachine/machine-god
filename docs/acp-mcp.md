@@ -74,7 +74,8 @@ the newly prepared workspace and state descriptors against the existing host's
 retained scope. Canonical spelling alone is insufficient. A checked reuse token
 is weakly bound to that exact host allocation and request spelling; a different
 domain requires a fresh host and permission registry.
-The reuse path requires an actual managed host owner. An inert child MCP
+The reuse path requires an explicitly selected managed lifecycle, which remains
+selected after its assembly transfers from the host to the outer owner. An inert child MCP
 preparation seed on an unmanaged embedding host does not select that lifecycle;
 such a host still uses fresh composition and explicit ephemeral-peer settlement.
 
@@ -87,6 +88,14 @@ and retires only the old parent; children and their interactions remain owned by
 the same manager. Command services and load history then follow the actual new
 foreground. Load replays history; resume does not. Successful native commitment
 wins cancellation that arrives after commitment.
+
+Loading or resuming the currently selected transcript preserves its durable
+session identity but still replaces the actual conversation and ephemeral MCP
+allocations. The candidate reserves prompt and notice registration capacity
+without becoming a live routing target. Activation follows exact old-runtime
+retirement; abandoning preparation releases only the candidate's reservations.
+Failure after retirement is indeterminate and retains cleanup custody, not a
+claim that the retired parent remains usable.
 
 Different-domain selection waits for complete old-host retirement before
 activating the candidate registry. Candidate failure before retirement preserves

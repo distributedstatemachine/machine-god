@@ -11,6 +11,7 @@ use super::{
 
 pub(super) struct Parent {
     pub context: Weak<ParentNoticeContext>,
+    pub active: bool,
     pub completed: Option<NoticeCheckpoint>,
     pub clear: Option<NoticeDelivery>,
     pub clearing:
@@ -43,22 +44,42 @@ impl ManagedManager {
         &mut self,
         context: &Arc<ParentNoticeContext>,
     ) -> Result<(), ManagedRuntimeError> {
+        self.retain_parent_context(context, true)
+    }
+
+    pub(super) fn stage_parent_context(
+        &mut self,
+        context: &Arc<ParentNoticeContext>,
+    ) -> Result<(), ManagedRuntimeError> {
+        self.retain_parent_context(context, false)
+    }
+
+    fn retain_parent_context(
+        &mut self,
+        context: &Arc<ParentNoticeContext>,
+        active: bool,
+    ) -> Result<(), ManagedRuntimeError> {
         if context.is_retired() {
             return Err(ManagedRuntimeError::Unavailable);
         }
         self.parents
             .retain(|parent| parent.context.strong_count() > 0);
         let weak = Arc::downgrade(context);
-        if self
+        if let Some(parent) = self
             .parents
             .iter()
-            .any(|parent| parent.context.ptr_eq(&weak))
+            .find(|parent| parent.context.ptr_eq(&weak))
         {
-            return Ok(());
+            return if parent.active == active {
+                Ok(())
+            } else {
+                Err(ManagedRuntimeError::Invalid)
+            };
         }
         if self
             .parents
             .iter()
+            .filter(|parent| active || !parent.active)
             .filter_map(|parent| parent.context.upgrade())
             .any(|parent| !parent.is_retired() && parent.principal() == context.principal())
         {
@@ -71,10 +92,38 @@ impl ManagedManager {
         }
         self.parents.push(Parent {
             context: weak,
+            active,
             completed: None,
             clear: None,
             clearing: None,
         });
+        self.replay_reset |= active;
+        Ok(())
+    }
+
+    pub(super) fn activate_parent_context(
+        &mut self,
+        context: &Arc<ParentNoticeContext>,
+    ) -> Result<(), ManagedRuntimeError> {
+        if context.is_retired() {
+            return Err(ManagedRuntimeError::Unavailable);
+        }
+        let weak = Arc::downgrade(context);
+        if self.parents.iter().any(|parent| {
+            parent.active
+                && !parent.context.ptr_eq(&weak)
+                && parent.context.upgrade().is_some_and(|original| {
+                    !original.is_retired() && original.principal() == context.principal()
+                })
+        }) {
+            return Err(ManagedRuntimeError::Invalid);
+        }
+        let parent = self
+            .parents
+            .iter_mut()
+            .find(|parent| parent.context.ptr_eq(&weak))
+            .ok_or(ManagedRuntimeError::Invalid)?;
+        parent.active = true;
         self.replay_reset = true;
         Ok(())
     }

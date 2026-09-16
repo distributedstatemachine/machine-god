@@ -1,5 +1,93 @@
 use super::*;
 
+#[test]
+fn same_transcript_replacement_transfers_actual_prompt_registration_without_rebinding_old_one() {
+    run(async {
+        let inbox = crate::NativeInteractivePromptInbox::new(
+            crate::NativeInteractivePromptLimits::default(),
+        )
+        .unwrap();
+        let factory = Arc::new(Factory::new());
+        factory.select_managed_inbox(&inbox);
+        let mut owner = NativeAcpSelectionOwner::new(factory.clone());
+        owner
+            .request(
+                NativeAcpSessionSelection::New,
+                factory.workspace.clone(),
+                empty(),
+                1,
+            )
+            .unwrap();
+        assert!(matches!(
+            outcome(&mut owner).await,
+            NativeAcpSelectionOutcome::Selected { .. }
+        ));
+        let principal = owner.current().unwrap().principal();
+        let host = Arc::downgrade(owner.current_host().unwrap());
+        for selection in [
+            NativeAcpSessionSelection::Load(principal.session_id().clone()),
+            NativeAcpSessionSelection::Resume(principal.session_id().clone()),
+        ] {
+            let original = inbox.registration_for_owner(&principal).unwrap();
+            let runtime = Arc::downgrade(owner.current().unwrap().runtime());
+            let mcp = Arc::downgrade(
+                owner
+                    .current()
+                    .unwrap()
+                    .command_services
+                    .mcp
+                    .as_ref()
+                    .unwrap(),
+            );
+            owner
+                .request(selection, factory.workspace.clone(), empty(), 2)
+                .unwrap();
+            assert!(matches!(
+                outcome(&mut owner).await,
+                NativeAcpSelectionOutcome::Selected { .. }
+            ));
+            assert_eq!(owner.current().unwrap().principal(), principal);
+            assert!(host.ptr_eq(&Arc::downgrade(owner.current_host().unwrap())));
+            assert!(!runtime.ptr_eq(&Arc::downgrade(owner.current().unwrap().runtime())));
+            assert!(
+                !mcp.ptr_eq(&Arc::downgrade(
+                    owner
+                        .current()
+                        .unwrap()
+                        .command_services
+                        .mcp
+                        .as_ref()
+                        .unwrap()
+                ))
+            );
+            assert!(!original.is_live());
+            assert!(inbox.registration_for_owner(&principal).unwrap().is_live());
+            let _ = owner.current_mut().unwrap().take_loaded_history();
+        }
+        let original = inbox.registration_for_owner(&principal).unwrap();
+        owner
+            .request(
+                NativeAcpSessionSelection::Resume(SessionId::new("missing-handover").unwrap()),
+                factory.workspace.clone(),
+                empty(),
+                3,
+            )
+            .unwrap();
+        assert!(matches!(
+            outcome(&mut owner).await,
+            NativeAcpSelectionOutcome::Rejected {
+                old_preserved: true,
+                ..
+            }
+        ));
+        assert!(original.is_live());
+        assert_eq!(factory.preparations.load(Ordering::Acquire), 1);
+        close(&mut owner).await;
+        assert!(!original.is_live());
+        assert!(inbox.registration_for_owner(&principal).is_none());
+    });
+}
+
 async fn opened() -> (Arc<Factory>, NativeAcpSelectionOwner) {
     let factory = Arc::new(Factory::new());
     factory.managed.store(true, Ordering::Release);
