@@ -176,7 +176,32 @@ struct PrincipalState {
 /// cancellation wakers are never invoked while this mutex is held.
 #[derive(Clone, Default)]
 pub(crate) struct TerminalAccessPrincipals(Arc<Mutex<PrincipalState>>);
+#[cfg(any(feature = "ai-gateway-http", test))]
+pub(super) enum TerminalObservation {
+    Unregistered,
+    Active(CancellationToken),
+    Revoked,
+    Closed,
+}
 impl TerminalAccessPrincipals {
+    /// Read-only classification. An absent owner does not allocate a writer or
+    /// revive a retired generation, even when its durable history exists.
+    #[cfg(any(feature = "ai-gateway-http", test))]
+    pub(super) fn observation(&self, owner: &BackgroundOutputOwner) -> TerminalObservation {
+        let state = self.lock();
+        if state.closed {
+            return TerminalObservation::Closed;
+        }
+        match state
+            .principals
+            .iter()
+            .find(|principal| &principal.owner == owner)
+        {
+            None => TerminalObservation::Unregistered,
+            Some(principal) if principal.revoked.is_cancelled() => TerminalObservation::Revoked,
+            Some(principal) => TerminalObservation::Active(principal.revoked.clone()),
+        }
+    }
     /// Observation only: background queries cannot activate a principal.
     pub(super) fn current(
         &self,

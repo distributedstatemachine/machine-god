@@ -153,6 +153,9 @@ fn id(number: u32) -> TerminalSessionId {
 }
 impl Fixture {
     fn new(rows: Vec<Row>) -> Self {
+        Self::with_registration(rows, true)
+    }
+    fn with_registration(rows: Vec<Row>, registered: bool) -> Self {
         let mut random = [0; 16];
         getrandom::fill(&mut random).unwrap();
         let path = std::env::temp_dir().join(format!(
@@ -165,7 +168,9 @@ impl Fixture {
             .unwrap();
         let worker_path = path.clone();
         let principals = TerminalAccessPrincipals::default();
-        principals.acquire(owner("a")).unwrap();
+        if registered {
+            principals.acquire(owner("a")).unwrap();
+        }
         let worker_principals = principals.clone();
         let initialized = Arc::new(AtomicUsize::new(0));
         let worker_initialized = initialized.clone();
@@ -398,6 +403,143 @@ fn inert_unknown_principal_cancelled_and_closed_requesters_never_initialize() {
         NativeTerminalBackgroundError::Closed
     );
     assert_eq!(fixture.initialized.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn read_only_observation_of_unregistered_owner_preserves_history_without_granting_controls() {
+    let fixture = Fixture::with_registration(vec![Row::new(1, 1, true)], false);
+    let snapshot = block_on(observation_request(
+        fixture.requester(),
+        fixture.principals.clone(),
+        owner("a"),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(snapshot.entries().len(), 1);
+    assert!(snapshot.entries()[0].recovered());
+    assert!(!snapshot.entries()[0].owns_backend());
+    assert!(matches!(
+        fixture.principals.observation(&owner("a")),
+        lifecycle::TerminalObservation::Unregistered
+    ));
+    assert_eq!(
+        fixture.select("a", Some(1)).unwrap_err(),
+        NativeTerminalBackgroundError::NotFound
+    );
+    assert_eq!(
+        fixture.snapshot().unwrap_err(),
+        NativeTerminalBackgroundError::NotFound
+    );
+
+    let empty = block_on(observation_request(
+        fixture.requester(),
+        fixture.principals.clone(),
+        owner("new-child"),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert!(empty.entries().is_empty());
+    assert!(
+        !fixture
+            .path
+            .join("terminal-v1")
+            .join(crate::terminal_catalog::owner_name(
+                "/workspace",
+                &owner("new-child")
+            ))
+            .exists(),
+        "empty navigation must not consume a persistent owner namespace"
+    );
+    assert!(matches!(
+        fixture.principals.observation(&owner("new-child")),
+        lifecycle::TerminalObservation::Unregistered
+    ));
+    assert_eq!(
+        fixture.select("new-child", None).unwrap_err(),
+        NativeTerminalBackgroundError::NotFound
+    );
+}
+
+#[test]
+fn read_only_observation_never_revives_retired_or_closed_access_and_is_inert_before_poll() {
+    let fixture = Fixture::new(vec![]);
+    drop(observation_request(
+        fixture.requester(),
+        fixture.principals.clone(),
+        owner("a"),
+        CancellationToken::new(),
+    ));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert_eq!(
+        block_on(observation_request(
+            fixture.requester(),
+            fixture.principals.clone(),
+            owner("unknown"),
+            cancellation
+        ))
+        .unwrap_err(),
+        NativeTerminalBackgroundError::Cancelled
+    );
+    fixture.principals.current(&owner("a")).unwrap().0.cancel();
+    assert_eq!(
+        block_on(observation_request(
+            fixture.requester(),
+            fixture.principals.clone(),
+            owner("a"),
+            CancellationToken::new()
+        ))
+        .unwrap_err(),
+        NativeTerminalBackgroundError::Revoked
+    );
+    fixture.principals.retire_all();
+    assert_eq!(
+        block_on(observation_request(
+            fixture.requester(),
+            fixture.principals.clone(),
+            owner("unknown"),
+            CancellationToken::new()
+        ))
+        .unwrap_err(),
+        NativeTerminalBackgroundError::Closed
+    );
+    assert_eq!(fixture.initialized.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn queued_unregistered_observation_rechecks_revocation_before_reading_history() {
+    let fixture = Fixture::new(vec![]);
+    let (entered, entry) = mpsc::sync_channel(1);
+    let (release, gate) = mpsc::sync_channel(1);
+    let mut blocker = Box::pin(fixture.requester().request_with_context(
+        CancellationToken::new(),
+        move |_| {
+            entered.send(()).unwrap();
+            gate.recv_timeout(Duration::from_secs(10)).unwrap();
+        },
+    ));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(blocker.as_mut().poll(&mut cx).is_pending());
+    entry.recv_timeout(Duration::from_secs(10)).unwrap();
+    let mut snapshot = observation_request(
+        fixture.requester(),
+        fixture.principals.clone(),
+        owner("pending-child"),
+        CancellationToken::new(),
+    );
+    assert!(snapshot.as_mut().poll(&mut cx).is_pending());
+    fixture
+        .principals
+        .acquire(owner("pending-child"))
+        .unwrap()
+        .0
+        .cancel();
+    release.send(()).unwrap();
+    block_on(blocker).unwrap();
+    assert_eq!(
+        block_on(snapshot).unwrap_err(),
+        NativeTerminalBackgroundError::Revoked
+    );
 }
 
 #[test]

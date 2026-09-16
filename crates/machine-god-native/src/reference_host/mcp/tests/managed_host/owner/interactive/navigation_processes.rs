@@ -16,7 +16,18 @@ async fn act(owner: &mut NativeInteractiveSession, action: Action) {
 
 #[test]
 fn child_process_is_visible_only_through_its_original_runtime_scope() {
-    let mut fixture = Fixture::with_options("auto", true, options);
+    let helper = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY")
+        .expect("real child process fixture requires the fresh explicit release helper");
+    let mut fixture = Fixture::with_options("auto", true, |selected, directory, clock| {
+        options(selected, directory, clock).with_terminal(
+            crate::NativeReferenceHostTerminalOptions::new(
+                helper.into(),
+                Some("/bin/bash".into()),
+                vec![],
+            )
+            .unwrap(),
+        )
+    });
     let process_command = "printf child-process; exec /bin/sleep 30";
     fixture.transport.responses.lock().unwrap().extend([
         call(
@@ -33,7 +44,25 @@ fn child_process_is_visible_only_through_its_original_runtime_scope() {
         poll_fn(|cx| {
             let progress = owner.poll_progress(cx, 10);
             assert!(owner.managed_error().is_none());
-            if fixture.transport.requests.lock().unwrap().len() == 2
+            let ordinary_requests = fixture
+                .transport
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| {
+                    !request["tools"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|tool| tool["name"] == "permission_decision")
+                })
+                .count();
+            assert!(
+                ordinary_requests <= 2,
+                "unexpected additional child model request"
+            );
+            if ordinary_requests == 2
                 && owner
                     .managed_agents()
                     .iter()

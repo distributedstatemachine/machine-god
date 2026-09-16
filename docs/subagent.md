@@ -540,6 +540,12 @@ bounded by the terminal service's 128 rows and 1 MiB command/path-text budget.
 agent detail page; `/parent-processes` and `/agent-processes` make
 the scope explicit. Child resolution checks the original manager and resident
 generation, never a supplied ID alone, and does not load an archived runtime.
+An unused resident child can return an empty snapshot, or its retained own-origin
+history, without registering terminal access, allocating a writer, or creating an
+empty owner catalog. Observation
+never reactivates a retired principal; closed/revoked access remains an error.
+Public process selection and control still require their existing live terminal
+generation, independently of this native runtime-bound read-only projection.
 The original runtime's lifecycle lease remains held until the snapshot settles,
 including cancellation when the view closes. Refresh reads a new snapshot;
 scrolling visits only retained rows. Owned backends and history-only records are

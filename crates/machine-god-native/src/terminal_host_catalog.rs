@@ -139,6 +139,28 @@ impl TerminalHostCatalogs {
         owner: &BackgroundOutputOwner,
         cancellation: &CancellationToken,
     ) -> Result<&mut TerminalCatalog> {
+        self.select_catalog(store, owner, cancellation, true)?
+            .ok_or(TerminalCatalogViewError::Invalid)
+    }
+
+    /// Missing history is empty observation, not permission to publish a new
+    /// owner namespace or retain another catalog lease.
+    pub(crate) fn existing_catalog(
+        &mut self,
+        store: &TerminalProfileStore,
+        owner: &BackgroundOutputOwner,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<&mut TerminalCatalog>> {
+        self.select_catalog(store, owner, cancellation, false)
+    }
+
+    fn select_catalog(
+        &mut self,
+        store: &TerminalProfileStore,
+        owner: &BackgroundOutputOwner,
+        cancellation: &CancellationToken,
+        create: bool,
+    ) -> Result<Option<&mut TerminalCatalog>> {
         if cancellation.is_cancelled() {
             return Err(TerminalCatalogViewError::Cancelled);
         }
@@ -153,7 +175,14 @@ impl TerminalHostCatalogs {
             transaction
                 .validate_catalog(&self.catalogs[index].1)
                 .map_err(TerminalCatalogViewError::Profile)?;
-            return Ok(&mut self.catalogs[index].1);
+            return Ok(Some(&mut self.catalogs[index].1));
+        }
+        if !create
+            && !transaction
+                .contains_catalog(&self.workspace, owner)
+                .map_err(TerminalCatalogViewError::Profile)?
+        {
+            return Ok(None);
         }
         if self.catalogs.len() == MAX_PROFILE_OWNERS {
             return Err(TerminalCatalogViewError::ResourceLimit);
@@ -162,7 +191,9 @@ impl TerminalHostCatalogs {
             .prepare_catalog(self.workspace.clone(), owner.clone())
             .map_err(TerminalCatalogViewError::Profile)?;
         self.catalogs.push((owner.clone(), catalog));
-        Ok(&mut self.catalogs.last_mut().expect("catalog inserted").1)
+        Ok(Some(
+            &mut self.catalogs.last_mut().expect("catalog inserted").1,
+        ))
     }
 
     /// Opens one cold history without promoting it to resident/native authority.

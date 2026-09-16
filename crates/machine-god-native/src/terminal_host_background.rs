@@ -215,6 +215,38 @@ impl NativeTerminalBackgroundRequester {
         }
     }
 
+    /// Native navigation resolves an actual runtime, never a supplied owner ID.
+    /// Keep that runtime's admission lease through worker settlement without
+    /// activating terminal access merely to read its bounded catalog.
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn observe_runtime(
+        &self,
+        runtime: &crate::NativeConversationRuntime,
+        cancellation: CancellationToken,
+    ) -> Result<(
+        BackgroundOutputOwner,
+        BoxFuture<'static, Result<NativeTerminalBackgroundSnapshot>>,
+    )> {
+        let permit = runtime
+            .acquire_file_control()
+            .map_err(|_| NativeTerminalBackgroundError::Unavailable)?;
+        let owner = BackgroundOutputOwner::new(runtime.id(), runtime.incarnation_id());
+        let future = observation_request(
+            self.requester.clone(),
+            self.principals.clone(),
+            owner.clone(),
+            cancellation,
+        );
+        Ok((
+            owner,
+            Box::pin(async move {
+                let result = future.await;
+                drop(permit);
+                result
+            }),
+        ))
+    }
+
     /// No effects before polling. Unknown/retired principals never create authority.
     #[must_use]
     pub fn snapshot(
@@ -362,7 +394,49 @@ where
             .ok_or(NativeTerminalBackgroundError::NotFound)?;
         requester
             .request_with_context(cancellation, move |mut context| {
-                snapshot_with(&mut context, &owner, &access)
+                snapshot_with(&mut context, &owner, Some(&access))
+            })
+            .await
+            .map_err(runtime_error)?
+    })
+}
+
+#[cfg(any(feature = "ai-gateway-http", test))]
+fn observed_generation(
+    principals: &TerminalAccessPrincipals,
+    owner: &BackgroundOutputOwner,
+) -> Result<Option<CancellationToken>> {
+    use super::lifecycle::TerminalObservation;
+    match principals.observation(owner) {
+        TerminalObservation::Unregistered => Ok(None),
+        TerminalObservation::Active(generation) => Ok(Some(generation)),
+        TerminalObservation::Revoked => Err(NativeTerminalBackgroundError::Revoked),
+        TerminalObservation::Closed => Err(NativeTerminalBackgroundError::Closed),
+    }
+}
+
+#[cfg(any(feature = "ai-gateway-http", test))]
+fn observation_request<B, S>(
+    requester: TerminalRuntimeRequester<B, S>,
+    principals: TerminalAccessPrincipals,
+    owner: BackgroundOutputOwner,
+    cancellation: CancellationToken,
+) -> BoxFuture<'static, Result<NativeTerminalBackgroundSnapshot>>
+where
+    B: TerminalSessionBackend + Send + 'static,
+    S: TerminalCatalogState + 'static,
+{
+    Box::pin(async move {
+        check_cancel(&cancellation)?;
+        let generation = observed_generation(&principals, &owner)?;
+        requester
+            .request_with_context(cancellation, move |mut context| {
+                // Check again after queueing and I/O, including a formerly absent
+                // principal being retired while this observation was pending.
+                observed_generation(&principals, &owner)?;
+                let snapshot = snapshot_with(&mut context, &owner, generation.as_ref())?;
+                observed_generation(&principals, &owner)?;
+                Ok(snapshot)
             })
             .await
             .map_err(runtime_error)?
@@ -389,7 +463,7 @@ where
         let admitted_access = access.clone();
         let snapshot = requester
             .request_with_context(cancellation, move |mut context| {
-                snapshot_with(&mut context, &admitted_owner, &admitted_access)
+                snapshot_with(&mut context, &admitted_owner, Some(&admitted_access))
             })
             .await
             .map_err(runtime_error)??;
@@ -414,9 +488,9 @@ where
 fn snapshot_with<B: TerminalSessionBackend, S: TerminalCatalogState>(
     context: &mut TerminalOwnerContext<'_, B, S>,
     owner: &BackgroundOutputOwner,
-    generation: &CancellationToken,
+    generation: Option<&CancellationToken>,
 ) -> Result<NativeTerminalBackgroundSnapshot> {
-    if generation.is_cancelled() {
+    if generation.is_some_and(CancellationToken::is_cancelled) {
         return Err(NativeTerminalBackgroundError::Revoked);
     }
     let access = context
@@ -429,11 +503,23 @@ fn snapshot_with<B: TerminalSessionBackend, S: TerminalCatalogState>(
     let mut remaining_text = MAX_TEXT_BYTES;
     for origin in access.origins(owner) {
         check_cancel(context.cancellation)?;
-        let catalog = context
-            .state
-            .catalogs()
-            .catalog(context.store, &origin, context.cancellation)
-            .map_err(catalog_error)?;
+        let catalog = if generation.is_none() {
+            let Some(catalog) = context
+                .state
+                .catalogs()
+                .existing_catalog(context.store, &origin, context.cancellation)
+                .map_err(catalog_error)?
+            else {
+                continue;
+            };
+            catalog
+        } else {
+            context
+                .state
+                .catalogs()
+                .catalog(context.store, &origin, context.cancellation)
+                .map_err(catalog_error)?
+        };
         let rows = describe_selected_with(
             context.registry,
             context.store,
@@ -446,7 +532,9 @@ fn snapshot_with<B: TerminalSessionBackend, S: TerminalCatalogState>(
             MAX_ROWS - entries.len(),
             |id| access.visible(owner, &origin, id),
             |facts, public, resident, owns_backend| {
-                if generation.is_cancelled() || context.cancellation.is_cancelled() {
+                if generation.is_some_and(CancellationToken::is_cancelled)
+                    || context.cancellation.is_cancelled()
+                {
                     return Err(TerminalCatalogViewError::Cancelled);
                 }
                 let metadata = facts.metadata.ok_or(TerminalCatalogViewError::Invalid)?;
@@ -485,7 +573,7 @@ fn snapshot_with<B: TerminalSessionBackend, S: TerminalCatalogState>(
     if ids.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err(NativeTerminalBackgroundError::Invalid);
     }
-    if generation.is_cancelled() {
+    if generation.is_some_and(CancellationToken::is_cancelled) {
         return Err(NativeTerminalBackgroundError::Revoked);
     }
     Ok(NativeTerminalBackgroundSnapshot { entries })

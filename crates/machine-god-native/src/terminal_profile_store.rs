@@ -240,6 +240,21 @@ impl TerminalProfileTransaction<'_> {
         result
     }
 
+    /// Observe bounded existing topology without creating an owner namespace.
+    pub(crate) fn contains_catalog(
+        &self,
+        workspace: &str,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<bool> {
+        if !canonical_workspace(workspace) {
+            return Err(TerminalProfileStoreError::Invalid);
+        }
+        let key = owner_name(workspace, owner);
+        let found = self.topology()?.iter().any(|entry| entry.name == key);
+        self.validate()?;
+        Ok(found)
+    }
+
     /// Admit an empty retained-session directory before mkdir. The catalog's
     /// existing per-owner limit, duplicate errors, fsync and poison rules remain
     /// authoritative; this adds exact profile binding and the global limit.

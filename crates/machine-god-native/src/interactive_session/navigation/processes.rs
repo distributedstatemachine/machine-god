@@ -22,19 +22,11 @@ pub(super) fn snapshot(
         .host
         .terminal_background_requester()
         .ok_or(Error::Unavailable)?;
-    let permit = runtime
-        .acquire_file_control()
+    let (principal, future) = requester
+        .observe_runtime(runtime, cancellation)
         .map_err(|_| Error::Unavailable)?;
-    let principal = BackgroundOutputOwner::new(runtime.id(), runtime.incarnation_id());
-    let future = requester.snapshot(principal.clone(), cancellation);
     Ok((
         principal,
-        Box::pin(async move {
-            let result = future.await.map_err(|_| Error::Unavailable);
-            // The original lifecycle lease survives worker settlement. Neither
-            // frame replacement nor closing the view drops an admitted operation.
-            drop(permit);
-            result
-        }),
+        Box::pin(async move { future.await.map_err(|_| Error::Unavailable) }),
     ))
 }
