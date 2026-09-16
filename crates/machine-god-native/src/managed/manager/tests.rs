@@ -1,5 +1,6 @@
 use super::super::store;
 use super::*;
+mod catalog;
 mod delivery;
 mod fixture;
 mod foreground;

@@ -10,6 +10,11 @@ impl ManagedManager {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Result<bool, ManagedRuntimeError> {
+        // At most one catalog read before giving ordinary durable work its next
+        // turn. A retained page is bounded and cannot delay child execution.
+        if !self.catalog.yield_to_work() && self.begin_catalog() {
+            return Ok(true);
+        }
         if let Some(index) = self
             .children
             .iter()
@@ -186,7 +191,7 @@ impl ManagedManager {
         if self.begin_replay() {
             return Ok(true);
         }
-        Ok(false)
+        Ok(self.begin_catalog())
     }
     pub(in crate::managed::manager) fn has_capacity(&self) -> bool {
         let reserved = self.reserved_foregrounds();

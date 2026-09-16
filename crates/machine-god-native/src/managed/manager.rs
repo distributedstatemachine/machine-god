@@ -1,5 +1,6 @@
 //! Outer native managed-agent ownership, independent of the foreground UI.
 
+pub(crate) mod catalog;
 mod command;
 mod delivery;
 mod durability;
@@ -137,6 +138,13 @@ struct Retiring {
 }
 #[allow(clippy::large_enum_variant)] // Exactly one owned operation, never a resident-sized array.
 enum Active {
+    Catalog {
+        request: catalog::Request,
+        future: BoxFuture<
+            'static,
+            Result<super::store::JournalCatalogPage, super::store::JournalError>,
+        >,
+    },
     Replay(BoxFuture<'static, replay::Outcome>),
     Delivery(BoxFuture<'static, delivery::Outcome>),
     Command {
@@ -190,6 +198,7 @@ pub(crate) struct ManagedManager {
     next_operation: u64,
     round_robin: usize,
     closing: bool,
+    catalog: catalog::Catalog,
 }
 impl ManagedManager {
     #[allow(clippy::too_many_arguments)] // Explicit independent authority injections.
@@ -243,6 +252,7 @@ impl ManagedManager {
             next_operation: 1,
             round_robin: 0,
             closing: false,
+            catalog: catalog::Catalog::default(),
         })
     }
     pub(crate) fn retry_reconciliation(&self) {
@@ -253,6 +263,7 @@ impl ManagedManager {
             return;
         }
         self.closing = true;
+        self.catalog.close();
         self.wake_foreground_reservations();
         self.mailbox.close();
         self.pending_job.take();

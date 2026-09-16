@@ -67,7 +67,23 @@ impl ManagedManager {
         cancellation: machine_god_core::CancellationToken,
     ) -> Result<super::super::mailbox::ManagedCommandResponse, machine_god_core::ManagedSubagentError>
     {
+        self.request_observed_human_command(selection, None, command, cancellation)
+    }
+
+    pub(crate) fn request_observed_human_command(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+        observed: Option<super::catalog::NativeObservedManagedAgent>,
+        command: machine_god_core::ManagedSubagentCommand,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<super::super::mailbox::ManagedCommandResponse, machine_god_core::ManagedSubagentError>
+    {
         if self.closing {
+            return Err(machine_god_core::ManagedSubagentError::Unavailable);
+        }
+        if observed.as_ref().is_some_and(|observed| {
+            !self.owns_observation(observed) || !observed.matches_command(&command)
+        }) {
             return Err(machine_god_core::ManagedSubagentError::Unavailable);
         }
         let parent = self
@@ -84,6 +100,7 @@ impl ManagedManager {
                     parent.prepared.owner.principal().clone(),
                     selected_cancel,
                 )
+                .map(|actor| actor.with_observation(observed))
             },
             cancellation,
         )

@@ -20,6 +20,7 @@ pub(crate) struct HumanCommandLease {
     principal: Arc<NativePrincipal>,
     selected: NativeManagedCommandSnapshot,
     cancellation: CancellationToken,
+    observed: Option<super::manager::catalog::NativeObservedManagedAgent>,
 }
 
 impl ManagedCommandActor {
@@ -38,11 +39,32 @@ impl ManagedCommandActor {
             principal,
             selected,
             cancellation,
+            observed: None,
         })))
     }
 
     pub(crate) fn is_human(&self) -> bool {
         matches!(self, Self::Human(_))
+    }
+
+    pub(crate) fn with_observation(
+        mut self,
+        observed: Option<super::manager::catalog::NativeObservedManagedAgent>,
+    ) -> Self {
+        if let Self::Human(lease) = &mut self {
+            lease.observed = observed;
+        }
+        self
+    }
+
+    pub(crate) fn matches_observation(&self, snapshot: &super::store::JournalSnapshot) -> bool {
+        match self {
+            Self::Model(_) => true,
+            Self::Human(lease) => lease
+                .observed
+                .as_ref()
+                .is_none_or(|observed| observed.matches_snapshot(snapshot)),
+        }
     }
 
     pub(crate) fn is_live(&self) -> bool {

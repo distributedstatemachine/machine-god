@@ -298,6 +298,39 @@ impl NativeReferenceHost {
 }
 
 impl NativeManagedAgents {
+    /// Queues one bounded journal observation. The manager owns the read through
+    /// completion even if presentation is abandoned. No child runtime is loaded.
+    /// # Errors
+    /// Rejects shutdown, a pending/unconsumed page, invalid bounds or foreign cursor.
+    pub fn request_catalog(
+        &mut self,
+        filter: crate::NativeManagedCatalogFilter,
+        cursor: Option<crate::NativeManagedCatalogCursor>,
+        limit: usize,
+    ) -> Result<crate::NativeManagedCatalogRequest, crate::NativeManagedCatalogError> {
+        self.manager.request_catalog(filter, cursor, limit)
+    }
+
+    #[must_use]
+    pub fn take_catalog_outcome(&mut self) -> Option<crate::NativeManagedCatalogOutcome> {
+        self.manager.take_catalog_outcome()
+    }
+
+    pub(crate) fn request_observed_human_command(
+        &mut self,
+        selection: &ManagedForegroundSelection,
+        observed: crate::NativeObservedManagedAgent,
+        command: machine_god_core::ManagedSubagentCommand,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<NativeManagedCommandResponse, machine_god_core::ManagedSubagentError> {
+        self.manager.request_observed_human_command(
+            selection,
+            Some(observed),
+            command,
+            cancellation,
+        )
+    }
+
     pub(crate) fn request_human_command(
         &mut self,
         selection: &ManagedForegroundSelection,

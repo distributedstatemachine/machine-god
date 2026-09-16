@@ -23,6 +23,7 @@ impl ManagedManager {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Poll<Result<ManagerProgress, ManagedRuntimeError>> {
+        self.catalog.register(cx);
         let mut changed = false;
         for _ in 0..self.limits.work_per_poll {
             self.capture_mailbox(cx)?;
@@ -76,6 +77,16 @@ impl ManagedManager {
             return Ok(false);
         };
         match &mut active {
+            Active::Catalog { future, .. } => {
+                let Poll::Ready(result) = future.as_mut().poll(cx) else {
+                    self.active = Some(active);
+                    return Ok(false);
+                };
+                let Active::Catalog { request, .. } = active else {
+                    unreachable!()
+                };
+                self.catalog.finish(request, result);
+            }
             Active::Replay(future) => {
                 let Poll::Ready(outcome) = future.as_mut().poll(cx) else {
                     self.active = Some(active);

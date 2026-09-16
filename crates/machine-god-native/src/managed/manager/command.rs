@@ -100,6 +100,11 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
         if !authorized(job.lease(), &snapshot) {
             return Outcome::reject(job, &env.operation, ManagedFailureCode::PermissionDenied);
         }
+        // Recheck after queueing and loading, before even recovery publication.
+        // A UI row cannot silently retarget a reopened or concurrently changed head.
+        if !job.lease().matches_observation(&snapshot) {
+            return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);
+        }
         // Recovery never executes work or signals cancellation. It only records interruption.
         if snapshot.recovery_required() {
             snapshot = match durability::mutate(

@@ -8,6 +8,11 @@ use std::time::Instant;
 
 mod construction;
 mod managed_agents;
+pub use crate::managed::manager::catalog::{
+    NativeManagedCatalogCursor, NativeManagedCatalogEntry, NativeManagedCatalogError,
+    NativeManagedCatalogFilter, NativeManagedCatalogOutcome, NativeManagedCatalogPage,
+    NativeManagedCatalogRequest, NativeObservedManagedAgent,
+};
 pub(crate) use managed_agents::map_error as managed_error;
 mod managed_factory;
 pub use managed_agents::{

@@ -1155,8 +1155,11 @@ pub use read_tool_result::{
 ))]
 pub use reference_host::{
     NativeManagedAgentSelection, NativeManagedAgentView, NativeManagedAgents,
-    NativeManagedAgentsError, NativeManagedAgentsProgress, NativeManagedCommandResponse,
-    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+    NativeManagedAgentsError, NativeManagedAgentsProgress, NativeManagedCatalogCursor,
+    NativeManagedCatalogEntry, NativeManagedCatalogError, NativeManagedCatalogFilter,
+    NativeManagedCatalogOutcome, NativeManagedCatalogPage, NativeManagedCatalogRequest,
+    NativeManagedCommandResponse, NativeObservedManagedAgent, NativeReferenceHost,
+    NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
     NativeReferenceHostConversationOptions, NativeReferenceHostManagedOptions,
     NativeReferenceHostMcpEphemeralStartupOptions, NativeReferenceHostMcpOptions,
     NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,

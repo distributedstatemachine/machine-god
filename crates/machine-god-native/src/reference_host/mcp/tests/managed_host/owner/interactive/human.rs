@@ -4,7 +4,7 @@ use machine_god_core::{
     ManagedSubagentResult,
 };
 
-fn command(value: serde_json::Value) -> ManagedSubagentCommand {
+pub(super) fn command(value: serde_json::Value) -> ManagedSubagentCommand {
     ManagedSubagentCommand::decode(serde_json::Value::Object(serde_json::Map::from_iter([(
         "command".into(),
         value,
@@ -12,11 +12,11 @@ fn command(value: serde_json::Value) -> ManagedSubagentCommand {
     .unwrap()
 }
 
-fn create() -> ManagedSubagentCommand {
+pub(super) fn create() -> ManagedSubagentCommand {
     command(serde_json::json!({"create":{"name":"human-worker","mode":"persistent"}}))
 }
 
-async fn open(
+pub(super) async fn open(
     fixture: &mut Fixture,
 ) -> (NativeInteractiveSession, crate::NativeOwnedWorkerCompletion) {
     let (mut startup, host) = preselection::prepare(fixture).await;
@@ -33,7 +33,7 @@ async fn open(
     (owner, completion)
 }
 
-async fn response(
+pub(super) async fn response(
     owner: &mut NativeInteractiveSession,
     mut response: crate::NativeManagedCommandResponse,
 ) -> Result<ManagedSubagentResult, ManagedSubagentError> {
@@ -58,7 +58,7 @@ async fn response(
     .await
 }
 
-async fn submit(
+pub(super) async fn submit(
     owner: &mut NativeInteractiveSession,
     command: ManagedSubagentCommand,
 ) -> ManagedSubagentResult {
@@ -68,7 +68,7 @@ async fn submit(
     response(owner, pending).await.unwrap()
 }
 
-async fn close(
+pub(super) async fn close(
     mut owner: NativeInteractiveSession,
     completion: crate::NativeOwnedWorkerCompletion,
 ) {

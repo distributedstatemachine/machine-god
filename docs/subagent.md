@@ -454,6 +454,27 @@ cursors bind exact source, revision and selected sections, with bounded raw scan
 and one shared encoded result budget. A changed or retired cursor asks the caller
 to restart rather than silently changing the requested projection.
 
+The native owner also exposes a separate current/archived/all catalog over durable
+heads, including nonresident histories. One request scans at most 64 heads;
+filtering does not enlarge that bound, so an empty page can carry a continuation.
+Catalog reads share the manager's serialized journal slot and yield between reads
+to ordinary durable work. One pending or retained result prevents another read,
+but neither a retained result nor its weak cursor/row observations hold runtime
+or worker custody or prevent child progress. Shutdown rejects unstarted reads and
+settles any original in-flight read. Request receipts correlate exact outcomes.
+Traversal is a live-head scan, not a globally frozen snapshot; cursors bind the
+original manager and filter, and each row carries its own generation/revision.
+A saved state requiring owner recovery is labeled as such, not asserted to be
+current execution. Reading the catalog does not restore or recover a child.
+
+An observed-row human command captures authority from the actual current foreground
+and checks the selected manager, target, generation and revision again after its
+queued journal load, before recovery or mutation. A changed head rejects with
+`StaleGeneration`; observations grant no model-call or process-control authority.
+Parent replacement retains the outer catalog identity while retiring the old
+foreground admission. This observation boundary does not itself constitute a
+displayed-frame receipt or implement the CLI navigation/editor protocol.
+
 Restore explicitly repairs a saved original notice outbox before child execution;
 factory preparation itself never performs delivery recovery. Close waits for the
 resident's exact source acknowledgements and outbox clear. Reopen first prepares
