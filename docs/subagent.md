@@ -909,6 +909,14 @@ Dropping a borrowed cleanup wrapper retains its accepted cleanup future in the
 stage; another poll resumes that operation instead of starting a second one.
 Terminal cleanup failure remains an explicit failure requiring outer selection
 fencing; a later observer cannot turn it into a successful retirement receipt.
+The native interactive transition lane can consume this ready stage directly.
+It reuses the original granted ticket and MCP publication, applies the settled
+parent's workspace/policy selection, and never starts the selected peers again.
+Staged replacement cannot be silently superseded by an ordinary transition.
+Preparation/configuration failure keeps the original stage or prepared runtime
+and ticket until settlement; a failed settlement fences selection with custody
+retained. Shutdown also settles a staged request accepted before its first driver
+poll. Child ownership stays in the existing manager throughout these phases.
 
 Foreground enrollment uses the same assembly and cleanup resources with the
 caller's actual already-created or loaded session and explicit admitted

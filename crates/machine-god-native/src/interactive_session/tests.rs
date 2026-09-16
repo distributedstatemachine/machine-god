@@ -114,6 +114,7 @@ fn install(owner: &mut NativeInteractiveSession, phase: Phase) -> NativeInteract
         managed_candidate: None,
         managed_reservation: None,
         preparation_cancel: CancellationToken::new(),
+        external_stage: false,
     });
     receipt.id
 }

@@ -23,6 +23,8 @@ use crate::{
 };
 use machine_god_core::{BoxFuture, ManagedAgentState};
 use rustix::fd::OwnedFd;
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) use staged::{NativeManagedStagedFailure, NativeManagedStagedParent};
 use std::{
     fmt,
     num::NonZeroU64,

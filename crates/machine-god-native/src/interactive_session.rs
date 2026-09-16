@@ -593,6 +593,19 @@ impl NativeInteractiveSession {
         if self.is_fenced() {
             return Err(NativeInteractiveError::Busy);
         }
+        // ACP owns one original stage through readiness, adoption and cleanup.
+        // Another request cannot silently supersede its charged custody.
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|request| request.staged.is_some())
+            || self
+                .transition
+                .as_ref()
+                .is_some_and(|transition| transition.external_stage)
+        {
+            return Err(NativeInteractiveError::Busy);
+        }
         if self
             .control_outcome
             .as_ref()
@@ -611,7 +624,13 @@ impl NativeInteractiveSession {
                 .filter(|transition| !transition.committed())
                 .map(|transition| transition.request.id)
         });
-        self.pending = Some(Request { id, kind, now_ms });
+        self.pending = Some(Request {
+            id,
+            kind,
+            now_ms,
+            staged: None,
+            staged_cancellation: None,
+        });
         self.close_managed_navigation();
         if let Some(transition) = &self.transition {
             transition.cancel_preparation();
@@ -626,10 +645,25 @@ impl NativeInteractiveSession {
         self.cancel_copy();
         self.cancel_background_control();
         self.shutting_down = true;
+        if let Some(cancellation) = self
+            .pending
+            .as_ref()
+            .and_then(|request| request.staged_cancellation.as_ref())
+        {
+            cancellation.cancel();
+        }
         if let Some(transition) = &self.transition {
             transition.cancel_preparation();
         }
-        self.pending.take();
+        // A staged request already owns peers and a manager residency ticket.
+        // Keep it in the transition lane until original cleanup is observed.
+        if self
+            .pending
+            .as_ref()
+            .is_none_or(|request| request.staged.is_none())
+        {
+            self.pending.take();
+        }
         self.presentation.take();
         self.notify();
     }

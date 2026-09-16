@@ -15,6 +15,8 @@ pub(super) struct Request {
     pub id: NativeInteractiveRequestId,
     pub kind: NativeInteractiveTransition,
     pub now_ms: i64,
+    pub staged: Option<Box<crate::reference_host::NativeManagedStagedParent>>,
+    pub staged_cancellation: Option<CancellationToken>,
 }
 pub(super) struct Transition {
     pub request: Request,
@@ -25,6 +27,7 @@ pub(super) struct Transition {
     pub managed_candidate: Option<crate::managed::manager::ManagedForegroundSelection>,
     pub managed_reservation: Option<crate::managed::manager::ManagedForegroundReservation>,
     pub preparation_cancel: CancellationToken,
+    pub external_stage: bool,
 }
 pub(super) enum Phase {
     Draining,
@@ -32,6 +35,11 @@ pub(super) enum Phase {
     Preparing(BoxFuture<'static, Result<NativeConversation, NativeInteractiveError>>),
     Reserving(NativeConversation),
     Composing(BoxFuture<'static, Result<super::managed::Prepared, NativeInteractiveError>>),
+    ComposingStaged(
+        BoxFuture<'static, Result<super::managed::Prepared, super::managed::staged::Failure>>,
+    ),
+    SettlingStaged(BoxFuture<'static, super::managed::staged::Settled>),
+    StagedFenced(Box<super::managed::staged::Failure>),
     Ready(Arc<NativeConversationRuntime>),
     Committing {
         candidate: Arc<NativeConversationRuntime>,
@@ -51,6 +59,26 @@ pub(super) struct CommitResult {
     pub affected: bool,
 }
 impl Transition {
+    pub fn new(request: Request) -> Self {
+        let external_stage = request.staged.is_some();
+        let preparation_cancel = request.staged_cancellation.clone().unwrap_or_default();
+        Self {
+            request,
+            guard: None,
+            phase: Phase::Draining,
+            terminal: None,
+            prepared: None,
+            managed_candidate: None,
+            managed_reservation: None,
+            preparation_cancel,
+            external_stage,
+        }
+    }
+
+    pub fn staged_cancelled(&self) -> bool {
+        self.external_stage && self.preparation_cancel.is_cancelled()
+    }
+
     pub fn cancel_preparation(&self) {
         if !self.committed() {
             self.preparation_cancel.cancel();
@@ -60,7 +88,7 @@ impl Transition {
         matches!(self.phase, Phase::Committing { .. } | Phase::Fenced { .. })
     }
     pub fn is_fenced(&self) -> bool {
-        matches!(self.phase, Phase::Fenced { .. })
+        matches!(self.phase, Phase::Fenced { .. } | Phase::StagedFenced(_))
     }
     pub fn reset_receipt(&self) -> Option<&NativeTerminalResetReceipt> {
         match &self.phase {

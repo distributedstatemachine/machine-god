@@ -1,4 +1,5 @@
 //! Managed preparation and cleanup stay with the native interactive owner.
+pub(in crate::interactive_session) mod staged;
 use super::{
     Arc, BoxFuture, Context, NativeConversation, NativeConversationRuntime,
     NativeConversationRuntimeError, NativeInteractiveError, NativeInteractiveInitialSession,
@@ -106,8 +107,7 @@ impl NativeInteractiveSession {
         &self,
         transition: &mut Transition,
         conversation: NativeConversation,
-    ) -> Result<BoxFuture<'static, Result<Prepared, NativeInteractiveError>>, NativeInteractiveError>
-    {
+    ) -> Result<super::transition::Phase, NativeInteractiveError> {
         let guard = transition
             .guard
             .as_ref()
@@ -118,7 +118,32 @@ impl NativeInteractiveSession {
         let policy = snapshot.permission_policy().cloned();
         let catalog = snapshot.model_catalog().cloned();
         let now_ms = transition.request.now_ms;
-        Ok(match &self.managed {
+        if transition.request.staged.is_some() {
+            let owner = self
+                .managed
+                .as_ref()
+                .ok_or(NativeInteractiveError::Configuration)?;
+            let workspace = guard
+                .workspace_snapshot()?
+                .ok_or(NativeInteractiveError::Configuration)?;
+            let policy = policy.ok_or(NativeInteractiveError::Configuration)?;
+            let candidate = transition.request.staged.take().expect("retained stage");
+            return Ok(super::transition::Phase::ComposingStaged(staged::compose(
+                &owner.agents,
+                host,
+                &options,
+                *candidate,
+                conversation,
+                staged::Selection {
+                    workspace,
+                    policy,
+                    catalog,
+                    now_ms,
+                    cancellation: transition.preparation_cancel.clone(),
+                },
+            )));
+        }
+        Ok(super::transition::Phase::Composing(match &self.managed {
             Some(owner) => prepare(
                 &owner.agents,
                 host,
@@ -154,7 +179,7 @@ impl NativeInteractiveSession {
                 .await
                 .map(Prepared::Ordinary)
             }),
-        })
+        }))
     }
 
     /// Opens a managed interactive owner from this exact host and an explicitly
@@ -223,6 +248,16 @@ impl NativeInteractiveSession {
         let Some(owner) = &mut self.managed else {
             return Poll::Ready(Ok(()));
         };
+        if let Some(candidate) = &transition.request.staged {
+            // Staging already holds the exact granted ticket. Never reserve a
+            // second slot, or wait for quota occupied by this same candidate.
+            return Poll::Ready(
+                owner
+                    .agents
+                    .validate_staged_foreground(candidate)
+                    .map_err(NativeInteractiveError::Managed),
+            );
+        }
         if transition.managed_reservation.is_none() {
             transition.managed_reservation = Some(
                 owner

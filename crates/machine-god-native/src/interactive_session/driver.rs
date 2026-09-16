@@ -159,27 +159,26 @@ impl NativeInteractiveSession {
                 id: NativeInteractiveRequestId(0),
                 kind: NativeInteractiveTransition::New,
                 now_ms,
+                staged: None,
+                staged_cancellation: None,
             });
+            let mut transition = Transition::new(request);
             match self.quiesce_current() {
                 Ok(guard) => {
-                    self.transition = Some(Transition {
-                        request,
-                        guard: Some(guard),
-                        phase: Phase::Draining,
-                        terminal: None,
-                        prepared: None,
-                        managed_candidate: None,
-                        managed_reservation: None,
-                        preparation_cancel: machine_god_core::CancellationToken::new(),
-                    });
+                    transition.guard = Some(guard);
+                    self.transition = Some(transition);
                 }
                 Err(error) => {
+                    if transition.external_stage {
+                        self.reject(transition, error.into());
+                        return true;
+                    }
                     if self.shutting_down && self.outcome.is_some() {
                         self.shutdown_error = Some(error.into());
                         return false;
                     }
                     self.outcome = Some(NativeInteractiveOutcome::Rejected {
-                        request: request.id,
+                        request: transition.request.id,
                         error: error.into(),
                         settled_turn: None,
                         candidate: None,
@@ -217,6 +216,10 @@ impl NativeInteractiveSession {
     fn fail_turn(&mut self, error: NativeInteractiveError) {
         self.cancel_requested = false;
         if let Some(mut transition) = self.transition.take() {
+            if transition.request.staged.is_some() {
+                self.reject(transition, error);
+                return;
+            }
             self.retire_candidate(&mut transition);
             let request = self
                 .pending
@@ -233,9 +236,19 @@ impl NativeInteractiveSession {
         }
     }
     fn reject(&mut self, mut transition: Transition, error: NativeInteractiveError) {
+        if let Some(candidate) = transition.request.staged.take() {
+            transition.phase = Phase::SettlingStaged(super::managed::staged::settle_owned(
+                super::managed::staged::Failure::staged(error, *candidate),
+            ));
+            self.transition = Some(transition);
+            self.notify();
+            return;
+        }
         self.retire_candidate(&mut transition);
         if self.shutting_down && self.outcome.is_some() {
-            self.shutdown_error = Some(error);
+            if !matches!(error, NativeInteractiveError::Closed) {
+                self.shutdown_error = Some(error);
+            }
             return;
         }
         self.outcome = Some(NativeInteractiveOutcome::Rejected {
@@ -251,6 +264,11 @@ impl NativeInteractiveSession {
         candidate: Option<BackgroundOutputOwner>,
         error: Option<NativeInteractiveError>,
     ) {
+        if transition.request.staged.is_some() {
+            transition.prepared = candidate.or(transition.prepared);
+            self.reject(transition, error.unwrap_or(NativeInteractiveError::Closed));
+            return;
+        }
         self.retire_candidate(&mut transition);
         let candidate = candidate.or_else(|| transition.prepared.take());
         transition.prepared.take();
@@ -296,6 +314,22 @@ impl NativeInteractiveSession {
                 return self.drive_reserving(transition, conversation, cx);
             }
             Phase::Composing(future) => return self.drive_composing(transition, future, cx),
+            Phase::ComposingStaged(future) => {
+                return self.drive_staged_composing(transition, future, cx);
+            }
+            Phase::SettlingStaged(future) => {
+                return self.drive_staged_settling(transition, future, cx);
+            }
+            Phase::StagedFenced(failure) => {
+                // Cached failure is never retried toward a false success. Keep
+                // the original candidate and residency ticket behind the fence.
+                transition.phase = Phase::StagedFenced(failure);
+                if self.shutting_down {
+                    self.shutdown_error = Some(NativeInteractiveError::Unavailable);
+                }
+                self.transition = Some(transition);
+                return Poll::Pending;
+            }
             Phase::Ready(candidate) => return self.begin_commit(transition, candidate, cx),
             Phase::Committing {
                 candidate,
@@ -359,6 +393,65 @@ impl NativeInteractiveSession {
         Poll::Ready(())
     }
 
+    fn drive_staged_composing(
+        &mut self,
+        mut transition: Transition,
+        mut future: BoxFuture<
+            'static,
+            Result<super::managed::Prepared, super::managed::staged::Failure>,
+        >,
+        cx: &mut Context<'_>,
+    ) -> Poll<()> {
+        match future.as_mut().poll(cx) {
+            Poll::Pending => {
+                transition.phase = Phase::ComposingStaged(future);
+                self.transition = Some(transition);
+                return Poll::Pending;
+            }
+            Poll::Ready(Ok(prepared)) => {
+                transition.phase = Phase::Composing(Box::pin(async move { Ok(prepared) }));
+            }
+            Poll::Ready(Err(failure)) => {
+                transition.phase =
+                    Phase::SettlingStaged(super::managed::staged::settle_owned(failure));
+            }
+        }
+        self.transition = Some(transition);
+        Poll::Ready(())
+    }
+
+    fn drive_staged_settling(
+        &mut self,
+        mut transition: Transition,
+        mut future: BoxFuture<'static, super::managed::staged::Settled>,
+        cx: &mut Context<'_>,
+    ) -> Poll<()> {
+        match future.as_mut().poll(cx) {
+            Poll::Pending => {
+                transition.phase = Phase::SettlingStaged(future);
+                self.transition = Some(transition);
+                return Poll::Pending;
+            }
+            Poll::Ready((failure, Ok(()))) => {
+                self.reject(transition, failure.error);
+                return Poll::Ready(());
+            }
+            Poll::Ready((failure, Err(error))) => {
+                transition.phase = Phase::StagedFenced(Box::new(failure));
+                self.outcome = Some(NativeInteractiveOutcome::Indeterminate {
+                    request: transition.request.id,
+                    error: NativeInteractiveError::Managed(error),
+                    settled_turn: transition.terminal.take(),
+                });
+                if self.shutting_down {
+                    self.shutdown_error = Some(NativeInteractiveError::Managed(error));
+                }
+            }
+        }
+        self.transition = Some(transition);
+        Poll::Ready(())
+    }
+
     fn drive_waiting(
         &mut self,
         mut transition: Transition,
@@ -385,7 +478,15 @@ impl NativeInteractiveSession {
                     return Poll::Pending;
                 }
                 transition.guard = Some(guard);
+                if transition.staged_cancelled() {
+                    self.reject(transition, NativeInteractiveError::Closed);
+                    return Poll::Ready(());
+                }
                 if self.shutting_down {
+                    if transition.request.staged.is_some() {
+                        self.reject(transition, NativeInteractiveError::Closed);
+                        return Poll::Ready(());
+                    }
                     match transition
                         .guard
                         .as_mut()
@@ -432,6 +533,13 @@ impl NativeInteractiveSession {
                 return Poll::Pending;
             }
             Poll::Ready(result) => {
+                if transition.staged_cancelled() {
+                    if let Ok(conversation) = &result {
+                        transition.prepared = Some(conversation_principal(conversation));
+                    }
+                    self.reject(transition, NativeInteractiveError::Closed);
+                    return Poll::Ready(());
+                }
                 if self.pending.is_some() || self.shutting_down {
                     let (candidate, error) = match result {
                         Ok(conversation) => (Some(conversation_principal(&conversation)), None),
@@ -450,7 +558,7 @@ impl NativeInteractiveSession {
                 let source = principal(&self.current);
                 let destination = conversation_principal(&conversation);
                 transition.prepared = Some(destination.clone());
-                if source == destination {
+                if source == destination && !transition.external_stage {
                     self.outcome = Some(NativeInteractiveOutcome::Transition(
                         NativeInteractiveTransitionReceipt {
                             request: transition.request.id,
@@ -491,6 +599,18 @@ impl NativeInteractiveSession {
                             Ok(runtime)
                         }
                         Err((error, mut prepared, reservation)) => {
+                            if transition.external_stage {
+                                transition.phase =
+                                    Phase::SettlingStaged(super::managed::staged::settle_owned(
+                                        super::managed::staged::Failure::prepared(
+                                            error,
+                                            prepared,
+                                            reservation,
+                                        ),
+                                    ));
+                                self.transition = Some(transition);
+                                return Poll::Ready(());
+                            }
                             transition.phase = Phase::Composing(Box::pin(async move {
                                 let _reservation = reservation;
                                 super::managed::close_prepared(&mut prepared).await?;
@@ -529,6 +649,11 @@ impl NativeInteractiveSession {
         conversation: NativeConversation,
         cx: &Context<'_>,
     ) -> Poll<()> {
+        if transition.staged_cancelled() {
+            transition.prepared = Some(conversation_principal(&conversation));
+            self.reject(transition, NativeInteractiveError::Closed);
+            return Poll::Ready(());
+        }
         if self.pending.is_some() || self.shutting_down {
             self.supersede(
                 transition,
@@ -549,8 +674,8 @@ impl NativeInteractiveSession {
             }
             Poll::Ready(Ok(())) => {
                 match self.compose_candidate(&mut transition, conversation) {
-                    Ok(future) => {
-                        transition.phase = Phase::Composing(future);
+                    Ok(phase) => {
+                        transition.phase = phase;
                         self.transition = Some(transition);
                     }
                     Err(error) => self.reject(transition, error),
@@ -566,6 +691,10 @@ impl NativeInteractiveSession {
         candidate: Arc<NativeConversationRuntime>,
         cx: &mut Context<'_>,
     ) -> Poll<()> {
+        if transition.staged_cancelled() {
+            self.reject(transition, NativeInteractiveError::Closed);
+            return Poll::Ready(());
+        }
         if self.pending.is_some() || self.shutting_down {
             self.supersede(transition, Some(principal(&candidate)), None);
             return Poll::Ready(());

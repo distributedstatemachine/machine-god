@@ -39,6 +39,16 @@ impl NativeManagedStagedParent {
 }
 
 impl NativeManagedAgents {
+    pub(crate) fn validate_staged_foreground(
+        &self,
+        candidate: &NativeManagedStagedParent,
+    ) -> Result<(), NativeManagedAgentsError> {
+        self.manager
+            .validate_foreground_reservation(&candidate.reservation)
+            .map_err(map_error)?;
+        candidate.ready()
+    }
+
     /// Native selection supplies explicitly captured network authority while
     /// retaining the parent's original workspace/helper/environment binding.
     /// Neither a waiting ticket nor a foreign manager can start peers.
@@ -80,6 +90,7 @@ impl NativeManagedAgents {
         workspace: NativeWorkspaceScopeSnapshot,
         policy: NativePermissionPolicySnapshot,
         preferences: NativeModelPreferences,
+        cancellation: CancellationToken,
     ) -> BoxFuture<
         'static,
         Result<(PreparedManagedRuntime, ManagedForegroundReservation), NativeManagedStagedFailure>,
@@ -89,6 +100,12 @@ impl NativeManagedAgents {
             .validate_foreground_reservation(&candidate.reservation);
         let factory = Arc::downgrade(&self.factory);
         Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(NativeManagedStagedFailure {
+                    error: NativeManagedAgentsError::Unavailable,
+                    candidate,
+                });
+            }
             if let Err(error) = granted.and_then(|()| candidate.reservation.validate_preparation())
             {
                 return Err(NativeManagedStagedFailure {
