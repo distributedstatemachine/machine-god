@@ -17,7 +17,11 @@ fn line(terminal: &mut Terminal, text: &str) {
     terminal.send(text.as_bytes());
     // The edited composer must be physically presented before Enter can use
     // its new native frame. A same-chunk Enter deliberately grants no ACK.
-    terminal.wait_for(text.as_bytes());
+    // Slash commands also occur in the menu footer; only the complete edited
+    // composer (including its cursor placement) acknowledges this input.
+    assert!(text.is_ascii() && text.len() < 76);
+    let composer = format!("\r\x1b[2K> {text}\x1b[{}G", text.len() + 3);
+    terminal.wait_for(composer.as_bytes());
     terminal.output.clear();
     terminal.send(b"\r");
 }
@@ -28,7 +32,9 @@ fn create(terminal: &mut Terminal) {
         &format!("/create {{\"name\":\"{NAME}\",\"mode\":\"persistent\"}}"),
     );
     terminal.wait_for(b"Created");
+    terminal.wait_for(b"Catalog(Current)\r\n");
     line(terminal, "/refresh");
+    terminal.wait_for(b"Catalog(Current)\r\n");
     terminal.wait_for(b"pty-worker [Idle, g1]");
 }
 
@@ -73,10 +79,14 @@ fn release_cli_managed_create_archive_and_reopen_survive_process_restart() {
     open(&mut terminal);
     terminal.wait_for(b"pty-worker [Idle, g1]");
     line(&mut terminal, "/close");
+    terminal.wait_for(b"ConfirmClose\r\n");
     terminal.wait_for(b"Close and archive this agent?");
     line(&mut terminal, "/confirm");
     terminal.wait_for(b"LifecycleChanged");
-    terminal.wait_for(b"Archived");
+    terminal.wait_for(b"Agent(Status)\r\n");
+    line(&mut terminal, "/archived");
+    terminal.wait_for(b"Catalog(Archived)\r\n");
+    terminal.wait_for(b"pty-worker [Archived, g1]");
     parent(&mut terminal);
     finish(terminal);
 
@@ -84,6 +94,7 @@ fn release_cli_managed_create_archive_and_reopen_survive_process_restart() {
     terminal.wait_for(b"> ");
     open(&mut terminal);
     line(&mut terminal, "/archived");
+    terminal.wait_for(b"Catalog(Archived)\r\n");
     terminal.wait_for(b"pty-worker [Archived, g1]");
     line(&mut terminal, "/reopen");
     terminal.wait_for(b"LifecycleChanged");
