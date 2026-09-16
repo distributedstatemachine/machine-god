@@ -208,7 +208,11 @@ unchanged; there are no test endpoint flags or environment switches.
 Bare startup creates a fresh native session; `resume` and `resume last` select
 latest through the validated native catalog, while `resume <id>` selects that
 exact record. Interactive startup sends no fabricated initial prompt. It retains
-one complete host, credential and completed model-catalog cache across turns.
+one complete host, credential and model-catalog cache across turns. Catalog
+fetching is deferred to the driven native managed owner: a slow catalog does not
+block the initial composer, and its loading state survives returning from a child
+model picker to the parent. Completed capabilities hydrate future admissions
+without changing saved model preferences; shutdown cancels and drains the fetch.
 The catalog can fall back without inventing model capabilities. The noninteractive
 `ask` and prompt-bearing `resume` paths retain their separate contracts.
 Interactive composition selects the native managed-agent owner using a private

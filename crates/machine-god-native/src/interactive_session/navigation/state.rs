@@ -1,4 +1,5 @@
 //! Native page ownership and bounded asynchronous navigation work.
+mod models;
 use super::super::agent_form::Form;
 use super::{
     NativeInteractiveSession,
@@ -20,6 +21,7 @@ use machine_god_core::{
     ManagedLifecycleAction, ManagedMessage, ManagedRelationship, ManagedSend,
     ManagedSubagentCommand, ManagedSubagentResult,
 };
+pub use models::NativeManagedModelsView;
 use std::{
     sync::Arc,
     task::{Context, Poll},
@@ -80,6 +82,7 @@ pub(in crate::interactive_session) struct Navigation {
     history: super::history::History,
     history_resident: bool,
     history_retry: Option<u64>,
+    models: models::Models,
 }
 
 impl Default for Navigation {
@@ -106,6 +109,7 @@ impl Default for Navigation {
             history: super::history::History::default(),
             history_resident: false,
             history_retry: None,
+            models: models::Models::default(),
         }
     }
 }
@@ -143,6 +147,7 @@ impl Navigation {
     }
     pub(super) fn view(&self) -> Option<NativeManagedNavigationView<'_>> {
         self.open.then(|| NativeManagedNavigationView {
+            models: (self.route == Route::Models).then(|| self.models.view()),
             history: self.history.view(),
             draft: matches!(self.route, Route::Agent(_) | Route::Conversation)
                 .then(|| {
@@ -214,6 +219,7 @@ impl Navigation {
         self.result = None;
         self.error = None;
         self.form = None;
+        self.models.chosen = None;
         self.process_owner = None;
         self.processes = None;
         self.history.clear();
@@ -398,6 +404,7 @@ impl Navigation {
         // Validate selection/action before consuming the displayed frame.
         match &action {
             Action::Select
+            | Action::Models
             | Action::Conversation
             | Action::SeekHistory(_)
             | Action::HistoryMode(_)
@@ -414,6 +421,14 @@ impl Navigation {
             _ => {}
         }
         if matches!(action, Action::ConfirmClose) && self.route != Route::ConfirmClose {
+            return Err(Error::InvalidAction);
+        }
+        if self.route == Route::Models
+            && !matches!(
+                action,
+                Action::Previous | Action::Next | Action::Select | Action::Back | Action::Refresh
+            )
+        {
             return Err(Error::InvalidAction);
         }
         if matches!(action, Action::SeekHistory(_) | Action::HistoryMode(_))
@@ -495,11 +510,13 @@ impl Navigation {
                 | Action::Inspect(_)
                 | Action::Processes(_)
                 | Action::OpenForm(_)
+                | Action::Models
                 | Action::Lifecycle(ManagedLifecycleAction::Close)
         ) {
             self.history.clear();
         }
         let result = match action {
+            Action::Models => self.open_models(owner),
             Action::Exit => {
                 self.close();
                 owner.request_shutdown();
@@ -508,6 +525,12 @@ impl Navigation {
             Action::SeekHistory(position) => self.history.seek(position),
             Action::HistoryMode(mode) => self.history.set_mode(mode),
             Action::Previous | Action::Next => {
+                if self.route == Route::Models {
+                    self.models
+                        .picker
+                        .move_selection(matches!(action, Action::Previous));
+                    return Ok(());
+                }
                 if let Some(form) = &mut self.form {
                     return form
                         .select(matches!(action, Action::Previous))
@@ -536,6 +559,10 @@ impl Navigation {
             Action::Refresh => {
                 self.history_retry = None;
                 match self.route {
+                    Route::Models => {
+                        self.models.load(&owner.options, true);
+                        Ok(())
+                    }
                     Route::Processes(scope) => self.processes(owner, scope),
                     _ => self.catalog(owner),
                 }
@@ -555,10 +582,12 @@ impl Navigation {
                     self.inspect(owner, section, Some(cursor))
                 }
                 Route::Conversation
+                | Route::Models
                 | Route::ConfirmClose
                 | Route::Form(_)
                 | Route::Processes(_) => Err(Error::InvalidAction),
             },
+            Action::Select if self.route == Route::Models => self.select_model(owner),
             Action::Select | Action::Conversation => {
                 self.route = Route::Conversation;
                 self.result = None;
@@ -570,6 +599,10 @@ impl Navigation {
                 self.inspect(owner, section, None)
             }
             Action::Back => {
+                if self.route == Route::Models {
+                    self.route = Route::Conversation;
+                    return self.history(owner);
+                }
                 if matches!(self.route, Route::Catalog(_)) {
                     self.close();
                 } else {
@@ -581,6 +614,7 @@ impl Navigation {
             }
             Action::Create(create) => self.command(owner, ManagedSubagentCommand::Create(create)),
             Action::OpenForm(kind) => {
+                self.models.chosen = None;
                 self.route = Route::Form(kind);
                 self.result = None;
                 if kind == NativeManagedFormKind::Create {
@@ -642,6 +676,14 @@ impl Navigation {
         result
     }
     pub(super) fn poll(&mut self, owner: &mut NativeInteractiveSession, cx: &mut Context<'_>) {
+        if self.models.poll(cx)
+            && self.open
+            && self.route == Route::Models
+            && self.change(false).is_err()
+        {
+            self.close();
+        }
+        Self::hydrate_catalog(owner);
         let Some(pending) = self.pending.take() else {
             self.refresh_changed_history(owner, cx);
             return;
@@ -863,6 +905,7 @@ impl Navigation {
         if matches!(
             self.route,
             Route::Conversation
+                | Route::Models
                 | Route::Agent(_)
                 | Route::ConfirmClose
                 | Route::Form(NativeManagedFormKind::Configure)
@@ -903,7 +946,15 @@ impl Navigation {
                     .ok()
                     .and_then(|target| Form::configure(target.id.clone(), configuration).ok())
             }) {
-                Some(form) => self.form = Some(form),
+                Some(mut form) => {
+                    if let Some(model) = self.models.chosen.take()
+                        && let Err(error) =
+                            form.replace(crate::NativeManagedFormField::Model, &model)
+                    {
+                        self.error = Some(Error::Form(error));
+                    }
+                    self.form = Some(form);
+                }
                 None => self.route = Route::Agent(ManagedInspectSection::Configuration),
             }
         } else if self.result.as_ref().is_some_and(|result| result.ok) {

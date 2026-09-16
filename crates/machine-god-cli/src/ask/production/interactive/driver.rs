@@ -358,6 +358,10 @@ impl Driver {
                 .managed_navigation()
                 .filter(|_| self.modal.is_none() && self.saved_rule.is_none())
                 .and_then(|view| view.form.map(|form| form.fields[form.selected])),
+            agent_models: self
+                .owner
+                .managed_navigation()
+                .and_then(|view| view.models.map(|models| models.state)),
             skills: if self.agents.is_some() {
                 None
             } else if self.skills_query_open() {

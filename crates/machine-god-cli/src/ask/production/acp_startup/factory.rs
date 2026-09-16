@@ -136,6 +136,7 @@ impl NativeAcpHostFactory for AcpHostFactory {
                             mcp: Some(presenter),
                             background_url: None,
                             managed: Some(managed),
+                            catalog_loading: super::super::CatalogLoading::Eager,
                         },
                         || Ok(()),
                         true,

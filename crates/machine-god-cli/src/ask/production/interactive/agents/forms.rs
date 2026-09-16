@@ -5,6 +5,14 @@ impl Driver {
         &mut self,
         binding: &InputBinding,
     ) {
+        if self
+            .owner
+            .managed_navigation()
+            .is_some_and(|view| view.models.is_some())
+        {
+            self.sync_agent_model_editor(binding);
+            return;
+        }
         let InputBinding::Agents { editor, .. } = binding else {
             return;
         };
@@ -40,6 +48,14 @@ impl Driver {
     }
 
     pub(super) fn edit_agent_form(&mut self, editor: &NativeManagedEditorIdentity) {
+        if self
+            .owner
+            .managed_navigation()
+            .is_some_and(|view| view.models.is_some())
+        {
+            self.edit_agent_model_editor(editor);
+            return;
+        }
         let Some(view) = self.owner.managed_navigation() else {
             return;
         };

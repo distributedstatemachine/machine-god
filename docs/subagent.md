@@ -667,6 +667,23 @@ The picker has no fetch, timer, inference or configuration authority: selection
 is observation, and durable child configuration still requires the owning
 navigation's original target and exact displayed-frame checks.
 
+Child `/models` opens a separate native query/editor over the injected host
+catalog cache. Loading is owned and polled outside model turns and output flush;
+Ctrl-X restores the parent draft while the original load continues. Reopening
+uses cached results, without fetching once ready. Ctrl-R explicitly refreshes;
+ordinary failed loads retain the cache cooldown. Query/paste limits are 256 UTF-8
+bytes, arrows or Ctrl-J/Ctrl-K move selection, and Escape returns to the child
+conversation. Enter preserves an unselected/rejected query; Ctrl-C clears the
+query without cancelling the child or depending on hidden parent activity.
+A complete escaped selected-model ID must fit the displayed frame
+before selection is acknowledged; clipped row previews alone cannot authorize it.
+Enter opens the child's configure form with the selected model as an edited
+field. A second, independently displayed submission persists the configuration
+under the original observed child/revision; no model call, parent model change,
+or implicit restart follows. Leaving the menu cannot carry query input into a
+child prompt. Shutdown and parent transitions cancel owned catalog loads, and
+shutdown waits for their settlement before reporting the session closed.
+
 The native create/configure form model retains one bounded draft with separate
 name, model, standalone prompt, reasoning effort, milestones and timer fields.
 Create also selects persistent/one-off mode; permission and notification toggles

@@ -94,6 +94,7 @@ pub(super) fn execute(
                 || control.activate_turn(),
                 super::ConversationFeatures {
                     discover_skills: true,
+                    catalog_loading: super::CatalogLoading::Deferred,
                     managed: Some(managed_startup::options(inbox)),
                 },
             )
@@ -182,7 +183,7 @@ fn run_interactive(
         catalog,
         model_routes: _model_routes,
         observations: _observations,
-        catalog_cache: _catalog_cache,
+        catalog_cache,
         user_config,
         skills_snapshot,
     }) = prepare(&inbox, control)
@@ -236,6 +237,7 @@ fn run_interactive(
                 if let Some(catalog) = &catalog {
                     options = options.with_catalog(catalog.clone());
                 }
+                options = options.with_catalog_cache(catalog_cache);
                 let options = clipboard::configure(options, clipboard);
                 let opening = InitialPresentation {
                     selection,
@@ -246,12 +248,13 @@ fn run_interactive(
                     dimensions: prepared.dimensions,
                     startup_notice: prepared.notice,
                 };
-                let mut driver = match opening.open(host, options, signals, agents?).await? {
-                    Ok(driver) => driver
-                        .with_resources(catalog, user_config)
-                        .with_skills_snapshot(skills_snapshot),
-                    Err(presentation) => return Ok(presentation),
-                };
+                let mut driver =
+                    match Box::pin(opening.open(host, options, signals, agents?)).await? {
+                        Ok(driver) => driver
+                            .with_resources(catalog, user_config)
+                            .with_skills_snapshot(skills_snapshot),
+                        Err(presentation) => return Ok(presentation),
+                    };
                 let result = poll_fn(|cx| driver.poll(cx, signals)).await;
                 Ok(driver.into_presentation(result))
             })

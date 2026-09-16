@@ -53,6 +53,17 @@ fn ids(picker: &NativeModelPicker) -> Vec<String> {
 }
 
 #[test]
+fn query_entered_before_catalog_arrival_is_retained_and_applied() {
+    let mut picker = NativeModelPicker::unloaded();
+    picker.edit("second", 3).unwrap();
+    assert_eq!(picker.view().rows().len(), 0);
+    picker.replace_catalog(catalog(&["vendor/first", "vendor/second"]));
+    assert_eq!(picker.view().query, "second");
+    assert_eq!(picker.view().cursor, 3);
+    assert_eq!(picker.selected().unwrap().model().id(), "vendor/second");
+}
+
+#[test]
 fn query_ranking_reuses_exact_and_fuzzy_semantics_with_stable_ties() {
     let mut picker = NativeModelPicker::new(catalog(&[
         "vendor/model-extra",

@@ -363,9 +363,9 @@ pub use interactive_session::{
     NativeInteractiveTransitionReceipt, NativeManagedDraftView, NativeManagedEditorIdentity,
     NativeManagedFormError, NativeManagedFormField, NativeManagedFormKind, NativeManagedFormView,
     NativeManagedFrameIdentity, NativeManagedHistoryMode, NativeManagedHistoryPosition,
-    NativeManagedHistoryView, NativeManagedInteractiveStartup, NativeManagedNavigationAction,
-    NativeManagedNavigationError, NativeManagedNavigationRoute, NativeManagedNavigationView,
-    NativeManagedProcessScope, NativeMcpHumanFeatureReceipt,
+    NativeManagedHistoryView, NativeManagedInteractiveStartup, NativeManagedModelsView,
+    NativeManagedNavigationAction, NativeManagedNavigationError, NativeManagedNavigationRoute,
+    NativeManagedNavigationView, NativeManagedProcessScope, NativeMcpHumanFeatureReceipt,
 };
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

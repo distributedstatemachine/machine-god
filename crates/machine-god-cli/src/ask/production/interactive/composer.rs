@@ -25,6 +25,7 @@ pub(super) struct ComposerContext {
     pub agents: bool,
     pub agent_history: Option<machine_god_native::NativeManagedHistoryMode>,
     pub agent_form: Option<machine_god_native::NativeManagedFormField>,
+    pub agent_models: Option<machine_god_native::NativeModelCatalogCacheState>,
     pub skills: Option<machine_god_native::NativeSkillPickerMode>,
 }
 impl ComposerContext {
@@ -406,7 +407,11 @@ impl Composer {
             15 if context.agents && context.agent_form.is_none() => {
                 Some(ComposerEvent::HistoryToggle)
             }
-            18 if context.agent_form.is_some() => Some(ComposerEvent::FormRefreshRequested),
+            18 if context.agent_form.is_some() || context.agent_models.is_some() => {
+                Some(ComposerEvent::FormRefreshRequested)
+            }
+            10 if context.agent_models.is_some() => Some(ComposerEvent::PickerNext),
+            11 if context.agent_models.is_some() => Some(ComposerEvent::PickerPrevious),
             9 if context.agent_form.is_some() => Some(ComposerEvent::PickerNext),
             b' ' if context
                 .agent_form
@@ -427,11 +432,11 @@ impl Composer {
             9 if context.session_picker => Some(ComposerEvent::PickerToggleScope),
             10 if context.session_picker => Some(ComposerEvent::PickerNext),
             11 if context.session_picker => Some(ComposerEvent::PickerPrevious),
-            b'\r' if context.session_picker => {
+            b'\r' if context.session_picker || context.agent_models.is_some() => {
                 self.skip_lf = true;
                 // Selection may fail or be stale. Keep the bounded query and
                 // cursor editable until the owner explicitly closes the picker.
-                if self.text.len() > MAX_PICKER_QUERY_BYTES {
+                if self.text.len() > byte_limit(context) {
                     return Some(ComposerEvent::InputError(ComposerInputError::TooLong));
                 }
                 Some(ComposerEvent::Submit(self.text.clone()))
@@ -442,7 +447,10 @@ impl Composer {
                 Some(ComposerEvent::Submit(std::mem::take(&mut self.text)))
             }
             3 => {
-                if context.agent_form.is_some() || !context.active_response {
+                if context.agent_form.is_some()
+                    || context.agent_models.is_some()
+                    || !context.active_response
+                {
                     self.reset();
                 }
                 Some(ComposerEvent::CancelRequested)
@@ -654,6 +662,8 @@ impl Paste {
 fn byte_limit(context: ComposerContext) -> usize {
     if context.skills == Some(machine_god_native::NativeSkillPickerMode::Menu) {
         machine_god_native::MAX_NATIVE_SKILL_QUERY_BYTES
+    } else if context.agent_models.is_some() {
+        machine_god_native::MAX_NATIVE_MODEL_PICKER_QUERY_BYTES
     } else if context.session_picker {
         MAX_PICKER_QUERY_BYTES
     } else {

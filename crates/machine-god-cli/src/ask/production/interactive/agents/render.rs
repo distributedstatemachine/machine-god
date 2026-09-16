@@ -2,6 +2,7 @@
 mod detail;
 mod forms;
 mod history;
+mod models;
 mod processes;
 pub(super) use history::scroll as scroll_history;
 pub(super) use processes::count as process_count;
@@ -79,7 +80,13 @@ pub(super) fn render(
     let content_limit = lines
         .limit
         .saturating_sub(4 + usize::from(view.error.is_some()));
+    let mut selectable = true;
     match view.route {
+        Route::Models => {
+            target_heading(&mut lines, view.target.ok_or(())?)?;
+            selectable =
+                models::render(&mut lines, view.models.as_ref().ok_or(())?, content_limit)?;
+        }
         Route::Conversation => {
             target_heading(&mut lines, view.target.ok_or(())?)?;
             if let Some(result) = view.result {
@@ -112,7 +119,7 @@ pub(super) fn render(
         lines.push(&error.to_string())?;
     }
     footer(&mut lines, view)?;
-    let mut frame = lines.finish(true)?;
+    let mut frame = lines.finish(selectable)?;
     let editor = super::super::composer_view::render(draft.0, draft.1, columns).map_err(|_| ())?;
     if frame.bytes.len() + editor.len() > 64 * 1024 {
         return Err(());
@@ -122,6 +129,12 @@ pub(super) fn render(
 }
 
 fn footer(lines: &mut Lines, view: &NativeManagedNavigationView<'_>) -> Result<(), ()> {
+    if view.route == Route::Models {
+        lines.push("Type to filter · arrows/Ctrl-J/Ctrl-K select")?;
+        lines.push("Enter opens child configuration · Esc returns")?;
+        lines.push("Ctrl-R refreshes models · Ctrl-X restores parent")?;
+        return lines.push("");
+    }
     lines.push(if matches!(view.route, Route::Form(_)) {
         "Tab/arrows fields · Space toggles · Ctrl-R refresh target"
     } else if matches!(view.route, Route::Processes(_)) {

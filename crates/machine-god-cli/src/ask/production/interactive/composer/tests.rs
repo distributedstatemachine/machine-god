@@ -3,6 +3,70 @@ use super::*;
 type EditReceipt = (Range<usize>, String, usize);
 
 #[test]
+fn model_query_survives_selection_and_clears_independently_of_parent_activity() {
+    for active_response in [false, true] {
+        let context = ComposerContext {
+            agents: true,
+            active_response,
+            agent_models: Some(machine_god_native::NativeModelCatalogCacheState::Ready),
+            ..ComposerContext::default()
+        };
+        let mut editor = Composer::default();
+        editor.feed(b"model query", context);
+        assert!(matches!(editor.feed(b"\r", context).1,
+            Some(ComposerEvent::Submit(text)) if text == "model query"));
+        assert_eq!(editor.text(), "model query");
+        assert_eq!(editor.cursor(), 11);
+        assert!(matches!(
+            editor.feed(b"\x03", context).1,
+            Some(ComposerEvent::CancelRequested)
+        ));
+        assert!(editor.is_empty());
+    }
+}
+
+#[test]
+fn model_menu_keys_do_not_submit_queries_or_escape_paste() {
+    let context = ComposerContext {
+        agents: true,
+        agent_models: Some(machine_god_native::NativeModelCatalogCacheState::Loading),
+        ..ComposerContext::default()
+    };
+    let mut editor = Composer::default();
+    assert!(matches!(
+        editor.feed(b"\x0a", context).1,
+        Some(ComposerEvent::PickerNext)
+    ));
+    assert!(matches!(
+        editor.feed(b"\x0b", context).1,
+        Some(ComposerEvent::PickerPrevious)
+    ));
+    assert!(matches!(
+        editor.feed(b"\x12", context).1,
+        Some(ComposerEvent::FormRefreshRequested)
+    ));
+    let mut input = b"\x1b[200~\x0a\x0b\x12\x1b[201~".as_slice();
+    while !input.is_empty() {
+        let (consumed, event) = editor.feed(input, context);
+        assert!(consumed > 0);
+        assert!(!matches!(
+            event,
+            Some(
+                ComposerEvent::Submit(_)
+                    | ComposerEvent::PickerNext
+                    | ComposerEvent::PickerPrevious
+                    | ComposerEvent::FormRefreshRequested
+            )
+        ));
+        input = &input[consumed..];
+    }
+    assert_eq!(
+        byte_limit(context),
+        machine_god_native::MAX_NATIVE_MODEL_PICKER_QUERY_BYTES
+    );
+}
+
+#[test]
 fn history_detail_keys_are_contextual_and_never_escape_atomic_paste() {
     let mut editor = Composer::default();
     feed(&mut editor, b"draft", false);

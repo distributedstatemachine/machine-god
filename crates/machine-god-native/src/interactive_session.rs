@@ -36,8 +36,8 @@ mod navigation;
 pub use navigation::{
     NativeManagedDraftView, NativeManagedEditorIdentity, NativeManagedFrameIdentity,
     NativeManagedHistoryMode, NativeManagedHistoryPosition, NativeManagedHistoryView,
-    NativeManagedNavigationAction, NativeManagedNavigationError, NativeManagedNavigationRoute,
-    NativeManagedNavigationView, NativeManagedProcessScope,
+    NativeManagedModelsView, NativeManagedNavigationAction, NativeManagedNavigationError,
+    NativeManagedNavigationRoute, NativeManagedNavigationView, NativeManagedProcessScope,
 };
 mod startup;
 pub use startup::NativeManagedInteractiveStartup;
@@ -55,6 +55,7 @@ pub struct NativeInteractiveSessionOptions {
     defaults: NativeModelPreferences,
     process_model: Option<String>,
     catalog: Option<Arc<NativeModelCatalog>>,
+    catalog_cache: Option<Arc<crate::NativeModelCatalogCache>>,
     mcp_startup_phase: crate::mcp::startup::NativeMcpStartupPhase,
     clipboard: Option<(
         crate::NativeClipboardExecutable,
@@ -101,6 +102,7 @@ impl NativeInteractiveSessionOptions {
             defaults: workspace_defaults,
             process_model: None,
             catalog: None,
+            catalog_cache: None,
             mcp_startup_phase: crate::mcp::startup::NativeMcpStartupPhase::All,
             clipboard: None,
             background_url: None,
@@ -139,6 +141,13 @@ impl NativeInteractiveSessionOptions {
     #[must_use]
     pub fn with_catalog(mut self, catalog: Arc<NativeModelCatalog>) -> Self {
         self.catalog = Some(catalog);
+        self
+    }
+    /// Injects the prepared host's catalog fetch authority. Managed ownership starts one
+    /// pending load; selecting a model never executes a conversation turn.
+    #[must_use]
+    pub fn with_catalog_cache(mut self, cache: Arc<crate::NativeModelCatalogCache>) -> Self {
+        self.catalog_cache = Some(cache);
         self
     }
     /// Retains explicit clipboard authority without inspecting or starting it.
@@ -467,12 +476,17 @@ impl NativeInteractiveSession {
         let mcp_browser_launcher = background_opener
             .as_ref()
             .map(crate::NativeBackgroundUrlOpener::mcp_launcher);
+        let navigation = (managed.is_some() && options.catalog_cache.is_some()).then(|| {
+            let mut navigation = Box::<navigation::Navigation>::default();
+            navigation.start_models(&options);
+            navigation
+        });
         Self {
             host,
             options,
             current,
             managed,
-            navigation: None,
+            navigation,
             admission: None,
             turn: None,
             transition: None,

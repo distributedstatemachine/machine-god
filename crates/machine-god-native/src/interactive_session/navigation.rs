@@ -16,6 +16,7 @@ pub use history::{
     NativeManagedHistoryMode, NativeManagedHistoryPosition, NativeManagedHistoryView,
 };
 use machine_god_core::{CancellationToken, ManagedSubagentCommand, ManagedSubagentError};
+pub use state::NativeManagedModelsView;
 pub(super) use state::Navigation;
 pub use view::{
     NativeManagedEditorIdentity, NativeManagedFrameIdentity, NativeManagedNavigationAction,
@@ -24,6 +25,25 @@ pub use view::{
 };
 
 impl NativeInteractiveSession {
+    /// Edits a child-local model query; selection still requires the resulting
+    /// exact frame and the original observed child. No configuration is saved.
+    /// # Errors
+    /// Rejects retired/non-model editors and invalid bounded query/cursor values.
+    pub fn edit_managed_models(
+        &mut self,
+        editor: &NativeManagedEditorIdentity,
+        query: &str,
+        cursor: usize,
+    ) -> Result<(), NativeManagedNavigationError> {
+        self.navigation_available()?;
+        let result = self
+            .navigation
+            .as_mut()
+            .ok_or(NativeManagedNavigationError::Unavailable)?
+            .edit_models(editor, query, cursor);
+        self.notify();
+        result
+    }
     /// Retains unsent child text/cursor under the exact current editor identity.
     /// It grants no command admission and never executes or persists a message.
     /// # Errors
@@ -264,6 +284,7 @@ impl NativeInteractiveSession {
             return;
         };
         if self.navigation_available().is_err() {
+            navigation.cancel_models();
             navigation.close();
         }
         navigation.poll(self, cx);

@@ -323,6 +323,13 @@ impl NativeInteractiveSession {
         if owner.foreground_closed {
             match owner.agents.poll_shutdown(cx, now_ms) {
                 Poll::Ready(Ok(())) => {
+                    if self
+                        .navigation
+                        .as_ref()
+                        .is_some_and(|navigation| navigation.models_pending())
+                    {
+                        return;
+                    }
                     self.closed = true;
                     if self.outcome.is_none() {
                         self.outcome = Some(NativeInteractiveOutcome::Shutdown);

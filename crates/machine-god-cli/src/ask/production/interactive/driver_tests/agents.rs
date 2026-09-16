@@ -4,8 +4,15 @@ use crate::ask::production::managed_startup;
 use machine_god_core::ManagedSubagentCommand;
 use native::{NativeManagedInteractiveStartup, NativeManagedNavigationRoute as Route};
 use std::io::Write as _;
+#[path = "agents/models.rs"]
+mod models;
 
 async fn prepared() -> (support::Fixture, Harness) {
+    prepared_with_catalog(None).await
+}
+async fn prepared_with_catalog(
+    cache: Option<Arc<native::NativeModelCatalogCache>>,
+) -> (support::Fixture, Harness) {
     let inbox =
         NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
     let bridge = inbox.router();
@@ -24,8 +31,11 @@ async fn prepared() -> (support::Fixture, Harness) {
         )
         .await
         .unwrap();
-    let options =
+    let mut options =
         NativeInteractiveSessionOptions::new(fixture.workspace.clone(), preferences).unwrap();
+    if let Some(cache) = cache {
+        options = options.with_catalog_cache(cache);
+    }
     let mut startup =
         NativeManagedInteractiveStartup::new(fixture.host.clone(), options, agents).unwrap();
     startup

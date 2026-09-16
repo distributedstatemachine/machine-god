@@ -1161,6 +1161,7 @@ mod production {
                             || control.activate_turn(),
                             ConversationFeatures {
                                 discover_skills: false,
+                                catalog_loading: CatalogLoading::Eager,
                                 managed: Some(managed_startup::base_options()),
                             },
                         )
@@ -1263,6 +1264,7 @@ mod production {
                 mcp: mcp_presenter,
                 background_url,
                 managed: features.managed,
+                catalog_loading: features.catalog_loading,
             },
             before_host,
             features.discover_skills,
@@ -1286,10 +1288,18 @@ mod production {
         mcp: Option<Arc<dyn machine_god_native::mcp::interaction::McpElicitationPresenter>>,
         background_url: Option<interactive::background_open::Authority>,
         managed: Option<machine_god_native::NativeReferenceHostManagedOptions>,
+        catalog_loading: CatalogLoading,
+    }
+
+    #[derive(Clone, Copy)]
+    enum CatalogLoading {
+        Eager,
+        Deferred,
     }
 
     struct ConversationFeatures {
         discover_skills: bool,
+        catalog_loading: CatalogLoading,
         managed: Option<machine_god_native::NativeReferenceHostManagedOptions>,
     }
 
@@ -1337,11 +1347,12 @@ mod production {
         let state_path = prepared_roots.state_root().to_owned();
         let acp_state = mcp.capture_state_descriptor(&prepared_roots)?;
         // Validate inference access before any catalog request.
-        // Catalog loading precedes terminal-host acquisition:
-        // setup signals can exit without abandoning native workers.
+        // Eager clients settle catalog loading before terminal-host acquisition.
+        // Interactive clients transfer an inert cache to the native owner.
         let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| ())?;
+        let loading = adapters.catalog_loading;
         let (cache, catalog) =
-            prepare_conversation_catalog(&runtime, &credential, cancellation.clone(), &network)?;
+            loading.prepare(&runtime, &credential, cancellation.clone(), &network)?;
         acp_startup::check_cancelled(&cancellation)?;
         let model_routes = Arc::new(NativeConversationModelRoutes::new());
         let observations = Arc::new(NativeConversationObservations::new());
@@ -1408,28 +1419,35 @@ mod production {
         })
     }
 
-    fn prepare_conversation_catalog(
-        runtime: &impl acp_startup::HostRuntime,
-        credential: &machine_god_native::DiscoveredAiGatewayCredential,
-        cancellation: CancellationToken,
-        network: &acp_startup::GatewayNetwork,
-    ) -> Result<
-        (
-            Arc<NativeModelCatalogCache>,
-            Option<Arc<NativeModelCatalog>>,
-        ),
-        (),
-    > {
-        let transport = network.catalog(credential)?;
-        let cache = Arc::new(NativeModelCatalogCache::new(Arc::new(
-            AiGatewayModelCatalogProvider::new(
-                AiGatewayModelCatalogAccessMode::Authenticated,
-                transport,
+    impl CatalogLoading {
+        fn prepare(
+            self,
+            runtime: &impl acp_startup::HostRuntime,
+            credential: &machine_god_native::DiscoveredAiGatewayCredential,
+            cancellation: CancellationToken,
+            network: &acp_startup::GatewayNetwork,
+        ) -> Result<
+            (
+                Arc<NativeModelCatalogCache>,
+                Option<Arc<NativeModelCatalog>>,
             ),
-        )));
-        let catalog =
-            runtime.block_on(load_conversation_catalog_with_cancel(&cache, cancellation))?;
-        Ok((cache, catalog))
+            (),
+        > {
+            let transport = network.catalog(credential)?;
+            let cache = Arc::new(NativeModelCatalogCache::new(Arc::new(
+                AiGatewayModelCatalogProvider::new(
+                    AiGatewayModelCatalogAccessMode::Authenticated,
+                    transport,
+                ),
+            )));
+            let catalog = match self {
+                CatalogLoading::Eager => {
+                    runtime.block_on(load_conversation_catalog_with_cancel(&cache, cancellation))?
+                }
+                CatalogLoading::Deferred => None,
+            };
+            Ok((cache, catalog))
+        }
     }
 
     /// Startup owns and joins its temporary worker scope on both success and
@@ -2970,6 +2988,37 @@ mod production {
                 .unwrap()
                 .block_on(super::load_conversation_catalog(cache))
                 .unwrap()
+        }
+
+        #[test]
+        fn interactive_catalog_preparation_is_inert_without_blocking_the_runtime() {
+            struct NoBlocking;
+            impl super::acp_startup::HostRuntime for NoBlocking {
+                fn block_on<F: std::future::Future>(&self, _: F) -> F::Output {
+                    panic!("interactive startup must not wait for a catalog response")
+                }
+            }
+            let credential = machine_god_native::discover_ai_gateway_credential(
+                machine_god_native::AiGatewayCredentialEnvironment::new(
+                    None,
+                    Some("catalog-test-token".into()),
+                ),
+            )
+            .unwrap();
+            let (cache, catalog) = super::CatalogLoading::Deferred
+                .prepare(
+                    &NoBlocking,
+                    &credential,
+                    CancellationToken::new(),
+                    &super::acp_startup::GatewayNetwork::default(),
+                )
+                .unwrap();
+            assert!(catalog.is_none());
+            assert_eq!(
+                cache.snapshot().state,
+                machine_god_native::NativeModelCatalogCacheState::Idle
+            );
+            assert_eq!(cache.snapshot().last_attempt_ms, None);
         }
 
         #[test]

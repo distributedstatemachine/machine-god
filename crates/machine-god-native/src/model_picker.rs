@@ -25,16 +25,20 @@ pub struct NativeModelPickerView<'a> {
     pub cursor: usize,
     /// Index in the filtered, ranked rows, not the underlying source catalog.
     pub selected: Option<usize>,
-    catalog: &'a NativeModelCatalog,
+    catalog: Option<&'a NativeModelCatalog>,
     matches: &'a [usize],
 }
 impl NativeModelPickerView<'_> {
     /// Exact validated catalog spellings and advertised capabilities.
     #[must_use]
     pub fn rows(&self) -> impl ExactSizeIterator<Item = &NativeModelCatalogEntry> {
-        self.matches
-            .iter()
-            .map(|index| &self.catalog.entries()[*index])
+        // An unloaded picker has no matches; both slices belong to the same
+        // immutable projection and cannot be independently replaced by callers.
+        let entries = self
+            .catalog
+            .map(NativeModelCatalog::entries)
+            .unwrap_or_default();
+        self.matches.iter().map(move |index| &entries[*index])
     }
 }
 impl fmt::Debug for NativeModelPickerView<'_> {
@@ -50,7 +54,7 @@ impl fmt::Debug for NativeModelPickerView<'_> {
 /// The interactive owner must still check its frame and original child before
 /// using a selected model in a durable configure command.
 pub struct NativeModelPicker {
-    catalog: Arc<NativeModelCatalog>,
+    catalog: Option<Arc<NativeModelCatalog>>,
     query: String,
     cursor: usize,
     matches: Vec<usize>,
@@ -64,15 +68,18 @@ impl fmt::Debug for NativeModelPicker {
 impl NativeModelPicker {
     #[must_use]
     pub fn new(catalog: Arc<NativeModelCatalog>) -> Self {
-        let mut picker = Self {
-            catalog,
+        let mut picker = Self::unloaded();
+        picker.replace_catalog(catalog);
+        picker
+    }
+    pub(crate) fn unloaded() -> Self {
+        Self {
+            catalog: None,
             query: String::new(),
             cursor: 0,
             matches: Vec::new(),
             selected: None,
-        };
-        picker.filter(None);
-        picker
+        }
     }
     #[must_use]
     pub fn view(&self) -> NativeModelPickerView<'_> {
@@ -80,15 +87,16 @@ impl NativeModelPicker {
             query: &self.query,
             cursor: self.cursor,
             selected: self.selected,
-            catalog: &self.catalog,
+            catalog: self.catalog.as_deref(),
             matches: &self.matches,
         }
     }
     #[must_use]
     pub fn selected(&self) -> Option<&NativeModelCatalogEntry> {
+        let catalog = self.catalog.as_ref()?;
         self.matches
             .get(self.selected?)
-            .map(|index| &self.catalog.entries()[*index])
+            .map(|index| &catalog.entries()[*index])
     }
     /// Replaces query/cursor atomically; cursor-only movement preserves selection.
     /// # Errors
@@ -112,7 +120,7 @@ impl NativeModelPicker {
     /// when it still matches. An absent ID selects the first remaining match.
     pub fn replace_catalog(&mut self, catalog: Arc<NativeModelCatalog>) {
         let selected = self.selected().map(|entry| entry.model().id().to_owned());
-        self.catalog = catalog;
+        self.catalog = Some(catalog);
         self.filter(selected.as_deref());
     }
     pub fn move_selection(&mut self, previous: bool) {
@@ -126,9 +134,13 @@ impl NativeModelPicker {
         });
     }
     fn filter(&mut self, retained: Option<&str>) {
+        let Some(catalog) = &self.catalog else {
+            self.matches.clear();
+            self.selected = None;
+            return;
+        };
         let query = Query::new(self.query.as_bytes());
-        let mut ranked: Vec<_> = self
-            .catalog
+        let mut ranked: Vec<_> = catalog
             .entries()
             .iter()
             .enumerate()
@@ -154,7 +166,7 @@ impl NativeModelPicker {
             .and_then(|id| {
                 self.matches
                     .iter()
-                    .position(|index| self.catalog.entries()[*index].model().id() == id)
+                    .position(|index| catalog.entries()[*index].model().id() == id)
             })
             .or_else(|| (!self.matches.is_empty()).then_some(0));
     }

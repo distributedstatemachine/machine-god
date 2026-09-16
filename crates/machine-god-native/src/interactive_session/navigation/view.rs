@@ -46,6 +46,7 @@ impl fmt::Debug for NativeManagedFrameIdentity {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeManagedNavigationRoute {
+    Models,
     Conversation,
     Catalog(NativeManagedCatalogFilter),
     Agent(ManagedInspectSection),
@@ -96,6 +97,7 @@ impl std::error::Error for NativeManagedNavigationError {}
 /// Typed human intent. IDs in configuration are checked against the exact row;
 /// lifecycle Close is admitted only through a separately displayed confirmation.
 pub enum NativeManagedNavigationAction {
+    Models,
     Exit,
     Conversation,
     SeekHistory(Option<super::NativeManagedHistoryPosition>),
@@ -126,6 +128,7 @@ pub enum NativeManagedNavigationAction {
 impl fmt::Debug for NativeManagedNavigationAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let action = match self {
+            Self::Models => "Models",
             Self::Exit => "Exit",
             Self::Conversation => "Conversation",
             Self::SeekHistory(_) => "SeekHistory",
@@ -158,6 +161,7 @@ impl fmt::Debug for NativeManagedNavigationAction {
 /// Borrowed unsanitized display values. The renderer must escape terminal text.
 /// A retained frame identity does not retain this projection or a child runtime.
 pub struct NativeManagedNavigationView<'a> {
+    pub models: Option<super::state::NativeManagedModelsView<'a>>,
     pub history: Option<super::NativeManagedHistoryView<'a>>,
     pub draft: Option<super::drafts::NativeManagedDraftView<'a>>,
     pub editor: NativeManagedEditorIdentity,
@@ -211,6 +215,7 @@ mod tests {
             revision: 456_789,
         };
         let view = NativeManagedNavigationView {
+            models: None,
             history: None,
             draft: None,
             editor,
