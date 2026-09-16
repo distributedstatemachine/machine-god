@@ -162,6 +162,14 @@ impl NativeSkillPicker {
         &mut self,
         identity: &NativeSkillFrameIdentity,
     ) -> Result<NativeSkillPickerInsertion> {
+        self.choose_with_retained_limit(identity, usize::MAX)
+    }
+
+    pub(crate) fn choose_with_retained_limit(
+        &mut self,
+        identity: &NativeSkillFrameIdentity,
+        retained_limit: usize,
+    ) -> Result<NativeSkillPickerInsertion> {
         self.check_frame(identity)?;
         let menu = self.menu.as_ref().ok_or(Error::NotOpen)?;
         if menu.acknowledged.as_ref() != Some(identity) {
@@ -206,6 +214,9 @@ impl NativeSkillPicker {
             return Err(Error::TooManySelections);
         }
         if bytes > super::MAX_NATIVE_SKILL_INVOCATION_SELECTION_BYTES {
+            return Err(Error::SelectionBytesExceeded);
+        }
+        if self.draft.len() - range.len() + inserted.len() + bytes > retained_limit {
             return Err(Error::SelectionBytesExceeded);
         }
         let binding = NativeSkillBinding {

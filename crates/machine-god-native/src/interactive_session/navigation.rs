@@ -25,6 +25,59 @@ pub use view::{
 };
 
 impl NativeInteractiveSession {
+    /// Supplies a host-discovered skill observation without performing I/O.
+    /// Replacing it invalidates an open child menu; bindings still require exact
+    /// catalog validation at submission and fresh source checks at execution.
+    pub fn set_managed_skills_snapshot(
+        &mut self,
+        snapshot: Option<std::sync::Arc<crate::NativeSkillSnapshot>>,
+    ) {
+        if self.managed.is_some() {
+            self.navigation
+                .get_or_insert_with(Default::default)
+                .set_skills_snapshot(snapshot);
+            self.notify();
+        }
+    }
+
+    /// Applies an actual UTF-8 edit receipt to a child draft and its skill spans.
+    /// # Errors
+    /// Rejects stale editors, invalid ranges and aggregate capacity atomically.
+    pub fn edit_managed_draft_range(
+        &mut self,
+        editor: &NativeManagedEditorIdentity,
+        range: std::ops::Range<usize>,
+        inserted: &str,
+        cursor: usize,
+    ) -> Result<(), NativeManagedNavigationError> {
+        self.navigation_available()?;
+        let result = self
+            .navigation
+            .as_mut()
+            .ok_or(NativeManagedNavigationError::Unavailable)?
+            .edit_draft_range(editor, range, inserted, cursor);
+        self.notify();
+        result
+    }
+
+    /// Edits only the child-local skill menu query; this cannot send a message.
+    /// # Errors
+    /// Rejects stale editors and invalid bounded query/cursor values.
+    pub fn edit_managed_skill_query(
+        &mut self,
+        editor: &NativeManagedEditorIdentity,
+        query: &str,
+        cursor: usize,
+    ) -> Result<(), NativeManagedNavigationError> {
+        self.navigation_available()?;
+        let result = self
+            .navigation
+            .as_mut()
+            .ok_or(NativeManagedNavigationError::Unavailable)?
+            .edit_skill_query(editor, query, cursor);
+        self.notify();
+        result
+    }
     /// Edits a child-local model query; selection still requires the resulting
     /// exact frame and the original observed child. No configuration is saved.
     /// # Errors
@@ -140,6 +193,16 @@ impl NativeInteractiveSession {
         command: ManagedSubagentCommand,
         cancellation: CancellationToken,
     ) -> Result<NativeManagedCommandResponse, ManagedSubagentError> {
+        self.request_observed_managed_command_with_skills(observed, command, &[], cancellation)
+    }
+
+    pub(super) fn request_observed_managed_command_with_skills(
+        &mut self,
+        observed: NativeObservedManagedAgent,
+        command: ManagedSubagentCommand,
+        skills: &[crate::NativeSkillReference],
+        cancellation: CancellationToken,
+    ) -> Result<NativeManagedCommandResponse, ManagedSubagentError> {
         if self.shutting_down || self.closed || self.pending.is_some() || self.transition.is_some()
         {
             return Err(ManagedSubagentError::Unavailable);
@@ -156,6 +219,7 @@ impl NativeInteractiveSession {
             foreground,
             observed,
             command,
+            skills,
             cancellation,
         )?;
         self.notify();

@@ -197,6 +197,16 @@ impl Fixture {
         Self::configured(false, FixtureExtension::Skills, Arc::new(AllowPrompter))
     }
 
+    #[allow(dead_code)] // Shared source: exercised by composed CLI tests, not every importing target.
+    pub fn with_workspace_skills_and_prompter(
+        select: impl FnOnce(
+            NativeReferenceHostConversationOptions,
+        ) -> NativeReferenceHostConversationOptions,
+        prompter: Arc<dyn PermissionPrompter>,
+    ) -> Self {
+        Self::configured_with_options(true, FixtureExtension::Skills, prompter, select)
+    }
+
     pub fn new_with_mcp() -> Self {
         Self::configured(false, FixtureExtension::Mcp, Arc::new(AllowPrompter))
     }

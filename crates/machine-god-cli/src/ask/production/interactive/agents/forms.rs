@@ -8,9 +8,9 @@ impl Driver {
         if self
             .owner
             .managed_navigation()
-            .is_some_and(|view| view.models.is_some())
+            .is_some_and(|view| view.models.is_some() || view.skills.is_some())
         {
-            self.sync_agent_model_editor(binding);
+            self.sync_agent_query_editor(binding);
             return;
         }
         let InputBinding::Agents { editor, .. } = binding else {
@@ -51,9 +51,9 @@ impl Driver {
         if self
             .owner
             .managed_navigation()
-            .is_some_and(|view| view.models.is_some())
+            .is_some_and(|view| view.models.is_some() || view.skills.is_some())
         {
-            self.edit_agent_model_editor(editor);
+            self.edit_agent_query_editor(editor);
             return;
         }
         let Some(view) = self.owner.managed_navigation() else {

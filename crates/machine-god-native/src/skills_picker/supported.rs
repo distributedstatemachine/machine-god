@@ -62,6 +62,39 @@ fn fixture() -> (Fixture, Arc<NativeSkillSnapshot>) {
 }
 
 #[test]
+fn multi_draft_retention_limits_reject_choice_and_edit_without_losing_binding() {
+    let (_fixture, snapshot) = fixture();
+    let mut picker = NativeSkillPicker::new(String::new(), 0).unwrap();
+    picker.open_menu(snapshot, "review").unwrap();
+    let frame = picker.view().unwrap().identity;
+    picker.acknowledge(&frame).unwrap();
+    assert_eq!(
+        picker.choose_with_retained_limit(&frame, 0).unwrap_err(),
+        NativeSkillPickerError::SelectionBytesExceeded
+    );
+    assert!(picker.draft().is_empty());
+    assert!(picker.bindings().is_empty());
+    picker.choose(&frame).unwrap();
+    let charged = picker.retained_bytes();
+    assert!(charged > picker.draft().len());
+    let draft = picker.draft_identity().clone();
+    assert_eq!(
+        picker.apply_edit_with_retained_limit(&draft, 0..0, "prefix ", 7, charged),
+        Err(NativeSkillPickerError::SelectionBytesExceeded)
+    );
+    assert_eq!(picker.draft_identity(), &draft);
+    assert_eq!(picker.draft(), "$review ");
+    assert_eq!(picker.bindings().len(), 1);
+    // Removing the token refunds its entire selection charge, so an edit that
+    // removes a binding is admitted based on surviving bytes, not old bytes.
+    picker
+        .apply_edit_with_retained_limit(&draft, 0..8, "x", 1, 1)
+        .unwrap();
+    assert_eq!(picker.retained_bytes(), 1);
+    assert!(picker.bindings().is_empty());
+}
+
+#[test]
 fn filter_preserves_ascii_fields_catalog_order_and_frame_acknowledgement() {
     let fixture = Fixture::new();
     fixture.skill("a", "ReView", "ordinary");

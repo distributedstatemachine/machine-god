@@ -171,6 +171,25 @@ leaving it available for explicit resolution; they do not fence the manager or
 affect siblings. Restart recovery still marks pending work interrupted and never
 starts a skill read or model turn merely because a reference was deserialized.
 
+Child `/skills` uses an independently retained native picker over the host's
+explicitly supplied skill snapshot. Filtering, Escape and Ctrl-X do not execute
+a model or alter the parent's draft or exact skill bindings. Enter inserts an
+exact selected `$name` binding into only that child's draft; the complete escaped name and location
+must fit the acknowledged frame. Actual UTF-8 edit ranges preserve disjoint
+bindings and invalidate overlapping ones. Whole-text replacements carry no edit
+provenance and discard old bindings rather than guessing which identical token
+was edited. Cursor-only synchronization preserves bindings. Retained text and
+selection bytes share the 4 MiB logical multi-draft budget. Large obsolete text
+allocations are compacted, bounding spare draft capacity to twice the text plus
+1 KiB per retained draft while preserving amortized append growth. Failed edits
+or selections leave the original draft intact. Snapshot replacement invalidates menu frames;
+incomplete discovery visibly suppresses automatic matching but preserves explicit
+choices. Message acceptance freezes the resolved list before durable enqueue.
+
+A successful management mutation refreshes the native catalog before another
+frame can be acknowledged. The next command therefore uses a fresh observation,
+not the pre-mutation journal revision; editor changes do not skip that refresh.
+
 Foreground replacement stages inactive prompt and notice registrations under
 the same aggregate capacity bounds as live registrations. A staged successor
 may share the old parent's durable session identity, but does not receive prompts,

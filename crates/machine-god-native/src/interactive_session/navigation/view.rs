@@ -46,6 +46,7 @@ impl fmt::Debug for NativeManagedFrameIdentity {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeManagedNavigationRoute {
+    Skills,
     Models,
     Conversation,
     Catalog(NativeManagedCatalogFilter),
@@ -97,6 +98,7 @@ impl std::error::Error for NativeManagedNavigationError {}
 /// Typed human intent. IDs in configuration are checked against the exact row;
 /// lifecycle Close is admitted only through a separately displayed confirmation.
 pub enum NativeManagedNavigationAction {
+    Skills,
     Models,
     Exit,
     Conversation,
@@ -128,6 +130,7 @@ pub enum NativeManagedNavigationAction {
 impl fmt::Debug for NativeManagedNavigationAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let action = match self {
+            Self::Skills => "Skills",
             Self::Models => "Models",
             Self::Exit => "Exit",
             Self::Conversation => "Conversation",
@@ -161,6 +164,9 @@ impl fmt::Debug for NativeManagedNavigationAction {
 /// Borrowed unsanitized display values. The renderer must escape terminal text.
 /// A retained frame identity does not retain this projection or a child runtime.
 pub struct NativeManagedNavigationView<'a> {
+    pub skills: Option<crate::NativeSkillPickerView<'a>>,
+    pub skills_cursor: usize,
+    pub skills_incomplete: bool,
     pub models: Option<super::state::NativeManagedModelsView<'a>>,
     pub history: Option<super::NativeManagedHistoryView<'a>>,
     pub draft: Option<super::drafts::NativeManagedDraftView<'a>>,
@@ -215,6 +221,9 @@ mod tests {
             revision: 456_789,
         };
         let view = NativeManagedNavigationView {
+            skills: None,
+            skills_cursor: 0,
+            skills_incomplete: false,
             models: None,
             history: None,
             draft: None,

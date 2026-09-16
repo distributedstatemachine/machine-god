@@ -1,5 +1,6 @@
 //! Native page ownership and bounded asynchronous navigation work.
 mod models;
+mod skills;
 use super::super::agent_form::Form;
 use super::{
     NativeInteractiveSession,
@@ -30,6 +31,18 @@ use std::{
 type Error = NativeManagedNavigationError;
 type Action = NativeManagedNavigationAction;
 type Route = NativeManagedNavigationRoute;
+
+fn mutation_receipt(
+    result: &Result<ManagedSubagentResult, machine_god_core::ManagedSubagentError>,
+) -> bool {
+    result.as_ref().is_ok_and(|result| {
+        result.ok
+            && matches!(
+                result.requested,
+                Some(machine_god_core::ManagedRequested::Receipt(_))
+            )
+    })
+}
 
 enum Pending {
     History {
@@ -83,6 +96,8 @@ pub(in crate::interactive_session) struct Navigation {
     history_resident: bool,
     history_retry: Option<u64>,
     models: models::Models,
+    skills_snapshot: Option<Arc<crate::NativeSkillSnapshot>>,
+    skills_cursor: usize,
 }
 
 impl Default for Navigation {
@@ -110,6 +125,8 @@ impl Default for Navigation {
             history_resident: false,
             history_retry: None,
             models: models::Models::default(),
+            skills_snapshot: None,
+            skills_cursor: 0,
         }
     }
 }
@@ -130,6 +147,11 @@ impl Navigation {
             }
         } else {
             self.drafts.accepted(&submission);
+            if self.route == Route::Skills
+                && let Err(error) = self.open_skills()
+            {
+                self.error = Some(error);
+            }
         }
     }
 
@@ -147,6 +169,18 @@ impl Navigation {
     }
     pub(super) fn view(&self) -> Option<NativeManagedNavigationView<'_>> {
         self.open.then(|| NativeManagedNavigationView {
+            skills: (self.route == Route::Skills)
+                .then(|| {
+                    self.target()
+                        .ok()
+                        .and_then(|target| self.drafts.skills(&target.observation))
+                })
+                .flatten(),
+            skills_cursor: self.skills_cursor,
+            skills_incomplete: self
+                .skills_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| !snapshot.complete()),
             models: (self.route == Route::Models).then(|| self.models.view()),
             history: self.history.view(),
             draft: matches!(self.route, Route::Agent(_) | Route::Conversation)
@@ -204,12 +238,17 @@ impl Navigation {
             return Err(Error::StaleFrame);
         }
         self.displayed = Some(frame.clone());
+        if self.route == Route::Skills {
+            self.drafts
+                .acknowledge_skill(&self.target()?.observation.clone())?;
+        }
         Ok(())
     }
     pub(super) fn invalidate(&mut self) -> Result<(), Error> {
         self.change(false)
     }
     pub(super) fn close(&mut self) {
+        self.drafts.close_skills();
         self.open = false;
         self.displayed = None;
         self.rows.clear();
@@ -292,12 +331,19 @@ impl Navigation {
             _ => None,
         };
         let cancellation = CancellationToken::new();
+        let skills = match &command {
+            ManagedSubagentCommand::Message(ManagedMessage::Send(message)) => {
+                self.skill_references(owner, &message.content)?
+            }
+            _ => Vec::new(),
+        };
         let response = if matches!(command, ManagedSubagentCommand::Create(_)) {
             owner.request_managed_command(command, cancellation.clone())
         } else {
-            owner.request_observed_managed_command(
+            owner.request_observed_managed_command_with_skills(
                 self.target()?.observation.clone(),
                 command,
+                &skills,
                 cancellation.clone(),
             )
         }
@@ -404,6 +450,7 @@ impl Navigation {
         // Validate selection/action before consuming the displayed frame.
         match &action {
             Action::Select
+            | Action::Skills
             | Action::Models
             | Action::Conversation
             | Action::SeekHistory(_)
@@ -427,6 +474,14 @@ impl Navigation {
             && !matches!(
                 action,
                 Action::Previous | Action::Next | Action::Select | Action::Back | Action::Refresh
+            )
+        {
+            return Err(Error::InvalidAction);
+        }
+        if self.route == Route::Skills
+            && !matches!(
+                action,
+                Action::Previous | Action::Next | Action::Select | Action::Back
             )
         {
             return Err(Error::InvalidAction);
@@ -511,11 +566,13 @@ impl Navigation {
                 | Action::Processes(_)
                 | Action::OpenForm(_)
                 | Action::Models
+                | Action::Skills
                 | Action::Lifecycle(ManagedLifecycleAction::Close)
         ) {
             self.history.clear();
         }
         let result = match action {
+            Action::Skills => self.open_skills(),
             Action::Models => self.open_models(owner),
             Action::Exit => {
                 self.close();
@@ -525,6 +582,12 @@ impl Navigation {
             Action::SeekHistory(position) => self.history.seek(position),
             Action::HistoryMode(mode) => self.history.set_mode(mode),
             Action::Previous | Action::Next => {
+                if self.route == Route::Skills {
+                    return self.drafts.move_skill(
+                        &self.target()?.observation.clone(),
+                        matches!(action, Action::Next),
+                    );
+                }
                 if self.route == Route::Models {
                     self.models
                         .picker
@@ -582,12 +645,19 @@ impl Navigation {
                     self.inspect(owner, section, Some(cursor))
                 }
                 Route::Conversation
+                | Route::Skills
                 | Route::Models
                 | Route::ConfirmClose
                 | Route::Form(_)
                 | Route::Processes(_) => Err(Error::InvalidAction),
             },
             Action::Select if self.route == Route::Models => self.select_model(owner),
+            Action::Select if self.route == Route::Skills => {
+                self.drafts
+                    .choose_skill(&self.target()?.observation.clone())?;
+                self.route = Route::Conversation;
+                self.history(owner)
+            }
             Action::Select | Action::Conversation => {
                 self.route = Route::Conversation;
                 self.result = None;
@@ -599,6 +669,11 @@ impl Navigation {
                 self.inspect(owner, section, None)
             }
             Action::Back => {
+                if self.route == Route::Skills {
+                    self.drafts.close_skills();
+                    self.route = Route::Conversation;
+                    return self.history(owner);
+                }
                 if self.route == Route::Models {
                     self.route = Route::Conversation;
                     return self.history(owner);
@@ -763,6 +838,11 @@ impl Navigation {
                     });
                     return;
                 };
+                if mutation_receipt(&result) {
+                    // A successful mutation advances the durable head. Never
+                    // acknowledge another command against the pre-mutation row.
+                    refresh = Some(Refresh::Catalog);
+                }
                 editor_changed = self.accept_command(result, draft, epoch);
                 epoch
             }
@@ -777,10 +857,11 @@ impl Navigation {
         editor_changed: bool,
         refresh: Option<Refresh>,
     ) {
-        if self.open && epoch == self.epoch && self.change(editor_changed).is_err() {
-            self.close();
-        }
         if !self.open || epoch != self.epoch {
+            return;
+        }
+        if self.change(editor_changed).is_err() {
+            self.close();
             return;
         }
         let result = match refresh {
@@ -906,6 +987,7 @@ impl Navigation {
             self.route,
             Route::Conversation
                 | Route::Models
+                | Route::Skills
                 | Route::Agent(_)
                 | Route::ConfirmClose
                 | Route::Form(NativeManagedFormKind::Configure)

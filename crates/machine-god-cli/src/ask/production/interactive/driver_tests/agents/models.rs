@@ -69,6 +69,11 @@ async fn assert_saved_model(harness: &mut Harness) {
     })
     .await;
     let view = harness.driver.owner.managed_navigation().unwrap();
+    assert!(
+        view.result.is_some_and(|result| result.ok),
+        "{:?}",
+        view.result
+    );
     let machine_god_core::ManagedRequested::Inspection(inspection) =
         view.result.unwrap().requested.as_ref().unwrap()
     else {

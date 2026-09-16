@@ -1,7 +1,7 @@
 //! Thin native-navigation adapter. This owns only rendering/flush and editor custody.
 mod drafts;
 mod forms;
-mod models;
+mod queries;
 mod render;
 use super::{Driver, InputBinding, Render, composer::ComposerEvent, principal};
 use machine_god_core::{
@@ -38,7 +38,9 @@ impl Driver {
             self.note(b"\n[agent navigation unavailable in this input view]\n");
             return;
         }
-        self.reset_skills();
+        // Park the parent's exact bindings; child input has independent native
+        // draft custody and must neither clear nor borrow these selections.
+        self.close_skills();
         if self.owner.open_managed_navigation().is_err() {
             self.owner.close_managed_navigation();
             self.note(b"\n[agent navigation unavailable or still settling]\n");
@@ -70,9 +72,11 @@ impl Driver {
         if self.owner.managed_navigation().is_none()
             && let Some(ui) = self.agents.take()
         {
-            self.input
-                .close_managed_editor(!self.shutting_down && ui.parent == principal(&self.owner));
-            self.reset_skills();
+            let restore_parent = !self.shutting_down && ui.parent == principal(&self.owner);
+            self.input.close_managed_editor(restore_parent);
+            if !restore_parent {
+                self.reset_skills();
+            }
             if let Some(frontend) = &mut self.frontend {
                 frontend.dirty = true;
             }
@@ -155,10 +159,9 @@ impl Driver {
             ComposerEvent::HistoryFull => Action::HistoryMode(HistoryMode::Full),
             ComposerEvent::Changed | ComposerEvent::CancelRequested
                 if matches!(event, ComposerEvent::Changed)
-                    || self
-                        .owner
-                        .managed_navigation()
-                        .is_some_and(|view| view.form.is_some() || view.models.is_some()) =>
+                    || self.owner.managed_navigation().is_some_and(|view| {
+                        view.form.is_some() || view.models.is_some() || view.skills.is_some()
+                    }) =>
             {
                 self.edit_agent_form(editor);
                 if let Some(ui) = &mut self.agents {
@@ -296,7 +299,7 @@ impl Driver {
 
     fn agent_line_action(&self, line: &str) -> Result<Action, ()> {
         let view = self.owner.managed_navigation().ok_or(())?;
-        if view.route == Route::Models {
+        if matches!(view.route, Route::Models | Route::Skills) {
             return Ok(Action::Select);
         }
         if matches!(view.route, Route::Form(_)) {
@@ -335,6 +338,7 @@ impl Driver {
             "/create" => Action::OpenForm(NativeManagedFormKind::Create),
             "/configure" => Action::OpenForm(NativeManagedFormKind::Configure),
             "/models" => Action::Models,
+            "/skills" => Action::Skills,
             "/cancel" => Action::Lifecycle(Lifecycle::Cancel),
             "/resume" => Action::Lifecycle(Lifecycle::Resume),
             "/reopen" => Action::Lifecycle(Lifecycle::Reopen),
@@ -434,6 +438,7 @@ impl Driver {
             frame: (frame.selectable
                 && (view.form.is_none() || ui.form_editor.as_ref() == Some(&view.editor))
                 && (view.models.is_none() || ui.form_editor.as_ref() == Some(&view.editor))
+                && (view.skills.is_none() || ui.form_editor.as_ref() == Some(&view.editor))
                 && view.draft.is_none_or(|draft| {
                     ui.draft_editor.as_ref().is_some_and(|(editor, revision)| {
                         editor == &view.editor && *revision == draft.revision

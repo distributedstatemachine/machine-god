@@ -177,3 +177,77 @@ fn changed_child_skill_fails_only_its_accepted_work() {
 fn unavailable_child_skill_catalog_fails_only_its_accepted_work() {
     rejected_skill(false);
 }
+
+#[test]
+fn child_menu_preserves_draft_binding_and_requires_new_ack_after_filter_edit() {
+    use super::navigation_ui::ready;
+    use crate::{NativeManagedNavigationAction as Action, NativeManagedNavigationError as Error};
+    let mut fixture = Fixture::with_options("auto", true, skill_options);
+    let snapshot = Arc::new(
+        fixture
+            .host()
+            .skills()
+            .unwrap()
+            .catalog()
+            .discover(&CancellationToken::new())
+            .unwrap(),
+    );
+    run(async {
+        let (mut owner, completion) = open(&mut fixture).await;
+        owner.set_managed_skills_snapshot(Some(snapshot));
+        let child = submit(&mut owner, create()).await.child_id.unwrap();
+        owner.open_managed_navigation().unwrap();
+        let frame = ready(&mut owner).await;
+        owner.acknowledge_managed_frame(&frame).unwrap();
+        owner.act_on_managed_frame(&frame, Action::Select).unwrap();
+        let frame = ready(&mut owner).await;
+        let editor = owner.managed_navigation().unwrap().editor;
+        owner.edit_managed_draft(&editor, "before", 6).unwrap();
+        owner.acknowledge_managed_frame(&frame).unwrap();
+        owner.act_on_managed_frame(&frame, Action::Skills).unwrap();
+        let frame = ready(&mut owner).await;
+        let editor = owner.managed_navigation().unwrap().editor;
+        owner.acknowledge_managed_frame(&frame).unwrap();
+        owner
+            .edit_managed_skill_query(&editor, "selected", 8)
+            .unwrap();
+        assert_eq!(
+            owner.act_on_managed_frame(&frame, Action::Select),
+            Err(Error::StaleFrame)
+        );
+        let frame = ready(&mut owner).await;
+        owner.acknowledge_managed_frame(&frame).unwrap();
+        owner.act_on_managed_frame(&frame, Action::Select).unwrap();
+        let frame = ready(&mut owner).await;
+        let draft = owner
+            .managed_navigation()
+            .unwrap()
+            .draft
+            .unwrap()
+            .text
+            .to_owned();
+        assert_eq!(draft, "before $selected ");
+        assert!(fixture.transport.requests.lock().unwrap().is_empty());
+        owner.acknowledge_managed_frame(&frame).unwrap();
+        owner
+            .submit_managed_frame(&frame, Action::Message(draft.clone()), &draft)
+            .unwrap();
+        state(&mut owner, &child, ManagedAgentState::Idle).await;
+        ready(&mut owner).await;
+        assert!(
+            owner
+                .managed_navigation()
+                .unwrap()
+                .draft
+                .unwrap()
+                .text
+                .is_empty()
+        );
+        assert!(
+            fixture.transport.requests.lock().unwrap()[0]
+                .to_string()
+                .contains("SELECTED_SKILL_BODY")
+        );
+        close(owner, completion).await;
+    });
+}

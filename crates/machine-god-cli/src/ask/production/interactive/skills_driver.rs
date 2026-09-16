@@ -156,6 +156,13 @@ impl SkillsUi {
 
 impl Driver {
     #[cfg(test)]
+    pub(super) fn bound_skill_count(&self) -> usize {
+        self.skills
+            .as_ref()
+            .map_or(0, |skills| skills.picker.bindings().len())
+    }
+
+    #[cfg(test)]
     pub(super) fn has_pending_skills_selection(&self) -> bool {
         self.skills
             .as_ref()
@@ -185,10 +192,15 @@ impl Driver {
         mut self,
         snapshot: Option<Arc<NativeSkillSnapshot>>,
     ) -> Self {
+        self.set_skills_snapshot(snapshot);
+        self
+    }
+
+    pub(super) fn set_skills_snapshot(&mut self, snapshot: Option<Arc<NativeSkillSnapshot>>) {
+        self.owner.set_managed_skills_snapshot(snapshot.clone());
         if self.owner.skills_catalog().is_some() {
             self.skills = Some(SkillsUi::new(snapshot));
         }
-        self
     }
 
     pub(super) fn skills_open(&self) -> bool {
@@ -482,12 +494,15 @@ impl Driver {
                 // A mutation (including partial/uncertain publication) makes
                 // the previous discovery unsuitable for a fresh invocation.
                 skills.snapshot = None;
+                self.owner.set_managed_skills_snapshot(None);
                 skills.refresh = Some(outcome.source.clone());
                 self.close_skills();
             }
             NativeSkillsServiceResult::Catalog(view) => {
                 let snapshot = Arc::new(view.snapshot.clone());
                 skills.snapshot = Some(snapshot.clone());
+                self.owner
+                    .set_managed_skills_snapshot(Some(snapshot.clone()));
                 if !request.open
                     || request.epoch != skills.epoch
                     || self.frontend.is_none()

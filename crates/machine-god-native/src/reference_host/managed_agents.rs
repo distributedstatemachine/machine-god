@@ -347,13 +347,14 @@ impl NativeManagedAgents {
         selection: &ManagedForegroundSelection,
         observed: crate::NativeObservedManagedAgent,
         command: machine_god_core::ManagedSubagentCommand,
+        skills: &[crate::NativeSkillReference],
         cancellation: machine_god_core::CancellationToken,
     ) -> Result<NativeManagedCommandResponse, machine_god_core::ManagedSubagentError> {
         self.manager.request_observed_human_command(
             selection,
             Some(observed),
             command,
-            &[],
+            skills,
             cancellation,
         )
     }

@@ -1,7 +1,7 @@
 //! Bounded unsent text, independent of page, editor and input-ACK lifetimes.
 use super::view::NativeManagedNavigationError as Error;
-use crate::NativeObservedManagedAgent;
-use std::fmt;
+use crate::{NativeObservedManagedAgent, NativeSkillPicker, NativeSkillPickerError};
+use std::{fmt, ops::Range, sync::Arc};
 
 const MAX_DRAFTS: usize = 128;
 const MAX_DRAFT_BYTES: usize = 256 * 1024;
@@ -24,8 +24,7 @@ impl fmt::Debug for NativeManagedDraftView<'_> {
 
 struct Draft {
     owner: NativeObservedManagedAgent,
-    text: Box<str>,
-    cursor: usize,
+    picker: NativeSkillPicker,
     revision: u64,
 }
 
@@ -53,8 +52,8 @@ impl Drafts {
             .map_or_else(NativeManagedDraftView::default, |index| {
                 let entry = &self.entries[index];
                 NativeManagedDraftView {
-                    text: &entry.text,
-                    cursor: entry.cursor,
+                    text: entry.picker.draft(),
+                    cursor: entry.picker.cursor(),
                     revision: entry.revision,
                 }
             })
@@ -73,15 +72,15 @@ impl Drafts {
             return Err(Error::InvalidAction);
         }
         let index = self.index(owner);
-        let previous = index.map_or(0, |index| self.entries[index].text.len());
+        let previous = index.map_or(0, |index| self.entries[index].picker.retained_bytes());
+        let unchanged = index.is_some_and(|index| self.entries[index].picker.draft() == text);
+        let next = if unchanged { previous } else { text.len() };
         if (index.is_none() && !text.is_empty() && self.entries.len() == MAX_DRAFTS)
-            || self.bytes - previous + text.len() > MAX_TOTAL_BYTES
+            || self.bytes - previous + next > MAX_TOTAL_BYTES
         {
             return Err(Error::DraftCapacity);
         }
-        if index.is_some_and(|index| {
-            self.entries[index].text.as_ref() == text && self.entries[index].cursor == cursor
-        }) {
+        if index.is_some_and(|index| unchanged && self.entries[index].picker.cursor() == cursor) {
             return Ok(());
         }
         let revision = self.revision.checked_add(1).ok_or(Error::Exhausted)?;
@@ -91,20 +90,28 @@ impl Drafts {
             }
         } else if let Some(index) = index {
             let entry = &mut self.entries[index];
-            if entry.text.as_ref() != text {
-                entry.text = text.into();
+            if unchanged {
+                entry
+                    .picker
+                    .move_cursor(&entry.picker.draft_identity().clone(), cursor)
+                    .map_err(picker_error)?;
+            } else {
+                // Whole-text replacement carries no edit provenance and must
+                // not transfer exact bindings to identical-looking tokens.
+                entry
+                    .picker
+                    .reset(text.into(), cursor)
+                    .map_err(picker_error)?;
             }
-            entry.cursor = cursor;
             entry.revision = revision;
         } else {
             self.entries.push(Draft {
                 owner: owner.clone(),
-                text: text.into(),
-                cursor,
+                picker: NativeSkillPicker::new(text.into(), cursor).map_err(picker_error)?,
                 revision,
             });
         }
-        self.bytes = self.bytes - previous + text.len();
+        self.bytes = self.bytes - previous + next;
         self.revision = revision;
         Ok(())
     }
@@ -115,7 +122,7 @@ impl Drafts {
         text: &str,
     ) -> Option<Submission> {
         let entry = &self.entries[self.index(owner)?];
-        (entry.text.as_ref() == text).then(|| Submission {
+        (entry.picker.draft() == text).then(|| Submission {
             owner: owner.clone(),
             revision: entry.revision,
         })
@@ -125,8 +132,162 @@ impl Drafts {
         if let Some(index) = self.index(&submission.owner)
             && self.entries[index].revision == submission.revision
         {
-            self.bytes -= self.entries.remove(index).text.len();
+            self.bytes -= self.entries.remove(index).picker.retained_bytes();
         }
+    }
+
+    fn ensure(&mut self, owner: &NativeObservedManagedAgent) -> Result<usize, Error> {
+        if let Some(index) = self.index(owner) {
+            return Ok(index);
+        }
+        if self.entries.len() == MAX_DRAFTS {
+            return Err(Error::DraftCapacity);
+        }
+        self.entries.push(Draft {
+            owner: owner.clone(),
+            picker: NativeSkillPicker::new(String::new(), 0).map_err(picker_error)?,
+            revision: self.revision,
+        });
+        Ok(self.entries.len() - 1)
+    }
+
+    fn mutate<T>(
+        &mut self,
+        index: usize,
+        action: impl FnOnce(&mut NativeSkillPicker, usize) -> Result<T, NativeSkillPickerError>,
+    ) -> Result<T, Error> {
+        let revision = self.revision.checked_add(1).ok_or(Error::Exhausted)?;
+        let entry = &mut self.entries[index];
+        let previous = entry.picker.retained_bytes();
+        let result = action(&mut entry.picker, MAX_TOTAL_BYTES - self.bytes + previous)
+            .map_err(picker_error)?;
+        entry.picker.compact_draft_capacity();
+        self.bytes = self.bytes - previous + entry.picker.retained_bytes();
+        self.revision = revision;
+        entry.revision = revision;
+        Ok(result)
+    }
+
+    pub(super) fn edit(
+        &mut self,
+        owner: &NativeObservedManagedAgent,
+        range: Range<usize>,
+        inserted: &str,
+        cursor: usize,
+    ) -> Result<(), Error> {
+        if inserted.contains('\0') {
+            return Err(Error::InvalidAction);
+        }
+        let index = self.ensure(owner)?;
+        let result = self.mutate(index, |picker, limit| {
+            picker.apply_edit_with_retained_limit(
+                &picker.draft_identity().clone(),
+                range,
+                inserted,
+                cursor,
+                limit,
+            )
+        });
+        if self.entries[index].picker.draft().is_empty()
+            && self.entries[index].picker.view().is_none()
+        {
+            self.entries.remove(index);
+        }
+        result
+    }
+
+    pub(super) fn open_skills(
+        &mut self,
+        owner: &NativeObservedManagedAgent,
+        snapshot: Arc<crate::NativeSkillSnapshot>,
+    ) -> Result<(), Error> {
+        self.close_skills();
+        let index = self.ensure(owner)?;
+        self.entries[index]
+            .picker
+            .open_menu(snapshot, "")
+            .map_err(picker_error)
+    }
+    pub(super) fn close_skills(&mut self) {
+        for entry in &mut self.entries {
+            entry.picker.close();
+        }
+        self.entries
+            .retain(|entry| !entry.picker.draft().is_empty());
+    }
+    pub(super) fn skills(
+        &self,
+        owner: &NativeObservedManagedAgent,
+    ) -> Option<crate::NativeSkillPickerView<'_>> {
+        self.entries.get(self.index(owner)?)?.picker.view()
+    }
+    pub(super) fn query_skills(
+        &mut self,
+        owner: &NativeObservedManagedAgent,
+        query: &str,
+    ) -> Result<(), Error> {
+        let index = self.index(owner).ok_or(Error::NoSelection)?;
+        self.entries[index]
+            .picker
+            .query_menu(query)
+            .map_err(picker_error)
+    }
+    pub(super) fn move_skill(
+        &mut self,
+        owner: &NativeObservedManagedAgent,
+        forward: bool,
+    ) -> Result<(), Error> {
+        let index = self.index(owner).ok_or(Error::NoSelection)?;
+        self.entries[index]
+            .picker
+            .move_selection(forward)
+            .map_err(picker_error)
+    }
+    pub(super) fn acknowledge_skill(
+        &mut self,
+        owner: &NativeObservedManagedAgent,
+    ) -> Result<(), Error> {
+        let index = self.index(owner).ok_or(Error::NoSelection)?;
+        let picker = &mut self.entries[index].picker;
+        let frame = picker.view().ok_or(Error::NoSelection)?.identity;
+        picker.acknowledge(&frame).map_err(picker_error)
+    }
+    pub(super) fn choose_skill(&mut self, owner: &NativeObservedManagedAgent) -> Result<(), Error> {
+        let index = self.index(owner).ok_or(Error::NoSelection)?;
+        self.mutate(index, |picker, limit| {
+            let frame = picker
+                .view()
+                .ok_or(NativeSkillPickerError::NotOpen)?
+                .identity;
+            picker.choose_with_retained_limit(&frame, limit).map(|_| ())
+        })
+    }
+    pub(super) fn selections(
+        &self,
+        owner: &NativeObservedManagedAgent,
+        text: &str,
+    ) -> Result<Vec<crate::NativeSkillSelection>, Error> {
+        let Some(index) = self.index(owner) else {
+            return Ok(Vec::new());
+        };
+        let picker = &self.entries[index].picker;
+        if picker.draft() != text {
+            return Ok(Vec::new());
+        }
+        picker
+            .selections(picker.draft_identity())
+            .map_err(picker_error)
+    }
+}
+
+fn picker_error(error: NativeSkillPickerError) -> Error {
+    match error {
+        NativeSkillPickerError::PromptTooLong
+        | NativeSkillPickerError::TooManySelections
+        | NativeSkillPickerError::SelectionBytesExceeded => Error::DraftCapacity,
+        NativeSkillPickerError::RevisionExhausted => Error::Exhausted,
+        NativeSkillPickerError::NoSelection => Error::NoSelection,
+        _ => Error::InvalidAction,
     }
 }
 

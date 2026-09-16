@@ -8,7 +8,7 @@ fn model_query_survives_selection_and_clears_independently_of_parent_activity() 
         let context = ComposerContext {
             agents: true,
             active_response,
-            agent_models: Some(machine_god_native::NativeModelCatalogCacheState::Ready),
+            agent_menu: Some(AgentMenu::Models),
             ..ComposerContext::default()
         };
         let mut editor = Composer::default();
@@ -29,7 +29,7 @@ fn model_query_survives_selection_and_clears_independently_of_parent_activity() 
 fn model_menu_keys_do_not_submit_queries_or_escape_paste() {
     let context = ComposerContext {
         agents: true,
-        agent_models: Some(machine_god_native::NativeModelCatalogCacheState::Loading),
+        agent_menu: Some(AgentMenu::Models),
         ..ComposerContext::default()
     };
     let mut editor = Composer::default();

@@ -30,9 +30,31 @@ impl NativeSkillPicker {
         inserted: &str,
         cursor_after: usize,
     ) -> Result<()> {
+        self.apply_edit_with_retained_limit(expected, range, inserted, cursor_after, usize::MAX)
+    }
+
+    pub(crate) fn apply_edit_with_retained_limit(
+        &mut self,
+        expected: &NativeSkillDraftIdentity,
+        range: Range<usize>,
+        inserted: &str,
+        cursor_after: usize,
+        retained_limit: usize,
+    ) -> Result<()> {
         self.check_draft(expected)?;
         let revision = self.next_revision()?;
         self.validate_edit(&range, inserted, cursor_after)?;
+        let bindings = self
+            .bindings
+            .iter()
+            .filter(|binding| {
+                surviving_span(&self.draft, &binding.span, &range, inserted).is_some()
+            })
+            .map(|binding| binding.selection.retained_bytes())
+            .sum::<usize>();
+        if self.draft.len() - range.len() + inserted.len() + bindings > retained_limit {
+            return Err(Error::SelectionBytesExceeded);
+        }
         self.commit_edit(&range, inserted, cursor_after);
         self.identity.revision = revision;
         self.refresh_after_edit();

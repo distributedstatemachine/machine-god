@@ -6,6 +6,8 @@ use native::{NativeManagedInteractiveStartup, NativeManagedNavigationRoute as Ro
 use std::io::Write as _;
 #[path = "agents/models.rs"]
 mod models;
+#[path = "agents/skills.rs"]
+mod skills;
 
 async fn prepared() -> (support::Fixture, Harness) {
     prepared_with_catalog(None).await
@@ -13,13 +15,24 @@ async fn prepared() -> (support::Fixture, Harness) {
 async fn prepared_with_catalog(
     cache: Option<Arc<native::NativeModelCatalogCache>>,
 ) -> (support::Fixture, Harness) {
+    prepared_with_extensions(cache, false).await
+}
+
+async fn prepared_with_extensions(
+    cache: Option<Arc<native::NativeModelCatalogCache>>,
+    skills: bool,
+) -> (support::Fixture, Harness) {
     let inbox =
         NativeInteractivePromptInbox::new(NativeInteractivePromptLimits::default()).unwrap();
     let bridge = inbox.router();
-    let mut fixture = support::Fixture::with_workspace_options_and_prompter(
-        |options| options.with_managed_agents(managed_startup::options(&inbox)),
-        bridge.clone(),
-    );
+    let select = |options: native::NativeReferenceHostConversationOptions| {
+        options.with_managed_agents(managed_startup::options(&inbox))
+    };
+    let mut fixture = if skills {
+        support::Fixture::with_workspace_skills_and_prompter(select, bridge.clone())
+    } else {
+        support::Fixture::with_workspace_options_and_prompter(select, bridge.clone())
+    };
     let state = std::fs::File::open(fixture.state_root()).unwrap();
     let host = Arc::get_mut(&mut fixture.host).unwrap();
     let preferences = host.loaded_config().config().model_preferences();

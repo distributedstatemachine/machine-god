@@ -236,6 +236,25 @@ impl NativeSkillPicker {
         &self.bindings
     }
 
+    /// Variable-sized draft and selection data charged by a multi-draft owner.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.draft.len()
+            + self
+                .bindings
+                .iter()
+                .map(|binding| binding.selection.retained_bytes())
+                .sum::<usize>()
+    }
+
+    pub(crate) fn compact_draft_capacity(&mut self) {
+        // Keep amortized append growth, but do not retain a formerly large
+        // allocation after deleting most of a child draft. With the owner's
+        // logical byte/count limits this bounds spare text to 2x + 1 KiB/draft.
+        if self.draft.capacity() > self.draft.len().saturating_mul(2).max(1024) {
+            self.draft.shrink_to_fit();
+        }
+    }
+
     /// Fresh prompt/handoff identity, even for identical text. Invalid inputs
     /// leave the old state intact; runtime synchronization failure should drop
     /// this object instead of relying on an invalid reset.

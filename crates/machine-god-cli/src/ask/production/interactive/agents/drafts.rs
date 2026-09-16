@@ -2,6 +2,19 @@
 use super::{Driver, InputBinding, NativeManagedEditorIdentity};
 
 impl Driver {
+    pub(in crate::ask::production::interactive) fn reject_agent_draft_edit(&mut self) {
+        if let Some(ui) = &mut self.agents {
+            ui.draft_editor = None;
+        }
+        if let Some(view) = self.owner.managed_navigation() {
+            self.sync_agent_draft_editor(&InputBinding::Agents {
+                editor: view.editor,
+                frame: None,
+            });
+        }
+        self.invalidate_agents();
+        self.note(b"\n[agent draft edit rejected; previous draft retained]\n");
+    }
     pub(super) fn sync_agent_draft_editor(&mut self, binding: &InputBinding) {
         let InputBinding::Agents { editor, .. } = binding else {
             return;

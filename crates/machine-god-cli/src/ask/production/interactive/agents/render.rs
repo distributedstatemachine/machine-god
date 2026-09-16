@@ -4,6 +4,7 @@ mod forms;
 mod history;
 mod models;
 mod processes;
+mod skills;
 pub(super) use history::scroll as scroll_history;
 pub(super) use processes::count as process_count;
 #[cfg(test)]
@@ -48,40 +49,32 @@ pub(super) fn render(
         Route::Form(machine_god_native::NativeManagedFormKind::Create)
     ) && let Some(target) = view.target
     {
-        let required = identity_rows(&target.id, columns)
-            .and_then(|id_rows| id_rows.checked_add(9 + usize::from(view.error.is_some())));
+        let required = identity_rows(&target.id, columns).and_then(|id_rows| {
+            id_rows.checked_add(
+                9 + usize::from(view.error.is_some()) + 2 * usize::from(view.skills_incomplete),
+            )
+        });
         if required.is_none_or(|required| required > lines.limit) {
             lines.push("Resize to display the complete target identity")?;
             return lines.finish(false);
         }
     }
-    lines.push(if view.route == Route::Conversation {
-        "Agents & processes · canonical conversation"
-    } else {
-        "Agents & processes · clipped previews"
-    })?;
-    if let Some(history) = view.history {
-        use machine_god_native::NativeManagedHistoryMode;
-        lines.push(match history.mode {
-            NativeManagedHistoryMode::Conversation => {
-                "Conversation · Ctrl-O opens transcript detail"
-            }
-            NativeManagedHistoryMode::Transcript => "Transcript · ←/→ switch · Ctrl-O close",
-            NativeManagedHistoryMode::Full => "Full detail · ←/→ switch · Ctrl-O close",
-        })?;
-    } else {
-        lines.push(&format!(
-            "{:?}{}",
-            view.route,
-            if view.busy { " — pending" } else { "" }
-        ))?;
-    }
+    heading(&mut lines, view)?;
     // Keep target, error and editor visible independently of detail scrolling.
     let content_limit = lines
         .limit
         .saturating_sub(4 + usize::from(view.error.is_some()));
     let mut selectable = true;
+    if view.skills_incomplete {
+        lines.push("Skills incomplete: automatic matching")?;
+        lines.push("disabled; explicit selections retained")?;
+    }
     match view.route {
+        Route::Skills => {
+            target_heading(&mut lines, view.target.ok_or(())?)?;
+            selectable =
+                skills::render(&mut lines, view.skills.as_ref().ok_or(())?, content_limit)?;
+        }
         Route::Models => {
             target_heading(&mut lines, view.target.ok_or(())?)?;
             selectable =
@@ -128,7 +121,37 @@ pub(super) fn render(
     Ok(frame)
 }
 
+fn heading(lines: &mut Lines, view: &NativeManagedNavigationView<'_>) -> Result<(), ()> {
+    lines.push(if view.route == Route::Conversation {
+        "Agents & processes · canonical conversation"
+    } else {
+        "Agents & processes · clipped previews"
+    })?;
+    if let Some(history) = view.history {
+        use machine_god_native::NativeManagedHistoryMode;
+        lines.push(match history.mode {
+            NativeManagedHistoryMode::Conversation => {
+                "Conversation · Ctrl-O opens transcript detail"
+            }
+            NativeManagedHistoryMode::Transcript => "Transcript · ←/→ switch · Ctrl-O close",
+            NativeManagedHistoryMode::Full => "Full detail · ←/→ switch · Ctrl-O close",
+        })
+    } else {
+        lines.push(&format!(
+            "{:?}{}",
+            view.route,
+            if view.busy { " — pending" } else { "" }
+        ))
+    }
+}
+
 fn footer(lines: &mut Lines, view: &NativeManagedNavigationView<'_>) -> Result<(), ()> {
+    if view.route == Route::Skills {
+        lines.push("Type to filter · arrows/Ctrl-J/Ctrl-K select")?;
+        lines.push("Enter inserts selected skill into this child's draft")?;
+        lines.push("Esc returns · Ctrl-X restores parent · no model call")?;
+        return lines.push("");
+    }
     if view.route == Route::Models {
         lines.push("Type to filter · arrows/Ctrl-J/Ctrl-K select")?;
         lines.push("Enter opens child configuration · Esc returns")?;

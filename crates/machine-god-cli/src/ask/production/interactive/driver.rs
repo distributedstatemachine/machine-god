@@ -358,10 +358,15 @@ impl Driver {
                 .managed_navigation()
                 .filter(|_| self.modal.is_none() && self.saved_rule.is_none())
                 .and_then(|view| view.form.map(|form| form.fields[form.selected])),
-            agent_models: self
-                .owner
-                .managed_navigation()
-                .and_then(|view| view.models.map(|models| models.state)),
+            agent_menu: self.owner.managed_navigation().and_then(|view| {
+                if view.models.is_some() {
+                    Some(super::composer::AgentMenu::Models)
+                } else if view.skills.is_some() {
+                    Some(super::composer::AgentMenu::Skills)
+                } else {
+                    None
+                }
+            }),
             skills: if self.agents.is_some() {
                 None
             } else if self.skills_query_open() {
@@ -380,6 +385,8 @@ impl Driver {
         let context = self.raw_input_context();
         let tape = &mut self.output.tape;
         let skills = &mut self.skills;
+        let owner = &mut self.owner;
+        let mut agent_edit_failed = false;
         let mut edit_failed = false;
         let mut received_nonselection = false;
         let mut received_non_picker_selection = false;
@@ -397,6 +404,18 @@ impl Driver {
                 }
             },
             |binding, range, inserted, cursor| {
+                if let InputBinding::Agents { editor, .. } = binding
+                    && owner
+                        .managed_navigation()
+                        .is_some_and(|view| view.draft.is_some())
+                {
+                    if !agent_edit_failed {
+                        agent_edit_failed = owner
+                            .edit_managed_draft_range(editor, range, inserted, cursor)
+                            .is_err();
+                    }
+                    return;
+                }
                 if let Some(skills) = skills
                     && matches!(binding, InputBinding::Skills { .. })
                 {
@@ -414,6 +433,10 @@ impl Driver {
         }
         if edit_failed {
             self.reset_skills();
+        }
+        if agent_edit_failed {
+            self.reject_agent_draft_edit();
+            return;
         }
         if self.input.take_cancel_disarm() {
             self.frontend.as_mut().expect("raw frontend").cancel_armed = None;
