@@ -64,11 +64,15 @@ answer ceiling and validate against the original admitted native schema.
 Successful decoding is not freshness evidence: the driver must retain the
 original token and exact owner through outbound correlation and submit replies
 to the native inbox, which independently rejects stale or cross-session tokens.
-The connection retains an explicit principal registration lease. Session
+An ordinary connection retains an explicit principal registration lease. Session
 replacement retires that exact lease, including answered-but-unconsumed replies,
-before registering its replacement; it does not globally invalidate other
-principals in a shared inbox. Prompt construction captures an existing
-registration, so an unpolled old request cannot bind a later replacement.
+before registering its replacement. Managed native runtimes instead own their
+actual leases; the connection validates the shared inbox binding and observes
+the selected registration without registering a second one. Changing foreground
+within the same permission-context allocation preserves a child's pending RPC,
+original token and URL completion. A different context allocation or connection
+deactivation clears that connection's correlations. Prompt construction captures
+an existing registration, so an unpolled old request cannot bind a replacement.
 The projection layer owns no I/O, pending RPC IDs, permission grants or browser.
 
 ## Modern client-managed URLs
@@ -114,6 +118,17 @@ correlation and the exact principal. IDs never repeat within the endpoint,
 including same-session reactivation. Deactivation discards old registrations
 and queued notices without publishing success. No request or answer is saved
 to profile configuration or credentials.
+
+URL registration captures a weak witness to the actual inbox registration and
+its epoch, not the currently displayed parent's labels. Activating presentation
+alone cannot register a URL for an unknown owner. Fixed-principal bridges cannot
+register a sibling even when both are live. Submission and completion revalidate
+the original witness; bounded pruning removes retired registrations and queued
+notices without clearing live siblings or rebinding reused session identities.
+The witness owns no runtime or registration lease. Its liveness check reads only
+weak atomic metadata, without acquiring the inbox mutex or upgrading an inbox
+owner while a correlation lock is held. Wire completion uses the
+original child's session ID, never the replacement parent's ID.
 
 See the [implementation plan](implementation-plan.md) for integration and
 delivery gates; this contract is not a delivery-status ledger.

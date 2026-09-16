@@ -14,6 +14,7 @@ use machine_god_core::{BoxFuture, CancellationToken, SessionId, SessionIncarnati
 use serde_json::{json, value::RawValue};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake, Waker};
+mod managed;
 
 fn owner() -> BackgroundOutputOwner {
     BackgroundOutputOwner::new(
@@ -29,6 +30,9 @@ fn connection() -> NativeAcpClientRequests {
     connection
 }
 fn request(url: bool) -> McpElicitationPromptRequest {
+    request_for(owner(), url)
+}
+fn request_for(owner: BackgroundOutputOwner, url: bool) -> McpElicitationPromptRequest {
     let text = if url {
         r#"{"mode":"url","message":"Confirm","url":"https://example.test/connect"}"#
     } else {
@@ -36,7 +40,7 @@ fn request(url: bool) -> McpElicitationPromptRequest {
     };
     let raw = RawValue::from_string(text.into()).unwrap();
     McpElicitationPromptRequest::new_human_feature(
-        owner(),
+        owner,
         Arc::from("server"),
         McpFeatureAction::ResourceRead,
         Arc::new(

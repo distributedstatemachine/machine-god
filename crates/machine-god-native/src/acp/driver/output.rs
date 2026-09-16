@@ -168,7 +168,20 @@ impl NativeAcpConnection {
                     self.fail(NativeAcpConnectionError::Native);
                     return;
                 };
-                if self.clients.activate(current, contexts).is_err() {
+                let native = self.selection.current().ok_or(()).and_then(|session| {
+                    session
+                        .manages_prompt_inbox(self.clients.prompt_inbox())
+                        .map_err(|_| ())
+                });
+                let activated = match native {
+                    Ok(true) => self.clients.activate_native(current, contexts),
+                    Ok(false) => self.clients.activate(current, contexts),
+                    Err(()) => {
+                        self.fail(NativeAcpConnectionError::Native);
+                        return;
+                    }
+                };
+                if activated.is_err() {
                     self.fail(NativeAcpConnectionError::Native);
                     return;
                 }

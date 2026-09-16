@@ -1,5 +1,6 @@
 //! Bounded ACP client URL correlation on the native human prompt inbox.
 
+use crate::interactive_prompts::NativeInteractivePromptRegistration;
 use crate::{
     NativeInteractivePromptBridge,
     mcp::interaction::{
@@ -44,18 +45,34 @@ impl fmt::Debug for NativeAcpElicitationComplete {
 
 struct Entry {
     request: Option<McpElicitationPromptRequest>,
-    owner: BackgroundOutputOwner,
+    registration: NativeInteractivePromptRegistration,
     charge: usize,
     submitted: bool,
 }
+struct QueuedCompletion {
+    notification: NativeAcpElicitationComplete,
+    registration: NativeInteractivePromptRegistration,
+}
 #[derive(Default)]
 struct State {
-    owner: Option<BackgroundOutputOwner>,
+    active: bool,
     next_id: u64,
     entries: BTreeMap<u64, Entry>,
-    ready: VecDeque<NativeAcpElicitationComplete>,
+    ready: VecDeque<QueuedCompletion>,
     bytes: usize,
     waker: Option<Waker>,
+}
+impl State {
+    fn prune_retired(&mut self) {
+        self.entries.retain(|_, entry| {
+            if entry.registration.is_live() {
+                return true;
+            }
+            self.bytes -= entry.charge;
+            false
+        });
+        self.ready.retain(|entry| entry.registration.is_live());
+    }
 }
 
 /// Explicit ACP presentation endpoint; constructing it performs no effects.
@@ -78,18 +95,28 @@ impl NativeAcpElicitationPresenter {
         }
     }
 
-    /// Change the exact client principal, invalidating all old registrations and
-    /// queued completions. The driver also activates its actual native inbox.
-    pub fn activate(&self, owner: BackgroundOutputOwner) {
-        self.replace_owner(Some(owner));
+    /// Opens connection presentation, not principal authority. Every URL must
+    /// capture an actual native inbox registration. Repeated activation retains
+    /// live child custody; retired registration epochs can never be rebound.
+    pub fn activate(&self) {
+        let wake = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.prune_retired();
+            state.active = true;
+            state.waker.take()
+        };
+        if let Some(wake) = wake {
+            wake.wake();
+        }
     }
 
-    /// EOF, close or replacement invalidates custody, never synthesizes success.
+    /// Connection cutoff or authority-domain replacement invalidates custody,
+    /// never synthesizing success. Same-domain foreground replacement activates
+    /// without deactivation so live child custody survives.
     pub fn deactivate(&self) {
-        self.replace_owner(None);
-    }
-
-    fn replace_owner(&self, owner: Option<BackgroundOutputOwner>) {
         let wake = {
             let mut state = self
                 .state
@@ -98,7 +125,7 @@ impl NativeAcpElicitationPresenter {
             state.entries.clear();
             state.ready.clear();
             state.bytes = 0;
-            state.owner = owner;
+            state.active = false;
             state.waker.take()
         };
         if let Some(wake) = wake {
@@ -125,7 +152,9 @@ impl NativeAcpElicitationPresenter {
                 entry
                     .request
                     .as_ref()
-                    .filter(|selected| same_request(selected, request))
+                    .filter(|selected| {
+                        entry.registration.is_live() && same_request(selected, request)
+                    })
                     .map(|_| NativeAcpElicitationId(id))
             })
             .ok_or(McpElicitationPromptError::InvalidSource)
@@ -147,7 +176,7 @@ impl NativeAcpElicitationPresenter {
             .entries
             .get_mut(&id.0)
             .ok_or(McpElicitationPromptError::InvalidSource)?;
-        if entry.submitted {
+        if entry.submitted || !entry.registration.is_live() {
             return Err(McpElicitationPromptError::InvalidSource);
         }
         entry.submitted = true;
@@ -171,9 +200,10 @@ impl NativeAcpElicitationPresenter {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.prune_retired();
             if let Some(completion) = state.ready.pop_front() {
-                (Poll::Ready(Some(completion)), None)
-            } else if state.owner.is_none() {
+                (Poll::Ready(Some(completion.notification)), None)
+            } else if !state.active {
                 (Poll::Ready(None), None)
             } else {
                 (
@@ -227,16 +257,18 @@ impl McpClientUrlEndpoint for NativeAcpElicitationPresenter {
         &self,
         request: &McpElicitationPromptRequest,
     ) -> Result<McpClientUrlCompletion, McpElicitationPromptError> {
+        let registration = self
+            .bridge
+            .elicitation_registration(request)
+            .ok_or(McpElicitationPromptError::InvalidSource)?;
         let mut state = self
             .state
             .lock()
             .map_err(|_| McpElicitationPromptError::Unavailable)?;
-        let owner = state
-            .owner
-            .as_ref()
-            .filter(|owner| request.source().belongs_to(owner))
-            .ok_or(McpElicitationPromptError::InvalidSource)?
-            .clone();
+        if !state.active || !registration.is_live() {
+            return Err(McpElicitationPromptError::InvalidSource);
+        }
+        state.prune_retired();
         if request.request().mode() != crate::mcp::mrtr::McpElicitationMode::Url {
             return Err(McpElicitationPromptError::InvalidSource);
         }
@@ -266,7 +298,7 @@ impl McpClientUrlEndpoint for NativeAcpElicitationPresenter {
             id,
             Entry {
                 request: Some(request.clone()),
-                owner,
+                registration,
                 charge: request.retained_byte_charge(),
                 submitted: false,
             },
@@ -308,11 +340,15 @@ impl McpClientUrlCompletionObserver for Completion {
             state.bytes -= entry.charge;
             if outcome == McpClientUrlOutcome::Completed
                 && entry.submitted
-                && state.owner.as_ref() == Some(&entry.owner)
+                && state.active
+                && entry.registration.is_live()
             {
-                state.ready.push_back(NativeAcpElicitationComplete {
-                    id: NativeAcpElicitationId(self.id),
-                    owner: entry.owner,
+                state.ready.push_back(QueuedCompletion {
+                    notification: NativeAcpElicitationComplete {
+                        id: NativeAcpElicitationId(self.id),
+                        owner: entry.registration.owner().clone(),
+                    },
+                    registration: entry.registration,
                 });
                 state.waker.take()
             } else {

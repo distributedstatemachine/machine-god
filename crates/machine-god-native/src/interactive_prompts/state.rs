@@ -11,6 +11,7 @@ use crate::{PermissionPromptDecision, QuestionPromptOutcome};
 use machine_god_core::BackgroundOutputOwner;
 use std::collections::VecDeque;
 use std::future::poll_fn;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 
@@ -155,6 +156,9 @@ impl Shared {
             let mut state = poison.into_inner();
             // Never recover possible partial admission into new authority.
             state.closed = true;
+            for principal in &state.principals {
+                principal.live.store(false, Ordering::Release);
+            }
             for entry in &state.entries {
                 entry.invalidate_rule();
             }
@@ -171,6 +175,18 @@ impl Shared {
             .principals
             .iter()
             .find(|key| bound.is_none_or(|bound| bound == *key) && payload.belongs_to(&key.owner))
+            .cloned()
+    }
+
+    pub(super) fn capture_owner(&self, owner: &BackgroundOutputOwner) -> Option<PrincipalKey> {
+        let state = self.lock();
+        if state.closed {
+            return None;
+        }
+        state
+            .principals
+            .iter()
+            .find(|key| &key.owner == owner)
             .cloned()
     }
 
@@ -193,6 +209,7 @@ impl Shared {
         let key = PrincipalKey {
             scope: Scope(state.next_scope),
             owner,
+            live: Arc::new(AtomicBool::new(true)),
         };
         state.next_scope = next;
         state.principals.push(key.clone());
@@ -206,6 +223,7 @@ impl Shared {
                 return;
             };
             let retired = state.principals.remove(index);
+            retired.live.store(false, Ordering::Release);
             let mut old = VecDeque::new();
             let mut index = 0;
             while index < state.entries.len() {
@@ -230,6 +248,9 @@ impl Shared {
         let (old, principals, wake) = {
             let mut state = self.lock();
             state.closed = true;
+            for principal in &state.principals {
+                principal.live.store(false, Ordering::Release);
+            }
             for entry in &state.entries {
                 entry.invalidate_rule();
             }

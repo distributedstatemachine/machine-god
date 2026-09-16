@@ -159,6 +159,13 @@ impl NativeAcpSession {
         self.inner.poll_managed(cx, now_ms);
     }
 
+    pub(crate) fn manages_prompt_inbox(
+        &self,
+        inbox: &crate::NativeInteractivePromptInbox,
+    ) -> Result<bool, AcpSessionError> {
+        self.inner.manages_prompt_inbox(inbox).map_err(Into::into)
+    }
+
     pub(crate) fn begin_quiescence(
         &mut self,
     ) -> Result<crate::NativeRuntimeQuiescence, AcpSessionError> {

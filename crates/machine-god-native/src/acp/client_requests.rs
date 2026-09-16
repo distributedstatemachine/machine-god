@@ -101,6 +101,13 @@ impl NativeAcpClientRequests {
         Arc::clone(&self.presenter)
     }
 
+    /// Read-only binding for native runtime registration during composition.
+    /// This does not create a second observer or grant wire reply authority.
+    #[must_use]
+    pub fn prompt_inbox(&self) -> &NativeInteractivePromptInbox {
+        &self.inbox
+    }
+
     /// Activates an already committed exact native principal. Even same-ID
     /// reactivation invalidates old tokens and never reuses an RPC identifier.
     /// # Errors
@@ -123,9 +130,45 @@ impl NativeAcpClientRequests {
                 .register(owner.clone())
                 .map_err(|_| NativeAcpClientRequestError::Unavailable)?,
         );
-        self.presenter.activate(owner.clone());
+        self.presenter.activate();
         self.pending = None;
         let _ = self.ids.clear();
+        self.owner = Some(owner);
+        self.contexts = Some(contexts);
+        self.epoch = epoch;
+        Ok(())
+    }
+
+    /// Native managed runtimes own their registration leases. A foreground
+    /// change in the same context registry preserves live child RPCs and URLs.
+    pub(crate) fn activate_native(
+        &mut self,
+        owner: BackgroundOutputOwner,
+        contexts: Arc<NativePermissionContexts>,
+    ) -> Result<(), NativeAcpClientRequestError> {
+        if self.closed {
+            return Err(NativeAcpClientRequestError::Closed);
+        }
+        let epoch = self
+            .epoch
+            .checked_add(1)
+            .ok_or(NativeAcpClientRequestError::Limit)?;
+        let registration = self
+            .inbox
+            .registration_for_owner(&owner)
+            .ok_or(NativeAcpClientRequestError::Stale)?;
+        let shared = self.principal.is_none()
+            && self
+                .contexts
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &contexts));
+        if !shared {
+            self.deactivate();
+        }
+        if !registration.is_live() {
+            return Err(NativeAcpClientRequestError::Stale);
+        }
+        self.presenter.activate();
         self.owner = Some(owner);
         self.contexts = Some(contexts);
         self.epoch = epoch;
@@ -294,7 +337,7 @@ impl NativeAcpClientRequests {
             Poll::Ready(None) => return Poll::Ready(Ok(None)),
             Poll::Ready(Some(complete)) => complete,
         };
-        if self.owner.as_ref() != Some(&complete.owner) {
+        if self.closed || self.contexts.is_none() {
             return Poll::Ready(Err(NativeAcpClientRequestError::Stale));
         }
         Poll::Ready(protocol::encode_frame(&AcpMessage::Notification {

@@ -424,7 +424,7 @@ fn human_feature_projection_never_invents_tool_call_authority() {
 fn urls_require_host_registration_and_never_copy_remote_scope_or_id() {
     let (bridge, mut inbox, _principal) = bridge();
     let presenter = NativeAcpElicitationPresenter::new(bridge.clone());
-    presenter.activate(owner());
+    presenter.activate();
     let request = request(
         r#"{"mode":"url","message":"Private URL","url":"https://example.test/authorize","sessionId":"foreign","toolCallId":"foreign"}"#,
     );

@@ -225,11 +225,23 @@ pub struct NativeInteractivePromptBridge {
     principal: Option<PrincipalKey>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+mod registration;
+pub(crate) use registration::NativeInteractivePromptRegistration;
+
+#[derive(Clone)]
 struct PrincipalKey {
     scope: NativeInteractivePromptScope,
     owner: BackgroundOutputOwner,
+    live: Arc<std::sync::atomic::AtomicBool>,
 }
+impl PartialEq for PrincipalKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.scope == other.scope
+            && self.owner == other.owner
+            && Arc::ptr_eq(&self.live, &other.live)
+    }
+}
+impl Eq for PrincipalKey {}
 
 /// Unique registration custody. Dropping or explicitly retiring this lease
 /// invalidates only this exact registration, including unconsumed answers.
