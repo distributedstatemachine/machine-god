@@ -78,12 +78,13 @@ impl ManagedConversationOwner {
         scheduler: ManagedScheduler,
         generation: u64,
         workspace: &NativeWorkspaceAuthority,
+        publication: crate::conversation_routes::RoutePublication,
     ) -> Result<Self> {
         let resident = scheduler
             .reserve_resident()
             .map_err(|_| NativeConversationError::ManagedAdmission)?;
         let principal = registry
-            .register(session, generation, workspace)
+            .register_with_publication(session, generation, workspace, publication)
             .map_err(|_| NativeConversationError::ManagedAdmission)?;
         Ok(Self(Arc::new(Owner {
             principal,
@@ -189,6 +190,20 @@ impl ManagedConversationOwner {
 }
 
 impl ManagedConversationBinding {
+    pub(crate) fn ready_to_publish(&self) -> bool {
+        self.0.upgrade().is_some_and(|owner| {
+            !owner.closed.load(Ordering::Acquire) && owner.principal.ready_to_publish()
+        })
+    }
+
+    /// Retire only the principal route; its outer owner still retains actual
+    /// admission, scheduler and worker settlement custody.
+    pub(crate) fn retire_routes(&self) {
+        if let Some(owner) = self.0.upgrade() {
+            owner.principal.retire();
+        }
+    }
+
     /// Weak lookup only; retaining the binding cannot prolong a principal.
     pub(crate) fn matches_principal(&self, principal: &Arc<NativePrincipal>) -> bool {
         self.0.upgrade().is_some_and(|owner| {

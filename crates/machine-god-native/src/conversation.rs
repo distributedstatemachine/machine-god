@@ -249,6 +249,9 @@ impl NativeConversation {
                 .workspace
                 .as_ref()
                 .is_none_or(|binding| binding.owner.ready_to_publish())
+            && self.managed.as_ref().is_none_or(
+                crate::managed::conversation::ManagedConversationBinding::ready_to_publish,
+            )
     }
     /// Actual session borrowed only for native allocation-bound enrollment.
     pub(crate) fn core_session(&self) -> &Session {
@@ -287,6 +290,9 @@ impl NativeConversation {
             return;
         }
         self.publication.retire();
+        if let Some(binding) = &self.managed {
+            binding.retire_routes();
+        }
         if let Some(owner) = &self.permissions {
             owner.retire();
         }
@@ -568,6 +574,7 @@ impl NativeConversation {
             scheduler,
             generation,
             workspace,
+            self.publication.clone(),
         )?;
         let mut conversation = self
             .with_workspace_contexts(owner.principal().workspace().clone(), contexts)?

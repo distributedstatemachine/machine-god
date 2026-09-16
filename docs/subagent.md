@@ -170,8 +170,12 @@ Native registers each principal from an actual session's weak allocation witness
 with a nonzero private generation. The registry admits at most 64 resident
 routes (configurable downward), not 64 lifetime creations. Dropped, retired and
 dead-session routes can be reclaimed; retiring an old owner never removes its
-replacement or a sibling. Duplicate live registration of the same actual session
-fails closed, even when a caller supplies a different generation.
+replacement or a sibling. Duplicate active registration of the same actual session
+fails closed, even when a caller supplies a different generation. One staged
+foreground successor may reserve a second slot for that allocation. It shares
+the conversation publication barrier and cannot register executable turns or
+issue invocation proofs before the exact predecessor's route retires. A second
+pending successor is rejected, and pending registrations count toward capacity.
 
 Each registration forks an independent workspace selection and creates a fresh
 owner/generation-bound undo history under the host domain's shared undo budget.
@@ -987,7 +991,7 @@ admission until native replacement; successful replacement retires only that
 parent. Children, their prompt registrations and configured-only MCP owners stay
 live, while foreground command services and load history follow the new runtime.
 
-Same-transcript replacement reserves permission-policy, permission-context,
+Same-transcript replacement reserves managed-principal, permission-policy, permission-context,
 workspace-context, file-observation and selected-model routes alongside the old
 runtime. Active routes and pending reservations share each table's existing
 64-entry limit; ordinary duplicates and a second pending successor are rejected.

@@ -82,6 +82,96 @@ fn engine() -> Engine {
 }
 
 #[test]
+fn staged_successor_is_capacity_charged_but_cannot_claim_the_predecessors_turn() {
+    let fixture = Fixture::new();
+    let registry = registry(3);
+    let engine = engine();
+    let session = session(&engine);
+    let original = registry.register(&session, 1, &fixture.workspace).unwrap();
+    let publication = RoutePublication::staged();
+    let candidate = registry
+        .register_with_publication(&session, 1, &fixture.workspace, publication.clone())
+        .unwrap();
+    assert!(!candidate.ready_to_publish());
+    assert!(matches!(
+        registry.register_with_publication(
+            &session,
+            2,
+            &fixture.workspace,
+            RoutePublication::staged()
+        ),
+        Err(PrincipalError::Stale)
+    ));
+    let unrelated = engine
+        .create_session(
+            SessionId::new("other").unwrap(),
+            SessionIncarnationId::new("other").unwrap(),
+        )
+        .unwrap();
+    let sibling = registry
+        .register(&unrelated, 1, &fixture.workspace)
+        .unwrap();
+    assert!(matches!(
+        registry.register_with_publication(
+            &unrelated,
+            2,
+            &fixture.workspace,
+            RoutePublication::staged()
+        ),
+        Err(PrincipalError::Limit)
+    ));
+    let turn = block_on(session.prompt("original work")).unwrap();
+    assert!(
+        candidate
+            .begin_turn(&turn, policy(), preferences(), None)
+            .is_err()
+    );
+    let guard = original
+        .begin_turn(&turn, policy(), preferences(), None)
+        .unwrap();
+    let stamp = registry
+        .requester()
+        .stamp_for_turn(&session.id(), &session.incarnation_id(), turn.id())
+        .unwrap();
+    assert!(stamp.matches_principal(&original));
+    assert!(!stamp.matches_principal(&candidate));
+    drop(guard);
+    original.retire();
+    assert!(!stamp.is_live());
+    assert!(candidate.ready_to_publish());
+    assert!(publication.activate());
+    let replacement = candidate
+        .begin_turn(&turn, policy(), preferences(), None)
+        .unwrap();
+    original.retire();
+    assert!(replacement.stamp().is_live());
+    assert!(sibling.is_live());
+    candidate.retire();
+    assert!(!publication.activate());
+    assert!(!replacement.stamp().is_live());
+}
+
+#[test]
+fn dropping_pending_principal_refunds_only_its_reservation() {
+    let fixture = Fixture::new();
+    let registry = registry(2);
+    let engine = engine();
+    let session = session(&engine);
+    let original = registry.register(&session, 1, &fixture.workspace).unwrap();
+    let pending = registry
+        .register_with_publication(&session, 1, &fixture.workspace, RoutePublication::staged())
+        .unwrap();
+    drop(pending);
+    let replacement = registry
+        .register_with_publication(&session, 1, &fixture.workspace, RoutePublication::staged())
+        .unwrap();
+    assert!(original.is_live());
+    assert!(!replacement.ready_to_publish());
+    original.retire();
+    assert!(replacement.ready_to_publish());
+}
+
+#[test]
 fn nonconsuming_turn_stamps_are_weak_exact_and_retire_with_original_guard() {
     let fixture = Fixture::new();
     let registry = registry(2);

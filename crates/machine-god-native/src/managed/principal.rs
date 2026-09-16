@@ -1,6 +1,7 @@
 //! Weak allocation-authenticated routes; no owning engine or runtime edges.
 
 use super::scheduler::RunRef;
+use crate::conversation_routes::RoutePublication;
 use crate::file_undo::{FileUndoTracker, NativeUndoBudget};
 use crate::{
     NativeModelPreferences, NativePermissionPolicySnapshot, NativeWorkspaceAuthority,
@@ -31,6 +32,7 @@ struct Registry {
     limit: usize,
 }
 struct Route {
+    publication: RoutePublication,
     principal: Weak<NativePrincipal>,
     session: SessionWitness,
     retired: Arc<AtomicBool>,
@@ -53,11 +55,22 @@ impl NativePrincipalRegistry {
         NativePrincipalRequester(Arc::downgrade(&self.0))
     }
 
+    #[cfg(test)]
     pub(crate) fn register(
         &self,
         session: &Session,
         generation: u64,
         workspace: &NativeWorkspaceAuthority,
+    ) -> Result<Arc<NativePrincipal>> {
+        self.register_with_publication(session, generation, workspace, RoutePublication::default())
+    }
+
+    pub(crate) fn register_with_publication(
+        &self,
+        session: &Session,
+        generation: u64,
+        workspace: &NativeWorkspaceAuthority,
+        publication: RoutePublication,
     ) -> Result<Arc<NativePrincipal>> {
         if generation == 0 {
             return Err(PrincipalError::Stale);
@@ -73,6 +86,7 @@ impl NativePrincipalRegistry {
                 .map_err(|_| PrincipalError::Unavailable)?,
         );
         let principal = Arc::new(NativePrincipal {
+            publication: publication.clone(),
             owner,
             generation,
             session: witness.clone(),
@@ -95,13 +109,13 @@ impl NativePrincipalRegistry {
         if routes.len() >= self.0.limit {
             return Err(PrincipalError::Limit);
         }
-        if routes
-            .iter()
-            .any(|route| route.session.same_session(&witness))
-        {
+        if routes.iter().any(|route| {
+            route.session.same_session(&witness) && publication.conflicts_with(&route.publication)
+        }) {
             return Err(PrincipalError::Stale);
         }
         routes.push(Route {
+            publication,
             principal: Arc::downgrade(&principal),
             session: witness,
             retired: principal.retired.clone(),
@@ -252,6 +266,7 @@ impl NativePrincipalRequester {
 }
 
 pub(crate) struct NativePrincipal {
+    publication: RoutePublication,
     owner: BackgroundOutputOwner,
     generation: u64,
     session: SessionWitness,
@@ -262,8 +277,26 @@ pub(crate) struct NativePrincipal {
     undo: Arc<FileUndoTracker>,
 }
 impl NativePrincipal {
+    /// Composition may bind resources to a reserved principal, but only an
+    /// active publication can register an executable turn.
     pub(crate) fn is_live(&self) -> bool {
         self.live()
+    }
+    pub(crate) fn ready_to_publish(&self) -> bool {
+        let Some(registry) = self.registry.upgrade() else {
+            return false;
+        };
+        let Ok(routes) = registry.routes.lock() else {
+            return false;
+        };
+        self.live()
+            && routes
+                .iter()
+                .any(|route| Arc::ptr_eq(&route.retired, &self.retired))
+            && !routes.iter().any(|route| {
+                !Arc::ptr_eq(&route.retired, &self.retired)
+                    && route.session.same_session(&self.session)
+            })
     }
     pub(crate) fn owner(&self) -> &BackgroundOutputOwner {
         &self.owner
@@ -285,6 +318,7 @@ impl NativePrincipal {
         self.registry.strong_count() != 0
             && self.session.is_live()
             && !self.retired.load(Ordering::Acquire)
+            && (self.publication.is_staged() || self.publication.is_active())
     }
     pub(crate) fn begin_turn(
         self: &Arc<Self>,
@@ -295,6 +329,7 @@ impl NativePrincipal {
     ) -> Result<NativePrincipalTurn> {
         let witness = turn.witness();
         if !self.live()
+            || !self.publication.is_active()
             || !witness.is_live()
             || !self.session.owns_turn(&witness)
             || run.as_ref().is_some_and(|run| !run.matches_turn(&witness))
@@ -314,6 +349,7 @@ impl NativePrincipal {
             .lock()
             .map_err(|_| PrincipalError::Unavailable)?;
         if !self.live()
+            || !self.publication.is_active()
             || active
                 .as_ref()
                 .and_then(Weak::upgrade)
@@ -337,6 +373,7 @@ impl NativePrincipal {
     }
 
     pub(crate) fn retire(&self) {
+        self.publication.retire();
         {
             let mut active = self
                 .active
@@ -393,6 +430,7 @@ impl TurnState {
         self.open.load(Ordering::Acquire)
             && self.witness.is_live()
             && self.principal.live()
+            && self.principal.publication.is_active()
             && self
                 .principal
                 .undo
