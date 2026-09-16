@@ -181,7 +181,7 @@ fn completed() -> ModelProviderStep {
 }
 
 #[test]
-fn abandoned_admission_detection_excludes_idle_and_transferred_turn_cohorts() {
+fn preparation_settlement_is_once_per_admission_or_turn_not_idle_poll() {
     let fixture = Fixture::new(vec![]);
     let (conversation, owner) = fixture.conversation("admission-custody");
     let workers = crate::NativeOwnedWorkerScope::new();
@@ -189,7 +189,7 @@ fn abandoned_admission_detection_excludes_idle_and_transferred_turn_cohorts() {
         .configure_worker_binding(workers.clone(), Arc::new(()))
         .unwrap();
     let binding = owner.binding();
-    assert!(!binding.take_untransferred_admission_preparation());
+    assert!(!binding.take_preparation_settlement());
     let runtime = crate::NativeConversationRuntime::new(
         conversation,
         NativeModelPreferences::new("selected-model", NativeReasoningEffort::default(), false)
@@ -209,14 +209,14 @@ fn abandoned_admission_detection_excludes_idle_and_transferred_turn_cohorts() {
             })
         })
         .unwrap();
-    assert!(!binding.take_untransferred_admission_preparation());
     drop(turn);
     assert!(!cleanup.completion().is_complete());
-    assert!(!binding.take_untransferred_admission_preparation());
+    assert!(binding.take_preparation_settlement());
+    assert!(!binding.take_preparation_settlement());
     release.send(()).unwrap();
     block_on(cleanup.completion().wait());
     owner.take_settlement().unwrap().1.complete().unwrap();
-    assert!(!binding.take_untransferred_admission_preparation());
+    assert!(!binding.take_preparation_settlement());
 
     // A later failed pre-turn admission must not be confused with the retained
     // previous run metadata, even on this same persistent principal.
@@ -232,19 +232,19 @@ fn abandoned_admission_detection_excludes_idle_and_transferred_turn_cohorts() {
         })
         .unwrap();
     drop(admission);
-    assert!(binding.take_untransferred_admission_preparation());
-    assert!(!binding.take_untransferred_admission_preparation());
+    assert!(binding.take_preparation_settlement());
+    assert!(!binding.take_preparation_settlement());
     release.send(()).unwrap();
     block_on(binding.admission_completion().unwrap().wait());
-    assert!(!binding.take_untransferred_admission_preparation());
+    assert!(!binding.take_preparation_settlement());
 
     // A retained controller future need not own a worker at cancellation. It
     // still requires exactly one owner-driven settlement before later controls.
     let admission = binding.prepare_admission().unwrap();
     drop(admission);
     assert!(binding.admission_completion().unwrap().is_complete());
-    assert!(binding.take_untransferred_admission_preparation());
-    assert!(!binding.take_untransferred_admission_preparation());
+    assert!(binding.take_preparation_settlement());
+    assert!(!binding.take_preparation_settlement());
     assert!(fixture.provider.requests().is_empty());
 }
 

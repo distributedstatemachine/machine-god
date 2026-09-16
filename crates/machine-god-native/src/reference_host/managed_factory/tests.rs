@@ -506,6 +506,15 @@ fn ambiguous_creation_keeps_exact_initial_receipt_and_never_reallocates_identity
 
 #[test]
 fn turn_settlement_waits_exact_worker_and_close_does_not_wait_unrelated_host_work() {
+    check_turn_settlement(false);
+}
+
+#[test]
+fn foreground_admission_first_settlement_waits_the_transferred_turn_cohort() {
+    check_turn_settlement(true);
+}
+
+fn check_turn_settlement(admission_first: bool) {
     let f = FactoryFixture::new();
     let mut child = f.prepare(f.request("cleanup"));
     child.runtime.enqueue("standalone work".into()).unwrap();
@@ -523,13 +532,20 @@ fn turn_settlement_waits_exact_worker_and_close_does_not_wait_unrelated_host_wor
         .unwrap();
     drop(turn);
     let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+    if admission_first {
+        assert!(child.resources.poll_admission_settled(&mut cx).is_pending());
+    }
     assert!(
         child
             .resources
             .poll_turn_settled(&mut cx, &run)
             .is_pending()
     );
+    assert!(!child.owner.binding().take_preparation_settlement());
     release.send(()).unwrap();
+    if admission_first {
+        block_on(poll_fn(|cx| child.resources.poll_admission_settled(cx))).unwrap();
+    }
     block_on(poll_fn(|cx| child.resources.poll_turn_settled(cx, &run))).unwrap();
     assert!(matches!(
         child.resources.poll_turn_settled(&mut cx, &run),

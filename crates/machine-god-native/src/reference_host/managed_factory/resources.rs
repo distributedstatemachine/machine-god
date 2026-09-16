@@ -114,6 +114,30 @@ impl Resources {
             prompt,
         }
     }
+
+    fn settle_preparation(
+        &self,
+        completion: Option<NativeOwnedWorkerCompletion>,
+    ) -> BoxFuture<'static, ()> {
+        let preparation = self.preparation.clone();
+        let controller = self
+            .binding
+            .take_preparation_settlement()
+            .then(|| self.mcp.instance.controller.clone())
+            .flatten();
+        Box::pin(async move {
+            // A cancelled admission or tool observer can leave a shared refresh
+            // holding an unpublished peer in the original cohort. Drive it
+            // before that cohort; do not close the persistent publication.
+            if let Some(controller) = controller {
+                controller.settle_abandoned_preparation().await;
+            }
+            preparation.wait().await;
+            if let Some(completion) = completion {
+                completion.wait().await;
+            }
+        })
+    }
 }
 impl ManagedRuntimeResources for Resources {
     fn activate_foreground(&mut self) -> Result<(), ManagedRuntimeError> {
@@ -159,14 +183,7 @@ impl ManagedRuntimeResources for Resources {
                 return Poll::Ready(Err(ManagedRuntimeError::Invalid));
             };
             let completion = cleanup.completion();
-            let preparation = self.preparation.clone();
-            self.turn = Some((
-                run.clone(),
-                Some(Box::pin(async move {
-                    preparation.wait().await;
-                    completion.wait().await;
-                })),
-            ));
+            self.turn = Some((run.clone(), Some(self.settle_preparation(Some(completion)))));
         }
         let future = &mut self.turn.as_mut().expect("exact run waiter").1;
         let Some(waiting) = future else {
@@ -184,25 +201,7 @@ impl ManagedRuntimeResources for Resources {
     ) -> Poll<Result<(), ManagedRuntimeError>> {
         if self.admission.is_none() {
             let completion = self.binding.admission_completion();
-            let preparation = self.preparation.clone();
-            let controller = self
-                .binding
-                .take_untransferred_admission_preparation()
-                .then(|| self.mcp.instance.controller.clone())
-                .flatten();
-            self.admission = Some(Box::pin(async move {
-                // A cancelled observer may leave a shared refresh holding an
-                // unpublished peer in this admission cohort. Drive its cutoff
-                // before awaiting that cohort; closing the entire controller
-                // would incorrectly disable a persistent child's next message.
-                if let Some(controller) = controller {
-                    controller.settle_abandoned_admission().await;
-                }
-                preparation.wait().await;
-                if let Some(completion) = completion {
-                    completion.wait().await;
-                }
-            }));
+            self.admission = Some(self.settle_preparation(completion));
         }
         let result = self
             .admission

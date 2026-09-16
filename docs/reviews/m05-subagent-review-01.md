@@ -101,3 +101,14 @@ refresh before worker admission. Both platform Clippy checks passed, but the
 subsequent test builds were intentionally interrupted before runtime tests.
 The replacement consumes explicit preparation custody once per admission,
 including worker-free cancellation, without affecting later idle controls.
+
+Inspection of `ff10fc22` then traced the same retained-refresh ownership through
+actual MCP tool execution. Its Linux formatting, Clippy, test compilation and
+release build passed; the macOS test build was intentionally interrupted after
+Clippy passed, before either platform ran runtime tests. The repair shares one
+preparation-settlement claim between admission-first foreground cleanup and
+turn-first child cleanup, including actual turns. Binding regressions cover
+exactly-once transfer/failed-admission custody; factory regressions exercise both
+settlement orderings with held actual workers. Controller tests separately cover
+retained refresh retirement and non-cancelling deferred activation. These are
+compositional tests, not a claimed full MCP tool-to-manager deadlock reproduction.

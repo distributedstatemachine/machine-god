@@ -383,12 +383,12 @@ impl NativeMcpController {
         )
     }
 
-    /// The principal owner calls this only after its admission future has ended
-    /// without producing a turn. Cancelling a public refresh observer alone must
+    /// The principal owner calls this only after its admission or turn has ended.
+    /// Cancelling a public refresh observer alone must
     /// not cancel a shared job; this owner boundary instead retires that abandoned
     /// preparation and drives its original future so private peer custody drops.
     /// The published runtime and authentication service remain usable.
-    pub(crate) fn settle_abandoned_admission(&self) -> BoxFuture<'static, ()> {
+    pub(crate) fn settle_abandoned_preparation(&self) -> BoxFuture<'static, ()> {
         let inner = Arc::downgrade(&self.inner);
         Box::pin(async move {
             let Some(inner) = inner.upgrade() else {

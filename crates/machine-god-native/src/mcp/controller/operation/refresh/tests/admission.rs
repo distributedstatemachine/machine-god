@@ -73,9 +73,9 @@ fn owner_settles_abandoned_refresh_without_closing_persistent_publication() {
             !job_cancel.is_cancelled(),
             "observer cancellation is not job ownership"
         );
-        drop(controller.settle_abandoned_admission());
+        drop(controller.settle_abandoned_preparation());
         assert!(!job_cancel.is_cancelled(), "unpolled cleanup must be inert");
-        controller.settle_abandoned_admission().await;
+        controller.settle_abandoned_preparation().await;
         completion.wait().await;
         assert!(job_cancel.is_cancelled());
         assert!(provider.requests().is_empty());
@@ -118,7 +118,7 @@ fn owner_drives_shared_deferred_attempt_without_cancelling_published_generation(
             cancellation: job_cancel.clone(),
             future: future.shared(),
         });
-        let mut settlement = controller.settle_abandoned_admission();
+        let mut settlement = controller.settle_abandoned_preparation();
         let mut cx = Context::from_waker(Waker::noop());
         assert!(settlement.as_mut().poll(&mut cx).is_pending());
         assert!(!job_cancel.is_cancelled());

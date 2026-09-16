@@ -63,12 +63,12 @@ impl ManagedConversationBinding {
             .map(|run| run.completion())
     }
 
-    /// Called only after the runtime's admission future has ended. An idle
+    /// Called only after the runtime's admission or actual turn has ended. An idle
     /// foreground is polled repeatedly, including during unrelated MCP controls;
     /// consume preparation custody once, even if it has no outstanding workers.
     /// Idle polling or an earlier turn's cleanup cannot authorize cancelling a
     /// later unrelated controller job.
-    pub(crate) fn take_untransferred_admission_preparation(&self) -> bool {
+    pub(crate) fn take_preparation_settlement(&self) -> bool {
         let Some(owner) = self.0.upgrade() else {
             return false;
         };

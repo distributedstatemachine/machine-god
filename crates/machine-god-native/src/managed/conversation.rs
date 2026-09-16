@@ -288,7 +288,9 @@ impl ManagedConversationBinding {
         slot.run = Some(reference.clone());
         slot.settlement = Some(settlement);
         slot.cleanup.clone_from(&cleanup);
-        slot.preparation_pending = false;
+        // Tool execution can join another shared MCP preparation after admission
+        // transfers. The manager must settle it when this actual turn ends too.
+        slot.preparation_pending = true;
         let registration = (|| {
             let principal = owner
                 .principal

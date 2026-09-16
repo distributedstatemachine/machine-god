@@ -1278,9 +1278,10 @@ actual future destruction; a ready runtime is handed off only after this exact
 cohort settles, including an explicitly reconciled creation. Pre-turn readiness/checkpoint work and actual turns
 use their exact existing admission/run cohorts. Resource settlement observes those
 actual worker/TLS/reap receipts, not the global host scope or a completed stream.
-When pre-turn admission ends without a turn, its principal owner cancels and
-drives retained shared MCP refresh before waiting for that admission's workers.
-Preparation custody is consumed once per admission even when no worker remains;
+When pre-turn admission fails or an actual turn ends, its principal owner cancels
+and drives retained shared MCP refresh before waiting for the original workers.
+Both settlement paths share preparation custody, consumed once per admission or
+turn even when no worker remains;
 subsequent idle polling cannot cancel an unrelated human controller operation.
 Deferred activation instead finishes its original configured attempt because
 its outcome belongs to the published generation. Cancelling an individual refresh observer still does
