@@ -14,6 +14,13 @@ impl NativeInteractiveSession {
         &mut self,
         observed: NativeObservedManagedAgent,
     ) -> Result<NativeManagedHistoryRequest, NativeManagedHistoryError> {
+        if self
+            .navigation
+            .as_ref()
+            .is_some_and(|navigation| navigation.owns_history())
+        {
+            return Err(NativeManagedHistoryError::Busy);
+        }
         self.navigation_available()
             .map_err(|_| NativeManagedHistoryError::Closed)?;
         let request = self
@@ -38,6 +45,13 @@ impl NativeInteractiveSession {
 
     #[must_use]
     pub fn take_managed_history_outcome(&mut self) -> Option<NativeManagedHistoryOutcome> {
+        if self
+            .navigation
+            .as_ref()
+            .is_some_and(|navigation| navigation.owns_history())
+        {
+            return None;
+        }
         self.managed.as_mut()?.agents.take_history_outcome()
     }
 }

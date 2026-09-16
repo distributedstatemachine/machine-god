@@ -197,6 +197,18 @@ impl ManagedJournal {
     ) -> BoxFuture<'static, Result<JournalSnapshot, JournalError>> {
         self.run(move |shared| transaction::inspect(shared, &id))
     }
+    /// Explicitly attribute this journal worker to a trusted caller's original
+    /// run cohort. The journal still owns its host ticket and operation budget;
+    /// unrelated scopes never inherit attribution implicitly.
+    pub(crate) fn inspect_in_run(
+        &self,
+        source: &NativeOwnedWorkerScope,
+        id: String,
+    ) -> Result<BoxFuture<'static, Result<JournalSnapshot, JournalError>>, JournalError> {
+        self.workers
+            .with_inherited_run_from(source, || self.inspect(id))
+            .map_err(|_| JournalError::Worker)
+    }
     pub(crate) fn catalog(
         &self,
         after: Option<JournalCatalogCursor>,

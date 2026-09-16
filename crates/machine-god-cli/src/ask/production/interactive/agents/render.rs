@@ -1,7 +1,9 @@
 //! Bounded sanitized terminal projection. Clipped previews never become authority.
 mod detail;
 mod forms;
+mod history;
 mod processes;
+pub(super) use history::scroll as scroll_history;
 pub(super) use processes::count as process_count;
 #[cfg(test)]
 mod tests;
@@ -52,7 +54,11 @@ pub(super) fn render(
             return lines.finish(false);
         }
     }
-    lines.push("Agents & processes · clipped previews")?;
+    lines.push(if view.route == Route::Conversation {
+        "Agents & processes · canonical conversation"
+    } else {
+        "Agents & processes · clipped previews"
+    })?;
     lines.push(&format!(
         "{:?}{}",
         view.route,
@@ -63,6 +69,16 @@ pub(super) fn render(
         .limit
         .saturating_sub(4 + usize::from(view.error.is_some()));
     match view.route {
+        Route::Conversation => {
+            target_heading(&mut lines, view.target.ok_or(())?)?;
+            if let Some(result) = view.result {
+                lines.push(&format!(
+                    "Receipt: {:?} · {:?}",
+                    result.status, result.error_code
+                ))?;
+            }
+            history::render(&mut lines, view.history, content_limit)?;
+        }
         Route::Catalog(_) => catalog(&mut lines, view, content_limit)?,
         Route::Agent(_) | Route::ConfirmClose => {
             let target = view.target.ok_or(())?;
@@ -108,6 +124,8 @@ fn footer(lines: &mut Lines, view: &NativeManagedNavigationView<'_>) -> Result<(
         "Enter submits displayed form · Esc discards/back · Ctrl-X closes"
     } else if matches!(view.route, Route::Processes(_)) {
         "Read-only · arrows scroll · Ctrl-X exits"
+    } else if view.route == Route::Conversation {
+        "Enter sends · arrows/PageUp/PageDown scroll · Ctrl-X exits"
     } else {
         "Enter opens/sends · /status /messages /tools /close · Ctrl-X exits"
     })?;
@@ -242,17 +260,20 @@ struct Lines {
 }
 impl Lines {
     fn push(&mut self, text: &str) -> Result<(), ()> {
+        let row = super::super::composer_view::label(text, self.columns, 512);
+        self.push_rendered(&row)
+    }
+    fn push_rendered(&mut self, row: &[u8]) -> Result<(), ()> {
         if self.count == self.limit {
             return Err(());
         }
-        let row = super::super::composer_view::label(text, self.columns, 512);
         if self.bytes.len() + row.len() + 2 > 64 * 1024 {
             return Err(());
         }
         if self.count != 0 {
             self.bytes.extend_from_slice(b"\r\n");
         }
-        self.bytes.extend_from_slice(&row);
+        self.bytes.extend_from_slice(row);
         self.count += 1;
         Ok(())
     }

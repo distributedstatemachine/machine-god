@@ -1,5 +1,6 @@
 //! Native managed observation/admission. UI pages never replace the parent runtime.
 mod drafts;
+mod history;
 mod history_read;
 mod processes;
 mod state;
@@ -11,6 +12,7 @@ use crate::{
     NativeObservedManagedAgent,
 };
 pub use drafts::NativeManagedDraftView;
+pub use history::{NativeManagedHistoryPosition, NativeManagedHistoryView};
 use machine_god_core::{CancellationToken, ManagedSubagentCommand, ManagedSubagentError};
 pub(super) use state::Navigation;
 pub use view::{

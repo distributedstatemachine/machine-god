@@ -37,8 +37,14 @@ impl SharedManagedRuntimeFactory {
             let result = preparation::Attributed::new(
                 cohort,
                 Box::pin(async move {
+                    let workers = factory
+                        .services
+                        .control_workers
+                        .as_ref()
+                        .ok_or(Error::Unavailable)?;
                     let original = journal
-                        .inspect(observed.id.clone())
+                        .inspect_in_run(workers, observed.id.clone())
+                        .map_err(|_| Error::Unavailable)?
                         .await
                         .map_err(|_| Error::Unavailable)?;
                     history::validate(&observed, &original)?;
@@ -47,11 +53,6 @@ impl SharedManagedRuntimeFactory {
                         record
                     } else {
                         let store = factory.services.session_lifecycle.session_store().clone();
-                        let workers = factory
-                            .services
-                            .control_workers
-                            .as_ref()
-                            .ok_or(Error::Unavailable)?;
                         let id = original.head.transcript.session_id.clone();
                         let control = FileSessionScanControl {
                             cancel: cancellation.clone(),
@@ -76,7 +77,8 @@ impl SharedManagedRuntimeFactory {
                     };
                     check(&cancellation)?;
                     let current = journal
-                        .inspect(observed.id.clone())
+                        .inspect_in_run(workers, observed.id.clone())
+                        .map_err(|_| Error::Unavailable)?
                         .await
                         .map_err(|_| Error::Unavailable)?;
                     history::validate(&observed, &current)?;

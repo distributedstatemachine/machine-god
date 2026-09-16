@@ -57,6 +57,8 @@ pub(super) enum ComposerEvent {
     FormRefreshRequested,
     PickerPrevious,
     PickerNext,
+    HistoryPageUp,
+    HistoryPageDown,
     PickerToggleScope,
     SkillSelected,
     StaleInput,
@@ -75,6 +77,8 @@ impl fmt::Debug for ComposerEvent {
             Self::FormRefreshRequested => f.write_str("FormRefreshRequested"),
             Self::PickerPrevious => f.write_str("PickerPrevious"),
             Self::PickerNext => f.write_str("PickerNext"),
+            Self::HistoryPageUp => f.write_str("HistoryPageUp"),
+            Self::HistoryPageDown => f.write_str("HistoryPageDown"),
             Self::PickerToggleScope => f.write_str("PickerToggleScope"),
             Self::SkillSelected => f.write_str("SkillSelected"),
             Self::StaleInput => f.write_str("StaleInput"),
@@ -664,6 +668,17 @@ fn picker_escape(bytes: &[u8], context: ComposerContext) -> Option<EscapeKey> {
     }
     if !context.session_picker && context.skills.is_none() && !context.agents {
         return None;
+    }
+    if context.agents && matches!(body, b"5~" | b"6~") {
+        return Some(if context.agent_form.is_some() {
+            EscapeKey::Consumed
+        } else {
+            EscapeKey::Event(if body == b"5~" {
+                ComposerEvent::HistoryPageUp
+            } else {
+                ComposerEvent::HistoryPageDown
+            })
+        });
     }
     if body == b"Z" {
         return Some(EscapeKey::Event(if context.agent_form.is_some() {

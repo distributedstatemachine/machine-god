@@ -205,20 +205,45 @@ impl Driver {
         event: &ComposerEvent,
         frame: Option<&NativeManagedFrameIdentity>,
     ) -> bool {
-        let previous = matches!(event, ComposerEvent::PickerPrevious);
-        if !previous && !matches!(event, ComposerEvent::PickerNext) {
+        let previous = matches!(
+            event,
+            ComposerEvent::PickerPrevious | ComposerEvent::HistoryPageUp
+        );
+        let page = matches!(
+            event,
+            ComposerEvent::HistoryPageUp | ComposerEvent::HistoryPageDown
+        );
+        if !previous
+            && !matches!(
+                event,
+                ComposerEvent::PickerNext | ComposerEvent::HistoryPageDown
+            )
+        {
             return false;
         }
         let Some(view) = self.owner.managed_navigation() else {
             return false;
         };
-        if !matches!(view.route, Route::Agent(_) | Route::Processes(_)) {
+        if !matches!(
+            view.route,
+            Route::Conversation | Route::Agent(_) | Route::Processes(_)
+        ) {
             return false;
         }
         let Some(ui) = &mut self.agents else {
             return true;
         };
         if frame != Some(&view.frame) || ui.acknowledged.as_ref() != frame || view.busy {
+            return true;
+        }
+        if view.route == Route::Conversation {
+            if let Some(frontend) = &self.frontend
+                && let Some(action) =
+                    render::scroll_history(&view, frontend.columns, frontend.rows, previous, page)
+            {
+                let frame = view.frame;
+                let _ = self.owner.act_on_managed_frame(&frame, action);
+            }
             return true;
         }
         let offset = if ui.detail_source.as_ref() == Some(&view.frame) {
@@ -267,7 +292,7 @@ impl Driver {
             "/processes" => Action::Processes(
                 if matches!(
                     view.route,
-                    Route::Agent(_) | Route::Processes(Scope::SelectedAgent)
+                    Route::Conversation | Route::Agent(_) | Route::Processes(Scope::SelectedAgent)
                 ) {
                     Scope::SelectedAgent
                 } else {
@@ -275,6 +300,7 @@ impl Driver {
                 },
             ),
             "/status" => Action::Inspect(Section::Status),
+            "/history" | "/conversation" => Action::Conversation,
             "/messages" => Action::Inspect(Section::Messages),
             "/tools" => Action::Inspect(Section::ToolActivity),
             "/events" => Action::Inspect(Section::Events),
@@ -329,7 +355,9 @@ impl Driver {
                     _ => return Err(()),
                 }
             }
-            _ if !text.starts_with('/') && matches!(view.route, Route::Agent(_)) => {
+            _ if !text.starts_with('/')
+                && matches!(view.route, Route::Agent(_) | Route::Conversation) =>
+            {
                 Action::Message(line.to_owned())
             }
             _ => return Err(()),

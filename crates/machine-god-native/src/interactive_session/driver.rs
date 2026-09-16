@@ -764,7 +764,7 @@ impl NativeInteractiveSession {
                         candidate,
                         undo,
                         reset: result.reset,
-                        handoff: Some(handoff),
+                        handoff,
                     };
                     self.outcome = Some(NativeInteractiveOutcome::Indeterminate {
                         request: transition.request.id,
@@ -799,7 +799,7 @@ impl NativeInteractiveSession {
                             candidate,
                             undo,
                             reset: result.reset,
-                            handoff: Some(handoff),
+                            handoff,
                         };
                         self.outcome = Some(NativeInteractiveOutcome::Indeterminate {
                             request: transition.request.id,
@@ -822,7 +822,7 @@ impl NativeInteractiveSession {
                         destination,
                         unchanged: false,
                         reset: result.reset,
-                        handoff: Some(handoff),
+                        handoff,
                         settled_turn: transition.terminal.take(),
                     },
                 ));

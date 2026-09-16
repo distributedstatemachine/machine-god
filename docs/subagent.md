@@ -189,6 +189,10 @@ reporting completion. Returned snapshots contain immutable data and no runtime,
 journal or host ownership; retaining one does not block shutdown. Debug output
 does not expose transcript contents. Reading does not acknowledge or mutate
 messages, notices, permissions or the parent selection.
+Journal inspections explicitly inherit the history read's original worker cohort
+across the journal/control scope boundary; each scope keeps its own host ticket.
+Completion therefore includes both journal inspections and transcript-store work,
+not just the returned canonical data.
 
 ### Execution principal registration
 
@@ -567,6 +571,28 @@ navigation or a confirmed command receipt; keyboard navigation preserves drafts.
 Restoring a draft seeds text/cursor only, never a previous input chunk or frame
 acknowledgement. The CLI cannot acknowledge a child frame until its corresponding
 draft has been restored without interrupting an atomic decoder.
+
+Selecting a child opens its canonical conversation; `/history` or `/conversation`
+returns there from journal inspection. Complete user/assistant text is wrapped,
+not reduced to journal or 512-byte previews. System instructions and raw structured
+payloads remain collapsed; terminal controls use the same escaped Unicode display
+units as the composer. Display rows retain at most 768 bytes, with oversized
+indivisible clusters represented by an ellipsis. The complete frame remains
+bounded to 64 rows and 64 KiB; scrolling never executes or resumes the child.
+Arrow and PageUp/PageDown navigation changes a native UTF-8 source anchor under
+the exact displayed frame, independently of the draft/editor identity. Initial
+entry follows the tail; returning to the tail resumes following later records.
+The native owner retains up to 128 recent reading positions keyed by the original
+manager/child generation, evicting the oldest position under pressure, not limiting
+child creation. Reopen, sibling navigation and resize do not restore old frame
+acknowledgements. A position survives record metadata changes or later appended
+messages only when its anchored canonical message is unchanged; changed or missing
+source messages reset to the tail. Navigation retains one charged canonical
+snapshot, releases it when leaving the conversation, and owns each pending read
+through actual cancellation settlement. External history callers cannot consume
+its outcome. Resident record changes trigger a fresh observed catalog/history
+read; unavailable reads remain explicit and `/refresh` retries them. Rendering
+scans the bounded captured record without retaining an unbounded wrapped index.
 
 The process page is a read-only snapshot of the selected runtime's terminal access,
 bounded by the terminal service's 128 rows and 1 MiB command/path-text budget.
@@ -1020,6 +1046,10 @@ second journal open. Readiness staging and cancellation preserve old parent
 admission until native replacement; successful replacement retires only that
 parent. Children, their prompt registrations and configured-only MCP owners stay
 live, while foreground command services and load history follow the new runtime.
+Replacing the same transcript still resets the old terminal access generation
+and activates a fresh one. Since the durable principal is unchanged, no terminal
+self-handoff is attempted and no transfer receipt is invented. The reset receipt
+remains available; previously captured controls retain their cancelled generation.
 
 Same-transcript replacement reserves managed-principal, permission-policy, permission-context,
 workspace-context, file-observation and selected-model routes alongside the old

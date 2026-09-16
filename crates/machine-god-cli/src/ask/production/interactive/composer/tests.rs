@@ -3,6 +3,35 @@ use super::*;
 type EditReceipt = (Range<usize>, String, usize);
 
 #[test]
+fn agent_history_page_keys_do_not_escape_paste_or_change_drafts() {
+    let mut editor = Composer::default();
+    feed(&mut editor, b"draft", false);
+    let context = ComposerContext {
+        agents: true,
+        ..ComposerContext::default()
+    };
+    assert!(matches!(
+        editor.feed(b"\x1b[5~", context).1,
+        Some(ComposerEvent::HistoryPageUp)
+    ));
+    assert!(matches!(
+        editor.feed(b"\x1b[6~", context).1,
+        Some(ComposerEvent::HistoryPageDown)
+    ));
+    assert_eq!(editor.text(), "draft");
+    let mut input = b"\x1b[200~\x1b[5~\x1b[6~\x1b[201~".as_slice();
+    while !input.is_empty() {
+        let (consumed, event) = editor.feed(input, context);
+        assert!(consumed > 0);
+        assert!(!matches!(
+            event,
+            Some(ComposerEvent::HistoryPageUp | ComposerEvent::HistoryPageDown)
+        ));
+        input = &input[consumed..];
+    }
+}
+
+#[test]
 fn ctrl_x_is_navigation_only_outside_an_atomic_paste() {
     let mut editor = Composer::default();
     feed(&mut editor, b"parent", false);

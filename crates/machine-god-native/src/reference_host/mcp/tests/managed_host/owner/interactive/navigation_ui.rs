@@ -55,9 +55,9 @@ fn navigation_requires_exact_display_ack_and_does_not_replace_the_parent() {
         let detail = ready(&mut owner).await;
         assert!(matches!(
             owner.managed_navigation().unwrap().route,
-            Route::Agent(_)
+            Route::Conversation
         ));
-        assert!(owner.managed_navigation().unwrap().result.unwrap().ok);
+        assert!(owner.managed_navigation().unwrap().history.is_some());
         assert_eq!(
             owner.act_on_managed_frame(&frame, Action::Lifecycle(Lifecycle::Close)),
             Err(Error::StaleFrame)

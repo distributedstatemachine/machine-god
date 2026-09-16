@@ -160,17 +160,17 @@ enum Representation {
 }
 
 #[derive(Clone, Copy)]
-struct Atom {
+pub(super) struct Atom {
     start: usize,
-    end: usize,
+    pub(super) end: usize,
     unit_end: usize,
-    cells: usize,
-    bytes: usize,
+    pub(super) cells: usize,
+    pub(super) bytes: usize,
     representation: Representation,
 }
 
 impl Atom {
-    fn at(text: &str, start: usize, capacity: usize) -> Self {
+    pub(super) fn at(text: &str, start: usize, capacity: usize) -> Self {
         let character = text[start..].chars().next().expect("nonempty UTF-8 atom");
         let unit = native_terminal_display_unit_at(text, start).expect("valid UTF-8 boundary");
         let mut atom = Self {
@@ -211,7 +211,16 @@ impl Atom {
         atom
     }
 
-    fn append(self, text: &str, output: &mut Vec<u8>) {
+    pub(super) fn bounded_bytes(mut self, limit: usize) -> Self {
+        if self.bytes > limit {
+            self.cells = 1;
+            self.bytes = "…".len();
+            self.representation = Representation::Marker;
+        }
+        self
+    }
+
+    pub(super) fn append(self, text: &str, output: &mut Vec<u8>) {
         match self.representation {
             Representation::Raw => output.extend_from_slice(&text.as_bytes()[self.start..self.end]),
             Representation::Escape(character) => {

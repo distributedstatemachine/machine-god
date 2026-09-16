@@ -55,7 +55,7 @@ pub(super) enum Phase {
 }
 pub(super) struct CommitResult {
     pub reset: Option<NativeTerminalResetReceipt>,
-    pub handoff: Result<NativeTerminalHandoffReceipt, NativeTerminalTransitionError>,
+    pub handoff: Result<Option<NativeTerminalHandoffReceipt>, NativeTerminalTransitionError>,
     pub affected: bool,
 }
 impl Transition {
@@ -237,9 +237,17 @@ pub(super) fn commit(
                 handoff: Err(error),
             };
         }
-        let handoff = requester
-            .handoff(source, destination, CancellationToken::new())
-            .await;
+        // Same-transcript ACP replacement still reset the old access generation
+        // and activated a fresh one above. There is no different principal to
+        // transfer to, so do not call self-handoff or invent a handoff receipt.
+        let handoff = if source == destination && reset.is_some() {
+            Ok(None)
+        } else {
+            requester
+                .handoff(source, destination, CancellationToken::new())
+                .await
+                .map(Some)
+        };
         let affected = reset.is_some()
             || handoff.is_ok()
             || matches!(handoff, Err(NativeTerminalTransitionError::Uncertain));

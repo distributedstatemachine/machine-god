@@ -236,7 +236,7 @@ fn started_commit_retains_undo_and_late_request_waits_for_settled_receipt() {
                 future: deferred(
                     CommitResult {
                         reset: None,
-                        handoff: Ok(handoff),
+                        handoff: Ok(Some(handoff)),
                         affected: true,
                     },
                     &gate,

@@ -36,6 +36,7 @@ type Error = NativeManagedHistoryError;
 struct Identity;
 #[derive(Clone)]
 pub struct NativeManagedHistoryRequest {
+    cancellation: CancellationToken,
     identity: Weak<Identity>,
     sequence: u64,
 }
@@ -45,6 +46,11 @@ impl PartialEq for NativeManagedHistoryRequest {
     }
 }
 impl Eq for NativeManagedHistoryRequest {}
+impl NativeManagedHistoryRequest {
+    pub(crate) fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+}
 
 /// One immutable canonical record, not a runtime, turn or permission capability.
 /// Retaining it occupies this manager's history slot, but does not hold cleanup.
@@ -206,6 +212,7 @@ impl NativeManagedAgents {
             cancellation.clone(),
         );
         let request = NativeManagedHistoryRequest {
+            cancellation: cancellation.clone(),
             identity: Arc::downgrade(&self.history.identity),
             sequence,
         };

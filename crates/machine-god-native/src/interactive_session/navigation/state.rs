@@ -30,6 +30,10 @@ type Action = NativeManagedNavigationAction;
 type Route = NativeManagedNavigationRoute;
 
 enum Pending {
+    History {
+        request: crate::NativeManagedHistoryRequest,
+        epoch: u64,
+    },
     Processes {
         future: super::processes::Snapshot,
         cancellation: CancellationToken,
@@ -45,6 +49,13 @@ enum Pending {
         epoch: u64,
         draft: Option<super::drafts::Submission>,
     },
+}
+
+#[derive(Clone, Copy)]
+enum Refresh {
+    Inspect(ManagedInspectSection),
+    History,
+    Catalog,
 }
 
 pub(in crate::interactive_session) struct Navigation {
@@ -66,6 +77,9 @@ pub(in crate::interactive_session) struct Navigation {
     process_owner: Option<machine_god_core::BackgroundOutputOwner>,
     processes: Option<crate::NativeTerminalBackgroundSnapshot>,
     drafts: super::drafts::Drafts,
+    history: super::history::History,
+    history_resident: bool,
+    history_retry: bool,
 }
 
 impl Default for Navigation {
@@ -89,13 +103,16 @@ impl Default for Navigation {
             process_owner: None,
             processes: None,
             drafts: super::drafts::Drafts::default(),
+            history: super::history::History::default(),
+            history_resident: false,
+            history_retry: false,
         }
     }
 }
 
 impl Navigation {
     pub(super) fn submitted_draft(&self, text: &str) -> Option<super::drafts::Submission> {
-        if !matches!(self.route, Route::Agent(_)) {
+        if !matches!(self.route, Route::Agent(_) | Route::Conversation) {
             return None;
         }
         self.drafts
@@ -115,6 +132,9 @@ impl Navigation {
     pub(super) fn owns_catalog(&self) -> bool {
         matches!(self.pending, Some(Pending::Catalog { .. }))
     }
+    pub(super) fn owns_history(&self) -> bool {
+        matches!(self.pending, Some(Pending::History { .. }))
+    }
     fn frame(&self) -> NativeManagedFrameIdentity {
         NativeManagedFrameIdentity {
             editor: editor(&self.identity, self.epoch),
@@ -123,7 +143,8 @@ impl Navigation {
     }
     pub(super) fn view(&self) -> Option<NativeManagedNavigationView<'_>> {
         self.open.then(|| NativeManagedNavigationView {
-            draft: matches!(self.route, Route::Agent(_))
+            history: self.history.view(),
+            draft: matches!(self.route, Route::Agent(_) | Route::Conversation)
                 .then(|| {
                     self.target()
                         .ok()
@@ -195,6 +216,10 @@ impl Navigation {
         self.form = None;
         self.process_owner = None;
         self.processes = None;
+        self.history.clear();
+        if let Some(Pending::History { request, .. }) = &self.pending {
+            request.cancel();
+        }
         if let Some(
             Pending::Command { cancellation, .. } | Pending::Processes { cancellation, .. },
         ) = &self.pending
@@ -231,6 +256,19 @@ impl Navigation {
             .request_managed_catalog(self.filter, self.start.clone(), 16)
             .map_err(|_| Error::Unavailable)?;
         self.pending = Some(Pending::Catalog {
+            request,
+            epoch: self.epoch,
+        });
+        Ok(())
+    }
+    fn history(&mut self, owner: &mut NativeInteractiveSession) -> Result<(), Error> {
+        // Release the prior charged record before reserving the reader's slot.
+        // Only the bounded source anchors survive a refresh or route change.
+        self.history.clear();
+        let request = owner
+            .request_managed_history(self.target()?.observation.clone())
+            .map_err(|_| Error::Unavailable)?;
+        self.pending = Some(Pending::History {
             request,
             epoch: self.epoch,
         });
@@ -314,7 +352,7 @@ impl Navigation {
         if !self.open || *identity != self.frame().editor {
             return Err(Error::StaleFrame);
         }
-        if !matches!(self.route, Route::Agent(_)) {
+        if !matches!(self.route, Route::Agent(_) | Route::Conversation) {
             return Err(Error::InvalidAction);
         }
         let target = self.target()?.observation.clone();
@@ -360,6 +398,8 @@ impl Navigation {
         // Validate selection/action before consuming the displayed frame.
         match &action {
             Action::Select
+            | Action::Conversation
+            | Action::SeekHistory(_)
             | Action::Inspect(_)
             | Action::Message(_)
             | Action::Configure(_)
@@ -373,6 +413,9 @@ impl Navigation {
             _ => {}
         }
         if matches!(action, Action::ConfirmClose) && self.route != Route::ConfirmClose {
+            return Err(Error::InvalidAction);
+        }
+        if matches!(action, Action::SeekHistory(_)) && self.route != Route::Conversation {
             return Err(Error::InvalidAction);
         }
         if self.route == Route::ConfirmClose
@@ -427,16 +470,30 @@ impl Navigation {
         {
             return Err(Error::InvalidAction);
         }
-        let editor_changed = !matches!(action, Action::Previous | Action::Next | Action::Refresh)
-            || (matches!(self.route, Route::Form(_))
-                && matches!(action, Action::Previous | Action::Next));
+        let editor_changed = !matches!(
+            action,
+            Action::Previous | Action::Next | Action::Refresh | Action::SeekHistory(_)
+        ) || (matches!(self.route, Route::Form(_))
+            && matches!(action, Action::Previous | Action::Next));
         self.change(editor_changed)?;
         self.error = None;
         if !matches!(action, Action::Processes(_) | Action::Refresh) {
             self.process_owner = None;
             self.processes = None;
         }
+        if matches!(
+            action,
+            Action::Back
+                | Action::Filter(_)
+                | Action::Inspect(_)
+                | Action::Processes(_)
+                | Action::OpenForm(_)
+                | Action::Lifecycle(ManagedLifecycleAction::Close)
+        ) {
+            self.history.clear();
+        }
         let result = match action {
+            Action::SeekHistory(position) => self.history.seek(position),
             Action::Previous | Action::Next => {
                 if let Some(form) = &mut self.form {
                     return form
@@ -463,10 +520,13 @@ impl Navigation {
                 self.result = None;
                 self.catalog(owner)
             }
-            Action::Refresh => match self.route {
-                Route::Processes(scope) => self.processes(owner, scope),
-                _ => self.catalog(owner),
-            },
+            Action::Refresh => {
+                self.history_retry = false;
+                match self.route {
+                    Route::Processes(scope) => self.processes(owner, scope),
+                    _ => self.catalog(owner),
+                }
+            }
             Action::Processes(scope) => self.processes(owner, scope),
             Action::NextPage => match self.route {
                 Route::Catalog(_) => {
@@ -481,13 +541,16 @@ impl Navigation {
                         .ok_or(Error::NoSelection)?;
                     self.inspect(owner, section, Some(cursor))
                 }
-                Route::ConfirmClose | Route::Form(_) | Route::Processes(_) => {
-                    Err(Error::InvalidAction)
-                }
+                Route::Conversation
+                | Route::ConfirmClose
+                | Route::Form(_)
+                | Route::Processes(_) => Err(Error::InvalidAction),
             },
-            Action::Select | Action::Inspect(ManagedInspectSection::Status) => {
-                self.route = Route::Agent(ManagedInspectSection::Status);
-                self.inspect(owner, ManagedInspectSection::Status, None)
+            Action::Select | Action::Conversation => {
+                self.route = Route::Conversation;
+                self.result = None;
+                self.history_retry = false;
+                self.history(owner)
             }
             Action::Inspect(section) => {
                 self.route = Route::Agent(section);
@@ -567,11 +630,26 @@ impl Navigation {
     }
     pub(super) fn poll(&mut self, owner: &mut NativeInteractiveSession, cx: &mut Context<'_>) {
         let Some(pending) = self.pending.take() else {
+            self.refresh_changed_history(owner, cx);
             return;
         };
-        let mut refresh_detail = None;
+        let mut refresh = None;
         let mut editor_changed = false;
         let epoch = match pending {
+            Pending::History { request, epoch } => {
+                let Some(outcome) = owner.take_managed_history_outcome() else {
+                    self.pending = Some(Pending::History { request, epoch });
+                    return;
+                };
+                if outcome.request != request {
+                    self.error = Some(Error::Unavailable);
+                } else if self.open && epoch == self.epoch {
+                    refresh = self
+                        .accept_history(owner, outcome.result)
+                        .then_some(Refresh::Catalog);
+                }
+                epoch
+            }
             Pending::Processes {
                 mut future,
                 cancellation,
@@ -604,9 +682,11 @@ impl Navigation {
                     match outcome.result {
                         Ok(page) => {
                             self.replace_page(page);
-                            if let Route::Agent(section) = self.route {
-                                refresh_detail = Some(section);
-                            }
+                            refresh = match self.route {
+                                Route::Agent(section) => Some(Refresh::Inspect(section)),
+                                Route::Conversation => Some(Refresh::History),
+                                _ => None,
+                            };
                         }
                         Err(_) => self.error = Some(Error::Unavailable),
                     }
@@ -628,41 +708,120 @@ impl Navigation {
                     });
                     return;
                 };
-                if result.as_ref().is_ok_and(|result| result.ok)
-                    && let Some(draft) = draft
-                {
-                    // Closing or changing presentation does not undo durable
-                    // acceptance. A newer unsent edit is never cleared here.
-                    self.drafts.accepted(&draft);
-                }
-                if self.open && epoch == self.epoch {
-                    match result {
-                        Ok(result) => self.result = Some(result),
-                        Err(_) => self.error = Some(Error::Unavailable),
-                    }
-                    editor_changed = self.finish_form_command();
-                    // Confirmation is a single submission, not a reusable button.
-                    // Show its receipt/rejection on the detail route and retire
-                    // any bytes captured for the confirmation editor.
-                    if self.route == Route::ConfirmClose {
-                        self.route = Route::Agent(ManagedInspectSection::Status);
-                        editor_changed = true;
-                    }
-                }
+                editor_changed = self.accept_command(result, draft, epoch);
                 epoch
             }
         };
+        self.finish_poll(owner, epoch, editor_changed, refresh);
+        cx.waker().wake_by_ref();
+    }
+    fn finish_poll(
+        &mut self,
+        owner: &mut NativeInteractiveSession,
+        epoch: u64,
+        editor_changed: bool,
+        refresh: Option<Refresh>,
+    ) {
         if self.open && epoch == self.epoch && self.change(editor_changed).is_err() {
             self.close();
         }
-        if self.open
-            && epoch == self.epoch
-            && let Some(section) = refresh_detail
-            && let Err(error) = self.inspect(owner, section, None)
-        {
+        if !self.open || epoch != self.epoch {
+            return;
+        }
+        let result = match refresh {
+            Some(Refresh::Inspect(section)) => self.inspect(owner, section, None),
+            Some(Refresh::History) => self.history(owner),
+            Some(Refresh::Catalog) => self.catalog(owner),
+            None => Ok(()),
+        };
+        if let Err(error) = result {
             self.error = Some(error);
         }
-        cx.waker().wake_by_ref();
+    }
+    fn refresh_changed_history(
+        &mut self,
+        owner: &mut NativeInteractiveSession,
+        cx: &mut Context<'_>,
+    ) {
+        // Observe the original resident generation only. No runtime is loaded,
+        // and an unchanged record never schedules a polling loop.
+        if self.open
+            && self.route == Route::Conversation
+            && let Some(history) = self.history.view()
+            && let Ok(target) = self.target()
+            && owner
+                .managed
+                .as_ref()
+                .and_then(|managed| managed.agents.observed_runtime(&target.observation))
+                .map_or(self.history_resident, |runtime| {
+                    runtime.record_snapshot().revision != history.record.revision
+                })
+        {
+            self.history_retry = false;
+            if self
+                .change(false)
+                .and_then(|()| self.catalog(owner))
+                .is_err()
+            {
+                self.error = Some(Error::Unavailable);
+                self.history.clear();
+            }
+            cx.waker().wake_by_ref();
+        }
+    }
+
+    fn accept_history(
+        &mut self,
+        owner: &NativeInteractiveSession,
+        result: Result<crate::NativeManagedHistorySnapshot, crate::NativeManagedHistoryError>,
+    ) -> bool {
+        match result {
+            Ok(snapshot) => {
+                self.history_resident = owner
+                    .managed
+                    .as_ref()
+                    .and_then(|managed| managed.agents.observed_runtime(snapshot.observation()))
+                    .is_some();
+                self.history.install(snapshot);
+            }
+            Err(crate::NativeManagedHistoryError::Stale) if !self.history_retry => {
+                self.history_retry = true;
+                return true;
+            }
+            Err(_) => self.error = Some(Error::Unavailable),
+        }
+        false
+    }
+
+    fn accept_command(
+        &mut self,
+        result: Result<ManagedSubagentResult, machine_god_core::ManagedSubagentError>,
+        draft: Option<super::drafts::Submission>,
+        epoch: u64,
+    ) -> bool {
+        if result.as_ref().is_ok_and(|result| result.ok)
+            && let Some(draft) = draft
+        {
+            // Closing or changing presentation does not undo durable acceptance.
+            // A newer unsent edit is never cleared here.
+            self.drafts.accepted(&draft);
+        }
+        if !self.open || epoch != self.epoch {
+            return false;
+        }
+        match result {
+            Ok(result) => self.result = Some(result),
+            Err(_) => self.error = Some(Error::Unavailable),
+        }
+        let editor_changed = self.finish_form_command();
+        // Confirmation is a single submission, not a reusable button. Its
+        // receipt retires the confirmation editor and any buffered input.
+        if self.route == Route::ConfirmClose {
+            self.route = Route::Agent(ManagedInspectSection::Status);
+            true
+        } else {
+            editor_changed
+        }
     }
     fn replace_page(&mut self, page: NativeManagedCatalogPage) {
         let previous = self
@@ -679,7 +838,10 @@ impl Navigation {
         // An absent target never substitutes another agent in a retained detail view.
         if matches!(
             self.route,
-            Route::Agent(_) | Route::ConfirmClose | Route::Form(NativeManagedFormKind::Configure)
+            Route::Conversation
+                | Route::Agent(_)
+                | Route::ConfirmClose
+                | Route::Form(NativeManagedFormKind::Configure)
         ) && self
             .target()
             .ok()
@@ -689,6 +851,7 @@ impl Navigation {
             self.route = Route::Catalog(self.filter);
             self.result = None;
             self.form = None;
+            self.history.clear();
             if self.change(true).is_err() {
                 self.close();
             }

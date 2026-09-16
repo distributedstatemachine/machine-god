@@ -104,6 +104,71 @@ fn displayed(driver: &Driver) -> bool {
         && presentation_idle(driver)
 }
 
+async fn enter_child(harness: &mut Harness) {
+    if harness.driver.agents.is_none() {
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(harness, displayed).await;
+    }
+    harness.input_writer.write_all(b"\r").unwrap();
+    pump_until(harness, |driver| {
+        displayed(driver) && driver.owner.managed_navigation().unwrap().route == Route::Conversation
+    })
+    .await;
+}
+
+#[test]
+fn full_child_history_updates_and_page_position_survives_both_reopen_paths() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let text = (1..=90)
+        .map(|n| format!("CHILD_POSITION_{n:03} α🙂"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fixture.transport.push(
+        format!(
+            "data: {}\n\ndata: {}\n\n",
+            serde_json::json!({"type":"text-delta","id":"answer","delta":text}),
+            serde_json::json!({"type":"finish","finishReason":{"unified":"stop"}})
+        )
+        .into_bytes(),
+    );
+    let result = runtime.block_on(async {
+        enter_child(&mut harness).await;
+        harness.input_writer.write_all(b"generate history\r").unwrap();
+        let output = pump_until(&mut harness, |driver| displayed(driver)
+            && driver.owner.managed_navigation().unwrap().history.is_some_and(|history| {
+                history.record.messages.iter().any(|message| message.content.iter().any(|block| {
+                    matches!(block, machine_god_core::ContentBlock::Text { text } if text.contains("CHILD_POSITION_090"))
+                }))
+            })).await;
+        assert!(String::from_utf8_lossy(&output).contains("CHILD_POSITION_090"));
+        let old = harness.driver.owner.managed_navigation().unwrap().frame;
+        let editor = harness.driver.owner.managed_navigation().unwrap().editor;
+        harness.input_writer.write_all(b"\x1b[5~").unwrap();
+        pump_until(&mut harness, |driver| displayed(driver)
+            && driver.owner.managed_navigation().unwrap().history.unwrap().position.is_some()).await;
+        let view = harness.driver.owner.managed_navigation().unwrap();
+        assert_eq!(view.editor, editor);
+        assert_ne!(view.frame, old);
+        let position = view.history.unwrap().position;
+        harness.input_writer.write_all(b"/back\r").unwrap();
+        pump_until(&mut harness, |driver| displayed(driver)
+            && matches!(driver.owner.managed_navigation().unwrap().route, Route::Catalog(_))).await;
+        enter_child(&mut harness).await;
+        assert_eq!(harness.driver.owner.managed_navigation().unwrap().history.unwrap().position, position);
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, |driver| driver.agents.is_none() && presentation_idle(driver)).await;
+        enter_child(&mut harness).await;
+        let view = harness.driver.owner.managed_navigation().unwrap();
+        assert_eq!(view.history.unwrap().position, position);
+        assert_ne!(view.editor, editor);
+        assert_eq!(fixture.transport.requests().len(), 1);
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
 #[test]
 fn child_unicode_draft_and_cursor_survive_closing_and_reopening_navigation() {
     let runtime = executor();
@@ -121,7 +186,7 @@ fn child_unicode_draft_and_cursor_survive_closing_and_reopening_navigation() {
             displayed(driver)
                 && matches!(
                     driver.owner.managed_navigation().unwrap().route,
-                    Route::Agent(_)
+                    Route::Conversation
                 )
         })
         .await;
@@ -154,7 +219,7 @@ fn child_unicode_draft_and_cursor_survive_closing_and_reopening_navigation() {
             displayed(driver)
                 && matches!(
                     driver.owner.managed_navigation().unwrap().route,
-                    Route::Agent(_)
+                    Route::Conversation
                 )
         })
         .await;
@@ -458,7 +523,7 @@ fn ctrl_x_preserves_parent_draft_and_a_same_chunk_enter_cannot_confirm_close() {
             displayed(driver)
                 && matches!(
                     driver.owner.managed_navigation().unwrap().route,
-                    Route::Agent(_)
+                    Route::Conversation
                 )
         })
         .await;
@@ -530,7 +595,7 @@ fn scrolling_invalidates_the_display_ack_without_replacing_the_editor_or_target(
     let result = runtime.block_on(async {
         harness.input_writer.write_all(b"\x18").unwrap();
         pump_until(&mut harness, displayed).await;
-        harness.input_writer.write_all(b"\r").unwrap();
+        harness.input_writer.write_all(b"/status\r").unwrap();
         pump_until(&mut harness, |driver| {
             displayed(driver)
                 && matches!(
