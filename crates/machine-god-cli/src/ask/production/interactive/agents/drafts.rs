@@ -2,6 +2,19 @@
 use super::{Driver, InputBinding, NativeManagedEditorIdentity};
 
 impl Driver {
+    pub(super) fn consume_local_agent_line(&mut self, editor: &NativeManagedEditorIdentity) {
+        // Replace text without resetting CRLF suppression or relabeling any
+        // already received bytes. Native admission has accepted the command.
+        if self.input.seed_managed_form(editor, "") == Ok(true) {
+            if let Some(ui) = &mut self.agents {
+                ui.draft_dirty = true;
+            }
+        } else {
+            self.native_failed = true;
+            self.shutdown();
+        }
+    }
+
     pub(in crate::ask::production::interactive) fn reject_agent_draft_edit(&mut self) {
         if let Some(ui) = &mut self.agents {
             ui.draft_editor = None;

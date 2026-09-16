@@ -625,6 +625,9 @@ Drafts are not persisted. A confirmed message acceptance clears only its exact
 submitted draft revision; rejection, ambiguity and newer edits preserve text.
 Submitted local-command text is likewise consumed only after successful
 navigation or a confirmed command receipt; keyboard navigation preserves drafts.
+Catalog and process `/refresh` submissions clear their local composer only
+after native navigation admission; rejected submissions retain their text and
+already received trailing input still needs its original frame acknowledgement.
 Restoring a draft seeds text/cursor only, never a previous input chunk or frame
 acknowledgement. The CLI cannot acknowledge a child frame until its corresponding
 draft has been restored without interrupting an atomic decoder.

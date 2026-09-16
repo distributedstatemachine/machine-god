@@ -492,6 +492,68 @@ fn process_navigation_preserves_parent_draft_and_rejects_agent_lifecycle_intent(
 }
 
 #[test]
+fn catalog_and_process_refresh_consume_only_admitted_local_command_text() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"/refresh").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.input.raw_draft() == Some(("/refresh", 8))
+        })
+        .await;
+        let InputBinding::Agents { editor, .. } = harness.driver.agents_binding().unwrap() else {
+            panic!("managed editor");
+        };
+        harness.driver.agents_event(
+            &ComposerEvent::Submit("/refresh".into()),
+            &InputBinding::Agents {
+                editor,
+                frame: None,
+            },
+        );
+        assert_eq!(harness.driver.input.raw_draft(), Some(("/refresh", 8)));
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"\r\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.input.raw_draft() == Some(("", 0))
+        })
+        .await;
+        assert!(matches!(
+            harness.driver.owner.managed_navigation().unwrap().route,
+            Route::Catalog(_)
+        ));
+        // The trailing Enter had the pre-refresh frame, so only a new Enter
+        // after presentation can select the child.
+        enter_child(&mut harness).await;
+        harness.input_writer.write_all(b"/processes\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && matches!(
+                    driver.owner.managed_navigation().unwrap().route,
+                    Route::Processes(_)
+                )
+        })
+        .await;
+        harness.input_writer.write_all(b"/refresh").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.input.raw_draft() == Some(("/refresh", 8))
+        })
+        .await;
+        harness.input_writer.write_all(b"\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver) && driver.input.raw_draft() == Some(("", 0))
+        })
+        .await;
+        assert!(fixture.transport.requests().is_empty());
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
 fn create_form_uses_native_fields_and_restores_the_parent_draft() {
     use native::NativeManagedFormField as Field;
     let runtime = executor();

@@ -98,6 +98,7 @@ fn release_cli_managed_create_archive_and_reopen_survive_process_restart() {
     terminal.wait_for(b"pty-worker [Archived, g1]");
     line(&mut terminal, "/reopen");
     terminal.wait_for(b"LifecycleChanged");
+    terminal.wait_for(b"Catalog(Archived)\r\n");
     // Reopen advances generation; select it afresh instead of reusing an old
     // editor, observation or draft as authority for the replacement runtime.
     line(&mut terminal, "/current");
@@ -130,6 +131,7 @@ fn managed_pty_child_turn_preserves_the_parent_draft_and_independent_context() {
     terminal.output.clear();
     terminal.send(b"\r");
     terminal.wait_for(b"canonical conversation");
+    terminal.wait_for(b"History rows ");
     line(&mut terminal, "child prompt only");
     terminal.wait_for(b"local fixture answer");
     assert_eq!(gateway.inference.load(Ordering::Acquire), 1);

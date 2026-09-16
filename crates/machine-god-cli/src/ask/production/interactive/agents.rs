@@ -195,6 +195,16 @@ impl Driver {
             _ => return true,
         };
         let exiting = matches!(action, Action::Exit);
+        // Catalog/process command lines have no native child draft. Refresh
+        // preserves their editor, so consume its local text only when native
+        // navigation accepts this exact submission. Keyboard refreshes do not
+        // submit text and must preserve it.
+        let clear_refresh = matches!(event, ComposerEvent::Submit(_))
+            && matches!(action, Action::Refresh)
+            && self
+                .owner
+                .managed_navigation()
+                .is_some_and(|view| matches!(view.route, Route::Catalog(_) | Route::Processes(_)));
         let result = frame.as_ref().ok_or(()).and_then(|frame| {
             if let ComposerEvent::Submit(text) = event {
                 self.owner.submit_managed_frame(frame, action, text)
@@ -209,6 +219,8 @@ impl Driver {
             );
         } else if exiting {
             self.shutdown();
+        } else if clear_refresh {
+            self.consume_local_agent_line(editor);
         }
         self.sync_agents();
         true
