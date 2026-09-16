@@ -362,7 +362,7 @@ pub use interactive_session::{
     NativeManagedFormField, NativeManagedFormKind, NativeManagedFormView,
     NativeManagedFrameIdentity, NativeManagedInteractiveStartup, NativeManagedNavigationAction,
     NativeManagedNavigationError, NativeManagedNavigationRoute, NativeManagedNavigationView,
-    NativeMcpHumanFeatureReceipt,
+    NativeManagedProcessScope, NativeMcpHumanFeatureReceipt,
 };
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

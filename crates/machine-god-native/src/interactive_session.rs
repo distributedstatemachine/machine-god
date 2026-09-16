@@ -36,6 +36,7 @@ mod navigation;
 pub use navigation::{
     NativeManagedEditorIdentity, NativeManagedFrameIdentity, NativeManagedNavigationAction,
     NativeManagedNavigationError, NativeManagedNavigationRoute, NativeManagedNavigationView,
+    NativeManagedProcessScope,
 };
 mod startup;
 pub use startup::NativeManagedInteractiveStartup;

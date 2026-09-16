@@ -431,6 +431,14 @@ impl NativeManagedAgents {
         self.manager.selected_runtime(&selection.0)
     }
 
+    pub(crate) fn observed_runtime(
+        &self,
+        observed: &crate::NativeObservedManagedAgent,
+    ) -> Option<&Arc<NativeConversationRuntime>> {
+        let selection = NativeManagedAgentSelection(self.manager.observed_selection(observed)?);
+        self.selected_runtime(&selection)
+    }
+
     pub(crate) fn prepare_foreground(
         &self,
         conversation: NativeConversation,

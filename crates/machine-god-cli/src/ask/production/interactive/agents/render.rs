@@ -1,6 +1,8 @@
 //! Bounded sanitized terminal projection. Clipped previews never become authority.
 mod detail;
 mod forms;
+mod processes;
+pub(super) use processes::count as process_count;
 #[cfg(test)]
 mod tests;
 use machine_god_core::ManagedSubagentResult;
@@ -72,6 +74,12 @@ pub(super) fn render(
             }
         }
         Route::Form(_) => forms::render(&mut lines, view, content_limit)?,
+        Route::Processes(_) => {
+            if let Some(target) = view.target {
+                target_heading(&mut lines, target)?;
+            }
+            processes::render(&mut lines, view, content_limit, detail_offset)?;
+        }
     }
     if let Some(error) = view.error {
         lines.push(&error.to_string())?;
@@ -89,6 +97,8 @@ pub(super) fn render(
 fn footer(lines: &mut Lines, view: &NativeManagedNavigationView<'_>) -> Result<(), ()> {
     lines.push(if matches!(view.route, Route::Form(_)) {
         "Tab/arrows fields · Space toggles · Ctrl-R refresh target"
+    } else if matches!(view.route, Route::Processes(_)) {
+        "/refresh snapshot · /back agents · /parent-processes"
     } else if view.has_next {
         "/next page · /refresh · /current /archived /all"
     } else {
@@ -96,13 +106,17 @@ fn footer(lines: &mut Lines, view: &NativeManagedNavigationView<'_>) -> Result<(
     })?;
     lines.push(if matches!(view.route, Route::Form(_)) {
         "Enter submits displayed form · Esc discards/back · Ctrl-X closes"
+    } else if matches!(view.route, Route::Processes(_)) {
+        "Read-only · arrows scroll · Ctrl-X exits"
     } else {
         "Enter opens/sends · /status /messages /tools /close · Ctrl-X exits"
     })?;
     lines.push(if matches!(view.route, Route::Form(_)) {
         "Values are intent only; native admission enforces permission policy"
+    } else if matches!(view.route, Route::Processes(_)) {
+        "/agent-processes uses the selected resident agent"
     } else {
-        "Arrows select/scroll · /create · /configure"
+        "Arrows select/scroll · /create /configure /processes"
     })?;
     lines.push("")
 }

@@ -35,6 +35,24 @@ impl fmt::Debug for ManagedChildProjection {
     }
 }
 impl ManagedManager {
+    /// Resolve an observation only to its original resident generation. A
+    /// revision may advance while reading; this grants no mutation authority.
+    pub(crate) fn observed_selection(
+        &self,
+        observed: &super::catalog::NativeObservedManagedAgent,
+    ) -> Option<ManagedSelection> {
+        if !self.owns_observation(observed) {
+            return None;
+        }
+        self.children
+            .iter()
+            .find(|child| {
+                child.snapshot.head.id == observed.id
+                    && child.snapshot.head.generation == observed.generation
+            })
+            .map(|child| ManagedSelection(Arc::downgrade(&child.selection)))
+    }
+
     pub(crate) fn children(&self) -> Vec<super::ManagedChildProjection> {
         self.children
             .iter()

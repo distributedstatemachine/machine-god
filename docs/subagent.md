@@ -506,6 +506,20 @@ paste or partial UTF-8 sequence keeps its original editor until decoding finishe
 retired input is drained, not reinterpreted as a new prompt or command. Human prompts
 invalidate the obscured frame and keep their exact multi-owner inbox tokens.
 
+The process page is a read-only snapshot of the selected runtime's terminal access,
+bounded by the terminal service's 128 rows and 1 MiB command/path-text budget.
+`/processes` observes the parent from the catalog and the selected child from an
+agent detail page; `/parent-processes` and `/agent-processes` make
+the scope explicit. Child resolution checks the original manager and resident
+generation, never a supplied ID alone, and does not load an archived runtime.
+The original runtime's lifecycle lease remains held until the snapshot settles,
+including cancellation when the view closes. Refresh reads a new snapshot;
+scrolling visits only retained rows. Owned backends and history-only records are
+labelled separately, and command text is an escaped, clipped preview. Enter,
+Ctrl-C and agent lifecycle commands cannot act on process rows. Returning to
+agents or the parent editor does not replace a runtime or transfer process
+authority.
+
 Restore explicitly repairs a saved original notice outbox before child execution;
 factory preparation itself never performs delivery recovery. Close waits for the
 resident's exact source acknowledgements and outbox clear. Reopen first prepares

@@ -1,4 +1,5 @@
 //! Native managed observation/admission. UI pages never replace the parent runtime.
+mod processes;
 mod state;
 mod view;
 use super::NativeInteractiveSession;
@@ -12,6 +13,7 @@ pub(super) use state::Navigation;
 pub use view::{
     NativeManagedEditorIdentity, NativeManagedFrameIdentity, NativeManagedNavigationAction,
     NativeManagedNavigationError, NativeManagedNavigationRoute, NativeManagedNavigationView,
+    NativeManagedProcessScope,
 };
 
 impl NativeInteractiveSession {

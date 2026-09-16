@@ -9,7 +9,7 @@ use machine_god_core::{
 use machine_god_native::{
     NativeManagedCatalogFilter as Filter, NativeManagedEditorIdentity, NativeManagedFormKind,
     NativeManagedFrameIdentity, NativeManagedNavigationAction as Action,
-    NativeManagedNavigationRoute as Route,
+    NativeManagedNavigationRoute as Route, NativeManagedProcessScope as Scope,
 };
 
 pub(super) struct Ui {
@@ -206,7 +206,7 @@ impl Driver {
         let Some(view) = self.owner.managed_navigation() else {
             return false;
         };
-        if !matches!(view.route, Route::Agent(_)) {
+        if !matches!(view.route, Route::Agent(_) | Route::Processes(_)) {
             return false;
         }
         let Some(ui) = &mut self.agents else {
@@ -220,7 +220,10 @@ impl Driver {
         } else {
             0
         };
-        let count = render::detail_count(view.result);
+        let count = match view.route {
+            Route::Processes(_) => render::process_count(view.processes),
+            _ => render::detail_count(view.result),
+        };
         let next = if previous {
             offset.saturating_sub(1)
         } else {
@@ -253,6 +256,18 @@ impl Driver {
             "/archived" => Action::Filter(Filter::Archived),
             "/current" => Action::Filter(Filter::Current),
             "/all" => Action::Filter(Filter::All),
+            "/parent-processes" => Action::Processes(Scope::Parent),
+            "/agent-processes" => Action::Processes(Scope::SelectedAgent),
+            "/processes" => Action::Processes(
+                if matches!(
+                    view.route,
+                    Route::Agent(_) | Route::Processes(Scope::SelectedAgent)
+                ) {
+                    Scope::SelectedAgent
+                } else {
+                    Scope::Parent
+                },
+            ),
             "/status" => Action::Inspect(Section::Status),
             "/messages" => Action::Inspect(Section::Messages),
             "/tools" => Action::Inspect(Section::ToolActivity),

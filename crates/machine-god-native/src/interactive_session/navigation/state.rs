@@ -12,7 +12,9 @@ use crate::{
     NativeManagedCatalogCursor, NativeManagedCatalogEntry, NativeManagedCatalogFilter,
     NativeManagedCatalogPage, NativeManagedCatalogRequest, NativeManagedCommandResponse,
 };
-use crate::{NativeManagedEditorIdentity, NativeManagedFormKind};
+use crate::{
+    NativeManagedEditorIdentity, NativeManagedFormKind, NativeManagedProcessScope as Scope,
+};
 use machine_god_core::{
     CancellationToken, ManagedInspect, ManagedInspectSection, ManagedLifecycle,
     ManagedLifecycleAction, ManagedMessage, ManagedRelationship, ManagedSend,
@@ -28,6 +30,11 @@ type Action = NativeManagedNavigationAction;
 type Route = NativeManagedNavigationRoute;
 
 enum Pending {
+    Processes {
+        future: super::processes::Snapshot,
+        cancellation: CancellationToken,
+        epoch: u64,
+    },
     Catalog {
         request: NativeManagedCatalogRequest,
         epoch: u64,
@@ -55,6 +62,8 @@ pub(in crate::interactive_session) struct Navigation {
     result: Option<ManagedSubagentResult>,
     error: Option<Error>,
     form: Option<Form>,
+    process_owner: Option<machine_god_core::BackgroundOutputOwner>,
+    processes: Option<crate::NativeTerminalBackgroundSnapshot>,
 }
 
 impl Default for Navigation {
@@ -75,6 +84,8 @@ impl Default for Navigation {
             result: None,
             error: None,
             form: None,
+            process_owner: None,
+            processes: None,
         }
     }
 }
@@ -96,7 +107,11 @@ impl Navigation {
             route: self.route,
             rows: &self.rows,
             selected: self.selected,
-            target: self.target().ok(),
+            target: if self.route == Route::Processes(Scope::Parent) {
+                None
+            } else {
+                self.target().ok()
+            },
             has_next: if matches!(self.route, Route::Agent(_)) {
                 self.result
                     .as_ref()
@@ -110,6 +125,8 @@ impl Navigation {
             result: self.result.as_ref(),
             error: self.error,
             form: self.form.as_ref().map(Form::view),
+            process_owner: self.process_owner.clone(),
+            processes: self.processes.as_ref(),
         })
     }
     fn change(&mut self, editor_changed: bool) -> Result<(), Error> {
@@ -148,7 +165,12 @@ impl Navigation {
         self.result = None;
         self.error = None;
         self.form = None;
-        if let Some(Pending::Command { cancellation, .. }) = &self.pending {
+        self.process_owner = None;
+        self.processes = None;
+        if let Some(
+            Pending::Command { cancellation, .. } | Pending::Processes { cancellation, .. },
+        ) = &self.pending
+        {
             cancellation.cancel();
         }
         // Keep each original request/future until the native owner settles it.
@@ -168,6 +190,8 @@ impl Navigation {
         self.next = None;
         self.result = None;
         self.error = None;
+        self.process_owner = None;
+        self.processes = None;
         let result = self.catalog(owner);
         if let Err(error) = result {
             self.error = Some(error);
@@ -226,6 +250,26 @@ impl Navigation {
         )
     }
 
+    fn processes(&mut self, owner: &NativeInteractiveSession, scope: Scope) -> Result<(), Error> {
+        let cancellation = CancellationToken::new();
+        let observed = match scope {
+            Scope::Parent => None,
+            Scope::SelectedAgent => Some(&self.target()?.observation),
+        };
+        let (principal, future) =
+            super::processes::snapshot(owner, observed, cancellation.clone())?;
+        self.route = Route::Processes(scope);
+        self.result = None;
+        self.processes = None;
+        self.process_owner = Some(principal);
+        self.pending = Some(Pending::Processes {
+            future,
+            cancellation,
+            epoch: self.epoch,
+        });
+        Ok(())
+    }
+
     pub(super) fn edit_form(
         &mut self,
         identity: &NativeManagedEditorIdentity,
@@ -271,6 +315,7 @@ impl Navigation {
             | Action::Relationship { .. }
             | Action::Lifecycle(_)
             | Action::ConfirmClose
+            | Action::Processes(Scope::SelectedAgent)
             | Action::OpenForm(NativeManagedFormKind::Configure) => {
                 self.target()?;
             }
@@ -281,6 +326,16 @@ impl Navigation {
         }
         if self.route == Route::ConfirmClose
             && !matches!(action, Action::ConfirmClose | Action::Back)
+        {
+            return Err(Error::InvalidAction);
+        }
+        // Process rows carry no command or lifecycle authority. In particular,
+        // Ctrl-C and Enter cannot cancel/message the underlying selected agent.
+        if matches!(self.route, Route::Processes(_))
+            && !matches!(
+                action,
+                Action::Back | Action::Refresh | Action::Filter(_) | Action::Processes(_)
+            )
         {
             return Err(Error::InvalidAction);
         }
@@ -326,6 +381,10 @@ impl Navigation {
                 && matches!(action, Action::Previous | Action::Next));
         self.change(editor_changed)?;
         self.error = None;
+        if !matches!(action, Action::Processes(_) | Action::Refresh) {
+            self.process_owner = None;
+            self.processes = None;
+        }
         let result = match action {
             Action::Previous | Action::Next => {
                 if let Some(form) = &mut self.form {
@@ -353,7 +412,11 @@ impl Navigation {
                 self.result = None;
                 self.catalog(owner)
             }
-            Action::Refresh => self.catalog(owner),
+            Action::Refresh => match self.route {
+                Route::Processes(scope) => self.processes(owner, scope),
+                _ => self.catalog(owner),
+            },
+            Action::Processes(scope) => self.processes(owner, scope),
             Action::NextPage => match self.route {
                 Route::Catalog(_) => {
                     self.start = Some(self.next.clone().ok_or(Error::NoSelection)?);
@@ -367,7 +430,9 @@ impl Navigation {
                         .ok_or(Error::NoSelection)?;
                     self.inspect(owner, section, Some(cursor))
                 }
-                Route::ConfirmClose | Route::Form(_) => Err(Error::InvalidAction),
+                Route::ConfirmClose | Route::Form(_) | Route::Processes(_) => {
+                    Err(Error::InvalidAction)
+                }
             },
             Action::Select | Action::Inspect(ManagedInspectSection::Status) => {
                 self.route = Route::Agent(ManagedInspectSection::Status);
@@ -456,6 +521,27 @@ impl Navigation {
         let mut refresh_detail = None;
         let mut editor_changed = false;
         let epoch = match pending {
+            Pending::Processes {
+                mut future,
+                cancellation,
+                epoch,
+            } => {
+                let Poll::Ready(result) = future.as_mut().poll(cx) else {
+                    self.pending = Some(Pending::Processes {
+                        future,
+                        cancellation,
+                        epoch,
+                    });
+                    return;
+                };
+                if self.open && epoch == self.epoch {
+                    match result {
+                        Ok(snapshot) => self.processes = Some(snapshot),
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+                epoch
+            }
             Pending::Catalog { request, epoch } => {
                 let Some(outcome) = owner.take_managed_catalog_outcome() else {
                     self.pending = Some(Pending::Catalog { request, epoch });

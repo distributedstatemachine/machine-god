@@ -48,8 +48,16 @@ impl fmt::Debug for NativeManagedFrameIdentity {
 pub enum NativeManagedNavigationRoute {
     Catalog(NativeManagedCatalogFilter),
     Agent(ManagedInspectSection),
+    Processes(NativeManagedProcessScope),
     ConfirmClose,
     Form(NativeManagedFormKind),
+}
+
+/// Selects whose terminal access is observed, never a process-control grant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeManagedProcessScope {
+    Parent,
+    SelectedAgent,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,6 +101,7 @@ pub enum NativeManagedNavigationAction {
     Back,
     Refresh,
     Inspect(ManagedInspectSection),
+    Processes(NativeManagedProcessScope),
     Message(String),
     Create(ManagedCreate),
     Configure(ManagedConfigure),
@@ -118,6 +127,7 @@ impl fmt::Debug for NativeManagedNavigationAction {
             Self::Back => "Back",
             Self::Refresh => "Refresh",
             Self::Inspect(_) => "Inspect",
+            Self::Processes(_) => "Processes",
             Self::Message(_) => "Message",
             Self::Create(_) => "Create",
             Self::Configure(_) => "Configure",
@@ -148,6 +158,8 @@ pub struct NativeManagedNavigationView<'a> {
     pub result: Option<&'a ManagedSubagentResult>,
     pub error: Option<NativeManagedNavigationError>,
     pub form: Option<NativeManagedFormView<'a>>,
+    pub process_owner: Option<machine_god_core::BackgroundOutputOwner>,
+    pub processes: Option<&'a crate::NativeTerminalBackgroundSnapshot>,
 }
 
 impl fmt::Debug for NativeManagedNavigationView<'_> {
@@ -197,6 +209,8 @@ mod tests {
             result: None,
             error: None,
             form: None,
+            process_owner: None,
+            processes: None,
         };
         let debug = format!("{view:?} {:?} {:?}", view.frame, view.editor);
         assert!(!debug.contains("567890"));

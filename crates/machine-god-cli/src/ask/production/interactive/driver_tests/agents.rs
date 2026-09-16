@@ -105,6 +105,70 @@ fn displayed(driver: &Driver) -> bool {
 }
 
 #[test]
+fn process_navigation_preserves_parent_draft_and_rejects_agent_lifecycle_intent() {
+    use native::NativeManagedProcessScope as Scope;
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        let parent = principal(&harness.driver.owner);
+        harness.input_writer.write_all(b"parent draft").unwrap();
+        input_until(&mut harness, |driver| {
+            driver.input.raw_draft() == Some(("parent draft", 12))
+        })
+        .await;
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, displayed).await;
+        harness.input_writer.write_all(b"/processes\r").unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && driver.owner.managed_navigation().unwrap().route
+                    == Route::Processes(Scope::Parent)
+        })
+        .await;
+        let view = harness.driver.owner.managed_navigation().unwrap();
+        assert_eq!(view.process_owner, Some(parent.clone()));
+        assert!(view.processes.is_some());
+        harness
+            .input_writer
+            .write_all(b"/agent-processes\r")
+            .unwrap();
+        pump_until(&mut harness, |driver| {
+            displayed(driver)
+                && driver.owner.managed_navigation().unwrap().route
+                    == Route::Processes(Scope::SelectedAgent)
+        })
+        .await;
+        assert_ne!(
+            harness
+                .driver
+                .owner
+                .managed_navigation()
+                .unwrap()
+                .process_owner,
+            Some(parent.clone())
+        );
+        harness.input_writer.write_all(b"/close\r").unwrap();
+        pump_until(&mut harness, displayed).await;
+        assert_eq!(
+            harness.driver.owner.managed_navigation().unwrap().route,
+            Route::Processes(Scope::SelectedAgent)
+        );
+        assert_eq!(harness.driver.owner.managed_agents().len(), 1);
+        assert_eq!(principal(&harness.driver.owner), parent);
+        assert!(fixture.transport.requests().is_empty());
+        harness.input_writer.write_all(b"\x18").unwrap();
+        pump_until(&mut harness, |driver| {
+            driver.agents.is_none() && presentation_idle(driver)
+        })
+        .await;
+        assert_eq!(harness.driver.input.raw_draft(), Some(("parent draft", 12)));
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
 fn create_form_uses_native_fields_and_restores_the_parent_draft() {
     use native::NativeManagedFormField as Field;
     let runtime = executor();

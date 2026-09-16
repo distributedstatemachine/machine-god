@@ -2,6 +2,60 @@ use super::super::catalog::{NativeManagedCatalogError, NativeManagedCatalogFilte
 use super::*;
 
 #[test]
+fn observed_runtime_selection_rejects_foreign_and_replaced_generations() {
+    let mut fixture = Fixture::new(vec![]);
+    let mut foreign = Fixture::new(vec![]);
+    for fixture in [&mut fixture, &mut foreign] {
+        assert!(
+            fixture
+                .command(serde_json::json!({"create":{"name":"worker","mode":"persistent"}}))
+                .ok
+        );
+        fixture.drive(|f| f.manager.active.is_none());
+    }
+    fixture
+        .manager
+        .request_catalog(NativeManagedCatalogFilter::All, None, 16)
+        .unwrap();
+    let page = block_on(std::future::poll_fn(|cx| {
+        let progress = fixture.manager.poll_progress(cx, 100);
+        assert!(!matches!(progress, Poll::Ready(Err(_))));
+        if let Some(outcome) = fixture.manager.take_catalog_outcome() {
+            return Poll::Ready(outcome.result.unwrap());
+        }
+        if progress.is_ready() {
+            cx.waker().wake_by_ref();
+        }
+        Poll::Pending
+    }));
+    let observed = page.entries.into_iter().next().unwrap().observation;
+    let selection = fixture.manager.observed_selection(&observed).unwrap();
+    let runtime = fixture.manager.selected_runtime(&selection).unwrap();
+    let original = (runtime.id(), runtime.incarnation_id());
+    assert!(foreign.manager.observed_selection(&observed).is_none());
+    assert!(
+        fixture
+            .command(serde_json::json!({"configure":{"id":"child-1","name":"new name"}}))
+            .ok
+    );
+    assert!(
+        fixture.manager.observed_selection(&observed).is_some(),
+        "read-only observation survives revision changes"
+    );
+    for action in ["close", "reopen"] {
+        assert!(
+            fixture
+                .command(serde_json::json!({"lifecycle":{"id":"child-1","action":action}}))
+                .ok
+        );
+    }
+    assert!(fixture.manager.observed_selection(&observed).is_none());
+    assert!(fixture.manager.selected_runtime(&selection).is_none());
+    let replacement = &fixture.manager.children[0].prepared.runtime;
+    assert_ne!(original, (replacement.id(), replacement.incarnation_id()));
+}
+
+#[test]
 fn repeated_catalog_refresh_yields_to_queued_durable_work_with_one_step_budget() {
     let mut fixture = Fixture::new(vec![]);
     fixture.manager.limits.work_per_poll = 1;
