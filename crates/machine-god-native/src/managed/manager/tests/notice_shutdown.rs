@@ -284,6 +284,216 @@ fn full_notice_inbox_does_not_require_a_parent_prompt_to_shutdown() {
     );
 }
 
+fn pressure_progress(f: &mut Fixture, predicate: impl Fn(&Fixture) -> bool) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut cx = Context::from_waker(Waker::noop());
+    loop {
+        if matches!(f.manager.poll_progress(&mut cx, 100), Poll::Ready(Err(_))) {
+            return false;
+        }
+        if predicate(f) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One bounded real publication/ACK/replay/shutdown lifecycle.
+fn deferred_terminal_replays_after_ack_and_snapshot_release_with_live_tracker() {
+    use crate::{
+        NativeConversation,
+        managed::notices::{ManagedNotices, NoticeEvent, NoticeLimits},
+    };
+    use machine_god_core::ManagedAgentState;
+
+    let mut f = Fixture::new(vec![completed()]);
+    f.manager.notices = Arc::new(
+        ManagedNotices::new(
+            NoticeLimits {
+                records: 1,
+                ..NoticeLimits::default()
+            },
+            f.manager.clock.clone(),
+        )
+        .unwrap(),
+    );
+    assert!(
+        f.command(serde_json::json!({"create": {
+            "name": "source", "mode": "persistent",
+            "notifications": {"started": true}
+        }}))
+        .ok
+    );
+    assert!(pressure_progress(&mut f, |f| f.manager.active.is_none()));
+    let session = f.notice_session();
+    let parent = Arc::new(ParentNoticeContext::new(
+        &session,
+        NoticePrincipal {
+            id: session.id().to_string(),
+            generation: nz(1),
+        },
+        &f.manager.notices,
+    ));
+    let conversation = NativeConversation::from_session(session.clone())
+        .unwrap()
+        .with_notice_context(&parent)
+        .unwrap();
+    // A real target may be staged/inactive when the original is published.
+    f.manager.stage_parent_context(&parent).unwrap();
+    let snapshot = block_on(f.journal.inspect("child-1".into())).unwrap();
+    let JournalPublication::Confirmed(snapshot) = block_on(f.journal.mutate(
+        snapshot,
+        JournalMutation::Relationship {
+            parent_id: Some(session.id().to_string()),
+            parent_owner: Some(JournalTranscript {
+                session_id: session.id(),
+                incarnation: session.incarnation_id(),
+            }),
+            parent_generation: Some(1),
+        },
+    ))
+    .unwrap() else {
+        panic!("confirmed relationship");
+    };
+    f.manager.children[0].snapshot = *snapshot;
+    f.manager.replay_reset = true;
+    assert!(
+        f.command(serde_json::json!({"message": {"send": {
+            "id": "child-1", "content": "finish once"
+        }}}))
+        .ok
+    );
+    // Persistent success settles to Idle, not Completed. A bounded predicate
+    // prevents a mistaken setup-state expectation from hanging Fixture::drop.
+    let settled = pressure_progress(&mut f, |f| {
+        let child = &f.manager.children[0];
+        child.snapshot.head.status == ManagedAgentState::Idle
+            && child.work.is_none()
+            && child.actual_settled
+            && child.notice_terminal.is_none()
+            && child.pending.is_empty()
+            && f.manager.active.is_none()
+    });
+    let held = f
+        .manager
+        .notices
+        .snapshot_for_parent(parent.principal(), &session.incarnation_id(), 1, 64 * 1024)
+        .unwrap();
+    let started_only = held.entries().len() == 1
+        && matches!(held.entries()[0].notice().event, NoticeEvent::Started);
+    let started = held.entries().first().map(|entry| entry.notice().clone());
+    let snapshot = block_on(f.journal.inspect("child-1".into())).unwrap();
+    let history = block_on(f.journal.history(snapshot, None, 100)).unwrap();
+    let terminal = history.records.iter().find_map(|record| match record {
+        JournalRecord::Notice(notice) if matches!(notice.event, NoticeEvent::Terminal { .. }) => {
+            Some(notice.clone())
+        }
+        _ => None,
+    });
+    let tracker = f.manager.children[0].notice.clone();
+    let unpublished_inbox = f.manager.notices.usage().pending == 1
+        && f.manager.notices.usage().publication_records == 0;
+
+    // Publish an actual parent checkpoint, then drop the unpolled stream:
+    // source ACK/outbox custody is real, but no parent provider call starts.
+    let turn = block_on(conversation.prompt("accept started notice".into(), 102)).unwrap();
+    drop(turn);
+    let delivery = parent.delivery().unwrap();
+    let acked = pressure_progress(&mut f, |f| {
+        f.manager.active.is_none()
+            && f.manager
+                .parents
+                .iter()
+                .any(|owner| owner.completed.as_ref() == Some(delivery.checkpoint()))
+    });
+    let cleared = block_on(conversation.clear_notice_delivery(&delivery)).is_ok();
+    // Activation must rediscover deferred originals without a new model turn.
+    f.manager.activate_parent_context(&parent).unwrap();
+    let held_blocks = pressure_progress(&mut f, |f| {
+        f.manager.active.is_none() && f.manager.notices.usage().pending == 0
+    }) && f.manager.notices.usage().retained_records == 1;
+    drop(held);
+    let replayed = pressure_progress(&mut f, |f| f.manager.notices.usage().pending == 1);
+    let replay = f
+        .manager
+        .notices
+        .snapshot_for_parent(parent.principal(), &session.incarnation_id(), 1, 64 * 1024)
+        .unwrap();
+    let exact_original = terminal.as_ref().is_some_and(|terminal| {
+        replay.entries().len() == 1 && replay.entries()[0].notice() == terminal
+    });
+    let live_tracker = tracker.as_ref().is_some_and(|tracker| {
+        f.manager.notices.pending_notice(tracker).is_ok() && f.manager.children[0].notice.is_some()
+    });
+    drop(replay);
+    let provider_requests = f.factory.provider.requests().len();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut cx = Context::from_waker(Waker::noop());
+    let stopped = loop {
+        match f.manager.poll_shutdown(&mut cx, 103) {
+            Poll::Ready(result) => break result.is_ok(),
+            Poll::Pending if std::time::Instant::now() >= deadline => break false,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    };
+    if !stopped {
+        // Bound the failure path too: do not enter Fixture's unbounded destructor
+        // with an unresolved durable custody bug. No notices are fake-ACKed.
+        std::mem::forget(f);
+        panic!("notice replay regression could not cleanly shut down in two seconds");
+    }
+    assert!(settled, "persistent source did not settle to idle");
+    assert!(started_only && unpublished_inbox && terminal.is_some());
+    assert!(
+        acked && cleared,
+        "real checkpoint ACK/outbox cleanup failed"
+    );
+    assert!(
+        held_blocks,
+        "held ACKed snapshot must retain delivery capacity"
+    );
+    assert!(
+        replayed && exact_original,
+        "deferred terminal was not replayed exactly"
+    );
+    assert!(
+        live_tracker,
+        "replay must coexist with the original live tracker"
+    );
+    assert_eq!(provider_requests, 1, "only the source model turn may run");
+    assert_eq!(f.factory.provider.requests().len(), 1);
+    let snapshot = block_on(f.journal.inspect("child-1".into())).unwrap();
+    let history = block_on(f.journal.history(snapshot, None, 100)).unwrap();
+    let started = started.unwrap();
+    assert!(
+        history
+            .records
+            .contains(&JournalRecord::NoticeAcknowledged {
+                identity: started.identity(),
+                target: started.target,
+                checkpoint: delivery.checkpoint().clone(),
+            })
+    );
+    let terminal = terminal.unwrap();
+    assert!(
+        history
+            .records
+            .contains(&JournalRecord::Notice(terminal.clone()))
+    );
+    assert!(
+        !history.records.iter().any(|record| {
+            matches!(record, JournalRecord::NoticeAcknowledged { identity, .. }
+            if identity == &terminal.identity())
+        }),
+        "shutdown must retain the unconsumed terminal without inventing its ACK"
+    );
+}
+
 fn context(f: &Fixture) -> Arc<ParentNoticeContext> {
     f.manager
         .children
