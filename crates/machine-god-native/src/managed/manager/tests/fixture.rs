@@ -58,7 +58,7 @@ impl PermissionPrompter for NoEffects {
         panic!("test has no permissions")
     }
 }
-pub(super) struct Factory {
+pub(in crate::managed::manager) struct Factory {
     pub registry: NativePrincipalRegistry,
     pub scheduler: ManagedScheduler,
     pub provider: ScriptedModelProvider,
@@ -262,7 +262,7 @@ pub(super) struct Admission {
     _session: Session,
     _engine: Engine,
 }
-pub(super) struct Fixture {
+pub(in crate::managed::manager) struct Fixture {
     pub factory: Arc<Factory>,
     pub journal: ManagedJournal,
     pub requester: ManagedMailboxRequester,
