@@ -3,6 +3,69 @@ use super::*;
 use machine_god_core::{CancellationToken, ManagedSubagentResult};
 use store::{JournalError, JournalPublication};
 
+#[test]
+fn full_residency_rejects_create_before_later_cancel_without_external_progress() {
+    let mut fixture = Fixture::new(vec![ModelProviderStep::pending()]);
+    fixture.manager.limits.residents = 1;
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "running", "mode": "persistent", "prompt": "keep running"
+            }}))
+            .ok
+    );
+    fixture.drive(|f| f.factory.provider.requests().len() == 1);
+    fixture.drive(|f| f.manager.active.is_none() && f.manager.replay.done);
+    let (_create_admission, create) = fixture.invocation(serde_json::json!({"create": {
+        "name": "overflow", "mode": "persistent"
+    }}));
+    let (_cancel_admission, cancel) = fixture.invocation(serde_json::json!({"lifecycle": {
+        "id": "child-1", "action": "cancel"
+    }}));
+    let requester = fixture.requester.clone();
+    let mut create = requester.execute(create, CancellationToken::new());
+    let mut cancel = requester.execute(cancel, CancellationToken::new());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(create.as_mut().poll(&mut cx).is_pending());
+    assert!(cancel.as_mut().poll(&mut cx).is_pending());
+    // No clock, provider response, unrelated wakeup or caller retirement can
+    // release this slot. A bounded poll budget makes the original deadlock red.
+    let mut rejected = None;
+    for _ in 0..10 {
+        if let Poll::Ready(result) = create.as_mut().poll(&mut cx) {
+            rejected = Some(result.unwrap());
+            break;
+        }
+        assert!(!matches!(
+            fixture.manager.poll_progress(&mut cx, 100),
+            Poll::Ready(Err(_))
+        ));
+    }
+    let rejected = rejected.expect("unaccepted create parked ahead of the only cancellation");
+    assert!(!rejected.ok);
+    assert_eq!(rejected.error_code, Some(ManagedFailureCode::ResourceLimit));
+    assert!(rejected.retryable);
+    assert!(
+        block_on(std::future::poll_fn(|cx| {
+            if let Poll::Ready(result) = cancel.as_mut().poll(cx) {
+                return Poll::Ready(result.unwrap());
+            }
+            if fixture.manager.poll_progress(cx, 100).is_ready() {
+                cx.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }))
+        .ok
+    );
+    assert_eq!(fixture.factory.provider.requests().len(), 1);
+    assert_eq!(fixture.factory.prepared.load(Ordering::Acquire), 1);
+    assert!(fixture.manager.children[0].snapshot.head.queue.is_empty());
+    assert_eq!(
+        fixture.manager.children[0].snapshot.head.status,
+        ManagedAgentState::Idle
+    );
+}
+
 fn saturated() -> Fixture {
     let mut fixture = Fixture::new(vec![ModelProviderStep::pending(), completed(), completed()]);
     assert!(
