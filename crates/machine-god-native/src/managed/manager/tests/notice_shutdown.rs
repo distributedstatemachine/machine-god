@@ -204,14 +204,24 @@ fn full_notice_inbox_does_not_require_a_parent_prompt_to_shutdown() {
         }}))
         .ok
     );
-    f.drive(|f| {
-        f.manager.children[0].snapshot.head.status == ManagedAgentState::Completed
+    let mut cx = Context::from_waker(Waker::noop());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let finished = loop {
+        let progress = f.manager.poll_progress(&mut cx, 100);
+        assert!(!matches!(progress, Poll::Ready(Err(_))));
+        if f.manager.children[0].snapshot.head.status == ManagedAgentState::Idle
             && f.manager.children[0].work.is_none()
             && f.manager.children[0].actual_settled
             && f.manager.active.is_none()
-    });
+        {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::yield_now();
+    };
     let deadline = Instant::now() + Duration::from_secs(2);
-    let mut cx = Context::from_waker(Waker::noop());
     let stopped = loop {
         match f.manager.poll_shutdown(&mut cx, 101) {
             Poll::Ready(result) => {
@@ -228,14 +238,50 @@ fn full_notice_inbox_does_not_require_a_parent_prompt_to_shutdown() {
         let batch = f
             .manager
             .notices
-            .snapshot(&NoticePrincipal { id: "parent".into(), generation: nz(1) }, 1, 64 * 1024)
+            .snapshot(
+                &NoticePrincipal {
+                    id: "parent".into(),
+                    generation: nz(1),
+                },
+                1,
+                64 * 1024,
+            )
             .unwrap();
-        let tokens = batch.entries().iter().map(|entry| entry.token()).collect::<Vec<_>>();
+        let tokens = batch
+            .entries()
+            .iter()
+            .map(|entry| entry.token())
+            .collect::<Vec<_>>();
         f.manager.notices.acknowledge(&batch, &tokens).unwrap();
         drop(batch);
         shutdown(&mut f);
     }
-    assert!(stopped, "full notice inbox prevented actual manager shutdown");
+    assert!(
+        finished,
+        "accepted persistent work did not reach settled idle before shutdown"
+    );
+    assert!(
+        stopped,
+        "full notice inbox prevented actual manager shutdown"
+    );
+    let original = block_on(f.journal.inspect("child-1".into())).unwrap();
+    let page = block_on(f.journal.history(original, None, 100)).unwrap();
+    let notices = page
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            JournalRecord::Notice(notice) => Some(notice),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(notices.len(), 2, "both accepted originals remain durable");
+    assert!(
+        !page
+            .records
+            .iter()
+            .any(|record| matches!(record, JournalRecord::NoticeAcknowledged { .. })),
+        "shutdown cannot invent a parent checkpoint or acknowledgement"
+    );
 }
 
 fn context(f: &Fixture) -> Arc<ParentNoticeContext> {
