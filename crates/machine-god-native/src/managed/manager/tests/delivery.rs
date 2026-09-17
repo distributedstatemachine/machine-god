@@ -168,6 +168,82 @@ fn actual_parent_checkpoint_is_source_acknowledged_before_outbox_clear() {
 }
 
 #[test]
+fn external_clear_wakes_shutdown_and_survives_context_drop_before_manager_poll() {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        task::{Context, Wake, Waker},
+    };
+    struct WakeCount(AtomicUsize);
+    impl Wake for WakeCount {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    let mut fixture = Fixture::new(vec![completed()]);
+    let session = fixture.notice_session();
+    original(&mut fixture, &session);
+    let (context, conversation) = deliver(&fixture, &session);
+    let delivered = context.delivery().unwrap();
+    fixture.manager.register_parent_context(&context).unwrap();
+    fixture.drive(|f| f.manager.active.is_none() && f.manager.parents[0].clear.is_some());
+    assert!(!delivered.is_cleared());
+    let wakes = Arc::new(WakeCount(AtomicUsize::new(0)));
+    let waker = Waker::from(wakes.clone());
+    assert!(
+        fixture
+            .manager
+            .poll_shutdown(&mut Context::from_waker(&waker), 103)
+            .is_pending()
+    );
+    let before = wakes.0.load(Ordering::Acquire);
+    block_on(conversation.clear_notice_delivery(&delivered)).unwrap();
+    assert!(delivered.is_cleared());
+    assert!(wakes.0.load(Ordering::Acquire) > before);
+    assert!(
+        !session
+            .record()
+            .metadata
+            .contains_key(crate::managed::prompt_context::NOTICE_OUTBOX_KEY)
+    );
+    let weak = Arc::downgrade(&context);
+    drop(context);
+    assert_eq!(weak.strong_count(), 0);
+    // No manager poll occurred between the actual save and owner retirement.
+    assert!(fixture.manager.parents[0].clear.is_some());
+    assert!(
+        fixture
+            .manager
+            .poll_delivery_clears(&mut Context::from_waker(&waker))
+    );
+    assert!(fixture.manager.parents[0].clear.is_none());
+    block_on(std::future::poll_fn(|cx| {
+        fixture.manager.poll_shutdown(cx, 103)
+    }))
+    .unwrap();
+}
+
+#[test]
+fn dropped_external_context_does_not_confirm_clear_receipt() {
+    let mut fixture = Fixture::new(vec![completed()]);
+    let session = fixture.notice_session();
+    original(&mut fixture, &session);
+    let (context, conversation) = deliver(&fixture, &session);
+    let delivered = context.delivery().unwrap();
+    // No source ACK exists; an attempted clear and subsequent context drop are
+    // neither a successful save nor permission to settle this original receipt.
+    assert!(block_on(conversation.clear_notice_delivery(&delivered)).is_err());
+    drop(context);
+    assert!(!delivered.is_cleared());
+    assert!(
+        session
+            .record()
+            .metadata
+            .contains_key(crate::managed::prompt_context::NOTICE_OUTBOX_KEY)
+    );
+}
+
+#[test]
 fn actual_checkpoint_from_another_incarnation_cannot_acknowledge_the_original() {
     let mut fixture = Fixture::new(vec![completed()]);
     let parent = fixture.notice_session();

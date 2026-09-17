@@ -271,6 +271,8 @@ fn shutdown_clear_committed_error_requires_original_retry() {
     f.drive(|f| f.manager.retry.issue() == Some(ManagerBlock::Journal));
     // A durable readback showing absence is not the missing clear confirmation.
     assert!(!has_outbox(&store));
+    let delivery = context(&f).delivery().unwrap();
+    assert!(!delivery.is_cleared());
     f.child_session("child-2");
     f.manager.request_shutdown();
     let kept = retained(&mut f);
@@ -281,6 +283,7 @@ fn shutdown_clear_committed_error_requires_original_retry() {
         "uncertain clear must retain its original child until confirmed retry"
     );
     assert!(!has_outbox(&store));
+    assert!(delivery.is_cleared());
 }
 
 #[test]
@@ -308,10 +311,12 @@ fn shutdown_dropped_clear_retains_original_until_explicit_repair() {
     // Explicit observer abandonment must not turn a Clearing slot into success.
     drop(slot.clearing.take().unwrap());
     let delivery = parent.delivery().unwrap();
+    assert!(!delivery.is_cleared());
     f.manager.request_shutdown();
     let kept = retained(&mut f);
     control.release();
     block_on(runtime.clear_notice_delivery(&delivery)).unwrap();
+    assert!(delivery.is_cleared());
     shutdown(&mut f);
     assert!(kept, "dropped clear still owns exact cleanup custody");
     assert!(!has_outbox(&store));

@@ -1157,6 +1157,10 @@ retain an exact bounded fence; neither readback nor an unrelated ordinary prompt
 silently settles it. A committed-but-unconfirmed clear may be repaired explicitly
 with another confirmed save even when readback already shows the key absent.
 Receipts hold weak parent/session authority, not a runtime ownership edge.
+An original receipt retains monotonic in-memory confirmation of its successful
+outbox clear even after its context retires. The manager observes that exact
+confirmation and receives a wake outside the context lock; context disappearance,
+dropped futures and uncertain saves cannot establish clear success.
 
 ## Shared-host runtime factory
 

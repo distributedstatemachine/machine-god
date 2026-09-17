@@ -457,3 +457,38 @@ This is executed reproduction of the finding, not a fixed-code acceptance result
 The rejected-restoration test component `7b1254ca` and production correction
 `2d0e12f1` are integrated with it. Focused execution, complete replacement gates
 and three fresh independent reviews remain required.
+
+Candidate `119b70318a70e78029b71c708a7446b6e7f8a3a9` passed both complete
+build stages, including fresh release helpers, and static/platform checks.
+All seven new shutdown/retirement regressions passed on macOS in 3.86 seconds,
+including the previously failing original-outbox assertion. Earlier CLI consent,
+selection, PTY/restart and durable-parent checks also passed. The existing
+`actual_parent_checkpoint_is_source_acknowledged_before_outbox_clear` test then
+hung during fixture shutdown, after its explicit external clear had succeeded.
+Sampling the live process confirmed `Fixture::drop` waiting in `block_on`.
+The external context had dropped before the manager observed its successful
+clear; `Parent.clear` retained a stale receipt without independent confirmation,
+and the strengthened shutdown predicate could never accept it. A dead context
+alone must not establish successful clearing, so blanket receipt disposal is not
+an acceptable correction.
+
+The exact diagnosed test process was terminated with SIGTERM after retaining
+the stack sample; the focused gate exited 143 and stopped all later stages.
+Neither complete runtime suite nor acceptance review ran. Logs and the stack
+remain under `/tmp/mg-managed-implementation.V0ZGg1/`, including
+`managed-focused-macos-119b7031.log` and
+`managed-delivery-stall-119b7031.sample.txt`. The candidate was not pushed.
+The same fix author is correcting exact confirmed-clear receipt settlement;
+this is continued remediation, not a fresh independent review.
+
+The follow-up component `88f81e153c3e24d580530589da3363df87805d9e` retains
+monotonic confirmed-clear evidence on the original delivery record. Only the
+matching operation after successful metadata publication sets it; notification
+wakes the waiting manager after releasing the context lock. The manager retains
+that exact receipt through clear/retry futures and observes its confirmation
+before discarding stale state. Dead context alone does not clear a receipt,
+and registration preserves unconfirmed custody. Two regressions cover external
+clear waking shutdown before context retirement and context drop without clear
+confirmation; existing error/drop tests assert confirmation only after repair.
+Formatting and diff checks passed in the fix-author worktree. Focused and full
+replacement execution and three fresh independent reviews remain required.

@@ -62,8 +62,9 @@ impl ManagedManager {
         if context.is_retired() {
             return Err(ManagedRuntimeError::Unavailable);
         }
-        self.parents
-            .retain(|parent| parent.context.strong_count() > 0);
+        self.parents.retain(|parent| {
+            parent.context.strong_count() > 0 || parent.clear.is_some() || parent.clearing.is_some()
+        });
         let weak = Arc::downgrade(context);
         if let Some(parent) = self
             .parents
@@ -136,8 +137,6 @@ impl ManagedManager {
                 continue;
             };
             let Some(delivery) = context.delivery() else {
-                parent.completed = None;
-                parent.clear.take();
                 continue;
             };
             if parent.completed.as_ref() == Some(delivery.checkpoint()) {
@@ -191,12 +190,28 @@ impl ManagedManager {
     pub(super) fn poll_delivery_clears(&mut self, cx: &mut Context<'_>) -> bool {
         let mut progress = false;
         for parent in &mut self.parents {
+            if let Some(delivery) = &parent.clear {
+                delivery.register_clear_waker(cx.waker());
+                if delivery.is_cleared() {
+                    // An external owner can clear and retire before our next
+                    // poll. Observe its exact confirmed receipt, not weak-owner
+                    // disappearance or an unobservable/uncertain slot.
+                    parent.clear.take();
+                    parent.clearing.take();
+                    parent.completed = None;
+                    progress = true;
+                    continue;
+                }
+            }
             if let Some(future) = &mut parent.clearing
                 && let Poll::Ready((delivery, result)) = future.as_mut().poll(cx)
             {
                 parent.clearing.take();
                 match result {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        parent.clear.take();
+                        parent.completed = None;
+                    }
                     Err(NativeConversationRuntimeError::Busy) => parent.clear = Some(delivery),
                     Err(_) => {
                         let runtime = self
@@ -259,7 +274,7 @@ impl ManagedManager {
                         super::foreground::runtime_for_notice(&self.foregrounds, &parent.context)
                     })
             {
-                let delivery = parent.clear.take().unwrap();
+                let delivery = parent.clear.as_ref().unwrap().clone();
                 parent.clearing = Some(Box::pin(async move {
                     let result = runtime.clear(&delivery).await;
                     (delivery, result)

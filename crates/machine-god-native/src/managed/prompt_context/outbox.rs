@@ -4,6 +4,7 @@ use super::{
     Inner, NoticeCheckpoint, NoticeContextError, NoticePublicationError, ParentNoticeContext,
     SavedNoticeContext, Slot, checkpoint::bounded_value,
 };
+use futures_util::task::AtomicWaker;
 use machine_god_core::{Session, SessionRecord, SessionRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,8 +12,9 @@ use std::{
     fmt,
     sync::{
         Arc, Weak,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    task::Waker,
 };
 
 pub(crate) const NOTICE_OUTBOX_KEY: &str = "machine_god.managed_notice_delivery_outbox";
@@ -115,6 +117,8 @@ pub(super) struct DeliveryRecord {
     #[cfg(test)]
     provenance: NoticeDeliveryProvenance,
     acknowledged: AtomicU64,
+    cleared: AtomicBool,
+    clear_waker: AtomicWaker,
 }
 impl DeliveryRecord {
     pub(super) fn confirmed(outbox: SavedNoticeOutbox) -> Arc<Self> {
@@ -123,6 +127,8 @@ impl DeliveryRecord {
             #[cfg(test)]
             provenance: NoticeDeliveryProvenance::ConfirmedPublication,
             acknowledged: AtomicU64::new(0),
+            cleared: AtomicBool::new(false),
+            clear_waker: AtomicWaker::new(),
         })
     }
     fn complete_mask(&self) -> u64 {
@@ -134,11 +140,19 @@ impl DeliveryRecord {
     }
 }
 /// Weak exact receipt, not session/runtime ownership or a new notice occurrence.
+#[derive(Clone)]
 pub(crate) struct NoticeDelivery {
     owner: Weak<Inner>,
     record: Arc<DeliveryRecord>,
 }
 impl NoticeDelivery {
+    /// The original successful clear receipt survives context retirement.
+    pub(crate) fn is_cleared(&self) -> bool {
+        self.record.cleared.load(Ordering::Acquire)
+    }
+    pub(crate) fn register_clear_waker(&self, waker: &Waker) {
+        self.record.clear_waker.register(waker);
+    }
     pub(crate) fn originals(&self) -> &[ManagedNotice] {
         &self.record.outbox.originals
     }
@@ -308,6 +322,8 @@ impl ParentNoticeContext {
                         #[cfg(test)]
                         provenance: NoticeDeliveryProvenance::RecoveredOriginal,
                         acknowledged: AtomicU64::new(0),
+                        cleared: AtomicBool::new(false),
+                        clear_waker: AtomicWaker::new(),
                     });
                     *slot = Slot::Recovering(Arc::clone(&original));
                     original
@@ -409,9 +425,18 @@ impl OutboxOperation {
         }
         *slot = match self.kind {
             OperationKind::Recover => Slot::Delivered(Arc::clone(&self.record)),
-            OperationKind::Clear => Slot::Idle,
+            OperationKind::Clear => {
+                // Only a confirmed save and matching original operation can
+                // settle this receipt; dropped/error operations never set it.
+                self.record.cleared.store(true, Ordering::Release);
+                Slot::Idle
+            }
         };
         self.finished = true;
+        drop(slot);
+        if matches!(self.kind, OperationKind::Clear) {
+            self.record.clear_waker.wake();
+        }
         Ok(())
     }
 }
