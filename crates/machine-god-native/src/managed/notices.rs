@@ -209,6 +209,8 @@ pub(crate) struct NoticeObservation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NoticeEmission {
     Queued,
+    /// The original is durable; its inbox projection awaits bounded replay.
+    Deferred,
     Suppressed,
     AlreadyRecorded,
 }
@@ -243,6 +245,8 @@ pub(crate) struct NoticeUsage {
     pub(crate) staged: usize,
     pub(crate) retained_records: usize,
     pub(crate) retained_bytes: usize,
+    pub(crate) publication_records: usize,
+    pub(crate) publication_bytes: usize,
 }
 
 /// A snapshot pins only its bounded immutable records, not runtimes/principals.
@@ -300,6 +304,9 @@ pub(crate) struct ManagedNotices {
     inner: Arc<Inner>,
 }
 impl ManagedNotices {
+    pub(super) fn register_capacity_waker(&self, waker: &std::task::Waker) {
+        self.inner.register_capacity_waker(waker);
+    }
     pub(crate) fn new(
         limits: NoticeLimits,
         clock: Arc<dyn NativeMcpRuntimeClock>,
@@ -324,13 +331,23 @@ impl ManagedNotices {
             inner: Arc::downgrade(&self.inner),
         })
     }
+    #[cfg(test)]
     pub(crate) fn prepare_start(
         &self,
         work: &WorkNoticeRef,
         sequence: NonZeroU64,
         history: Option<&NoticeHistoryRef>,
     ) -> Result<PreparedNotice, NoticeError> {
-        self.inner.start(work, sequence, history)
+        self.inner.start(work, sequence, history, false)
+    }
+    /// Manager-only publication reserve, separate from slow inbox observers.
+    pub(super) fn prepare_durable_start(
+        &self,
+        work: &WorkNoticeRef,
+        sequence: NonZeroU64,
+        history: Option<&NoticeHistoryRef>,
+    ) -> Result<PreparedNotice, NoticeError> {
+        self.inner.start(work, sequence, history, true)
     }
     pub(crate) fn prepare_milestone(
         &self,
@@ -341,6 +358,7 @@ impl ManagedNotices {
     ) -> Result<PreparedNotice, NoticeError> {
         self.inner.milestone(work, sequence, name, history)
     }
+    #[cfg(test)]
     pub(crate) fn prepare_terminal(
         &self,
         work: &WorkNoticeRef,
@@ -348,7 +366,16 @@ impl ManagedNotices {
         outcome: NoticeTerminal,
         history: Option<&NoticeHistoryRef>,
     ) -> Result<PreparedNotice, NoticeError> {
-        self.inner.terminal(work, sequence, outcome, history)
+        self.inner.terminal(work, sequence, outcome, history, false)
+    }
+    pub(super) fn prepare_durable_terminal(
+        &self,
+        work: &WorkNoticeRef,
+        sequence: NonZeroU64,
+        outcome: NoticeTerminal,
+        history: Option<&NoticeHistoryRef>,
+    ) -> Result<PreparedNotice, NoticeError> {
+        self.inner.terminal(work, sequence, outcome, history, true)
     }
     pub(crate) fn prepare_due(
         &self,
@@ -384,7 +411,15 @@ impl ManagedNotices {
         work: &WorkNoticeRef,
         notice: &ManagedNotice,
     ) -> Result<NoticeEmission, NoticeError> {
-        self.inner.restore(work, notice)
+        self.inner.restore(Some(work), notice)
+    }
+    /// The manager has validated this exact original and lack of source ACK in
+    /// its journal. Replaying it cannot change the live emitter's cursor/timer.
+    pub(super) fn restore_durable_original(
+        &self,
+        notice: &ManagedNotice,
+    ) -> Result<NoticeEmission, NoticeError> {
+        self.inner.restore(None, notice)
     }
     pub(crate) fn set_relationship(
         &self,

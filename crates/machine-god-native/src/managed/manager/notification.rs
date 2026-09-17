@@ -113,6 +113,7 @@ impl ManagedManager {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Result<bool, ManagedRuntimeError> {
+        self.notices.register_capacity_waker(cx.waker());
         self.retained_notices
             .retain(|work| self.notices.release_work(work).is_err());
         if self.active.is_some() {
@@ -135,7 +136,8 @@ impl ManagedManager {
                 source_sequence: sequence,
             };
             let prepared = if child.notice_started {
-                self.notices.prepare_start(work, sequence, Some(&history))
+                self.notices
+                    .prepare_durable_start(work, sequence, Some(&history))
             } else if let Some(status) = child.notice_terminal {
                 let outcome = match status {
                     ManagedQueueStatus::Completed => NoticeTerminal::Completed,
@@ -143,7 +145,7 @@ impl ManagedManager {
                     _ => NoticeTerminal::Failed,
                 };
                 self.notices
-                    .prepare_terminal(work, sequence, outcome, Some(&history))
+                    .prepare_durable_terminal(work, sequence, outcome, Some(&history))
             } else {
                 continue;
             };

@@ -22,24 +22,35 @@ pub(super) struct Inner {
     pub(super) state: Mutex<State>,
     limits: NoticeLimits,
     budget: Arc<Budget>,
+    // One separately charged durable-publication candidate, not a second inbox.
+    publication: Arc<Budget>,
 }
 #[derive(Default)]
 struct Budget {
     count: AtomicUsize,
     bytes: AtomicUsize,
+    wake: futures_util::task::AtomicWaker,
 }
 pub(super) struct NoticeRecord {
     id: u64,
     pub(super) notice: ManagedNotice,
     work: u64,
     encoded_bytes: usize,
+    deferred: bool,
+    _reservation: RecordReservation,
+}
+struct RecordReservation {
     charge: usize,
     budget: Arc<Budget>,
+    notify: bool,
 }
-impl Drop for NoticeRecord {
+impl Drop for RecordReservation {
     fn drop(&mut self) {
         self.budget.bytes.fetch_sub(self.charge, Ordering::AcqRel);
         self.budget.count.fetch_sub(1, Ordering::AcqRel);
+        if self.notify {
+            self.budget.wake.wake();
+        }
     }
 }
 pub(super) struct WorkIdentity {
@@ -110,9 +121,22 @@ pub(super) struct State {
     last_now: Option<Instant>,
     trackers: BTreeMap<u64, Tracker>,
     queue: VecDeque<Arc<NoticeRecord>>,
+    retired: Vec<Arc<NoticeRecord>>,
     pub(super) driver: Option<(u64, Option<Waker>)>,
 }
 impl State {
+    fn retain_records(&mut self, keep: impl Fn(&NoticeRecord) -> bool) {
+        let retired = &mut self.retired;
+        self.queue.retain(|record| {
+            if keep(record) {
+                true
+            } else {
+                // Keep a final strong reference until after the registry lock.
+                retired.push(record.clone());
+                false
+            }
+        });
+    }
     fn next_id(&self) -> Result<u64, NoticeError> {
         self.next.checked_add(1).ok_or(NoticeError::Exhausted)
     }
@@ -157,19 +181,24 @@ impl State {
     }
 }
 impl Inner {
+    pub(super) fn register_capacity_waker(&self, waker: &Waker) {
+        self.budget.wake.register(waker);
+        self.publication.wake.register(waker);
+    }
     pub(super) fn new(limits: NoticeLimits, clock: Arc<dyn NativeMcpRuntimeClock>) -> Self {
         Self {
             clock,
             state: Mutex::new(State::default()),
             limits,
             budget: Arc::new(Budget::default()),
+            publication: Arc::new(Budget::default()),
         }
     }
     fn mutate<R>(
         &self,
         f: impl FnOnce(&mut State) -> Result<R, NoticeError>,
     ) -> Result<R, NoticeError> {
-        let (result, waker) = {
+        let (result, waker, retired) = {
             let mut state = self
                 .state
                 .lock()
@@ -180,8 +209,10 @@ impl Inner {
             } else {
                 None
             };
-            (result, waker)
+            (result, waker, std::mem::take(&mut state.retired))
         };
+        // Final snapshot/queue refunds wake the manager, never under its registry lock.
+        drop(retired);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -246,6 +277,7 @@ impl Inner {
             Ok(identity)
         })
     }
+    #[allow(clippy::too_many_arguments)] // Exact occurrence plus explicit publication admission class.
     fn emit(
         self: &Arc<Self>,
         state: &mut State,
@@ -254,6 +286,7 @@ impl Inner {
         event: NoticeEvent,
         history: Option<&NoticeHistoryRef>,
         enabled: bool,
+        durable: bool,
     ) -> Result<PreparedNotice, NoticeError> {
         let work = state.trackers.get(&id).ok_or(NoticeError::Stale)?;
         if !enabled {
@@ -261,6 +294,26 @@ impl Inner {
         }
         let Some(parent) = &work.relationship.parent else {
             return Ok(PreparedNotice::Suppressed);
+        };
+        // Reserve before envelope copies or encoding scratch. Lost observers
+        // and ambiguous publication retain this exact finite allocation charge.
+        let publication = if durable {
+            self.publication
+                .count
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .map_err(|_| NoticeError::Capacity)?;
+            // Envelope plus geometrically grown serialization scratch.
+            let charge = 3 * self.limits.notice_bytes
+                + std::mem::size_of::<NoticeRecord>()
+                + std::mem::size_of::<PendingNotice>();
+            self.publication.bytes.store(charge, Ordering::Release);
+            Some(RecordReservation {
+                charge,
+                budget: self.publication.clone(),
+                notify: false,
+            })
+        } else {
+            None
         };
         let notice = ManagedNotice {
             source: work.identity.source.clone(),
@@ -278,7 +331,7 @@ impl Inner {
             history: history.cloned(),
         };
         let transition = Cursor::capture(work);
-        let record = self.reserve_record(state, id, notice)?;
+        let record = self.reserve_record(state, id, notice, publication)?;
         let token = StagedNotice {
             inner: Arc::downgrade(self),
             record: Arc::clone(&record),
@@ -295,6 +348,7 @@ impl Inner {
         state: &mut State,
         work: u64,
         notice: ManagedNotice,
+        publication: Option<RecordReservation>,
     ) -> Result<Arc<NoticeRecord>, NoticeError> {
         let next = state.next_id()?;
         let encoded_bytes = serde_json::to_vec(&notice)
@@ -304,48 +358,60 @@ impl Inner {
             .checked_add(std::mem::size_of::<NoticeRecord>())
             .and_then(|bytes| bytes.checked_add(std::mem::size_of::<PendingNotice>()))
             .ok_or(NoticeError::Capacity)?;
-        if encoded_bytes > self.limits.notice_bytes
-            || self.budget.count.load(Ordering::Acquire) >= self.limits.records
+        if encoded_bytes > self.limits.notice_bytes {
+            return Err(NoticeError::Capacity);
+        }
+        let full = self.budget.count.load(Ordering::Acquire) >= self.limits.records
             || self
                 .budget
                 .bytes
                 .load(Ordering::Acquire)
                 .checked_add(charge)
-                .is_none_or(|bytes| bytes > self.limits.retained_bytes)
-        {
-            return Err(NoticeError::Capacity);
-        }
-        // Reserve queue storage for all currently staged candidates as well as
-        // visible records, so confirmation cannot discover a new queue bound.
-        let staged = state
-            .trackers
-            .values()
-            .filter(|work| work.pending.is_some())
-            .count();
-        state
-            .queue
-            .try_reserve(staged + 1)
-            .map_err(|_| NoticeError::Capacity)?;
-        // Insertions are serialized; concurrent final snapshot drops only refund.
-        self.budget.count.fetch_add(1, Ordering::AcqRel);
-        self.budget.bytes.fetch_add(charge, Ordering::AcqRel);
+                .is_none_or(|bytes| bytes > self.limits.retained_bytes);
+        let reservation = if full {
+            let mut publication = publication.ok_or(NoticeError::Capacity)?;
+            publication.notify = true;
+            publication
+        } else {
+            // Reserve queue storage for all currently staged candidates as well as
+            // visible records, so confirmation cannot discover a new queue bound.
+            let staged = state
+                .trackers
+                .values()
+                .filter(|work| work.pending.is_some())
+                .count();
+            state
+                .queue
+                .try_reserve(staged + 1)
+                .map_err(|_| NoticeError::Capacity)?;
+            // Insertions are serialized; concurrent final snapshot drops only refund.
+            self.budget.count.fetch_add(1, Ordering::AcqRel);
+            self.budget.bytes.fetch_add(charge, Ordering::AcqRel);
+            RecordReservation {
+                charge,
+                budget: self.budget.clone(),
+                notify: true,
+            }
+        };
         let record = Arc::new(NoticeRecord {
             id: next,
             notice,
             work,
             encoded_bytes,
-            charge,
-            budget: self.budget.clone(),
+            deferred: full,
+            _reservation: reservation,
         });
         state.next = next;
         Ok(record)
     }
     pub(super) fn restore(
         &self,
-        reference: &WorkNoticeRef,
+        reference: Option<&WorkNoticeRef>,
         notice: &ManagedNotice,
     ) -> Result<NoticeEmission, NoticeError> {
-        let identity = self.resolve(reference)?;
+        let identity = reference
+            .map(|reference| self.resolve(reference))
+            .transpose()?;
         valid_principal(&notice.target.parent)?;
         valid_history(notice.history.as_ref(), notice.source_sequence)?;
         match &notice.event {
@@ -374,12 +440,19 @@ impl Inner {
             _ => {}
         }
         self.mutate(|state| {
-            let work = state.trackers.get(&identity.id).ok_or(NoticeError::Stale)?;
+            let work = if let Some(identity) = &identity {
+                state.trackers.get(&identity.id)
+            } else {
+                state
+                    .trackers
+                    .values()
+                    .find(|work| work.identity.source == notice.source)
+            }
+            .ok_or(NoticeError::Stale)?;
             if work.closed
-                || work.pending.is_some()
-                || work.started
-                || work.identity.source != notice.source
                 || notice.source_sequence.get() > work.sequence
+                || work.identity.source != notice.source
+                || (reference.is_some() && (work.pending.is_some() || work.started))
             {
                 return Err(NoticeError::InvalidInput);
             }
@@ -393,10 +466,12 @@ impl Inner {
                     Err(NoticeError::InvalidInput)
                 };
             }
-            let record = self.reserve_record(state, identity.id, notice.clone())?;
+            let id = work.identity.id;
+            let record = self.reserve_record(state, id, notice.clone(), None)?;
             state.queue.push_back(record);
-            // Replay admission is explicitly inert, never a running-work resume.
-            state.trackers.get_mut(&identity.id).unwrap().stopped = true;
+            if reference.is_some() {
+                state.trackers.get_mut(&id).unwrap().stopped = true;
+            }
             Ok(NoticeEmission::Queued)
         })
     }
@@ -405,6 +480,7 @@ impl Inner {
         reference: &WorkNoticeRef,
         sequence: NonZeroU64,
         history: Option<&NoticeHistoryRef>,
+        durable: bool,
     ) -> Result<PreparedNotice, NoticeError> {
         valid_history(history, sequence)?;
         let identity = self.resolve(reference)?;
@@ -429,6 +505,7 @@ impl Inner {
                 NoticeEvent::Started,
                 history,
                 enabled,
+                durable,
             )?;
             let work = state.trackers.get_mut(&identity.id).unwrap();
             work.started = true;
@@ -477,6 +554,7 @@ impl Inner {
                 },
                 history,
                 true,
+                false,
             )?;
             let work = state.trackers.get_mut(&identity.id).unwrap();
             work.milestones |= bit;
@@ -491,6 +569,7 @@ impl Inner {
         sequence: NonZeroU64,
         outcome: NoticeTerminal,
         history: Option<&NoticeHistoryRef>,
+        durable: bool,
     ) -> Result<PreparedNotice, NoticeError> {
         valid_history(history, sequence)?;
         let identity = self.resolve(reference)?;
@@ -521,6 +600,7 @@ impl Inner {
                 NoticeEvent::Terminal { outcome },
                 history,
                 enabled,
+                durable,
             )?;
             let work = state.trackers.get_mut(&identity.id).unwrap();
             work.terminal = Some(outcome);
@@ -611,6 +691,7 @@ impl Inner {
                 event,
                 observation.history.as_ref(),
                 true,
+                false,
             )?;
             let work = state.trackers.get_mut(&identity.id).unwrap();
             work.next_due = Some(next);
@@ -658,6 +739,9 @@ impl Inner {
             let pending = work.pending.take().unwrap();
             pending.transition.apply(work);
             if pending.eligible && !work.closed && !work.stopped {
+                if pending.record.deferred {
+                    return Ok(NoticeEmission::Deferred);
+                }
                 state.queue.push_back(pending.record);
                 Ok(NoticeEmission::Queued)
             } else {
@@ -702,7 +786,7 @@ impl Inner {
             work.next_due = None;
             work.duration_end = None;
             if close {
-                state.queue.retain(|record| record.work != identity.id);
+                state.retain_records(|record| record.work != identity.id);
             }
             Ok(())
         })
@@ -722,9 +806,7 @@ impl Inner {
                     work.relationship.parent_incarnation = None;
                 }
             }
-            state
-                .queue
-                .retain(|record| record.notice.target.parent != *target);
+            state.retain_records(|record| record.notice.target.parent != *target);
             Ok(())
         })
     }
@@ -755,9 +837,7 @@ impl Inner {
                     }
                 }
             }
-            state
-                .queue
-                .retain(|record| record.notice.source.source != *source);
+            state.retain_records(|record| record.notice.source.source != *source);
             Ok(())
         })
     }
@@ -769,9 +849,7 @@ impl Inner {
             return Err(NoticeError::InvalidInput);
         }
         self.mutate(|state| {
-            state
-                .queue
-                .retain(|record| !originals.contains(&record.notice));
+            state.retain_records(|record| !originals.contains(&record.notice));
             Ok(())
         })
     }
@@ -899,7 +977,7 @@ impl Inner {
                 }
                 ids.push(id);
             }
-            state.queue.retain(|record| !ids.contains(&record.id));
+            state.retain_records(|record| !ids.contains(&record.id));
             Ok(ids.len())
         })
     }
@@ -919,6 +997,8 @@ impl Inner {
                 .count(),
             retained_records: self.budget.count.load(Ordering::Acquire),
             retained_bytes: self.budget.bytes.load(Ordering::Acquire),
+            publication_records: self.publication.count.load(Ordering::Acquire),
+            publication_bytes: self.publication.bytes.load(Ordering::Acquire),
         }
     }
 }

@@ -6,6 +6,200 @@ fn staged(prepared: PreparedNotice) -> StagedNotice {
     };
     stage
 }
+
+#[test]
+fn durable_terminal_bypasses_full_inbox_without_refunding_held_snapshot() {
+    let clock = Clock::new();
+    let manager = ManagedNotices::new(
+        NoticeLimits {
+            records: 1,
+            ..NoticeLimits::default()
+        },
+        clock.clone(),
+    )
+    .unwrap();
+    let work = work(&manager, "child", started_policy());
+    manager.start_work(&work, nz(1), None).unwrap();
+    let held = snapshot(&manager);
+    let before = manager.usage();
+    ack_all(&manager, &held);
+    assert_eq!(manager.usage().retained_records, 1);
+    assert!(matches!(
+        manager.prepare_terminal(&work, nz(2), NoticeTerminal::Completed, None),
+        Err(NoticeError::Capacity)
+    ));
+    let stage = staged(
+        manager
+            .prepare_durable_terminal(&work, nz(2), NoticeTerminal::Completed, None)
+            .unwrap(),
+    );
+    let original = stage.notice().clone();
+    assert_eq!(manager.usage().publication_records, 1);
+    assert!(manager.usage().publication_bytes <= 3 * NoticeLimits::default().notice_bytes + 2048);
+    assert_eq!(manager.usage().retained_bytes, before.retained_bytes);
+    assert!(snapshot(&manager).entries().is_empty());
+    assert_eq!(
+        manager.confirm_durable(&stage),
+        Ok(NoticeEmission::Deferred)
+    );
+    assert!(snapshot(&manager).entries().is_empty());
+    assert_eq!(
+        manager.restore_durable_original(&original),
+        Err(NoticeError::Capacity)
+    );
+    drop(stage);
+    assert_eq!(manager.usage().publication_records, 0);
+    assert_eq!(manager.usage().publication_bytes, 0);
+    drop(held);
+    assert_eq!(
+        manager.restore_durable_original(&original),
+        Ok(NoticeEmission::Queued)
+    );
+    assert_eq!(
+        manager.restore_durable_original(&original),
+        Ok(NoticeEmission::AlreadyRecorded)
+    );
+    assert_eq!(snapshot(&manager).entries()[0].notice(), &original);
+    assert_eq!(clock.created.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn deferred_publication_is_one_exact_slot_until_confirmed_or_discarded_observers_drop() {
+    let clock = Clock::new();
+    let manager = ManagedNotices::new(
+        NoticeLimits {
+            records: 1,
+            ..NoticeLimits::default()
+        },
+        clock,
+    )
+    .unwrap();
+    let first = work(&manager, "first", started_policy());
+    let second = work(&manager, "second", started_policy());
+    manager.start_work(&first, nz(1), None).unwrap();
+    let original = staged(
+        manager
+            .prepare_durable_terminal(&first, nz(2), NoticeTerminal::Completed, None)
+            .unwrap(),
+    );
+    let envelope = original.notice().clone();
+    assert!(matches!(
+        manager.prepare_durable_start(&second, nz(1), None),
+        Err(NoticeError::Capacity)
+    ));
+    drop(original);
+    assert_eq!(manager.usage().publication_records, 1);
+    assert_eq!(manager.release_work(&first), Err(NoticeError::Busy));
+    let recovered = manager.pending_notice(&first).unwrap().unwrap();
+    assert_eq!(recovered.notice(), &envelope);
+    manager.discard_not_applied(&recovered).unwrap();
+    assert_eq!(manager.usage().publication_records, 1);
+    assert!(matches!(
+        manager.prepare_durable_start(&second, nz(1), None),
+        Err(NoticeError::Capacity)
+    ));
+    drop(recovered);
+    let retried = staged(
+        manager
+            .prepare_durable_terminal(&first, nz(2), NoticeTerminal::Completed, None)
+            .unwrap(),
+    );
+    assert_eq!(retried.notice(), &envelope);
+    assert_eq!(
+        manager.confirm_durable(&retried),
+        Ok(NoticeEmission::Deferred)
+    );
+    assert_eq!(manager.usage().publication_records, 1);
+    drop(retried);
+    let next = staged(manager.prepare_durable_start(&second, nz(1), None).unwrap());
+    assert_eq!(manager.usage().publication_records, 1);
+    assert_eq!(manager.confirm_durable(&next), Ok(NoticeEmission::Deferred));
+}
+
+#[test]
+fn deferred_terminal_releases_tracker_without_discarding_original_inbox() {
+    let clock = Clock::new();
+    let manager = ManagedNotices::new(
+        NoticeLimits {
+            trackers: 1,
+            records: 1,
+            ..NoticeLimits::default()
+        },
+        clock,
+    )
+    .unwrap();
+    let first = work(&manager, "first", started_policy());
+    manager.start_work(&first, nz(1), None).unwrap();
+    let stage = staged(
+        manager
+            .prepare_durable_terminal(&first, nz(2), NoticeTerminal::Completed, None)
+            .unwrap(),
+    );
+    let original = stage.notice().clone();
+    assert_eq!(
+        manager.confirm_durable(&stage),
+        Ok(NoticeEmission::Deferred)
+    );
+    drop(stage);
+    manager.release_work(&first).unwrap();
+    assert_eq!(manager.usage().trackers, 0);
+    assert_eq!(snapshot(&manager).entries().len(), 1);
+    let replay = manager
+        .register_work(
+            &original.source,
+            ManagedNotifications::default(),
+            &relationship("parent"),
+            2,
+        )
+        .unwrap();
+    let held = snapshot(&manager);
+    ack_all(&manager, &held);
+    drop(held);
+    assert_eq!(
+        manager.restore_notice(&replay, &original),
+        Ok(NoticeEmission::Queued)
+    );
+    manager.release_work(&replay).unwrap();
+    assert_eq!(snapshot(&manager).entries()[0].notice(), &original);
+}
+
+#[test]
+fn last_snapshot_and_queue_refunds_wake_capacity_outside_the_notice_lock() {
+    struct Wake {
+        inner: std::sync::Weak<super::super::state::Inner>,
+        calls: AtomicUsize,
+    }
+    impl std::task::Wake for Wake {
+        fn wake(self: Arc<Self>) {
+            if let Some(inner) = self.inner.upgrade() {
+                assert!(
+                    inner.state.try_lock().is_ok(),
+                    "capacity callback under notice lock"
+                );
+                self.calls.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+    }
+    let clock = Clock::new();
+    let manager = manager(&clock);
+    let work = work(&manager, "child", started_policy());
+    manager.start_work(&work, nz(1), None).unwrap();
+    let held = snapshot(&manager);
+    ack_all(&manager, &held);
+    let wake = Arc::new(Wake {
+        inner: Arc::downgrade(&manager.inner),
+        calls: AtomicUsize::new(0),
+    });
+    manager.register_capacity_waker(&Waker::from(wake.clone()));
+    drop(held);
+    assert_eq!(wake.calls.load(Ordering::Acquire), 1);
+    manager
+        .terminal(&work, nz(2), NoticeTerminal::Completed, None)
+        .unwrap();
+    manager.register_capacity_waker(&Waker::from(wake.clone()));
+    manager.close_work(&work).unwrap();
+    assert_eq!(wake.calls.load(Ordering::Acquire), 2);
+}
 #[test]
 fn staging_is_invisible_and_drop_retains_exact_charged_candidate() {
     let clock = Clock::new();
