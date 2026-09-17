@@ -1,7 +1,7 @@
 //! One source-history page per manager journal admission.
 use super::{
-    Arc, JournalMutation, JournalRecord, JournalSnapshot, ManagedJournal, ManagedNotice,
-    ManagedRuntimeError, NoticeCheckpoint, NoticeDelivery, Repair, durability,
+    Arc, JournalMutation, JournalRecord, ManagedJournal, ManagedNotice, ManagedRuntimeError,
+    NoticeCheckpoint, NoticeDelivery, Repair, durability,
 };
 use crate::managed::store::{JournalError, JournalHistoryCursor};
 

@@ -5,7 +5,10 @@ use crate::managed::{
         PreparedNotice, WorkNoticeIdentity,
     },
     prompt_context::{ParentNoticeContext, saved_outbox},
-    store::{JournalCreate, JournalIntent, JournalLimits, JournalPublication, JournalTranscript},
+    store::{
+        JournalCreate, JournalIntent, JournalLimits, JournalPublication, JournalSnapshot,
+        JournalTranscript,
+    },
 };
 use crate::mcp::runtime::NativeMcpRuntimeClock;
 use crate::{NativeConversation, NativeOwnedWorkerScope};

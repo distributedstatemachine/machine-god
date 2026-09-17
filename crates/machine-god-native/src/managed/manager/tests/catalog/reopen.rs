@@ -1,5 +1,5 @@
 use super::{Fixture, NativeManagedCatalogFilter, read_page};
-use crate::managed::manager::{Active, ManagedForegroundSelection};
+use crate::managed::manager::ManagedForegroundSelection;
 use crate::managed::store::{JournalMutation, JournalPublication};
 use futures_executor::block_on;
 use machine_god_core::{
@@ -273,7 +273,7 @@ fn observed_reopen(external_recovery: bool) {
         .unwrap();
     let result = finish(&mut fixture, response);
     assert_eq!(result.operation_id, operation);
-    fixture.drive(|f| !matches!(f.manager.active, Some(Active::Command { .. })));
+    fixture.drive(|f| f.manager.active.is_none());
     let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
     if external_recovery {
         assert_eq!(result.error_code, Some(ManagedFailureCode::StaleGeneration));
