@@ -66,10 +66,12 @@ fn check_parent_after_consent(archive: bool) {
                 .ok
         );
         fixture.drive(|f| {
-            f.manager
-                .children
-                .iter()
-                .all(|c| c.snapshot.head.id != "child-2")
+            f.manager.active.is_none()
+                && f.manager.replay.done
+                && f.manager
+                    .children
+                    .iter()
+                    .all(|c| c.snapshot.head.id != "child-2")
         });
         assert_eq!(
             block_on(fixture.journal.inspect("child-2".into()))
@@ -91,6 +93,9 @@ fn check_parent_after_consent(archive: bool) {
         }
         Poll::Pending
     }));
+    // The command receipt can precede notice replay. Settle its journal worker
+    // before this out-of-band assertion competes for the single operation slot.
+    fixture.drive(|f| f.manager.active.is_none() && f.manager.replay.done);
     let child = block_on(fixture.journal.inspect("child-1".into())).unwrap();
     if archive {
         assert_eq!(

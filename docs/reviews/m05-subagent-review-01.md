@@ -165,3 +165,12 @@ Candidate `c0cd4da3` passed static policy/audit and platform/Apple ABI compilati
 but both Linux and macOS Clippy rejected one unused import in the new preparation
 regressions. Neither platform reached runtime tests. The import was removed;
 both failed build logs remain retained for the replacement gate.
+
+Candidate `08c9a943` passed both complete build gates and the native Apple ABI
+probe. Focused execution then rejected the two relationship-consent regressions
+on Linux and macOS: their direct journal assertions raced manager notice replay
+and returned `Busy`. The other 15 selected tests passed on both platforms; neither
+full runtime gate started. The tests now settle replay before out-of-band journal
+reads, without changing consent or publication assertions. Failed and remaining
+focused logs are retained under the same log directory. Replacement verification
+is still required; passing builds alone do not establish feature acceptance.
