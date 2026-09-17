@@ -853,3 +853,174 @@ fn rejected_restored_admission_retains_outbox_until_clear() {
     assert_eq!(snapshot.head.queue, accepted);
     assert_eq!(f.factory.provider.requests().len(), 1);
 }
+
+#[test]
+fn nonresident_close_saved_delivery_yields_to_sibling_commands() {
+    saved_lifetime_yields(false);
+}
+
+#[test]
+fn nonresident_reopen_saved_delivery_yields_and_waits_for_old_resources() {
+    saved_lifetime_yields(true);
+}
+
+fn finish_response(
+    f: &mut Fixture,
+    response: &mut BoxFuture<
+        '_,
+        Result<machine_god_core::ManagedSubagentResult, machine_god_core::ManagedSubagentError>,
+    >,
+) -> machine_god_core::ManagedSubagentResult {
+    block_on(std::future::poll_fn(|cx| {
+        if let Poll::Ready(result) = response.as_mut().poll(cx) {
+            return Poll::Ready(result.unwrap());
+        }
+        let progress = f.manager.poll_progress(cx, 100);
+        assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");
+        if progress.is_ready() {
+            cx.waker().wake_by_ref();
+        }
+        Poll::Pending
+    }))
+}
+
+#[allow(clippy::too_many_lines)] // One original lifecycle across saved evidence, blocked clear and resource closure.
+fn saved_lifetime_yields(reopen: bool) {
+    use machine_god_core::{ManagedAgentState, ManagedHistoryItem, ManagedHistoryKind};
+
+    let (mut f, store, control) = fixture();
+    // The original notice/relationship live behind multiple immutable history
+    // pages. Saved-lifetime cleanup must use the ordinary paged delivery lane.
+    let mut source = block_on(f.journal.inspect("child-1".into())).unwrap();
+    for _ in 0..4 {
+        let JournalPublication::Confirmed(next) = block_on(
+            f.journal.mutate(
+                source,
+                JournalMutation::AppendHistory(
+                    (0..90)
+                        .map(|_| {
+                            JournalRecord::History(ManagedHistoryItem {
+                                kind: ManagedHistoryKind::Conversation,
+                                work_id: None,
+                                user: None,
+                                assistant: Some("retained source evidence".into()),
+                                user_truncated: false,
+                                assistant_truncated: false,
+                            })
+                        })
+                        .collect(),
+                ),
+            ),
+        )
+        .unwrap() else {
+            panic!("confirmed history")
+        };
+        source = *next;
+    }
+    f.manager.children[0].snapshot = source;
+    drop(saved_recipient(&f));
+    let index = f
+        .manager
+        .children
+        .iter()
+        .position(|child| child.snapshot.head.id == "child-2")
+        .unwrap();
+    let child = f.manager.children.remove(index);
+    assert!(!child.busy() && child.actual_settled);
+    drop(child);
+    if reopen {
+        let snapshot = block_on(f.journal.inspect("child-2".into())).unwrap();
+        let JournalPublication::Confirmed(snapshot) = block_on(f.journal.mutate(
+            snapshot,
+            JournalMutation::Intent(crate::managed::store::JournalIntent::Archive),
+        ))
+        .unwrap() else {
+            panic!("confirmed archive intent")
+        };
+        assert!(matches!(
+            block_on(f.journal.mutate(*snapshot, JournalMutation::Archive)).unwrap(),
+            JournalPublication::Confirmed(_)
+        ));
+    }
+    let resident_before = f.manager.progress().residents;
+    let prepared_before = f.factory.prepared.load(Ordering::Acquire);
+    control.pause_clear.store(true, Ordering::Release);
+    let operation = format!("operation-{}", f.manager.next_operation);
+    let (_admission, invocation) = f.invocation(serde_json::json!({
+        "lifecycle": {"id": "child-2", "action": if reopen { "reopen" } else { "close" }}
+    }));
+    let requester = f.requester.clone();
+    let mut original = requester.execute(invocation, CancellationToken::new());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(original.as_mut().poll(&mut cx).is_pending());
+    f.drive(|_| control.clear_started.load(Ordering::Acquire) == 1);
+    assert!(has_outbox(&store));
+    assert!(original.as_mut().poll(&mut cx).is_pending());
+    let charged = f.manager.progress().residents > resident_before;
+    let (_sibling_admission, invocation) = f.invocation(serde_json::json!({
+        "configure": {"id": "child-1", "name": "sibling progressed"}
+    }));
+    let mut sibling = requester.execute(invocation, CancellationToken::new());
+    assert!(sibling.as_mut().poll(&mut cx).is_pending());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut sibling_result = None;
+    while std::time::Instant::now() < deadline {
+        if let Poll::Ready(result) = sibling.as_mut().poll(&mut cx) {
+            sibling_result = Some(result.unwrap());
+            break;
+        }
+        let progress = f.manager.poll_progress(&mut cx, 100);
+        assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");
+        std::thread::yield_now();
+    }
+    let yielded = sibling_result.is_some();
+    if reopen {
+        f.factory.cleanup.store(false, Ordering::Release);
+    }
+    control.release();
+    if reopen {
+        f.drive(|_| !has_outbox(&store));
+        assert_eq!(
+            f.factory.prepared.load(Ordering::Acquire),
+            prepared_before + 1,
+            "new generation cannot precede original resource closure"
+        );
+        assert!(original.as_mut().poll(&mut cx).is_pending());
+        f.factory.cleanup.store(true, Ordering::Release);
+    }
+    // Release every deliberate hold before reporting a RED assertion, so the
+    // original accepted close and Fixture's owned cleanup can always finish.
+    let result = finish_response(&mut f, &mut original);
+    let sibling_result = sibling_result.unwrap_or_else(|| finish_response(&mut f, &mut sibling));
+    assert!(
+        result.ok && sibling_result.ok,
+        "{result:?}; {sibling_result:?}"
+    );
+    assert_eq!(result.operation_id, operation);
+    f.drive(|f| f.manager.active.is_none());
+    let snapshot = block_on(f.journal.inspect("child-2".into())).unwrap();
+    assert_eq!(snapshot.head.generation, if reopen { 2 } else { 1 });
+    assert_eq!(
+        snapshot.head.status,
+        if reopen {
+            ManagedAgentState::Idle
+        } else {
+            ManagedAgentState::Archived
+        }
+    );
+    shutdown(&mut f);
+    assert!(!has_outbox(&store));
+    assert_eq!(
+        f.factory.provider.requests().len(),
+        1,
+        "cleanup and reopen never execute a model turn"
+    );
+    assert!(
+        yielded,
+        "saved-lifetime clear retained the serialized command lane"
+    );
+    assert!(
+        charged,
+        "saved-lifetime preparation escaped resident accounting"
+    );
+}
