@@ -35,13 +35,12 @@ pub(super) async fn prepare(
     // Close settles its turn as Cancelled too, but must stop notifications.
     let notice = if snapshot.head.intent == Some(JournalIntent::Cancel)
         && work.configuration.notifications.terminal.cancelled
-        && snapshot.head.parent_owner.is_some()
+        && let Some(parent) = snapshot.head.parent_owner.as_ref()
     {
         let (attempt, terminal) = attempt(journal, snapshot, work_id).await?;
         if terminal {
             None
         } else {
-            let parent = snapshot.head.parent_owner.as_ref().unwrap();
             let sequence = positive(snapshot.head.next_sequence)?;
             Some(ManagedNotice {
                 source: WorkNoticeIdentity {

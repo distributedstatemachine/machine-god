@@ -93,7 +93,7 @@ fn cancellation_notice_and_fifo_removal_share_exact_ambiguity_custody() {
         assert!(settled.head.queue.is_empty());
         assert_eq!(settled.head.intent, None);
         assert_eq!(settled.head.notice_cursor, notice.source_sequence.get());
-        assert_eq!(originals(&journal, &settled), [notice.clone()]);
+        assert_eq!(originals(&journal, &settled), std::slice::from_ref(&notice));
         // No runtime or in-memory tracker is needed to recover the same original.
         drop(journal);
         let journal = fixture.open();

@@ -547,3 +547,11 @@ repeat, active cancel, explicit retry and close. Two store regressions cover
 exact target rejection and all four publication fault phases, reconciliation
 failure and restart. Author formatting and diff checks passed; fixed-code runtime
 execution and replacement independent acceptance have not yet run.
+
+Integrated candidate `6f90dd864e74f8c8fbcba04e42b3456ed78c273f` stopped at
+warnings-denied Clippy on Linux and macOS: cancellation preparation checked
+`parent_owner.is_some()` before unwrapping it, and a store assertion cloned a
+notice into a one-element array. Static policy/audit and platform checks passed;
+no runtime stage started. Binding the parent with `if let` and using
+`std::slice::from_ref` preserve behavior and assertions. The replacement still
+requires focused execution, the complete local gate and fresh independent review.
