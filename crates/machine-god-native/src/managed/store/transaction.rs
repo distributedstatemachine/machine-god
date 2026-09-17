@@ -239,7 +239,7 @@ pub(super) fn mutate(
     let source = check_snapshot(shared, &snapshot)?;
     if snapshot.head.owner_epoch != shared.epoch {
         if !matches!(mutation, JournalMutation::Recover)
-            && !archived_acknowledgement(&snapshot.head, &mutation)
+            && !quiescent_acknowledgement(&snapshot.head, &mutation)
         {
             return Err(Error::RecoveryRequired);
         }
@@ -263,13 +263,30 @@ pub(super) fn mutate(
     )
 }
 
-fn archived_acknowledgement(head: &JournalHead, mutation: &JournalMutation) -> bool {
-    // Archived sources cannot reactivate. The manager has proved exact original
+impl JournalHead {
+    /// Exactly the work-state changes performed by Recover; durable intent is
+    /// preserved by recovery and is deliberately not an execution-state test.
+    pub(crate) fn recovery_changes_work(&self) -> bool {
+        use machine_god_core::{ManagedAgentState, ManagedQueueStatus};
+        self.status != ManagedAgentState::Archived
+            && self.queue.iter().any(|work| {
+                matches!(
+                    work.status,
+                    ManagedQueueStatus::Pending
+                        | ManagedQueueStatus::Running
+                        | ManagedQueueStatus::AwaitingApproval
+                )
+            })
+    }
+}
+
+fn quiescent_acknowledgement(head: &JournalHead, mutation: &JournalMutation) -> bool {
+    // Quiescent sources need no work-state repair. The manager has proved exact original
     // envelopes/checkpoints against this immutable snapshot before submitting
     // ACKs; record validation still checks recipient/checkpoint consistency.
     // Transfer owner epoch in that same credited publication, not a preceding
     // generic recovery write. Mixed history and unreserved ACKs cannot use it.
-    head.status == machine_god_core::ManagedAgentState::Archived
+    !head.recovery_changes_work()
         && matches!(mutation, JournalMutation::AppendHistory(records)
         if !records.is_empty() && records.iter().all(|record| matches!(record,
             JournalRecord::NoticeAcknowledged { identity, .. }
