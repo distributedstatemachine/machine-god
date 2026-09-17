@@ -371,6 +371,13 @@ impl Fixture {
         Self::with_store(steps, InMemorySessionStore::default())
     }
     pub fn with_store(steps: Vec<ModelProviderStep>, store: impl SessionStore) -> Self {
+        Self::with_engine_setup(steps, store, |engine| engine)
+    }
+    pub fn with_engine_setup(
+        steps: Vec<ModelProviderStep>,
+        store: impl SessionStore,
+        configure: impl FnOnce(EngineBuilder) -> EngineBuilder,
+    ) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let path = std::env::temp_dir().join(format!(
             "mg-managed-manager-{}-{}",
@@ -399,12 +406,14 @@ impl Fixture {
             Arc::new(NoEffects),
             Arc::new(NoEffects),
         ));
-        let engine = Engine::builder()
-            .provider(provider.clone())
-            .shared_permission_handler(permissions.clone())
-            .session_store(store)
-            .build()
-            .unwrap();
+        let engine = configure(
+            Engine::builder()
+                .provider(provider.clone())
+                .shared_permission_handler(permissions.clone())
+                .session_store(store),
+        )
+        .build()
+        .unwrap();
         let factory = Arc::new(Factory {
             registry: NativePrincipalRegistry::new(64, Arc::new(NativeUndoBudget::default()))
                 .unwrap(),
