@@ -579,6 +579,9 @@ fn closing_nonresident_child_restricts_repair_without_changing_saved_policy() {
         fixture.factory.prepared_modes.lock().unwrap().last(),
         Some(&ManagedPermissionMode::Ask)
     );
+    // The close response can precede manager-owned replay settlement. Keep
+    // this independent assertion read out of the replay's journal slot.
+    fixture.drive(|f| f.manager.active.is_none());
     let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
     assert_eq!(snapshot.head.status, ManagedAgentState::Archived);
     assert_eq!(

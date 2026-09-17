@@ -259,3 +259,25 @@ without changing admission or revocation conditions. An intermediate focused
 Clippy run still counted 102 lines after only the first extraction; its log is
 retained too. Neither build reached runtime tests; both failed build logs
 remain retained under the candidate SHA.
+
+Candidate `a4b0ca24` passed both complete build gates and static/platform checks.
+Its nine acknowledgement regressions and both managed PTY scenarios passed on
+Linux and macOS; the complete Linux CLI suite passed 607 tests with six private
+helper entrypoints ignored. The full Linux native suite then parked in
+`closing_nonresident_child_restricts_repair_without_changing_saved_policy`.
+Read-only live debugger captures located the wait in its subsequent reopen
+command, with `Active::Replay`, a `Journal` retry issue, a registered waker and
+`closing=false`; the only other native threads were idle cleanup collectors.
+The journal had already retained the archived child and unchanged saved policy.
+
+The fixture read the private journal directly after close without settling
+manager-owned replay. Source tracing shows that these operations can compete for
+the same slot and leave replay behind the explicit journal-repair gate. The
+original losing error was not retained in the live future. The fixture now waits
+for owned journal settlement before its independent assertion read, following
+the existing neighboring test pattern; product retry behavior is unchanged.
+After capturing state, the exact owned test binary was explicitly terminated,
+and Cargo exited 101 from SIGTERM. This is an interrupted gate, not a passing
+native suite or a deadline-only restart. Full macOS runtime was not started.
+The original runtime and three `managed-live-hang-*-linux-a4b0ca24.log` captures
+remain in the retained log directory. Fresh replacement gates remain required.
