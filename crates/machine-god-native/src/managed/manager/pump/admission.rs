@@ -107,7 +107,6 @@ impl ManagedManager {
             None
         };
         if let Some((job, wait_finished, operation)) = job {
-            self.remember_principal(job.lease().principal());
             if let ManagedSubagentCommand::Message(ManagedMessage::Milestone(request)) =
                 job.command()
             {

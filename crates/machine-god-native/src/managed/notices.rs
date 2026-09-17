@@ -93,11 +93,13 @@ pub(crate) struct WorkNoticeIdentity {
 pub(crate) struct NoticeRelationship {
     pub(crate) generation: NonZeroU64,
     pub(crate) parent: Option<NoticePrincipal>,
+    pub(crate) parent_incarnation: Option<machine_god_core::SessionIncarnationId>,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoticeTarget {
     pub(crate) parent: NoticePrincipal,
+    pub(crate) parent_incarnation: machine_god_core::SessionIncarnationId,
     pub(crate) relationship_generation: NonZeroU64,
 }
 /// Bounded opaque journal reference, not a path or authority to read it.
@@ -248,6 +250,7 @@ pub(crate) struct NoticeUsage {
 pub(crate) struct NoticeBatch {
     inner: Weak<Inner>,
     target: NoticePrincipal,
+    incarnation: Option<machine_god_core::SessionIncarnationId>,
     entries: Vec<NoticeBatchEntry>,
     bytes: usize,
     more: bool,
@@ -421,13 +424,24 @@ impl ManagedNotices {
     ) -> Result<(), NoticeError> {
         self.inner.acknowledge_recovered(originals)
     }
+    #[cfg(test)]
     pub(crate) fn snapshot(
         &self,
         target: &NoticePrincipal,
         max_count: usize,
         max_bytes: usize,
     ) -> Result<NoticeBatch, NoticeError> {
-        self.inner.snapshot(target, max_count, max_bytes)
+        self.inner.snapshot(target, None, max_count, max_bytes)
+    }
+    pub(crate) fn snapshot_for_parent(
+        &self,
+        target: &NoticePrincipal,
+        incarnation: &machine_god_core::SessionIncarnationId,
+        max_count: usize,
+        max_bytes: usize,
+    ) -> Result<NoticeBatch, NoticeError> {
+        self.inner
+            .snapshot(target, Some(incarnation), max_count, max_bytes)
     }
     /// Required immediately before root's serialized checkpoint/context admission.
     pub(crate) fn validate_batch(&self, batch: &NoticeBatch) -> Result<(), NoticeError> {

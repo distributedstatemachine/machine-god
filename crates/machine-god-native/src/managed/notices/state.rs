@@ -267,6 +267,11 @@ impl Inner {
             source_sequence: sequence,
             target: NoticeTarget {
                 parent: parent.clone(),
+                parent_incarnation: work
+                    .relationship
+                    .parent_incarnation
+                    .clone()
+                    .ok_or(NoticeError::InvalidInput)?,
                 relationship_generation: work.relationship.generation,
             },
             event,
@@ -714,6 +719,7 @@ impl Inner {
                 }
                 if work.relationship.parent.as_ref() == Some(target) {
                     work.relationship.parent = None;
+                    work.relationship.parent_incarnation = None;
                 }
             }
             state
@@ -772,6 +778,7 @@ impl Inner {
     pub(super) fn snapshot(
         self: &Arc<Self>,
         target: &NoticePrincipal,
+        incarnation: Option<&machine_god_core::SessionIncarnationId>,
         count: usize,
         bytes: usize,
     ) -> Result<NoticeBatch, NoticeError> {
@@ -790,6 +797,9 @@ impl Inner {
             .queue
             .iter()
             .filter(|record| record.notice.target.parent == *target)
+            .filter(|record| {
+                incarnation.is_none_or(|value| &record.notice.target.parent_incarnation == value)
+            })
         {
             if !groups.contains_key(&record.work) {
                 order.push(record.work);
@@ -826,6 +836,7 @@ impl Inner {
         Ok(NoticeBatch {
             inner: Arc::downgrade(self),
             target: target.clone(),
+            incarnation: incarnation.cloned(),
             more: entries.len() < available,
             entries,
             bytes: encoded,
@@ -845,6 +856,9 @@ impl Inner {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for entry in &batch.entries {
             if entry.record.notice.target.parent != batch.target
+                || batch.incarnation.as_ref().is_some_and(|incarnation| {
+                    &entry.record.notice.target.parent_incarnation != incarnation
+                })
                 || !state
                     .queue
                     .iter()
@@ -971,6 +985,9 @@ fn valid_principal(value: &NoticePrincipal) -> Result<(), NoticeError> {
     valid_id(&value.id)
 }
 fn valid_relationship(value: &NoticeRelationship) -> Result<(), NoticeError> {
+    if value.parent.is_some() != value.parent_incarnation.is_some() {
+        return Err(NoticeError::InvalidInput);
+    }
     if let Some(parent) = &value.parent {
         valid_principal(parent)?;
     }

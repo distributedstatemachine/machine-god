@@ -49,6 +49,14 @@ impl SavedNoticeContext {
         checkpoint: &NoticeCheckpoint,
         originals: Vec<ManagedNotice>,
     ) -> Result<Self, NoticeContextError> {
+        if parent.id != checkpoint.session_id.as_str()
+            || originals.iter().any(|notice| {
+                notice.target.parent != *parent
+                    || notice.target.parent_incarnation != checkpoint.incarnation_id
+            })
+        {
+            return Err(NoticeContextError::InvalidCheckpoint);
+        }
         let text = render(&originals)?;
         let result = Self {
             schema_version: 1,
@@ -207,10 +215,10 @@ pub(crate) fn saved_context(
                 saved.checkpoint.turn_sequence,
                 saved.checkpoint.first_user_message,
             ))
-        || saved
-            .originals
-            .iter()
-            .any(|notice| notice.target.parent != saved.parent)
+        || saved.originals.iter().any(|notice| {
+            notice.target.parent != saved.parent
+                || notice.target.parent_incarnation != record.incarnation_id
+        })
         || saved.identities
             != saved
                 .originals

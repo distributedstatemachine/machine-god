@@ -119,6 +119,9 @@ fn identity(id: &str) -> WorkNoticeIdentity {
 }
 fn relationship(parent: &str) -> NoticeRelationship {
     NoticeRelationship {
+        parent_incarnation: Some(
+            machine_god_core::SessionIncarnationId::new("incarnation").unwrap(),
+        ),
         generation: nz(1),
         parent: Some(principal(parent, 1)),
     }
@@ -413,6 +416,9 @@ fn reparent_changes_future_targets_but_never_existing_notice_targets() {
         .set_relationship(
             &work,
             &NoticeRelationship {
+                parent_incarnation: Some(
+                    machine_god_core::SessionIncarnationId::new("incarnation").unwrap(),
+                ),
                 generation: nz(2),
                 parent: Some(principal("new", 2)),
             },
@@ -780,6 +786,7 @@ fn explicit_restore_preserves_original_identity_target_and_payload_without_timer
         source: identity("child"),
         source_sequence: nz(5),
         target: NoticeTarget {
+            parent_incarnation: machine_god_core::SessionIncarnationId::new("incarnation").unwrap(),
             parent: principal("parent", 1),
             relationship_generation: nz(3),
         },

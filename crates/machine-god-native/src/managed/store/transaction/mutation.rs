@@ -189,15 +189,16 @@ fn apply_inner(
         JournalMutation::Relationship {
             parent_id,
             parent_owner,
+            parent_generation,
         } => {
-            if let Some(parent) = &parent_id {
-                validation::id(parent)?;
-            }
-            if parent_id.is_some() != parent_owner.is_some() {
-                return Err(Error::Invalid);
-            }
+            validation::relationship(
+                parent_id.as_deref(),
+                parent_owner.as_ref(),
+                parent_generation,
+            )?;
             head.parent_id = parent_id;
             head.parent_owner = parent_owner;
+            head.parent_generation = parent_generation;
         }
         JournalMutation::SuppressedNotice(sequence) => {
             if sequence != head.next_sequence || sequence <= head.notice_cursor {

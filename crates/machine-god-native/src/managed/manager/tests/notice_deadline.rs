@@ -100,6 +100,9 @@ fn suppressed_duration_rearms_later_child_without_unrelated_activity() {
                     ..ManagedNotifications::default()
                 },
                 &NoticeRelationship {
+                    parent_incarnation: Some(
+                        machine_god_core::SessionIncarnationId::new("incarnation").unwrap(),
+                    ),
                     generation: nz(1),
                     parent: Some(NoticePrincipal {
                         id: "parent".into(),

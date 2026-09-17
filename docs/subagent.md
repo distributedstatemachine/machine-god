@@ -25,13 +25,16 @@ outbox cleanup. It creates neither an additional runtime owner nor an idle turn.
 ## Commands
 
 The control journal retains immutable controller transcript identity and the
-exact optional parent transcript identity alongside its public parent label,
-including empty persistent children. Reparenting updates the paired relationship
-fields, not the original controller. These durable labels do not replace actual
-native-call admission. Idle cancellation still publishes intent before its
-separate durable settlement; it cannot leave an empty FIFO permanently blocked.
+exact optional parent transcript identity and lifecycle generation alongside its
+public parent label, including empty persistent children. Reparenting updates
+the complete relationship target, not the original controller. Detached records
+omit all three parent fields; attached records require a positive generation.
+These durable labels do not replace actual native-call admission. Idle
+cancellation still publishes intent before its separate durable settlement;
+it cannot leave an empty FIFO permanently blocked.
 Exact typed notice envelopes are immutable pageable journal records, preserving
-source/work generations, target relationship, source sequence and interval gaps.
+source/work generations, exact target incarnation and relationship, source
+sequence and interval gaps.
 Their journal confirmation precedes visibility in the parent notice inbox.
 
 Source journals also retain exact acknowledgement identity, original target and
@@ -964,6 +967,18 @@ not filesystem read authority. Reparent/detach changes the relationship used by
 future emissions. Each already-pending notice keeps its original parent and
 relationship revision; parent retirement invalidates only that target's pending
 context. Weak work references retain no principal, runtime or manager ownership.
+
+Notice addressing uses the durable parent target, not parent residency. Evicting
+an idle parent does not detach its children or suppress their enabled notices:
+confirmed originals remain available for bounded replay when that exact parent
+returns. Restoring the same generation preserves delivery eligibility. Closing
+and reopening a parent does not retarget old relationships or originals to its
+new generation; an explicit relationship change selects that new target.
+Replay and acknowledgement validate the generation as well as the historical
+parent transcript incarnation at the original relationship revision.
+Live prompt snapshots also filter by the actual parent transcript incarnation
+before bounded selection. A replacement context with a reused display ID and
+generation cannot ingest an original addressed to another incarnation.
 
 Default bounds are 64 trackers, 256 retained notices, 1 MiB retained notice
 bytes and 8 KiB per encoded notice. Configurable hard ceilings are 4,096

@@ -50,6 +50,7 @@ impl ManagedManager {
                 let relationship = NoticeRelationship {
                     generation: notice.target.relationship_generation,
                     parent: Some(notice.target.parent.clone()),
+                    parent_incarnation: Some(notice.target.parent_incarnation.clone()),
                 };
                 match self.notices.register_work(
                     &notice.source,
@@ -197,8 +198,10 @@ async fn step(
             journal,
             snapshot,
             original.target.relationship_generation.get(),
+            &original.target.parent,
         )
         .await?
+        && transcript.incarnation == original.target.parent_incarnation
         && targets.iter().filter_map(Weak::upgrade).any(|context| {
             context.principal() == &original.target.parent
                 && context.matches_transcript(&transcript)
@@ -217,6 +220,7 @@ async fn historical_parent(
     journal: &ManagedJournal,
     snapshot: &JournalSnapshot,
     revision: u64,
+    parent: &super::super::notices::NoticePrincipal,
 ) -> Result<Option<JournalTranscript>, ()> {
     let mut cursor = None;
     loop {
@@ -228,7 +232,10 @@ async fn historical_parent(
             if let JournalRecord::Control(control) = record
                 && control.revision == revision
             {
-                return Ok(control.parent_owner);
+                return Ok((control.parent_generation == Some(parent.generation.get())
+                    && control.parent_id.as_deref() == Some(parent.id.as_str()))
+                .then_some(control.parent_owner)
+                .flatten());
             }
         }
         let Some(next) = page.next else {

@@ -160,8 +160,9 @@ impl ParentNoticeContext {
             return Ok(None);
         }
         let batch = notices
-            .snapshot(
+            .snapshot_for_parent(
                 &self.inner.parent,
+                &self.inner.transcript.incarnation,
                 64,
                 machine_god_core::MAX_SESSION_USER_CONTEXT_BYTES,
             )

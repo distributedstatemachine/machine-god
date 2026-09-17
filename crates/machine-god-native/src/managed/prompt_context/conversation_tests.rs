@@ -106,6 +106,7 @@ fn emit(notices: &ManagedNotices, work_id: &str) {
             },
             ManagedNotifications::default(),
             &NoticeRelationship {
+                parent_incarnation: Some(SessionIncarnationId::new("incarnation").unwrap()),
                 generation: NonZeroU64::new(1).unwrap(),
                 parent: Some(principal("parent")),
             },

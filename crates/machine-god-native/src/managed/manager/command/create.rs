@@ -87,6 +87,7 @@ pub(super) async fn execute(
         controller: parent.clone(),
         parent_id: Some(parent.session_id.to_string()),
         parent_owner: Some(parent),
+        parent_generation: Some(job.lease().principal().generation()),
         initial_work,
     };
     match durability::create(&env.journal, &env.gate, record, job.lease()).await {

@@ -9,6 +9,7 @@ mod fixture;
 mod foreground;
 mod limits;
 mod notice_deadline;
+mod notice_parent;
 mod observation;
 mod relationship;
 use fixture::Fixture;
@@ -58,6 +59,7 @@ fn journal_replay_preserves_originals_and_excludes_confirmed_source_acks() {
                 session_id: session.id(),
                 incarnation: session.incarnation_id(),
             }),
+            parent_generation: Some(1),
         },
     ))
     .unwrap() else {
@@ -75,6 +77,7 @@ fn journal_replay_preserves_originals_and_excludes_confirmed_source_acks() {
         },
         source_sequence: nz(snapshot.head.next_sequence),
         target: NoticeTarget {
+            parent_incarnation: session.incarnation_id(),
             parent: target.clone(),
             relationship_generation: nz(snapshot.head.revision),
         },
@@ -131,6 +134,7 @@ fn journal_replay_preserves_originals_and_excludes_confirmed_source_acks() {
                 incarnation:
                     machine_god_core::SessionIncarnationId::new("later-incarnation").unwrap(),
             }),
+            parent_generation: Some(1),
         },
     ))
     .unwrap() else {

@@ -84,10 +84,10 @@ pub(crate) fn saved_outbox(
         || outbox.checkpoint.turn_sequence == 0
         || outbox.checkpoint.turn_sequence >= record.next_turn_sequence
         || outbox.checkpoint.first_user_message >= record.messages.len()
-        || outbox
-            .originals
-            .iter()
-            .any(|notice| notice.target.parent != outbox.parent)
+        || outbox.originals.iter().any(|notice| {
+            notice.target.parent != outbox.parent
+                || notice.target.parent_incarnation != record.incarnation_id
+        })
     {
         return Err(NoticeContextError::InvalidCheckpoint);
     }

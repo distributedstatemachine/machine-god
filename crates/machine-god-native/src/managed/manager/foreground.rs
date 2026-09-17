@@ -201,7 +201,6 @@ impl ManagedManager {
             return Err((error, prepared));
         }
         let selection = ManagedForegroundSelection(Arc::downgrade(&identity));
-        self.remember_principal(prepared.owner.principal());
         self.foregrounds.push(Foreground {
             prepared: *prepared,
             identity,

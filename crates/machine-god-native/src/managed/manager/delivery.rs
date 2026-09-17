@@ -386,10 +386,15 @@ async fn source_acknowledgements(
                 JournalRecord::Control(control) => {
                     for (index, original) in selected.iter().enumerate() {
                         if control.revision == original.target.relationship_generation.get() {
-                            lineage[index] = control.parent_owner.as_ref().is_some_and(|owner| {
-                                owner.session_id == expected_checkpoint.session_id
-                                    && owner.incarnation == expected_checkpoint.incarnation_id
-                            });
+                            lineage[index] = control.parent_generation
+                                == Some(original.target.parent.generation.get())
+                                && control.parent_id.as_deref()
+                                    == Some(original.target.parent.id.as_str())
+                                && control.parent_owner.as_ref().is_some_and(|owner| {
+                                    owner.session_id == expected_checkpoint.session_id
+                                        && owner.incarnation == expected_checkpoint.incarnation_id
+                                        && owner.incarnation == original.target.parent_incarnation
+                                });
                         }
                     }
                 }

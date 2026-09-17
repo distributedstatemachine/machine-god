@@ -1,8 +1,14 @@
-use super::super::records::{JournalHead, JournalPageRef, JournalRecord, JournalWork};
+use super::super::records::{
+    JournalHead, JournalPageRef, JournalRecord, JournalTranscript, JournalWork,
+};
 use super::super::{JournalError as Error, JournalLimits};
 use machine_god_core::{ManagedConfiguration, ManagedEventKind};
 
 pub(super) const MAX_RECORDS: usize = 101;
+
+#[cfg(test)]
+mod tests;
+
 pub(super) fn id(value: &str) -> Result<(), Error> {
     if value.is_empty()
         || value.len() > 255
@@ -69,9 +75,29 @@ pub(super) fn reference(value: &JournalPageRef, limits: JournalLimits) -> Result
     }
     Ok(())
 }
+pub(super) fn relationship(
+    parent_id: Option<&str>,
+    parent_owner: Option<&JournalTranscript>,
+    parent_generation: Option<u64>,
+) -> Result<(), Error> {
+    match (parent_id, parent_owner, parent_generation) {
+        (None, None, None) => Ok(()),
+        (Some(parent), Some(owner), Some(generation))
+            if generation != 0 && parent == owner.session_id.as_str() =>
+        {
+            id(parent)
+        }
+        _ => Err(Error::Invalid),
+    }
+}
 pub(super) fn head(head: &JournalHead, limits: JournalLimits) -> Result<(), Error> {
     id(&head.id)?;
     configuration(&head.configuration)?;
+    relationship(
+        head.parent_id.as_deref(),
+        head.parent_owner.as_ref(),
+        head.parent_generation,
+    )?;
     if head.version != 1
         || head.owner_epoch == 0
         || head.generation == 0
@@ -80,7 +106,6 @@ pub(super) fn head(head: &JournalHead, limits: JournalLimits) -> Result<(), Erro
         || head.last_event_sequence == 0
         || head.last_event_sequence >= head.next_sequence
         || head.queue.len() > limits.queue_entries
-        || head.parent_id.is_some() != head.parent_owner.is_some()
     {
         return Err(Error::Invalid);
     }
@@ -137,6 +162,7 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
                 id(&identity.source.work_id)?;
                 id(&target.parent.id)?;
                 if checkpoint.session_id.as_str() != target.parent.id
+                    || checkpoint.incarnation_id != target.parent_incarnation
                     || checkpoint.turn_sequence == 0
                 {
                     return Err(Error::Invalid);
@@ -189,8 +215,12 @@ pub(super) fn records(records: &[JournalRecord]) -> Result<(), Error> {
             }
             JournalRecord::WorkResolved { work_id, .. } => id(work_id)?,
             JournalRecord::Control(value) => {
-                if value.revision == 0 || value.parent_id.is_some() != value.parent_owner.is_some()
-                {
+                relationship(
+                    value.parent_id.as_deref(),
+                    value.parent_owner.as_ref(),
+                    value.parent_generation,
+                )?;
+                if value.revision == 0 {
                     return Err(Error::Invalid);
                 }
                 if let Some(parent) = &value.parent_id {

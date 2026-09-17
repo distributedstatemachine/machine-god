@@ -24,15 +24,20 @@ impl ManagedRelationshipAuthorizer for HeldConsent {
 
 #[test]
 fn relationship_consent_rechecks_parent_after_archive() {
-    check_parent_after_consent(true);
+    check_parent_after_consent(true, false);
 }
 
 #[test]
 fn relationship_consent_publishes_when_parent_remains_eligible() {
-    check_parent_after_consent(false);
+    check_parent_after_consent(false, false);
 }
 
-fn check_parent_after_consent(archive: bool) {
+#[test]
+fn relationship_consent_rechecks_parent_generation_after_reopen() {
+    check_parent_after_consent(true, true);
+}
+
+fn check_parent_after_consent(archive: bool, reopen: bool) {
     let mut fixture = Fixture::new(vec![]);
     for name in ["child", "proposed-parent"] {
         assert!(
@@ -81,6 +86,15 @@ fn check_parent_after_consent(archive: bool) {
             machine_god_core::ManagedAgentState::Archived
         );
     }
+    if reopen {
+        assert!(
+            fixture
+                .command(serde_json::json!({
+                    "lifecycle": {"id": "child-2", "action": "reopen"}
+                }))
+                .ok
+        );
+    }
     consent.store(true, Ordering::Release);
     let result = block_on(std::future::poll_fn(|cx| {
         if let Poll::Ready(result) = response.as_mut().poll(cx) {
@@ -100,7 +114,11 @@ fn check_parent_after_consent(archive: bool) {
     if archive {
         assert_eq!(
             result.error_code,
-            Some(ManagedFailureCode::PermissionDenied)
+            Some(if reopen {
+                ManagedFailureCode::StaleGeneration
+            } else {
+                ManagedFailureCode::PermissionDenied
+            })
         );
         assert!(!result.ok);
         assert_eq!(child.head.parent_id.as_deref(), Some("parent"));

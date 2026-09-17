@@ -24,6 +24,16 @@ fn confirmed(publication: JournalPublication) -> JournalSnapshot {
 }
 
 pub(super) fn original(fixture: &mut Fixture, parent: &Session) -> ManagedNotice {
+    original_for_target(fixture, parent, 1, parent.incarnation_id())
+}
+
+// Deliberately accepts a mismatched envelope target for historical validation tests.
+fn original_for_target(
+    fixture: &mut Fixture,
+    parent: &Session,
+    generation: u64,
+    incarnation: SessionIncarnationId,
+) -> ManagedNotice {
     assert!(
         fixture
             .command(serde_json::json!({
@@ -42,6 +52,7 @@ pub(super) fn original(fixture: &mut Fixture, parent: &Session) -> ManagedNotice
                     session_id: parent.id(),
                     incarnation: parent.incarnation_id(),
                 }),
+                parent_generation: Some(1),
             },
         ))
         .unwrap(),
@@ -60,10 +71,11 @@ pub(super) fn original(fixture: &mut Fixture, parent: &Session) -> ManagedNotice
             },
             ManagedNotifications::default(),
             &NoticeRelationship {
+                parent_incarnation: Some(incarnation),
                 generation: NonZeroU64::new(snapshot.head.revision).unwrap(),
                 parent: Some(NoticePrincipal {
                     id: parent.id().to_string(),
-                    generation: NonZeroU64::new(1).unwrap(),
+                    generation: NonZeroU64::new(generation).unwrap(),
                 }),
             },
             snapshot.head.notice_cursor,
@@ -96,11 +108,19 @@ pub(super) fn original(fixture: &mut Fixture, parent: &Session) -> ManagedNotice
 }
 
 fn deliver(fixture: &Fixture, session: &Session) -> (Arc<ParentNoticeContext>, NativeConversation) {
+    deliver_generation(fixture, session, 1)
+}
+
+fn deliver_generation(
+    fixture: &Fixture,
+    session: &Session,
+    generation: u64,
+) -> (Arc<ParentNoticeContext>, NativeConversation) {
     let context = Arc::new(ParentNoticeContext::new(
         session,
         NoticePrincipal {
             id: session.id().to_string(),
-            generation: NonZeroU64::new(1).unwrap(),
+            generation: NonZeroU64::new(generation).unwrap(),
         },
         &fixture.manager.notices,
     ));
@@ -151,7 +171,12 @@ fn actual_parent_checkpoint_is_source_acknowledged_before_outbox_clear() {
 fn actual_checkpoint_from_another_incarnation_cannot_acknowledge_the_original() {
     let mut fixture = Fixture::new(vec![completed()]);
     let parent = fixture.notice_session();
-    let original = original(&mut fixture, &parent);
+    let original = original_for_target(
+        &mut fixture,
+        &parent,
+        1,
+        SessionIncarnationId::new("foreign-life").unwrap(),
+    );
     // An actual foreign checkpoint is still not the original recipient's checkpoint.
     let engine = machine_god_core::Engine::builder()
         .provider(machine_god_testkit::ScriptedModelProvider::new(
@@ -187,4 +212,86 @@ fn actual_checkpoint_from_another_incarnation_cannot_acknowledge_the_original() 
     assert_eq!(before.head, after.head);
     assert!(block_on(conversation.clear_notice_delivery(&delivered)).is_err());
     assert!(fixture.factory.provider.requests().is_empty());
+}
+
+#[test]
+fn wrong_historical_parent_generation_cannot_replay_or_acknowledge() {
+    let mut fixture = Fixture::new(vec![completed()]);
+    let parent = fixture.notice_session();
+    let original = original_for_target(&mut fixture, &parent, 2, parent.incarnation_id());
+    let (context, _conversation) = deliver_generation(&fixture, &parent, 2);
+    let delivered = context.delivery().unwrap();
+    let mut snapshots = Vec::new();
+    assert!(matches!(
+        block_on(delivery::reconcile_sources(
+            &fixture.journal,
+            &Arc::new(durability::RetryGate::default()),
+            &delivered,
+            &mut snapshots,
+        )),
+        Err(ManagedRuntimeError::Invalid)
+    ));
+    assert!(snapshots.is_empty());
+    fixture.restart_manager();
+    let context = Arc::new(ParentNoticeContext::new(
+        &parent,
+        original.target.parent.clone(),
+        &fixture.manager.notices,
+    ));
+    fixture.manager.register_parent_context(&context).unwrap();
+    fixture.drive(|f| f.manager.replay.done && f.manager.active.is_none());
+    assert!(
+        fixture
+            .manager
+            .notices
+            .snapshot(&original.target.parent, 64, 64 * 1024)
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
+}
+
+#[test]
+fn direct_inbox_excludes_reused_parent_pair_with_foreign_incarnation() {
+    let mut fixture = Fixture::new(vec![]);
+    let parent = fixture.notice_session();
+    let original = original(&mut fixture, &parent);
+    let engine = machine_god_core::Engine::builder()
+        .provider(machine_god_testkit::ScriptedModelProvider::new(
+            "foreign",
+            [completed()],
+        ))
+        .permission_handler(machine_god_testkit::ScriptedPermissionHandler::new([]))
+        .session_store(machine_god_testkit::InMemorySessionStore::default())
+        .build()
+        .unwrap();
+    let foreign = engine
+        .create_session(
+            parent.id(),
+            SessionIncarnationId::new("foreign-life").unwrap(),
+        )
+        .unwrap();
+    let context = Arc::new(ParentNoticeContext::new(
+        &foreign,
+        original.target.parent.clone(),
+        &fixture.manager.notices,
+    ));
+    let conversation = NativeConversation::from_session(foreign)
+        .unwrap()
+        .with_notice_context(&context)
+        .unwrap();
+    let turn = block_on(conversation.prompt("explicit foreign input".into(), 102)).unwrap();
+    assert!(block_on(turn.collect::<Vec<_>>()).iter().all(Result::is_ok));
+    assert!(context.delivery().is_none());
+    let batch = fixture
+        .manager
+        .notices
+        .snapshot_for_parent(
+            &original.target.parent,
+            &parent.incarnation_id(),
+            64,
+            64 * 1024,
+        )
+        .unwrap();
+    assert_eq!(batch.entries()[0].notice(), &original);
 }

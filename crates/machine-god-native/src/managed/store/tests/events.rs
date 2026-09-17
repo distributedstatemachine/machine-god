@@ -173,6 +173,7 @@ fn emitted_milestone_event_and_notice_share_one_atomic_sequence() {
         },
         source_sequence: nz(snapshot.head.next_sequence),
         target: NoticeTarget {
+            parent_incarnation: SessionIncarnationId::new("incarnation").unwrap(),
             parent: NoticePrincipal {
                 id: "parent".into(),
                 generation: nz(1),

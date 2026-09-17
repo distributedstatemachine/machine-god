@@ -420,10 +420,13 @@ pub(super) fn approved_relationship(
         if let JournalMutation::Relationship {
             parent_id: Some(parent),
             parent_owner,
+            parent_generation,
         } = &mutation
         {
             match relationship::parent_owner(&env, job.lease(), parent).await {
-                Ok(owner) if parent_owner.as_ref() == Some(&owner) => {}
+                Ok((owner, generation))
+                    if parent_owner.as_ref() == Some(&owner)
+                        && *parent_generation == Some(generation) => {}
                 Ok(_) => {
                     return Outcome::reject(
                         job,

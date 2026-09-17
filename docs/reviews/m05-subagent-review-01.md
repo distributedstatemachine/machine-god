@@ -360,3 +360,43 @@ without holding the journal lane. Internal writes after durable acceptance and
 ambiguous publication retain their original custody. The R3 reviewer then
 became a fix author and is not an independent acceptance reviewer of that fix.
 Focused regression results and complete replacement acceptance remain required.
+
+Candidate `8dd596c452390aa2b7499e54d21fd5d4306e8bbc` passed the complete
+replacement Linux/macOS local gate, including the three FIFO-limit regressions.
+Linux native passed 4,018 tests and macOS native passed 4,025; CLI suites passed
+609 and 611 respectively, and all 275 repository Python tests passed. Exact
+build, focused, static/platform and full runtime logs remain under
+`/tmp/mg-managed-implementation.V0ZGg1/` with the `8dd596c4` suffix. These are
+local regression results, not delivery or performance evidence.
+
+The fresh R4 correctness reviewer (`m65_r4_correctness`) rejected that candidate
+with one source-backed P2: notice addressing required a live parent principal.
+An idle-evicted persistent parent retained its durable child relationship, but
+work admitted to that child registered a detached notice tracker. Restoring the
+parent before completion refreshed only the parent's own tracker, so the child's
+enabled completion notice remained suppressed and no original existed to replay.
+The source-only reviewer ran no tests. The other two review tracks did not start
+because new agent threads were unavailable; this was not three-track acceptance.
+The R4 reviewer subsequently became the fix author and cannot count as an
+independent acceptance reviewer of its correction.
+
+Integration tracing of the durable-target correction also identified a related
+direct-inbox boundary: snapshots selected by display ID/generation alone could
+expose an old original to a sequential replacement with a different transcript
+incarnation, before historical source-acknowledgement validation rejected it.
+The correction must retain target incarnation in each immutable envelope and
+filter live snapshots before bounded selection, alongside historical replay and
+acknowledgement validation. This source-backed finding is not an executed
+regression or acceptance result.
+
+The correction persists the parent generation with its journal relationship and
+the target incarnation in immutable notice envelopes. Actual prompt snapshots
+filter by incarnation before bounded selection; saved prompt/outbox records and
+historical replay/acknowledgement validate the same original target. Eviction
+does not change addressing, and reopen does not silently retarget an old
+relationship. The obsolete weak live-principal addressing cache is removed.
+Regression coverage includes actual residency pressure and restoration, restart
+replay, close/reopen and explicit reparent/detach, consent across parent-generation
+change, malformed relationship triples, historical target mismatches and direct
+foreign-incarnation exclusion. Compilation, focused execution, full replacement
+gates and independent acceptance remain required for the integrated correction.

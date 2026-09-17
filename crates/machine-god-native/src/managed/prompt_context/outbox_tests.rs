@@ -36,6 +36,29 @@ fn ordinary(f: &Fixture) {
     drop(block_on(f.session.prompt_prepared("ordinary input", preparation)).unwrap());
 }
 #[test]
+fn persisted_context_and_outbox_reject_foreign_original_incarnation() {
+    let f = Fixture::new();
+    publish(&f);
+    for key in [NOTICE_CONTEXT_KEY, NOTICE_OUTBOX_KEY] {
+        let mut record = f.record();
+        record.metadata.get_mut(key).unwrap()["originals"][0]["target"]["parent_incarnation"] =
+            serde_json::json!("foreign-life");
+        let result = if key == NOTICE_CONTEXT_KEY {
+            saved_context(&record, Some((1, 0))).map(|_| ())
+        } else {
+            saved_outbox(&record).map(|_| ())
+        };
+        assert!(matches!(result, Err(NoticeContextError::InvalidCheckpoint)));
+    }
+    let mut originals = f.parent.delivery().unwrap().originals().to_vec();
+    originals[0].target.parent_incarnation = SessionIncarnationId::new("foreign-life").unwrap();
+    assert!(matches!(
+        SavedNoticeContext::new(&principal("parent"), &f.checkpoint(), originals),
+        Err(NoticeContextError::InvalidCheckpoint)
+    ));
+}
+
+#[test]
 fn original_outbox_survives_ordinary_prompt_and_requires_exact_source_ack_to_clear() {
     let f = Fixture::new();
     publish(&f);
@@ -319,6 +342,7 @@ fn full_batch_subset_ack_is_atomic_and_requires_the_last_exact_original() {
                 },
                 ManagedNotifications::default(),
                 &NoticeRelationship {
+                    parent_incarnation: Some(f.session.incarnation_id()),
                     generation: NonZeroU64::new(1).unwrap(),
                     parent: Some(principal("parent")),
                 },

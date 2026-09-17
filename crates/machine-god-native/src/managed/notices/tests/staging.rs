@@ -34,6 +34,45 @@ fn staging_is_invisible_and_drop_retains_exact_charged_candidate() {
     assert!(manager.pending_notice(&work).unwrap().is_none());
 }
 #[test]
+fn original_incarnation_survives_staging_and_filters_before_bounded_selection() {
+    let clock = Clock::new();
+    let manager = manager(&clock);
+    let old_work = work(&manager, "old-child", started_policy());
+    let stage = staged(manager.prepare_start(&old_work, nz(1), None).unwrap());
+    let original = stage.notice().clone();
+    let replacement = machine_god_core::SessionIncarnationId::new("replacement").unwrap();
+    let mut changed = relationship("parent");
+    changed.parent_incarnation = Some(replacement.clone());
+    manager.set_relationship(&old_work, &changed).unwrap();
+    drop(stage);
+    let recovered = manager.pending_notice(&old_work).unwrap().unwrap();
+    assert_eq!(recovered.notice(), &original);
+    manager.confirm_durable(&recovered).unwrap();
+    let new_work = manager
+        .register_work(&identity("new-child"), started_policy(), &changed, 0)
+        .unwrap();
+    let new_stage = staged(manager.prepare_start(&new_work, nz(1), None).unwrap());
+    manager.confirm_durable(&new_stage).unwrap();
+    // The older foreign record cannot consume the one-record selection budget.
+    let new_batch = manager
+        .snapshot_for_parent(&principal("parent", 1), &replacement, 1, 64 * 1024)
+        .unwrap();
+    assert_eq!(new_batch.entries()[0].notice(), new_stage.notice());
+    assert!(!new_batch.has_more());
+    manager.validate_batch(&new_batch).unwrap();
+    let old_batch = manager
+        .snapshot_for_parent(
+            &principal("parent", 1),
+            &original.target.parent_incarnation,
+            1,
+            64 * 1024,
+        )
+        .unwrap();
+    assert_eq!(old_batch.entries()[0].notice(), &original);
+    assert_eq!(manager.usage().retained_records, 2);
+}
+
+#[test]
 fn explicit_not_applied_preserves_source_cursor_and_refunds_only_after_custody_drop() {
     let clock = Clock::new();
     let manager = manager(&clock);
@@ -79,6 +118,9 @@ fn ambiguous_interval_retains_original_ticks_target_history_and_schedule() {
         .set_relationship(
             &work,
             &NoticeRelationship {
+                parent_incarnation: Some(
+                    machine_god_core::SessionIncarnationId::new("incarnation").unwrap(),
+                ),
                 generation: nz(2),
                 parent: Some(principal("new-parent", 1)),
             },

@@ -17,6 +17,7 @@ fn detach() -> JournalMutation {
     JournalMutation::Relationship {
         parent_id: None,
         parent_owner: None,
+        parent_generation: None,
     }
 }
 
@@ -116,6 +117,7 @@ fn create(id: &str) -> JournalCreate {
         controller: transcript("parent"),
         parent_id: Some("parent".into()),
         parent_owner: Some(transcript("parent")),
+        parent_generation: Some(1),
         initial_work: Some(work("work-1")),
     }
 }
@@ -140,12 +142,14 @@ fn lineage_survives_empty_creation_and_exact_reparent_history() {
             JournalMutation::Relationship {
                 parent_id: Some("other".into()),
                 parent_owner: Some(transcript("other")),
+                parent_generation: Some(2),
             },
         ))
         .unwrap(),
     );
     assert_eq!(reparented.head.controller, transcript("parent"));
     assert_eq!(reparented.head.parent_owner, Some(transcript("other")));
+    assert_eq!(reparented.head.parent_generation, Some(2));
     let history = block_on(journal.history(reparented.clone(), None, 100)).unwrap();
     assert!(history.records.iter().any(|record| matches!(record, JournalRecord::Control(control) if control.parent_owner == Some(transcript("other")) && control.controller == transcript("parent"))));
     assert!(matches!(
@@ -153,11 +157,71 @@ fn lineage_survives_empty_creation_and_exact_reparent_history() {
             reparented,
             JournalMutation::Relationship {
                 parent_id: None,
-                parent_owner: Some(transcript("other"))
+                parent_owner: Some(transcript("other")),
+                parent_generation: Some(2),
             }
         )),
         Err(JournalError::Invalid)
     ));
+}
+
+#[test]
+fn relationship_identity_requires_complete_matching_nonzero_triple() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let initial = confirmed(block_on(journal.create(create("valid"))).unwrap());
+    let malformed = [
+        (None, None, Some(1)),
+        (None, Some(transcript("parent")), None),
+        (None, Some(transcript("parent")), Some(1)),
+        (Some("parent".to_owned()), None, None),
+        (Some("parent".to_owned()), None, Some(1)),
+        (Some("parent".to_owned()), Some(transcript("parent")), None),
+        (
+            Some("parent".to_owned()),
+            Some(transcript("parent")),
+            Some(0),
+        ),
+        (
+            Some("parent".to_owned()),
+            Some(transcript("other")),
+            Some(1),
+        ),
+    ];
+    for (index, (parent_id, parent_owner, parent_generation)) in malformed.into_iter().enumerate() {
+        let mut request = create(&format!("invalid-{index}"));
+        request.parent_id = parent_id.clone();
+        request.parent_owner = parent_owner.clone();
+        request.parent_generation = parent_generation;
+        assert!(matches!(
+            block_on(journal.create(request)),
+            Err(JournalError::Invalid)
+        ));
+        assert!(matches!(
+            block_on(journal.mutate(
+                initial.clone(),
+                JournalMutation::Relationship {
+                    parent_id: parent_id.clone(),
+                    parent_owner: parent_owner.clone(),
+                    parent_generation,
+                }
+            )),
+            Err(JournalError::Invalid)
+        ));
+    }
+    assert_eq!(
+        block_on(journal.inspect("valid".into())).unwrap().head,
+        initial.head
+    );
+    let detached = confirmed(block_on(journal.mutate(initial, detach())).unwrap());
+    assert_eq!(
+        (
+            detached.head.parent_id,
+            detached.head.parent_owner,
+            detached.head.parent_generation
+        ),
+        (None, None, None)
+    );
 }
 
 #[test]
@@ -198,6 +262,7 @@ fn exact_notice_envelope_is_pageable_and_validated() {
         },
         source_sequence: NonZeroU64::new(initial.head.next_sequence).unwrap(),
         target: NoticeTarget {
+            parent_incarnation: SessionIncarnationId::new("incarnation").unwrap(),
             parent: NoticePrincipal {
                 id: "parent".into(),
                 generation: NonZeroU64::new(9).unwrap(),
@@ -296,6 +361,7 @@ fn archived_source_accepts_exact_delivery_ack_without_reopening() {
             kind: NoticeKind::Started,
         },
         target: NoticeTarget {
+            parent_incarnation: SessionIncarnationId::new("incarnation").unwrap(),
             parent: NoticePrincipal {
                 id: "parent".into(),
                 generation: NonZeroU64::new(1).unwrap(),
@@ -393,6 +459,7 @@ fn stale_foreign_and_mutated_snapshots_cannot_publish() {
         JournalMutation::Relationship {
             parent_id: None,
             parent_owner: None,
+            parent_generation: None,
         },
     );
     assert_eq!(
@@ -647,6 +714,7 @@ fn paging_is_bounded_continues_whole_history_and_rejects_stale_cursor() {
             JournalMutation::Relationship {
                 parent_id: None,
                 parent_owner: None,
+                parent_generation: None,
             },
         );
     }

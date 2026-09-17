@@ -5,8 +5,8 @@ use super::super::notices::{
 };
 use super::{
     Active, Arc, Child, ChildWrite, Context, JournalMutation, JournalRecord, ManagedAgentState,
-    ManagedMailboxJob, ManagedManager, ManagedQueueStatus, ManagedRuntimeError, Poll, Weak,
-    WriteAfter, command,
+    ManagedMailboxJob, ManagedManager, ManagedQueueStatus, ManagedRuntimeError, Poll, WriteAfter,
+    command,
 };
 use machine_god_core::ManagedFailureCode;
 use std::{future::Future, num::NonZeroU64, pin::Pin};
@@ -38,46 +38,25 @@ impl ManagedManager {
         let relationship = NoticeRelationship {
             generation: NonZeroU64::new(child.snapshot.head.revision).unwrap(),
             parent,
+            parent_incarnation: child
+                .snapshot
+                .head
+                .parent_owner
+                .as_ref()
+                .map(|owner| owner.incarnation.clone()),
         };
         let _ = self.notices.set_relationship(work, &relationship);
     }
     fn notice_parent(&self, index: usize) -> Option<NoticePrincipal> {
-        let owner = self.children[index].snapshot.head.parent_owner.as_ref()?;
-        let principal = self
-            .principals
-            .iter()
-            .filter_map(Weak::upgrade)
-            .chain(
-                self.children
-                    .iter()
-                    .map(|child| child.prepared.owner.principal().clone()),
-            )
-            .find(|principal| {
-                principal.is_live()
-                    && principal.owner().session_id() == &owner.session_id
-                    && principal.owner().session_incarnation_id() == &owner.incarnation
-            })?;
+        // Residency is not a relationship change. Retain the exact admitted
+        // target even while its runtime is evicted or its original generation
+        // has closed; replay/ACK separately require the historical incarnation.
+        let head = &self.children[index].snapshot.head;
+        let owner = head.parent_owner.as_ref()?;
         Some(NoticePrincipal {
             id: owner.session_id.to_string(),
-            generation: NonZeroU64::new(principal.generation())?,
+            generation: NonZeroU64::new(head.parent_generation?)?,
         })
-    }
-    pub(super) fn remember_principal(
-        &mut self,
-        principal: &Arc<super::super::principal::NativePrincipal>,
-    ) {
-        self.principals
-            .retain(|entry| entry.upgrade().is_some_and(|principal| principal.is_live()));
-        if self
-            .principals
-            .iter()
-            .any(|entry| entry.ptr_eq(&Arc::downgrade(principal)))
-        {
-            return;
-        }
-        if self.principals.len() < 64 {
-            self.principals.push(Arc::downgrade(principal));
-        }
     }
     pub(super) fn register_notice(&mut self, index: usize) -> Result<bool, ManagedRuntimeError> {
         if self.children[index].notice.is_some() || self.children[index].work.is_none() {
@@ -101,6 +80,12 @@ impl ManagedManager {
         let relationship = NoticeRelationship {
             generation: NonZeroU64::new(child.snapshot.head.revision).unwrap(),
             parent,
+            parent_incarnation: child
+                .snapshot
+                .head
+                .parent_owner
+                .as_ref()
+                .map(|owner| owner.incarnation.clone()),
         };
         let work = self.notices.register_work(
             &identity,

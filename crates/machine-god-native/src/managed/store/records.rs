@@ -72,6 +72,7 @@ pub(crate) struct JournalHead {
     pub controller: JournalTranscript,
     pub parent_id: Option<String>,
     pub parent_owner: Option<JournalTranscript>,
+    pub parent_generation: Option<u64>,
     pub status: ManagedAgentState,
     #[serde(deserialize_with = "queue")]
     pub queue: Vec<JournalWorkRef>,
@@ -93,6 +94,7 @@ pub(crate) struct JournalCreate {
     pub controller: JournalTranscript,
     pub parent_id: Option<String>,
     pub parent_owner: Option<JournalTranscript>,
+    pub parent_generation: Option<u64>,
     pub initial_work: Option<JournalWork>,
 }
 
@@ -131,6 +133,7 @@ pub(crate) struct JournalControl {
     pub controller: JournalTranscript,
     pub parent_id: Option<String>,
     pub parent_owner: Option<JournalTranscript>,
+    pub parent_generation: Option<u64>,
     pub notice_cursor: u64,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -165,6 +168,7 @@ pub(crate) enum JournalMutation {
     Relationship {
         parent_id: Option<String>,
         parent_owner: Option<JournalTranscript>,
+        parent_generation: Option<u64>,
     },
     /// Consume the exact next source sequence without emitting a visible notice.
     SuppressedNotice(u64),

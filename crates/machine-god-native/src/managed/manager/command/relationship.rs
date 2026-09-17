@@ -11,8 +11,10 @@ pub(super) async fn execute(
     snapshot: JournalSnapshot,
     request: ManagedRelationship,
 ) -> Outcome {
-    let (parent_id, parent_owner) = if request.action == ManagedRelationshipAction::Detach {
-        (None, None)
+    let (parent_id, parent_owner, parent_generation) = if request.action
+        == ManagedRelationshipAction::Detach
+    {
+        (None, None, None)
     } else {
         if request.action == ManagedRelationshipAction::Attach && snapshot.head.parent_id.is_some()
         {
@@ -26,8 +28,8 @@ pub(super) async fn execute(
         let id = request
             .parent_id
             .unwrap_or_else(|| actor.session_id.to_string());
-        let owner = match parent_owner(&env, job.lease(), &id).await {
-            Ok(owner) => owner,
+        let (owner, generation) = match parent_owner(&env, job.lease(), &id).await {
+            Ok(parent) => parent,
             Err(code) => return Outcome::reject(job, &env.operation, code),
         };
         if let Err(code) = check_graph(&env, &snapshot.head.id, &id).await {
@@ -42,6 +44,7 @@ pub(super) async fn execute(
                 JournalMutation::Relationship {
                     parent_id: Some(id),
                     parent_owner: Some(owner),
+                    parent_generation: Some(generation),
                 },
                 ManagedOutcome::RelationshipChanged,
             )
@@ -70,6 +73,7 @@ pub(super) async fn execute(
                 mutation: JournalMutation::Relationship {
                     parent_id: Some(id),
                     parent_owner: Some(owner),
+                    parent_generation: Some(generation),
                 },
             },
         };
@@ -82,6 +86,7 @@ pub(super) async fn execute(
         JournalMutation::Relationship {
             parent_id,
             parent_owner,
+            parent_generation,
         },
         ManagedOutcome::RelationshipChanged,
     )
@@ -94,10 +99,10 @@ pub(super) async fn parent_owner(
     env: &Environment,
     actor: &super::ManagedCommandActor,
     id: &str,
-) -> Result<super::JournalTranscript, ManagedFailureCode> {
+) -> Result<(super::JournalTranscript, u64), ManagedFailureCode> {
     let owner = principal_owner(actor);
     if id == owner.session_id.as_str() {
-        return Ok(owner);
+        return Ok((owner, actor.principal().generation()));
     }
     let parent = load(env, id).await?;
     if !authorized(actor, &parent)
@@ -106,7 +111,7 @@ pub(super) async fn parent_owner(
     {
         return Err(ManagedFailureCode::PermissionDenied);
     }
-    Ok(parent.head.transcript)
+    Ok((parent.head.transcript, parent.head.generation))
 }
 
 pub(super) async fn check_graph(

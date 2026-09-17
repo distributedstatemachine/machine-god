@@ -66,6 +66,7 @@ impl Fixture {
                 },
                 ManagedNotifications::default(),
                 &NoticeRelationship {
+                    parent_incarnation: Some(session.incarnation_id()),
                     generation: NonZeroU64::new(1).unwrap(),
                     parent: Some(principal("parent")),
                 },
@@ -413,6 +414,7 @@ fn new_arrivals_between_snapshot_and_confirmation_are_not_consumed() {
             },
             ManagedNotifications::default(),
             &NoticeRelationship {
+                parent_incarnation: Some(f.session.incarnation_id()),
                 generation: NonZeroU64::new(1).unwrap(),
                 parent: Some(principal("parent")),
             },

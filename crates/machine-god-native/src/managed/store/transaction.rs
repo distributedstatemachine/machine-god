@@ -194,6 +194,7 @@ pub(super) fn create(
         controller: create.controller,
         parent_id: create.parent_id,
         parent_owner: create.parent_owner,
+        parent_generation: create.parent_generation,
         status: machine_god_core::ManagedAgentState::Idle,
         queue: Vec::new(),
         failure: None,
@@ -276,6 +277,7 @@ fn publish(
         controller: head.controller.clone(),
         parent_id: head.parent_id.clone(),
         parent_owner: head.parent_owner.clone(),
+        parent_generation: head.parent_generation,
         notice_cursor: head.notice_cursor,
     }));
     let page = if records.is_empty() {
