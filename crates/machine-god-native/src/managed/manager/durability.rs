@@ -20,8 +20,32 @@ pub(super) struct RetryGate(Mutex<RetryState>);
 #[derive(Default)]
 struct RetryState {
     generations: [Arc<()>; 4],
-    issue: Option<ManagerBlock>,
+    issue: Option<(ManagerBlock, Arc<()>)>,
     waker: Option<Waker>,
+}
+struct IssueGuard<'a> {
+    gate: &'a RetryGate,
+    owner: Arc<()>,
+}
+impl Drop for IssueGuard<'_> {
+    fn drop(&mut self) {
+        let waker = {
+            let mut state = self.gate.0.lock().unwrap();
+            if state
+                .issue
+                .as_ref()
+                .is_some_and(|(_, owner)| Arc::ptr_eq(owner, &self.owner))
+            {
+                state.issue = None;
+                state.waker.take()
+            } else {
+                None
+            }
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
 }
 impl RetryGate {
     pub(super) fn retry(&self) {
@@ -39,7 +63,7 @@ impl RetryGate {
         let wake = {
             let mut state = self.0.lock().unwrap();
             state.generations[0] = Arc::new(());
-            if state.issue == Some(ManagerBlock::Capacity) {
+            if matches!(state.issue, Some((ManagerBlock::Capacity, _))) {
                 state.issue = None;
             }
             state.waker.take()
@@ -49,7 +73,12 @@ impl RetryGate {
         }
     }
     pub(super) fn issue(&self) -> Option<ManagerBlock> {
-        self.0.lock().unwrap().issue
+        self.0
+            .lock()
+            .unwrap()
+            .issue
+            .as_ref()
+            .map(|(issue, _)| *issue)
     }
     pub(super) async fn blocked(&self, issue: ManagerBlock) {
         let index = match issue {
@@ -58,9 +87,13 @@ impl RetryGate {
             ManagerBlock::Preparation => 2,
             ManagerBlock::Cleanup => 3,
         };
+        let guard = IssueGuard {
+            gate: self,
+            owner: Arc::new(()),
+        };
         let generation = {
             let mut state = self.0.lock().unwrap();
-            state.issue = Some(issue);
+            state.issue = Some((issue, guard.owner.clone()));
             state.generations[index].clone()
         };
         poll_fn(|cx| {
@@ -83,6 +116,7 @@ impl RetryGate {
             }
         })
         .await;
+        drop(guard);
     }
 }
 pub(super) fn mutate(

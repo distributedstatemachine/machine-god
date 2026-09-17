@@ -6,7 +6,7 @@ use crate::managed::{
 };
 use futures_executor::block_on;
 use machine_god_core::{ManagedHistoryItem, ManagedHistoryKind};
-use std::num::NonZeroU64;
+use std::{future::Future, num::NonZeroU64};
 
 fn append(
     fixture: &mut Fixture,
@@ -219,4 +219,23 @@ fn failed_replay_read_does_not_hold_the_command_or_shutdown_lane() {
     assert!(fixture.factory.provider.requests().is_empty());
     // Fixture drop performs actual manager/resource shutdown without an
     // explicit retry or a parent prompt to unblock read-only validation.
+}
+
+#[test]
+fn dropping_a_superseded_read_retry_clears_only_its_own_blocked_status() {
+    let gate = durability::RetryGate::default();
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    let mut first = Box::pin(gate.blocked(ManagerBlock::Journal));
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(gate.issue(), Some(ManagerBlock::Journal));
+    drop(first);
+    assert!(gate.issue().is_none());
+    let mut first = Box::pin(gate.blocked(ManagerBlock::Journal));
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    let mut second = Box::pin(gate.blocked(ManagerBlock::Journal));
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    drop(first);
+    assert_eq!(gate.issue(), Some(ManagerBlock::Journal));
+    drop(second);
+    assert!(gate.issue().is_none());
 }

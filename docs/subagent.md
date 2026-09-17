@@ -767,6 +767,8 @@ budget) per admission. Every page releases the serialized journal lane for
 commands and cleanup. Read-only retry waits also release that lane; an uncertain
 recovery mutation retains its original publication custody. Source changes
 invalidate the validation frontier rather than admitting a stale original.
+Discarding a superseded read retry clears only that wait's blocked-status
+observation; it neither clears a newer wait nor triggers mutation retries.
 This bounds work per admission, not total scans across an arbitrary history.
 
 Managed tool activity includes one `Denied` record for each actual core policy

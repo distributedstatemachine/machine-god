@@ -700,3 +700,8 @@ JSON bytes without an encoded allocation, and rejects oversized replay envelopes
 before cloning. Added tests compare Unicode/escaping counts with actual JSON,
 exercise exact and undersized limits, and check full charge refunds after tiny
 limit rejection. These are implementation checks, not independent acceptance.
+
+The parked-read retry also receives exact issue-observation ownership: dropping
+a superseded validation wait clears its own stale blocked status without
+clearing a newer wait or authorizing a mutation retry. A focused ownership test
+covers both ordinary drop and overlapping same-kind waits.
