@@ -214,11 +214,13 @@ class CiChangeClassificationTests(unittest.TestCase):
             "documentation:\n"
             "              - 'AGENTS.md'\n"
             "              - 'README.md'\n"
+            "              - 'assets/banner.png'\n"
             "              - 'docs/**/*.md'\n"
             "            non_documentation:\n"
             "              - '**'\n"
             "              - '!AGENTS.md'\n"
             "              - '!README.md'\n"
+            "              - '!assets/banner.png'\n"
             "              - '!docs/**/*.md'"
         )
         for workflow in (self.ci, self.benchmark):
@@ -233,6 +235,7 @@ class CiChangeClassificationTests(unittest.TestCase):
 
         self.assertIn("            unclassified:\n              - '**'", classifier)
         for admitted in (
+            "!assets/banner.png",
             "!.github/workflows/**",
             "!benchmarks/**",
             "!compatibility/**",
@@ -245,6 +248,8 @@ class CiChangeClassificationTests(unittest.TestCase):
         ):
             self.assertIn(f"              - '{admitted}'", classifier)
         for unsafe_exclusion in (
+            "!assets/**",
+            "!**/*.png",
             "!.github/**",
             "!**/*.py",
             "!scripts/**",

@@ -1,3 +1,5 @@
+![machine god — a monumental dark machine mask surrounded by a luminous halo](assets/banner.png)
+
 # machine-god
 
 `machine-god` is an experimental coding-agent engine written in Rust. The
