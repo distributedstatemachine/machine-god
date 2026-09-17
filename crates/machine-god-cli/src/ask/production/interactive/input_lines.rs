@@ -414,8 +414,15 @@ impl InputLines {
             return Poll::Ready(Some(Ok((ComposerEvent::StaleInput, stale))));
         }
         let composer = self.composer.as_mut().expect("raw mode checked");
+        // Navigation can remain open behind a modal or saved-rule prompt. Only
+        // the editor owning these bytes may apply its agent limits/shortcuts.
+        // Use the retained binding so an in-flight paste keeps its original owner.
+        let agents = matches!(self.line_binding, Some(InputBinding::Agents { .. }));
         let effective_context = ComposerContext {
-            agents: matches!(self.line_binding, Some(InputBinding::Agents { .. })),
+            agents,
+            agent_history: if agents { context.agent_history } else { None },
+            agent_form: if agents { context.agent_form } else { None },
+            agent_menu: if agents { context.agent_menu } else { None },
             session_picker: self
                 .line_binding
                 .as_ref()
