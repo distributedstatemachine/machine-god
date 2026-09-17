@@ -487,6 +487,14 @@ and releases its command lane, allowing previously accepted FIFO work and
 subsequent commands to progress. Only confirmed journal acceptance may schedule
 effects.
 
+Resident admission rejects unaccepted commands with `ResourceLimit` when all
+slots are unavailable and no child retirement is underway. It cannot retain a
+create/message/restore request ahead of the cancel or close needed to free a
+slot. Foreground reservations retain priority without parking these commands.
+Safe idle-child eviction may start retirement, whose actual cleanup remains
+owned before slot reuse. A child with unresolved notice custody is never evicted;
+an unaccepted requester must retry after repair rather than hold the mailbox.
+
 One aggregate mailbox budget covers queued commands, dequeued in-flight jobs and
 completed replies with slow observers. Defaults are 64 requests and 256 MiB of
 reserved capacity; configurable bounds allow 1–256 requests and 4 MiB–1 GiB.

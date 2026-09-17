@@ -467,18 +467,13 @@ fn residency_pressure_retains_saved_outbox_without_a_live_delivery_receipt() {
             .notice_cleanup_pending()
     );
 
-    let (_admission, invocation) = f.invocation(serde_json::json!({"create": {
+    let result = f.command(serde_json::json!({"create": {
         "name": "replacement", "mode": "persistent"
     }}));
-    let requester = f.requester.clone();
-    let mut response = requester.execute(invocation, CancellationToken::new());
-    assert!(
-        response
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_pending()
-    );
-    f.drive(|f| f.manager.pending_job.is_some() && f.manager.active.is_none());
+    assert!(!result.ok);
+    assert_eq!(result.error_code, Some(ManagedFailureCode::ResourceLimit));
+    f.drive(|f| f.manager.active.is_none());
+    assert!(f.manager.pending_job.is_none());
     assert!(original.upgrade().is_some());
     assert!(f.manager.retiring.is_empty());
     assert_eq!(f.factory.prepared.load(Ordering::Acquire), 1);
@@ -487,13 +482,18 @@ fn residency_pressure_retains_saved_outbox_without_a_live_delivery_receipt() {
     let mut record = session.record();
     record.metadata.remove(NOTICE_OUTBOX_KEY);
     block_on(session.update_metadata(record.revision, record.metadata)).unwrap();
+    assert!(
+        f.command(serde_json::json!({"create": {
+            "name": "replacement", "mode": "persistent"
+        }}))
+        .ok
+    );
     f.drive(|f| {
         f.manager
             .children()
             .iter()
             .any(|child| child.id == "child-2")
     });
-    assert!(block_on(response).unwrap().ok);
     f.drive(|f| f.manager.active.is_none() && f.manager.retiring.is_empty());
     assert!(original.upgrade().is_none());
     block_on(f.journal.inspect("child-1".into())).unwrap();

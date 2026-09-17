@@ -555,3 +555,46 @@ notice into a one-element array. Static policy/audit and platform checks passed;
 no runtime stage started. Binding the parent with `if let` and using
 `std::slice::from_ref` preserve behavior and assertions. The replacement still
 requires focused execution, the complete local gate and fresh independent review.
+
+Candidate `71dc23728fa74488fad26ce925b269ce98c167fd` passed the complete exact
+Rust 1.94.1 replacement gate. Linux passed 609 CLI and 4,047 native tests,
+workspace integrations and doctests, and all 275 Python checks (219.350 seconds).
+macOS passed 611 CLI and 4,054 native tests (828.26 seconds for native), remaining
+workspace integrations and doctests. Both platforms passed all eight manager
+cancellation and two store cancellation regressions, six delivery and seven
+shutdown regressions. Warnings-denied all-feature Clippy, fresh release helpers,
+static policy/audit and platform checks passed. The native-only test builds still
+reported their 26 existing unused-code warnings. Logs remain in the retained
+gate directory with `71dc2372` suffixes; the complete gate process exited zero.
+
+Fresh R7 correctness review started in an isolated read-only checkout of this
+candidate. Concurrent lifecycle launch and its single retry both hit the host
+thread limit, so that unused clean worktree was removed. Resources review had
+not started. Review acceptance requires three fresh independent results; a
+later completed-reviewer state may permit the remaining new reviewers to run
+sequentially. This is no three-track acceptance or delivery claim. Remote main
+was still `7cadf2f2ea13ef392797903ad190c0ce3ba92654`; the feature was not pushed.
+
+The R7 correctness agent subsequently hit a usage limit before completing its
+review. Its partial report identified a possible full-residency mailbox deadlock;
+it supplied neither a final finding inventory nor acceptance. Coordinator tracing
+confirmed `manager/pump/admission.rs` retained an unaccepted capacity-needing
+command even with no evictable child or retirement in progress. `capture_mailbox`
+then withheld later cancel/close controls behind that same head.
+
+Test-only component `a09b472e542244283840746217fef6e12126a179`, with unchanged
+`71dc2372` production, reproduced this on exact Rust 1.94.1 unprivileged Linux
+with a fresh release helper. The full-residency create-then-cancel regression
+failed in 0.09 seconds with `unaccepted create parked ahead of the only
+cancellation` (exit 101), without a provider response or caller retirement.
+Logs are `managed-residency-red-build-a09b472e.log` and
+`managed-residency-red-runtime-a09b472e.log` in the retained gate directory.
+The clean failed-review worktree was removed; no review acceptance was inferred.
+
+Remediation rejects unaccepted resident requests when neither safe idle eviction
+nor actual ongoing retirement can supply a slot, and preserves foreground
+reservation priority without parking commands. Already-owned retirement still
+settles before reuse. Unresolved saved-notice custody stays retained; the
+requester receives a limit result and explicitly retries after repair. Replacement
+tests, the complete local gate and three fresh whole-feature reviews remain
+required. Coordinator remediation is not an independent acceptance review.

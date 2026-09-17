@@ -146,12 +146,24 @@ impl ManagedManager {
                 && (!self.has_capacity() || self.waiting_foreground())
                 && job.lease().is_live()
             {
-                self.pending_job = Some((job, wait_finished, operation));
-                if !self.waiting_foreground() && self.evict_idle_child(target.as_deref()) {
+                let foreground_waiting = self.waiting_foreground();
+                let evicted = !foreground_waiting && self.evict_idle_child(target.as_deref());
+                if !foreground_waiting && !self.retiring.is_empty() {
+                    self.pending_job = Some((job, wait_finished, operation));
+                    if evicted {
+                        return Ok(true);
+                    }
+                    // Wait only for actual retirement already owned by the
+                    // manager, not a running child or a future caller action.
+                } else {
+                    // This request has no durable acceptance. Holding it here
+                    // would hide the cancel/close that could free its capacity.
+                    job.complete(Ok(command::rejected(
+                        &operation,
+                        machine_god_core::ManagedFailureCode::ResourceLimit,
+                    )));
                     return Ok(true);
                 }
-                // Accepted child FIFO work can continue while the original
-                // preacceptance head waits for actual residency retirement.
             } else {
                 let environment = self.environment(now_ms, operation.clone(), wait_finished);
                 self.active = Some(Active::Command {

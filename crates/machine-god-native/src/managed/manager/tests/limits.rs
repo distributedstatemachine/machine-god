@@ -66,6 +66,73 @@ fn full_residency_rejects_create_before_later_cancel_without_external_progress()
     );
 }
 
+#[test]
+fn reserved_foreground_capacity_rejects_create_without_consuming_the_ticket() {
+    let mut fixture = Fixture::new(vec![]);
+    fixture.manager.limits.residents = 1;
+    let reservation = fixture.manager.reserve_foreground().unwrap();
+    fixture.drive(|f| f.manager.reserved_foregrounds() == 1);
+    let result = fixture.command(serde_json::json!({"create": {
+        "name": "must-not-borrow", "mode": "persistent"
+    }}));
+    assert!(!result.ok);
+    assert_eq!(result.error_code, Some(ManagedFailureCode::ResourceLimit));
+    assert_eq!(reservation.validate_preparation(), Ok(()));
+    assert_eq!(fixture.factory.prepared.load(Ordering::Acquire), 0);
+    assert!(fixture.manager.children.is_empty());
+    drop(reservation);
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "after-ticket-drop", "mode": "persistent"
+            }}))
+            .ok
+    );
+}
+
+#[test]
+fn started_idle_retirement_keeps_original_request_until_actual_cleanup() {
+    let mut fixture = Fixture::new(vec![]);
+    fixture.manager.limits.residents = 1;
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "idle", "mode": "persistent"
+            }}))
+            .ok
+    );
+    fixture.drive(|f| f.manager.active.is_none());
+    fixture.factory.cleanup.store(false, Ordering::Release);
+    let (_admission, invocation) = fixture.invocation(serde_json::json!({"create": {
+        "name": "replacement", "mode": "persistent"
+    }}));
+    let requester = fixture.requester.clone();
+    let mut response = requester.execute(invocation, CancellationToken::new());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(response.as_mut().poll(&mut cx).is_pending());
+    fixture.drive(|f| !f.manager.retiring.is_empty() && f.manager.pending_job.is_some());
+    for _ in 0..3 {
+        assert!(response.as_mut().poll(&mut cx).is_pending());
+        assert!(!matches!(
+            fixture.manager.poll_progress(&mut cx, 100),
+            Poll::Ready(Err(_))
+        ));
+        assert_eq!(fixture.factory.prepared.load(Ordering::Acquire), 1);
+        assert_eq!(fixture.manager.retiring.len(), 1);
+    }
+    fixture.factory.cleanup.store(true, Ordering::Release);
+    fixture.drive(|f| {
+        f.manager
+            .children
+            .iter()
+            .any(|child| child.snapshot.head.id == "child-2")
+    });
+    assert!(block_on(response).unwrap().ok);
+    assert!(fixture.manager.retiring.is_empty());
+    assert_eq!(fixture.factory.prepared.load(Ordering::Acquire), 2);
+    assert!(fixture.factory.provider.requests().is_empty());
+}
+
 fn saturated() -> Fixture {
     let mut fixture = Fixture::new(vec![ModelProviderStep::pending(), completed(), completed()]);
     assert!(
