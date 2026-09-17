@@ -863,3 +863,13 @@ while retaining manager cleanup. Corrected fixtures preserve actual-cleanup,
 original-intent and no-new-generation assertions; their final run remains due.
 Root integration proceeds to the full replacement gate on this frozen source,
 not to delivery or a new independent acceptance claim.
+
+The corrected frozen `989573d4` manager run passed all 99 tests in 57.15 seconds;
+`r9-saved-lifetime-manager.log` retains that exact result. Integrated `84df58f3`
+passed static policy/audit and FreeBSD/WASI/Apple compilation, then both Linux
+and macOS all-feature Clippy rejected the same three style issues: manual
+let-else, a 104-line delivery-clear function and a non-Copy test-only mode enum.
+Neither build reached release/runtime gates. Follow-up `1fe6c15e` uses let-else,
+derives Copy/Clone for that enum and shares the exact-context runtime lookup,
+preserving lookup order and the distinct fresh-clear idle-child condition.
+The corrected source requires a complete replacement gate before fresh review.
