@@ -34,6 +34,7 @@ pub(super) struct Environment {
     pub factory: Arc<dyn ManagedRuntimeFactory>,
     pub capacity: bool,
     pub residents: Vec<(String, JournalTranscript, bool)>,
+    pub controls: Vec<String>,
     pub now_ms: i64,
     pub operation: String,
     pub wait_finished: Option<bool>,
@@ -45,6 +46,7 @@ pub(super) struct Outcome {
     pub snapshot: Option<JournalSnapshot>,
     pub prepared: Option<PreparedManagedRuntime>,
     pub action: Action,
+    pub replay_changed: bool,
 }
 #[allow(clippy::large_enum_variant)] // One operation transfers its complete immutable proposal.
 pub(super) enum Action {
@@ -64,6 +66,7 @@ impl Outcome {
             snapshot: None,
             prepared: None,
             action: Action::Reply(rejected(operation, code)),
+            replay_changed: false,
         }
     }
 }
@@ -105,6 +108,7 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
         if !job.lease().matches_observation(&snapshot) {
             return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);
         }
+        let recovered = snapshot.recovery_required();
         // Recovery never executes work or signals cancellation. It only records interruption.
         if snapshot.recovery_required() {
             snapshot = match durability::mutate(
@@ -120,133 +124,147 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
             };
         }
         if !job.lease().is_live() {
-            return Outcome::reject(job, &env.operation, ManagedFailureCode::CallerUnavailable);
+            let mut outcome =
+                Outcome::reject(job, &env.operation, ManagedFailureCode::CallerUnavailable);
+            outcome.replay_changed = recovered;
+            return outcome;
         }
-        match command {
-            ManagedSubagentCommand::Inspect(request) => {
-                if env.wait_finished.is_none()
-                    && request.wait.as_ref().is_some_and(|wait| {
-                        !wait.satisfied(snapshot.head.generation, snapshot.head.status)
-                    })
-                {
-                    return Outcome {
+        let mut outcome = async move {
+            match command {
+                ManagedSubagentCommand::Inspect(request) => {
+                    if env.wait_finished.is_none()
+                        && request.wait.as_ref().is_some_and(|wait| {
+                            !wait.satisfied(snapshot.head.generation, snapshot.head.status)
+                        })
+                    {
+                        return Outcome {
+                            job,
+                            snapshot: Some(snapshot),
+                            prepared: None,
+                            action: Action::Wait(request),
+                            replay_changed: recovered,
+                        };
+                    }
+                    let result = super::projection::inspect(
+                        &env.journal,
+                        &env.cursors,
+                        &snapshot,
+                        &request,
+                        &env.operation,
+                        env.wait_finished == Some(true),
+                    )
+                    .await;
+                    Outcome {
                         job,
                         snapshot: Some(snapshot),
                         prepared: None,
-                        action: Action::Wait(request),
+                        action: Action::Reply(result),
+                        replay_changed: recovered,
+                    }
+                }
+                ManagedSubagentCommand::Message(ManagedMessage::Send(request)) => {
+                    if snapshot.head.mode != ManagedAgentMode::Persistent {
+                        return Outcome::reject(
+                            job,
+                            &env.operation,
+                            ManagedFailureCode::OneOffNotMessageable,
+                        );
+                    }
+                    if snapshot.head.status == ManagedAgentState::Archived
+                        || snapshot.head.intent.is_some()
+                    {
+                        return Outcome::reject(
+                            job,
+                            &env.operation,
+                            ManagedFailureCode::InvalidState,
+                        );
+                    }
+                    if !permitted(job.lease(), snapshot.head.configuration.permission_mode) {
+                        return Outcome::reject(
+                            job,
+                            &env.operation,
+                            ManagedFailureCode::PermissionDenied,
+                        );
+                    }
+                    let prepared =
+                        match prepare_if_needed(&env, &snapshot, Some(origin(job.lease()))).await {
+                            Ok(value) => value,
+                            Err(code) => return Outcome::reject(job, &env.operation, code),
+                        };
+                    let Some(sequence) = snapshot.head.revision.checked_add(1) else {
+                        return with_rejected_preparation(
+                            job,
+                            prepared,
+                            &env,
+                            ManagedFailureCode::GenerationExhausted,
+                        );
                     };
-                }
-                let result = super::projection::inspect(
-                    &env.journal,
-                    &env.cursors,
-                    &snapshot,
-                    &request,
-                    &env.operation,
-                    env.wait_finished == Some(true),
-                )
-                .await;
-                Outcome {
-                    job,
-                    snapshot: Some(snapshot),
-                    prepared: None,
-                    action: Action::Reply(result),
-                }
-            }
-            ManagedSubagentCommand::Message(ManagedMessage::Send(request)) => {
-                if snapshot.head.mode != ManagedAgentMode::Persistent {
-                    return Outcome::reject(
-                        job,
-                        &env.operation,
-                        ManagedFailureCode::OneOffNotMessageable,
-                    );
-                }
-                if snapshot.head.status == ManagedAgentState::Archived
-                    || snapshot.head.intent.is_some()
-                {
-                    return Outcome::reject(job, &env.operation, ManagedFailureCode::InvalidState);
-                }
-                if !permitted(job.lease(), snapshot.head.configuration.permission_mode) {
-                    return Outcome::reject(
-                        job,
-                        &env.operation,
-                        ManagedFailureCode::PermissionDenied,
-                    );
-                }
-                let prepared =
-                    match prepare_if_needed(&env, &snapshot, Some(origin(job.lease()))).await {
-                        Ok(value) => value,
-                        Err(code) => return Outcome::reject(job, &env.operation, code),
+                    let work = JournalWork {
+                        id: format!("work-{sequence}"),
+                        source_id: job.lease().principal().owner().session_id().to_string(),
+                        source_owner: principal_owner(job.lease()),
+                        content: request.content,
+                        skills: job.skill_references().to_vec(),
+                        accepted_at_ms: env.now_ms,
+                        configuration: snapshot.head.configuration.clone(),
                     };
-                let Some(sequence) = snapshot.head.revision.checked_add(1) else {
-                    return with_rejected_preparation(
+                    publish(
                         job,
+                        env,
+                        snapshot,
                         prepared,
-                        &env,
-                        ManagedFailureCode::GenerationExhausted,
-                    );
-                };
-                let work = JournalWork {
-                    id: format!("work-{sequence}"),
-                    source_id: job.lease().principal().owner().session_id().to_string(),
-                    source_owner: principal_owner(job.lease()),
-                    content: request.content,
-                    skills: job.skill_references().to_vec(),
-                    accepted_at_ms: env.now_ms,
-                    configuration: snapshot.head.configuration.clone(),
-                };
-                publish(
-                    job,
-                    env,
-                    snapshot,
-                    prepared,
-                    JournalMutation::Enqueue(work),
-                    ManagedOutcome::MessageQueued,
-                )
-                .await
-            }
-            ManagedSubagentCommand::Configure(request) => {
-                let mut configuration = snapshot.head.configuration.clone();
-                if let Some(value) = request.name {
-                    configuration.name = value;
+                        JournalMutation::Enqueue(work),
+                        ManagedOutcome::MessageQueued,
+                    )
+                    .await
                 }
-                if let Some(value) = request.model {
-                    configuration.model = Some(value);
-                }
-                if let Some(value) = request.effort {
-                    configuration.effort = Some(value);
-                }
-                if let Some(value) = request.notifications {
-                    configuration.notifications = value;
-                }
-                if let Some(value) = request.permission_mode {
-                    configuration.permission_mode = value;
-                }
-                if !permitted(job.lease(), configuration.permission_mode) {
-                    return Outcome::reject(
+                ManagedSubagentCommand::Configure(request) => {
+                    let mut configuration = snapshot.head.configuration.clone();
+                    if let Some(value) = request.name {
+                        configuration.name = value;
+                    }
+                    if let Some(value) = request.model {
+                        configuration.model = Some(value);
+                    }
+                    if let Some(value) = request.effort {
+                        configuration.effort = Some(value);
+                    }
+                    if let Some(value) = request.notifications {
+                        configuration.notifications = value;
+                    }
+                    if let Some(value) = request.permission_mode {
+                        configuration.permission_mode = value;
+                    }
+                    if !permitted(job.lease(), configuration.permission_mode) {
+                        return Outcome::reject(
+                            job,
+                            &env.operation,
+                            ManagedFailureCode::PermissionDenied,
+                        );
+                    }
+                    publish(
                         job,
-                        &env.operation,
-                        ManagedFailureCode::PermissionDenied,
-                    );
+                        env,
+                        snapshot,
+                        None,
+                        JournalMutation::Configure(configuration),
+                        ManagedOutcome::Configured,
+                    )
+                    .await
                 }
-                publish(
-                    job,
-                    env,
-                    snapshot,
-                    None,
-                    JournalMutation::Configure(configuration),
-                    ManagedOutcome::Configured,
-                )
-                .await
+                ManagedSubagentCommand::Relationship(request) => {
+                    relationship::execute(job, env, snapshot, request).await
+                }
+                ManagedSubagentCommand::Lifecycle(request) => {
+                    lifecycle::execute(job, env, snapshot, request).await
+                }
+                ManagedSubagentCommand::Create(_)
+                | ManagedSubagentCommand::Message(ManagedMessage::Milestone(_)) => unreachable!(),
             }
-            ManagedSubagentCommand::Relationship(request) => {
-                relationship::execute(job, env, snapshot, request).await
-            }
-            ManagedSubagentCommand::Lifecycle(request) => {
-                lifecycle::execute(job, env, snapshot, request).await
-            }
-            ManagedSubagentCommand::Create(_)
-            | ManagedSubagentCommand::Message(ManagedMessage::Milestone(_)) => unreachable!(),
         }
+        .await;
+        outcome.replay_changed |= recovered;
+        outcome
     })
 }
 
@@ -405,6 +423,7 @@ async fn publish(
                 snapshot: Some(snapshot),
                 prepared,
                 action: Action::Reply(result),
+                replay_changed: true,
             }
         }
         Err(error) => with_rejected_preparation(job, prepared, &env, failure(error)),
@@ -462,6 +481,7 @@ fn with_rejected_preparation(
         snapshot: None,
         prepared,
         action: Action::Reply(rejected(&env.operation, code)),
+        replay_changed: false,
     }
 }
 pub(super) fn rejected(operation: &str, code: ManagedFailureCode) -> ManagedSubagentResult {

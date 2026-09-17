@@ -363,3 +363,187 @@ fn admitted_journal_limit_rejects_but_busy_retains_the_original_operation() {
     job.complete(Err(machine_god_core::ManagedSubagentError::Cancelled));
     assert!(block_on(response).is_err());
 }
+
+#[test]
+fn overlapping_lifecycle_keeps_the_first_accepted_control_until_actual_settlement() {
+    for action in ["cancel", "close"] {
+        let mut fixture = Fixture::new(vec![ModelProviderStep::pending()]);
+        assert!(
+            fixture
+                .command(serde_json::json!({"create": {
+                    "name": "worker", "mode": "persistent", "prompt": "work"
+                }}))
+                .ok
+        );
+        fixture.drive(|f| f.factory.provider.requests().len() == 1);
+        fixture.factory.cleanup.store(false, Ordering::Release);
+        let (_first_admission, first) = fixture.invocation(serde_json::json!({"lifecycle": {
+            "id": "child-1", "action": "cancel"
+        }}));
+        let requester = fixture.requester.clone();
+        let mut first = requester.execute(first, CancellationToken::new());
+        assert!(
+            first
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        fixture.drive(|f| {
+            let child = &f.manager.children[0];
+            child.snapshot.head.intent.is_none()
+                && child.snapshot.head.queue.is_empty()
+                && child.control.is_some()
+                && child.settlement.is_some()
+        });
+        let (_second_admission, second) = fixture.invocation(serde_json::json!({"lifecycle": {
+            "id": "child-1", "action": action
+        }}));
+        let mut second = requester.execute(second, CancellationToken::new());
+        let (early_first, early_second) = block_on(std::future::poll_fn(|cx| {
+            if let Poll::Ready(result) = first.as_mut().poll(cx) {
+                return Poll::Ready((Some(result), None));
+            }
+            if let Poll::Ready(result) = second.as_mut().poll(cx) {
+                return Poll::Ready((None, Some(result)));
+            }
+            let progress = fixture.manager.poll_progress(cx, 100);
+            assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");
+            if progress.is_ready() {
+                cx.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }));
+        // Release the exact delayed cleanup even on the broken implementation,
+        // so failure reports never strand this test's manager-owned resources.
+        fixture.factory.cleanup.store(true, Ordering::Release);
+        fixture.drive(|f| {
+            f.manager
+                .children
+                .iter()
+                .all(|child| child.control.is_none())
+        });
+        let displaced = early_first.is_some();
+        let first = early_first.unwrap_or_else(|| block_on(first));
+        let second = early_second.unwrap_or_else(|| block_on(second));
+        assert!(
+            !displaced,
+            "{action} displaced the accepted cancellation receipt"
+        );
+        assert!(first.unwrap().ok);
+        let rejected = second.unwrap();
+        assert_eq!(rejected.error_code, Some(ManagedFailureCode::ResourceLimit));
+        assert!(rejected.retryable);
+        assert_eq!(
+            fixture.manager.children[0].snapshot.head.status,
+            ManagedAgentState::Idle
+        );
+        assert!(
+            fixture
+                .command(serde_json::json!({"lifecycle": {
+                    "id": "child-1", "action": action
+                }}))
+                .ok
+        );
+    }
+}
+
+#[test]
+fn replenished_mailbox_traffic_cannot_starve_accepted_work_or_ready_waits() {
+    let mut fixture = Fixture::new(vec![completed()]);
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "inspection-target", "mode": "persistent"
+            }}))
+            .ok
+    );
+    fixture.manager.limits.work_per_poll = 1;
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "accepted-worker", "mode": "one_off", "prompt": "must-progress"
+            }}))
+            .ok
+    );
+    assert!(fixture.factory.provider.requests().is_empty());
+    let requester = fixture.requester.clone();
+    let (_wait_admission, wait) = fixture.invocation(serde_json::json!({"inspect": {
+        "id": "child-1", "sections": ["status"], "wait": {"until": "settled", "timeout_ms": 100}
+    }}));
+    let mut wait = requester.execute(wait, CancellationToken::new());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(wait.as_mut().poll(&mut cx).is_pending());
+    let Poll::Ready(Some(job)) = fixture.manager.mailbox.poll_next(&mut cx) else {
+        panic!("actual admitted inspection job");
+    };
+    fixture
+        .manager
+        .ready_jobs
+        .push_back((job, false, "settled-wait".into()));
+
+    let inspection = || {
+        serde_json::json!({"inspect": {
+            "id": "child-1", "sections": ["status"]
+        }})
+    };
+    let mut traffic = Vec::new();
+    for _ in 0..4 {
+        let (admission, invocation) = fixture.invocation(inspection());
+        let mut response = requester.execute(invocation, CancellationToken::new());
+        assert!(response.as_mut().poll(&mut cx).is_pending());
+        traffic.push((admission, response));
+    }
+    let mut responses = 0;
+    let mut waited = None;
+    while responses < 64 {
+        let index = block_on(std::future::poll_fn(|cx| {
+            if waited.is_none()
+                && let Poll::Ready(result) = wait.as_mut().poll(cx)
+            {
+                waited = Some(result);
+            }
+            for (index, slot) in traffic.iter_mut().enumerate() {
+                if let Poll::Ready(result) = slot.1.as_mut().poll(cx) {
+                    assert!(result.unwrap().ok);
+                    return Poll::Ready(index);
+                }
+            }
+            let progress = fixture.manager.poll_progress(cx, 100);
+            assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");
+            if progress.is_ready() {
+                cx.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }));
+        responses += 1;
+        // Fixture invocation drives a real core caller, outside this manager's
+        // executor. Three other admitted inspections remain continuously queued.
+        let (admission, invocation) = fixture.invocation(inspection());
+        let mut response = requester.execute(invocation, CancellationToken::new());
+        assert!(response.as_mut().poll(&mut cx).is_pending());
+        traffic[index] = (admission, response);
+    }
+    let progressed = fixture.manager.children[1].snapshot.head.status
+        == ManagedAgentState::Completed
+        && !fixture.manager.children[1].busy();
+    let replayed = fixture.manager.replay.done;
+    drop(traffic);
+    drop(wait);
+    fixture.drive(|f| {
+        f.manager.children[1].snapshot.head.status == ManagedAgentState::Completed
+            && !f.manager.children[1].busy()
+    });
+    assert!(
+        progressed,
+        "bounded, continually replenished inspection traffic starved accepted work"
+    );
+    assert!(
+        waited.is_some(),
+        "completed wait response starved behind new inspections"
+    );
+    assert!(waited.unwrap().unwrap().ok);
+    assert!(
+        replayed,
+        "unchanged inspections repeatedly reset durable replay"
+    );
+}

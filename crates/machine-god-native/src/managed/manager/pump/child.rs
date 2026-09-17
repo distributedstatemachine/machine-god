@@ -3,7 +3,6 @@ use super::{
     ManagedAgentState, ManagedHistoryItem, ManagedHistoryKind, ManagedManager, ManagedOutcome,
     ManagedPermissionMode, ManagedQueueStatus, ManagedRuntimeError, ManagedToolActivity,
     ManagedToolPhase, ModelEvent, Pin, Poll, Stream, TurnEvent, WriteAfter, command, projection,
-    target_id,
 };
 
 impl ManagedManager {
@@ -17,6 +16,7 @@ impl ManagedManager {
         if self.children[index].work.is_some() && !self.register_notice(index)? {
             return Ok(false);
         }
+        let command_pending = self.command_target_pending(&self.children[index].snapshot.head.id);
         let child = &mut self.children[index];
         let writing = match &self.active {
             Some(Active::Child { id, .. } | Active::Load { id, .. }) => {
@@ -32,9 +32,7 @@ impl ManagedManager {
                 | Active::Catalog { .. }
                 | Active::Observation(_),
             ) => false,
-        } || self.pending_job.as_ref().is_some_and(|(job, _, _)| {
-            target_id(job.command()) == Some(child.snapshot.head.id.as_str())
-        });
+        } || command_pending;
         let mut progress = false;
         if child.admission_pending
             && child.starting.is_none()

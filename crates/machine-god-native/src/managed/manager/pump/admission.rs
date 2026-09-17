@@ -4,7 +4,6 @@ use super::{
 };
 
 impl ManagedManager {
-    #[allow(clippy::too_many_lines)] // One bounded FIFO selection policy; no head bypass.
     pub(super) fn admit_next(
         &mut self,
         cx: &mut Context<'_>,
@@ -29,21 +28,37 @@ impl ManagedManager {
             });
             return Ok(true);
         }
-        // Drain child custody first. Each write has a bounded payload; no UI ACK is involved.
-        let control_ready = self.pending_job.as_ref().is_some_and(|(job, _, _)| {
-            target_id(job.command()).is_none_or(|target| {
-                self.children
-                    .iter()
-                    .find(|child| child.snapshot.head.id == target)
-                    .is_none_or(|child| child.pending.is_empty())
-            })
-        });
-        for offset in 0..if control_ready {
-            0
-        } else {
-            self.children.len()
-        } {
-            let index = (self.round_robin + offset) % self.children.len();
+        // Candidate reservations precede new allocations, not accepted work.
+        if !self.closing && self.waiting_foreground() && self.evict_idle_child(None) {
+            return Ok(true);
+        }
+        // Rotate on actual admission, not polling frequency. Each ready lane
+        // receives a turn within seven admissions (plus the shared read allowance).
+        // A parked mailbox head cannot hide another lane's accepted custody.
+        const LANES: usize = 7;
+        for offset in 0..LANES {
+            let lane = (self.next_admission + offset) % LANES;
+            let admitted = match lane {
+                0 => self.admit_child_write(),
+                1 => self.admit_approval(now_ms),
+                2 => self.admit_ready_wait(now_ms),
+                3 => self.admit_mailbox(now_ms)?,
+                4 => self.admit_child_start(),
+                5 => self.begin_delivery(cx),
+                6 => self.begin_replay(cx),
+                _ => unreachable!("bounded admission lane"),
+            };
+            if admitted {
+                self.next_admission = (lane + 1) % LANES;
+                return Ok(true);
+            }
+        }
+        Ok(self.begin_observation() || self.begin_catalog())
+    }
+
+    fn admit_child_write(&mut self) -> bool {
+        for offset in 0..self.children.len() {
+            let index = (self.next_write + offset) % self.children.len();
             let child = &mut self.children[index];
             if let Some(write) = child.pending.pop_front() {
                 self.active = Some(Active::Child {
@@ -57,9 +72,14 @@ impl ManagedManager {
                     mutation: write.mutation,
                     after: write.after,
                 });
-                return Ok(true);
+                self.next_write = index + 1;
+                return true;
             }
         }
+        false
+    }
+
+    fn admit_approval(&mut self, now_ms: i64) -> bool {
         if let Some(index) = self.approvals.iter().position(|approval| approval.approved) {
             let mut approval = self.approvals.remove(index);
             let environment = self.environment(now_ms, approval.operation.clone(), None);
@@ -73,41 +93,42 @@ impl ManagedManager {
                     approval.mutation,
                 ),
             });
-            return Ok(true);
+            return true;
         }
-        // Candidate requests precede new resident allocations, but never block
-        // accepted child work, its durable writes, or notice cleanup below.
-        if !self.closing && self.waiting_foreground() && self.evict_idle_child(None) {
-            return Ok(true);
+        false
+    }
+
+    fn admit_ready_wait(&mut self, now_ms: i64) -> bool {
+        if self
+            .ready_jobs
+            .front()
+            .is_some_and(|(job, _, _)| self.target_has_pending_writes(job_target(job)))
+        {
+            return false;
         }
-        let ready = if self.pending_job.is_none() {
-            self.ready_jobs.pop_front()
-        } else {
-            None
+        let Some((job, timeout, operation)) = self.ready_jobs.pop_front() else {
+            return false;
         };
-        let job = if self.pending_job.is_some() {
-            self.pending_job.take()
-        } else if let Some((job, timeout, operation)) = ready {
-            Some((job, Some(timeout), operation))
-        } else if !self.closing {
-            match self.mailbox.poll_next(cx) {
-                Poll::Ready(Some(job)) => {
-                    let sequence = self.next_operation;
-                    self.next_operation = sequence
-                        .checked_add(1)
-                        .ok_or(ManagedRuntimeError::Capacity)?;
-                    Some((job, None, format!("operation-{sequence}")))
-                }
-                Poll::Ready(None) => {
-                    self.request_shutdown();
-                    None
-                }
-                Poll::Pending => None,
-            }
-        } else {
-            None
-        };
-        if let Some((job, wait_finished, operation)) = job {
+        let environment = self.environment(now_ms, operation.clone(), Some(timeout));
+        self.active = Some(Active::Command {
+            target: target_id(job.command()).map(str::to_owned),
+            operation,
+            future: command::execute(job, environment),
+        });
+        true
+    }
+
+    fn admit_mailbox(&mut self, now_ms: i64) -> Result<bool, ManagedRuntimeError> {
+        // Freeze only the captured target; finish its already-buffered writes
+        // before loading the command's exact head. Unrelated children keep moving.
+        if self
+            .pending_job
+            .as_ref()
+            .is_some_and(|(job, _, _)| self.target_has_pending_writes(job_target(job)))
+        {
+            return Ok(false);
+        }
+        if let Some((job, wait_finished, operation)) = self.pending_job.take() {
             if let ManagedSubagentCommand::Message(ManagedMessage::Milestone(request)) =
                 job.command()
             {
@@ -153,8 +174,7 @@ impl ManagedManager {
                     if evicted {
                         return Ok(true);
                     }
-                    // Wait only for actual retirement already owned by the
-                    // manager, not a running child or a future caller action.
+                    // Retain the FIFO head, but let other lanes make progress.
                 } else {
                     // This request has no durable acceptance. Holding it here
                     // would hide the cancel/close that could free its capacity.
@@ -174,14 +194,19 @@ impl ManagedManager {
                 return Ok(true);
             }
         }
+        Ok(false)
+    }
+
+    fn admit_child_start(&mut self) -> bool {
         if !self.closing {
             for offset in 0..self.children.len() {
-                let index = (self.round_robin + offset) % self.children.len();
+                let index = (self.next_start + offset) % self.children.len();
                 let child = &self.children[index];
                 if !child.busy()
                     && child.actual_settled
                     && child.snapshot.head.intent.is_none()
                     && !child.closing
+                    && !self.command_target_pending(&child.snapshot.head.id)
                     && let Some(work) = child
                         .snapshot
                         .head
@@ -193,17 +218,27 @@ impl ManagedManager {
                         id: child.snapshot.head.id.clone(),
                         future: self.journal.read_work(work.page.clone()),
                     });
-                    return Ok(true);
+                    self.next_start = index + 1;
+                    return true;
                 }
             }
         }
-        if self.begin_delivery(cx) {
-            return Ok(true);
-        }
-        if self.begin_replay(cx) {
-            return Ok(true);
-        }
-        Ok(self.begin_observation() || self.begin_catalog())
+        false
+    }
+    fn target_has_pending_writes(&self, target: Option<&str>) -> bool {
+        target.is_some_and(|target| {
+            self.children
+                .iter()
+                .any(|child| child.snapshot.head.id == target && !child.pending.is_empty())
+        })
+    }
+    pub(super) fn command_target_pending(&self, id: &str) -> bool {
+        self.pending_job
+            .as_ref()
+            .map(|(job, _, _)| job)
+            .into_iter()
+            .chain(self.ready_jobs.front().map(|(job, _, _)| job))
+            .any(|job| job_target(job) == Some(id))
     }
     pub(in crate::managed::manager) fn has_capacity(&self) -> bool {
         let reserved = self.reserved_foregrounds();
@@ -296,12 +331,28 @@ impl ManagedManager {
                     )
                 })
                 .collect(),
+            controls: self
+                .children
+                .iter()
+                .filter(|child| child.control_requested)
+                .map(|child| child.snapshot.head.id.clone())
+                .collect(),
             now_ms,
             operation,
             wait_finished,
             repaired_heads: self.repaired_heads.clone(),
             notices: self.notices.clone(),
         }
+    }
+}
+pub(super) fn job_target(job: &super::super::ManagedMailboxJob) -> Option<&str> {
+    if matches!(
+        job.command(),
+        ManagedSubagentCommand::Message(ManagedMessage::Milestone(_))
+    ) {
+        Some(job.lease().principal().owner().session_id().as_str())
+    } else {
+        target_id(job.command())
     }
 }
 pub(super) fn target_id(command: &ManagedSubagentCommand) -> Option<&str> {

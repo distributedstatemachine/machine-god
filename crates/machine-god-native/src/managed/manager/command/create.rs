@@ -98,6 +98,7 @@ pub(super) async fn execute(
                 snapshot: Some(snapshot),
                 prepared: Some(prepared),
                 action: Action::Reply(result),
+                replay_changed: true,
             }
         }
         Err(error) => with_rejected_preparation(job, Some(prepared), &env, failure(error)),

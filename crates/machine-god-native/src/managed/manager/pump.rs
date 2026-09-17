@@ -8,7 +8,6 @@ use super::{
     ManagerProgress, Poll, Retiring, VecDeque, WriteAfter, command, durability, projection,
     waiting,
 };
-use admission::target_id;
 use futures_core::Stream;
 use machine_god_core::{
     ManagedFailureCode, ManagedHistoryItem, ManagedHistoryKind, ManagedMessage, ManagedOutcome,
@@ -237,6 +236,7 @@ impl ManagedManager {
     }
     #[allow(clippy::too_many_lines)] // One result atomically updates resident and response ownership.
     fn apply_outcome(&mut self, mut outcome: command::Outcome, operation: String, _now_ms: i64) {
+        self.replay_reset |= outcome.replay_changed;
         if let Some(context) = outcome
             .prepared
             .as_ref()
@@ -249,7 +249,6 @@ impl ManagedManager {
             .then(|| outcome.snapshot.as_ref().unwrap().clone());
         let mut resident = None;
         if let Some(snapshot) = outcome.snapshot.take() {
-            self.replay_reset = true;
             resident = self
                 .children
                 .iter()

@@ -771,6 +771,16 @@ Discarding a superseded read retry clears only that wait's blocked-status
 observation; it neither clears a newer wait nor triggers mutation retries.
 This bounds work per admission, not total scans across an arbitrary history.
 
+Serialized durable admission rotates across child writes, approved relationships,
+completed waits, captured mailbox requests, accepted child starts, delivery and
+replay. A ready lane receives a turn within seven successful lane admissions,
+plus the shared bounded catalog/read allowance. A parked mailbox head cannot hide
+unrelated accepted work. Commands and completed waits drain their target's buffered
+writes before loading its exact head. Unchanged inspections do not reset replay.
+A second lifecycle request while an original accepted control awaits actual
+cleanup returns retryable `resource_limit`; it cannot replace the first observer.
+The caller may explicitly retry once that settlement completes.
+
 Managed tool activity includes one `Denied` record for each actual core policy
 denial. The original event sequence distinguishes reused provider call IDs
 across turns; capability labels and permission-request IDs are not correlation

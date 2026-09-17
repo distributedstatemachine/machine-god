@@ -76,6 +76,7 @@ pub(super) async fn execute(
                     parent_generation: Some(generation),
                 },
             },
+            replay_changed: false,
         };
     };
     publish(

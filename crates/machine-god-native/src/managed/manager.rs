@@ -201,6 +201,9 @@ pub(crate) struct ManagedManager {
     wait_sleep: Option<(Instant, BoxFuture<'static, ()>)>,
     next_operation: u64,
     round_robin: usize,
+    next_admission: usize,
+    next_write: usize,
+    next_start: usize,
     closing: bool,
     catalog: catalog::Catalog,
 }
@@ -255,6 +258,9 @@ impl ManagedManager {
             wait_sleep: None,
             next_operation: 1,
             round_robin: 0,
+            next_admission: 0,
+            next_write: 0,
+            next_start: 0,
             closing: false,
             catalog: catalog::Catalog::default(),
         })

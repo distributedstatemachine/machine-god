@@ -772,3 +772,14 @@ full head per parent. Logs are `r9-delivery-focused.log` and
 `r9-delivery-manager-focused.log`. All-feature Clippy identified one
 `single_match_else` style lint; the equivalent `if let` correction is included.
 These author checks do not establish the full replacement gate or acceptance.
+
+Author component `1bdda588` preserves accepted control custody, rotates seven
+durable admission lanes, fences target writes and avoids resetting replay for
+unchanged inspections. Its overlapping-cancellation regression reproduced the
+baseline failure. All 79 default-feature manager tests passed on Rust 1.94.1 in
+the isolated author tree, including continuously replenished four-slot inspection
+traffic with accepted child progress, completed-wait response and replay completion.
+Coordinator integration retains the resumable delivery signature and shutdown
+custody checks; its exact combined checks remain due. The journal/pressure and
+FIFO-successor fixes are separate components of the same rejected-candidate repair,
+not new delivered features.

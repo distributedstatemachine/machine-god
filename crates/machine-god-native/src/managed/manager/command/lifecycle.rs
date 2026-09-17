@@ -12,6 +12,11 @@ pub(super) async fn execute(
     mut snapshot: JournalSnapshot,
     request: ManagedLifecycle,
 ) -> Outcome {
+    // A cleared journal intent is not completion of its original control job:
+    // worker settlement may still be outstanding. Never replace that custody.
+    if env.controls.contains(&request.id) {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
+    }
     let busy = env
         .residents
         .iter()
@@ -119,6 +124,7 @@ pub(super) async fn execute(
                     snapshot: Some(snapshot),
                     prepared: None,
                     action: Action::Reply(result),
+                    replay_changed: false,
                 };
             }
             if snapshot.head.intent.is_none() {
@@ -145,6 +151,7 @@ pub(super) async fn execute(
                     } else {
                         Action::Cancel
                     },
+                    replay_changed: true,
                 };
             }
             if archive {
@@ -183,6 +190,7 @@ pub(super) async fn execute(
                         snapshot: Some(snapshot),
                         prepared: None,
                         action: Action::Reply(result),
+                        replay_changed: true,
                     }
                 }
                 Err(error) => Outcome::reject(job, &env.operation, failure(error)),
