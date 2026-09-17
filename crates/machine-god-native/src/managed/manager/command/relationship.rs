@@ -51,6 +51,7 @@ pub(super) async fn execute(
             return Outcome::reject(job, &env.operation, ManagedFailureCode::CallerUnavailable);
         };
         let proposal = ManagedRelationshipProposal {
+            consent: job.execution_consent(),
             origin: origin(job.lease()),
             context,
             child_id: snapshot.head.id.clone(),

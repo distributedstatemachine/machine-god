@@ -116,6 +116,7 @@ impl Shared {
                 bytes += 2 * identity_bytes;
                 let kind = match entry.payload.as_ref() {
                     Payload::Permission { .. } => Kind::Permission,
+                    Payload::ExecutionConsent { .. } => Kind::ExecutionConsent,
                     Payload::Question { .. } => Kind::Question,
                     Payload::Elicitation { .. } => Kind::Elicitation,
                     Payload::UrlRecovery { .. } => Kind::UrlRecovery,
@@ -537,6 +538,7 @@ impl Shared {
                 .ok_or(Error::Stale)?;
             match entry.payload.as_ref() {
                 Payload::Permission { .. } => Response::Permission(PermissionPromptDecision::Deny),
+                Payload::ExecutionConsent { .. } => Response::ExecutionConsent(false),
                 Payload::Question { .. } => Response::Question(QuestionPromptOutcome::Cancelled),
                 Payload::Elicitation { .. } => Response::Elicitation(
                     crate::mcp::interaction::McpElicitationAnswerInput::cancel(),

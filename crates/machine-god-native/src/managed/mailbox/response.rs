@@ -3,12 +3,16 @@ use machine_god_core::{MAX_SUBAGENT_OUTPUT_BYTES, ManagedRequested};
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll, Waker},
 };
 
 type Result = std::result::Result<ManagedSubagentResult, Error>;
 pub(super) struct Reply {
+    consent_lifetime: Weak<AtomicBool>,
     state: Mutex<State>,
     reservation: Arc<Reservation>,
     wake: ManagedMailboxWake,
@@ -20,8 +24,13 @@ struct State {
     waker: Option<Waker>,
 }
 impl Reply {
-    pub(super) fn new(reservation: Arc<Reservation>, wake: ManagedMailboxWake) -> Self {
+    pub(super) fn new(
+        reservation: Arc<Reservation>,
+        wake: ManagedMailboxWake,
+        consent_lifetime: Weak<AtomicBool>,
+    ) -> Self {
         Self {
+            consent_lifetime,
             state: Mutex::new(State {
                 observer: true,
                 settled: false,
@@ -40,6 +49,7 @@ impl Reply {
             .observer
     }
     pub(super) fn finish(&self, result: Result) {
+        self.retire_consent();
         let mut incoming = Some(result);
         let waker = {
             let mut state = self
@@ -58,6 +68,11 @@ impl Reply {
         drop(incoming);
         if let Some(waker) = waker {
             waker.wake();
+        }
+    }
+    fn retire_consent(&self) {
+        if let Some(live) = self.consent_lifetime.upgrade() {
+            live.store(false, Ordering::Release);
         }
     }
 }
@@ -100,6 +115,7 @@ impl Future for Response {
 impl Drop for Response {
     fn drop(&mut self) {
         if let Some(reply) = self.0.take() {
+            reply.retire_consent();
             let (result, waker) = {
                 let mut state = reply
                     .state

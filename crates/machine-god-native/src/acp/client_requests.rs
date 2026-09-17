@@ -220,6 +220,14 @@ impl NativeAcpClientRequests {
             Poll::Ready(None) => return Poll::Ready(Ok(None)),
             Poll::Ready(Some(view)) => view,
         };
+        if view
+            .execution_consent()
+            .is_some_and(|request| !request.is_live())
+        {
+            let _ = self.inbox.cancel(view.token());
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
         let result = self.encode_request(&view);
         match result {
             Ok((id, scope, bytes)) => {
@@ -228,6 +236,15 @@ impl NativeAcpClientRequests {
             }
             Err(error) => {
                 let _ = self.inbox.cancel(view.token());
+                if view
+                    .execution_consent()
+                    .is_some_and(|request| !request.is_live())
+                {
+                    // A cancelled/retired execution proposal is no longer a
+                    // request, not a protocol failure for the ACP connection.
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
                 Poll::Ready(Err(error))
             }
         }

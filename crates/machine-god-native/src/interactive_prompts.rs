@@ -1,6 +1,10 @@
 //! Owned human interaction without acquiring an input, output, or worker.
 
+mod execution_consent;
 mod payload;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use execution_consent::ExecutionConsentSource;
+pub use execution_consent::NativeExecutionConsentRequest;
 mod projection;
 mod state;
 #[cfg(test)]
@@ -169,6 +173,13 @@ impl NativeInteractivePromptView {
         }
     }
     #[must_use]
+    pub fn execution_consent(&self) -> Option<&NativeExecutionConsentRequest> {
+        match self.payload.as_ref() {
+            Payload::ExecutionConsent { request } => Some(request),
+            _ => None,
+        }
+    }
+    #[must_use]
     pub fn question(&self) -> Option<(&ToolContext, &QuestionPromptRequest)> {
         match self.payload.as_ref() {
             Payload::Question { context, request } => Some((context, request)),
@@ -209,6 +220,7 @@ impl fmt::Debug for NativeInteractivePromptView {
 /// this enum never confirms or publishes a saved rule.
 pub enum NativeInteractivePromptResponse {
     Permission(PermissionPromptDecision),
+    ExecutionConsent(bool),
     Question(QuestionPromptOutcome),
     Elicitation(McpElicitationAnswerInput),
     UrlRecovery(McpUrlRecoveryAnswer),
@@ -296,6 +308,27 @@ impl fmt::Debug for NativeInteractivePromptBridge {
 }
 
 impl PermissionPrompter for NativeInteractivePromptBridge {
+    fn prompt_execution_consent(
+        &self,
+        request: NativeExecutionConsentRequest,
+    ) -> BoxFuture<'_, Result<bool, PermissionPromptError>> {
+        let shared = Arc::clone(&self.shared);
+        let payload = Arc::new(Payload::ExecutionConsent { request });
+        let principal = shared.capture(self.principal.as_ref(), &payload);
+        Box::pin(async move {
+            let Payload::ExecutionConsent { request } = payload.as_ref() else {
+                unreachable!();
+            };
+            if !request.is_live() {
+                return Err(PermissionPromptError::new());
+            }
+            match shared.request(principal, payload.clone()).await {
+                Ok(AcceptedResponse::ExecutionConsent(answer)) if request.is_live() => Ok(answer),
+                Ok(_) | Err(_) => Err(PermissionPromptError::new()),
+            }
+        })
+    }
+
     fn prompt(
         &self,
         request: PermissionRequest,

@@ -22,6 +22,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeAcpReplyKind {
     Permission,
+    ExecutionConsent,
     Question,
     Form,
     Url,
@@ -59,9 +60,44 @@ pub fn project_prompt(
     if let Some((context, request)) = view.question() {
         return question(context, request);
     }
+    if let Some(request) = view.execution_consent() {
+        return execution_consent(request);
+    }
     // A PermissionRequest alone has no actual tool-call identity. It cannot be
     // promoted to an ACP toolCall by inventing an ID from the permission ID.
     Err(Error::InvalidSource)
+}
+
+fn execution_consent(
+    request: &crate::NativeExecutionConsentRequest,
+) -> Result<NativeAcpClientRequest, Error> {
+    if !request.is_live() {
+        return Err(Error::InvalidSource);
+    }
+    super::bounded_text(request.reason())?;
+    let call = request.call();
+    protocol::validate_value(&call.arguments, 5).map_err(|_| Error::Limit)?;
+    // The actual admitted call supplies identity; the frozen proposal supplies
+    // exact generation/revision and old/new parent details for human review.
+    let proposal = serde_json::to_value(request.capability()).map_err(|_| Error::Limit)?;
+    let details = super::serialize_bounded(&proposal, protocol::ACP_MAX_FRAME_BYTES)?;
+    Ok(NativeAcpClientRequest {
+        method: "session/request_permission",
+        params: checked(json!({
+            "sessionId": request.context().session_id.as_str(),
+            "toolCall": {
+                "toolCallId": call.id.as_str(), "title": request.reason(),
+                "kind": super::tool_kind(call.name.as_str()), "status": "pending",
+                "rawInput": call.arguments,
+                "content": [{"type":"content", "content":{"type":"text", "text":details}}]
+            },
+            "options": [
+                {"optionId":"allow_once", "name":"Approve this exact proposal", "kind":"allow_once"},
+                {"optionId":"reject_once", "name":"Reject", "kind":"reject_once"}
+            ]
+        }))?,
+        reply_kind: NativeAcpReplyKind::ExecutionConsent,
+    })
 }
 
 /// Project permission with its actual call from the native review context.
@@ -117,6 +153,19 @@ pub fn decode_reply(
     protocol::validate_value(result, 3).map_err(|_| Error::Limit)?;
     if view.permission().is_some() {
         return permission_reply(result).map(NativeInteractivePromptResponse::Permission);
+    }
+    if view.execution_consent().is_some() {
+        return match permission_reply(result)? {
+            PermissionPromptDecision::AllowOnce => {
+                Ok(NativeInteractivePromptResponse::ExecutionConsent(true))
+            }
+            PermissionPromptDecision::Deny => {
+                Ok(NativeInteractivePromptResponse::ExecutionConsent(false))
+            }
+            PermissionPromptDecision::AllowTurn | PermissionPromptDecision::AllowSession => {
+                Err(Error::InvalidResponse)
+            }
+        };
     }
     if let Some((_, request)) = view.question() {
         return question_reply(request, result).map(NativeInteractivePromptResponse::Question);

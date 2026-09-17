@@ -491,6 +491,19 @@ pub(crate) struct NativePrincipalTurnStamp {
     generation: u64,
 }
 impl NativePrincipalTurnStamp {
+    /// Execution consent keeps no call lease alive, but observes the same run
+    /// generation/executing restriction as the original owned model lease.
+    pub(crate) fn execution_is_live(&self) -> bool {
+        self.is_live()
+            && self.state.upgrade().is_some_and(|state| {
+                state.run.as_ref().is_none_or(|run| {
+                    run.matches_turn(&state.witness)
+                        && run.is_executing()
+                        && run.work_generation() == state.work_generation
+                })
+            })
+    }
+
     pub(crate) fn is_live(&self) -> bool {
         self.state.upgrade().is_some_and(|state| {
             state.live()
@@ -521,6 +534,12 @@ impl NativePrincipalTurnStamp {
     }
 }
 impl NativeManagedCallLease {
+    pub(crate) fn consent_stamp(&self) -> NativePrincipalTurnStamp {
+        NativePrincipalTurnStamp {
+            state: Arc::downgrade(&self.state),
+            generation: self.state.principal.generation,
+        }
+    }
     pub(crate) fn is_live(&self) -> bool {
         self.state.live()
             && self.state.run.as_ref().is_none_or(|run| {

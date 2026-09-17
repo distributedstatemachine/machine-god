@@ -3,6 +3,8 @@ use super::*;
 mod catalog;
 mod delivery;
 mod events;
+#[cfg(feature = "ai-gateway-http")]
+mod execution_consent;
 mod fixture;
 mod foreground;
 mod notice_deadline;

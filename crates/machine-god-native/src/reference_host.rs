@@ -24,6 +24,8 @@ pub use managed_agents::{
     NativeManagedHistorySnapshot,
 };
 mod managed_host;
+#[cfg(test)]
+pub(crate) use managed_host::relationship::RelationshipConsent;
 mod mcp;
 mod permissions;
 mod services;

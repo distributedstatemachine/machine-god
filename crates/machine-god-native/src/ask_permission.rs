@@ -58,6 +58,15 @@ impl std::error::Error for PermissionPromptError {}
 /// leave detached prompt work running. Host-specific terminal, UI, environment,
 /// filesystem, or network authority belongs behind this interface.
 pub trait PermissionPrompter: Send + Sync + 'static {
+    /// One exact execution proposal, not an ordinary policy grant. Hosts which
+    /// cannot present this distinct contract (including headless hosts) deny it.
+    fn prompt_execution_consent(
+        &self,
+        _request: crate::NativeExecutionConsentRequest,
+    ) -> BoxFuture<'_, Result<bool, PermissionPromptError>> {
+        Box::pin(async { Ok(false) })
+    }
+
     /// Returns the host's decision for `request`.
     fn prompt(
         &self,

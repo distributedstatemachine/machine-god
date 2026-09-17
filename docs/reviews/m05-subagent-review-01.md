@@ -302,3 +302,33 @@ fixture. Existing group-only fallback tests and production signaling remain
 unchanged. The original assertions still require graceful escalation to KILL,
 failed force-close retention and actual reap after a subsequent force retry.
 Fresh focused and complete replacement gates remain required.
+
+During replacement-candidate preparation at `9a735e2e`, read-only investigation
+found a separate reachable ACP defect in model attach/reparent consent. Core
+ends the ordinary permission-review scope before admitted tool execution. The
+relationship authorizer then emitted a new synthetic permission request, but
+ACP required the exact still-authorizing request for every permission prompt.
+That lookup necessarily failed stale, and the connection driver treated the
+projection failure as a protocol error. This finding is source-backed; no
+runtime reproduction was claimed at discovery. Human relationship commands and
+detach do not take this second-consent path.
+
+The remediation separates exact-proposal execution consent from policy
+authorization. Its native request must originate in the actual claimed managed
+invocation, retain the frozen proposal and expire with its original job, turn,
+principal or cancellation. CLI and ACP expose only one-shot approve/reject,
+with no saved rule or reusable grant. Ordinary ACP permission snapshots remain
+strict. Composed tests drive actual model calls through native admission and
+the inbox, including CLI flush acknowledgement and ACP reply correlation;
+structural test contexts are not positive consent evidence. This correction
+requires replacement full local gates and three fresh whole-feature reviews
+before delivery; the prior candidate is not accepted.
+
+The exact `9a735e2e` Linux/macOS build stages and static/platform checks finished
+successfully before integration. With its fresh macOS release helper, the
+complete signal-denial fixture, close/reopen settlement fixture and both
+retained-leader/group-denial fallback regressions passed (four focused tests).
+The retained log is
+`/tmp/mg-managed-implementation.V0ZGg1/managed-denial-repair-macos-9a735e2e.log`.
+This verifies those narrow corrections, not whole-feature acceptance; full
+runtime gates were not started for the candidate with the known ACP defect.

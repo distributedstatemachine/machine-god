@@ -4,6 +4,8 @@ use crate::ask::production::managed_startup;
 use machine_god_core::ManagedSubagentCommand;
 use native::{NativeManagedInteractiveStartup, NativeManagedNavigationRoute as Route};
 use std::io::Write as _;
+#[path = "agents/consent.rs"]
+mod consent;
 #[path = "agents/models.rs"]
 mod models;
 #[path = "agents/selection_ack.rs"]

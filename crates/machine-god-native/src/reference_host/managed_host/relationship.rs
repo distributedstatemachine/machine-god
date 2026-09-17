@@ -1,46 +1,37 @@
 //! Human consent for one exact admitted relationship proposal, never a reusable grant.
+use crate::PermissionPrompter;
 use crate::managed::{
     manager::factory::{
         ManagedRelationshipAuthorizer, ManagedRelationshipProposal, ManagedRuntimeError,
     },
     principal::NativePrincipalRequester,
 };
-use crate::{PermissionPromptDecision, PermissionPrompter};
-use machine_god_core::{
-    BoxFuture, CancellationToken, Capability, ManagedRelationshipAction, PermissionRequest,
-    PermissionRequestId, PermissionRisk,
-};
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use machine_god_core::{BoxFuture, CancellationToken, Capability, ManagedRelationshipAction};
+use std::sync::Arc;
 
-pub(in crate::reference_host) struct RelationshipConsent {
+pub(crate) struct RelationshipConsent {
     principals: NativePrincipalRequester,
     prompter: Arc<dyn PermissionPrompter>,
-    sequence: Arc<AtomicU64>,
 }
 impl RelationshipConsent {
-    pub(in crate::reference_host) fn new(
+    pub(crate) fn new(
         principals: NativePrincipalRequester,
         prompter: Arc<dyn PermissionPrompter>,
     ) -> Self {
         Self {
             principals,
             prompter,
-            sequence: Arc::new(AtomicU64::new(1)),
         }
     }
 }
 impl ManagedRelationshipAuthorizer for RelationshipConsent {
     fn authorize(
         &self,
-        proposal: ManagedRelationshipProposal,
+        mut proposal: ManagedRelationshipProposal,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<bool, ManagedRuntimeError>> {
         let principals = self.principals.clone();
         let prompter = self.prompter.clone();
-        let sequence = self.sequence.clone();
         Box::pin(async move {
             if cancellation.is_cancelled() {
                 return Err(ManagedRuntimeError::Unavailable);
@@ -52,18 +43,12 @@ impl ManagedRelationshipAuthorizer for RelationshipConsent {
             if !stamp.matches_principal(&proposal.origin.principal) {
                 return Err(ManagedRuntimeError::Unavailable);
             }
-            let id = sequence
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                    value.checked_add(1)
-                })
-                .map_err(|_| ManagedRuntimeError::Capacity)?;
-            let request = PermissionRequest {
-                id: PermissionRequestId::new(format!("managed-relationship-{id}"))
-                    .map_err(|_| ManagedRuntimeError::Invalid)?,
-                session_id: proposal.context.session_id,
-                session_incarnation_id: proposal.context.session_incarnation_id,
-                turn_id: proposal.context.turn_id,
-                capability: Capability::Custom {
+            let source = proposal
+                .consent
+                .take()
+                .ok_or(ManagedRuntimeError::Unavailable)?;
+            let request = source.request(
+                Capability::Custom {
                     name: "managed_relationship".into(),
                     details: serde_json::json!({
                         "call_id": proposal.context.call_id,
@@ -75,11 +60,13 @@ impl ManagedRelationshipAuthorizer for RelationshipConsent {
                         "parent": proposal.parent,
                     }),
                 },
-                risk: PermissionRisk::High,
-                reason: "Approve this exact managed-agent parent relationship change.".into(),
-            };
+                "Approve this exact managed-agent parent relationship change.".into(),
+            );
+            if !request.is_live() || request.context() != &proposal.context {
+                return Err(ManagedRuntimeError::Unavailable);
+            }
             let decision = match futures_util::future::select(
-                prompter.prompt(request),
+                prompter.prompt_execution_consent(request),
                 Box::pin(cancellation.cancelled()),
             )
             .await
@@ -94,9 +81,9 @@ impl ManagedRelationshipAuthorizer for RelationshipConsent {
             if cancellation.is_cancelled() || !stamp.matches_principal(&proposal.origin.principal) {
                 return Err(ManagedRuntimeError::Unavailable);
             }
-            // Even AllowTurn/AllowSession approves only this frozen proposal.
-            // No grant is registered in the permission controller or copied to a child.
-            Ok(decision != PermissionPromptDecision::Deny)
+            // This boolean can approve only the exact frozen proposal. No
+            // permission grant is registered or copied to a child.
+            Ok(decision)
         })
     }
 }

@@ -30,13 +30,23 @@ not assert rollback of effects that may already have completed.
 Duplicate active request IDs are rejected without retaining their parameters;
 discarding even deeply constructed native-call parameters uses iterative cleanup.
 
-Permission projection requires both the inbox view and its actual tool call
+Ordinary policy permission projection requires both the inbox view and its actual tool call
 from the live native permission-review context. A permission request ID is not
 a tool-call ID, and event-order guessing is not accepted provenance. The
 `session/request_permission` options are `allow_once`, `allow_always` (displayed
 as allowing this session), and `reject_once`. `allow_always` maps only to the
 existing volatile `AllowSession` decision; it never publishes a persistent rule.
 The exact selected/cancelled outcome shape is checked before inbox submission.
+
+Managed attach/reparent can require a second, execution-time consent after
+ordinary tool authorization has ended. This uses a distinct native inbox payload
+minted from the actual claimed invocation and frozen relationship proposal,
+not a synthetic permission ID or a relaxed policy-review snapshot. ACP projects
+the original tool call and exact proposal through `session/request_permission`
+with only `allow_once` and `reject_once`; `allow_always` is invalid for this
+request. Consent creates no permission grant. Cancellation, retired principals
+and stale replies remain subject to native one-shot validation, and the manager
+rechecks the proposed relationship immediately before publication.
 
 MCP form and URL requests use modern `elicitation/create`, with the actual
 native `sessionId`, and `toolCallId` only for an actual model-tool source. Human

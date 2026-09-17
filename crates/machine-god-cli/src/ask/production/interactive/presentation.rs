@@ -53,7 +53,14 @@ impl Modal {
                 .render(request.request(), request.server(), request.source());
         }
         let mut text = crate::ask::production::interactive::bounded_output();
-        if let Some(request) = self.view.permission() {
+        if let Some(request) = self.view.execution_consent() {
+            text.write_str("\n[consent] ").map_err(|_| ())?;
+            escaped(&mut text, request.reason())?;
+            text.write_char('\n').map_err(|_| ())?;
+            render_capability(&mut text, request.capability())?;
+            text.write_str("\n[y] approve this proposal  [n] reject\n> ")
+                .map_err(|_| ())?;
+        } else if let Some(request) = self.view.permission() {
             text.write_str("\n[permission] ").map_err(|_| ())?;
             escaped(&mut text, &request.reason)?;
             text.write_char('\n').map_err(|_| ())?;
@@ -113,6 +120,16 @@ impl Modal {
             return Ok(response);
         }
         let line = line.trim();
+        if self.view.execution_consent().is_some() {
+            let approved = match line {
+                "y" | "yes" => true,
+                "n" | "no" | "/cancel" => false,
+                _ => return Err(()),
+            };
+            return Ok(Some(NativeInteractivePromptResponse::ExecutionConsent(
+                approved,
+            )));
+        }
         if self.view.permission().is_some() {
             let decision = match line {
                 "y" | "yes" => PermissionPromptDecision::AllowOnce,

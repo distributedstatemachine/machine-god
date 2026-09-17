@@ -13,6 +13,7 @@ use std::io::{self, Write};
 
 pub(super) enum AcceptedResponse {
     Permission(crate::PermissionPromptDecision),
+    ExecutionConsent(bool),
     Question(QuestionPromptOutcome),
     Elicitation(McpElicitationAnswer),
     UrlRecovery(McpUrlRecoveryAnswer),
@@ -21,6 +22,7 @@ impl AcceptedResponse {
     pub fn bytes(&self) -> Result<usize, Error> {
         match self {
             Self::Permission(_)
+            | Self::ExecutionConsent(_)
             | Self::UrlRecovery(_)
             | Self::Question(
                 QuestionPromptOutcome::Cancelled | QuestionPromptOutcome::Unavailable,
@@ -39,6 +41,9 @@ impl AcceptedResponse {
 }
 
 pub(super) enum Payload {
+    ExecutionConsent {
+        request: super::NativeExecutionConsentRequest,
+    },
     Permission {
         request: PermissionRequest,
         rule: Option<Box<crate::NativePermissionRulePrompt>>,
@@ -58,6 +63,10 @@ pub(super) enum Payload {
 impl Payload {
     pub fn belongs_to(&self, owner: &BackgroundOutputOwner) -> bool {
         let (session, incarnation) = match self {
+            Self::ExecutionConsent { request } => (
+                &request.context().session_id,
+                &request.context().session_incarnation_id,
+            ),
             Self::Permission { request, .. } => {
                 (&request.session_id, &request.session_incarnation_id)
             }
@@ -73,6 +82,24 @@ impl Payload {
     pub fn bytes(&self, limit: usize) -> Result<usize, Error> {
         let mut budget = Budget { bytes: 0, limit };
         match self {
+            Self::ExecutionConsent { request } => {
+                if let Some(value) = capability_value(request.capability()) {
+                    check_json(value)?;
+                }
+                check_json(&request.call().arguments)?;
+                for text in [
+                    request.context().session_id.as_str(),
+                    request.context().session_incarnation_id.as_str(),
+                    request.context().turn_id.as_str(),
+                    request.reason(),
+                ] {
+                    budget.add(text.len())?;
+                }
+                budget.add(256)?;
+                serde_json::to_writer(&mut budget, request.capability())
+                    .map_err(|_| Error::Limit)?;
+                serde_json::to_writer(&mut budget, request.call()).map_err(|_| Error::Limit)?;
+            }
             Self::Permission { request, rule } => {
                 // Canonical identity plus fixed digest/weak-owner bookkeeping.
                 if rule.is_some() {
@@ -122,6 +149,9 @@ impl Payload {
                 self.validate_response(&response)?;
                 match response {
                     Response::Permission(decision) => Ok(AcceptedResponse::Permission(decision)),
+                    Response::ExecutionConsent(answer) => {
+                        Ok(AcceptedResponse::ExecutionConsent(answer))
+                    }
                     Response::Question(outcome) => Ok(AcceptedResponse::Question(outcome)),
                     Response::Elicitation(_) | Response::UrlRecovery(_) => {
                         Err(Error::InvalidResponse)
@@ -133,6 +163,13 @@ impl Payload {
 
     pub fn validate_response(&self, response: &Response) -> Result<(), Error> {
         match (self, response) {
+            (Self::ExecutionConsent { request }, Response::ExecutionConsent(approve)) => {
+                if !approve || request.is_live() {
+                    Ok(())
+                } else {
+                    Err(Error::Stale)
+                }
+            }
             (
                 Self::Question { request, .. },
                 Response::Question(QuestionPromptOutcome::Answered(answers)),

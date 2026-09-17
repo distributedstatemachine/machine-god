@@ -74,6 +74,7 @@ pub(crate) trait ManagedRuntimeFactory: Send + Sync + 'static {
 }
 
 pub(crate) struct ManagedRelationshipProposal {
+    pub consent: Option<crate::interactive_prompts::ExecutionConsentSource>,
     pub origin: ManagedRuntimeOrigin,
     pub context: ToolContext,
     pub child_id: String,

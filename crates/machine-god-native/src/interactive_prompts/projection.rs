@@ -4,6 +4,7 @@ use super::NativeInteractivePromptToken;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeInteractivePromptKind {
     Permission,
+    ExecutionConsent,
     Question,
     Elicitation,
     UrlRecovery,

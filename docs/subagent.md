@@ -532,8 +532,15 @@ or permission mode alone never authorize that relationship change.
 The shared-host consent endpoint checks the original live principal/turn before
 presenting the exact child generation/revision and old/new parent incarnations,
 then checks it again after the answer. Cancellation drops the pending prompt.
-Every positive answer applies only to that frozen proposal; turn/session choices
-never install a reusable relationship grant or bypass later human consent.
+This is a distinct execution-time consent request, minted from the original
+claimed tool invocation rather than a structural context or a new policy
+authorization. The bounded native inbox retains its actual call provenance and
+exact proposal. CLI offers only approve/reject; ACP projects the actual tool
+call with only `allow_once`/`reject_once`. Neither surface offers turn/session
+grants or saved rules for this request. Hosts without an explicit execution-consent
+presenter reject it, including headless execution; Yolo is not proposal consent.
+Every positive answer applies only to that frozen proposal and never installs
+a reusable relationship grant or bypasses later human consent.
 Before publishing an approved relationship, the serialized command lane rechecks
 the proposed parent's transcript identity, caller access and current eligibility.
 A parent that is archived or already has a close intent cannot acquire a new

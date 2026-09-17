@@ -49,6 +49,18 @@ impl ManagedSubagentInvocation {
     pub fn context(&self) -> &ToolContext {
         self.invocation.context()
     }
+    /// Exact registered name from the admitted envelope, for native projection.
+    /// Observing it does not claim the invocation or grant execution authority.
+    #[must_use]
+    pub fn tool_name(&self) -> &ToolName {
+        self.invocation.tool_name()
+    }
+    /// Exact prepared arguments bound to the admitted envelope. Native hosts
+    /// need not reconstruct them from the decoded command for presentation.
+    #[must_use]
+    pub fn arguments(&self) -> &Value {
+        self.invocation.arguments()
+    }
     /// Native must additionally admit policy, principal generation and budgets.
     #[must_use]
     pub fn claim(&self, turn: &TurnWitness) -> bool {

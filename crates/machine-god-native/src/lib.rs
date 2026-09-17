@@ -247,11 +247,11 @@ mod interactive_prompts;
 pub use interactive_prompts::{
     MAX_NATIVE_INTERACTIVE_PROMPT_PAGE_BYTES, MAX_NATIVE_INTERACTIVE_PROMPT_PAYLOAD_BYTES,
     MAX_NATIVE_INTERACTIVE_PROMPT_PRINCIPALS, MAX_NATIVE_INTERACTIVE_PROMPT_RESPONSE_BYTES,
-    MAX_NATIVE_INTERACTIVE_PROMPTS, NativeInteractivePromptBridge, NativeInteractivePromptError,
-    NativeInteractivePromptInbox, NativeInteractivePromptKind, NativeInteractivePromptLimits,
-    NativeInteractivePromptPage, NativeInteractivePromptPrincipal, NativeInteractivePromptResponse,
-    NativeInteractivePromptScope, NativeInteractivePromptSummary, NativeInteractivePromptToken,
-    NativeInteractivePromptView,
+    MAX_NATIVE_INTERACTIVE_PROMPTS, NativeExecutionConsentRequest, NativeInteractivePromptBridge,
+    NativeInteractivePromptError, NativeInteractivePromptInbox, NativeInteractivePromptKind,
+    NativeInteractivePromptLimits, NativeInteractivePromptPage, NativeInteractivePromptPrincipal,
+    NativeInteractivePromptResponse, NativeInteractivePromptScope, NativeInteractivePromptSummary,
+    NativeInteractivePromptToken, NativeInteractivePromptView,
 };
 mod copy_file;
 mod create_folder;

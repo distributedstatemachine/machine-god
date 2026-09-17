@@ -16,7 +16,10 @@ use response::{Reply, Response};
 use std::{
     collections::VecDeque,
     fmt,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll, Waker},
 };
 
@@ -286,11 +289,15 @@ impl Shared {
         cancellation: CancellationToken,
         reservation: Arc<Reservation>,
     ) -> Result<Response, Error> {
+        let consent_lifetime = Arc::new(AtomicBool::new(true));
         let reply = Arc::new(Reply::new(
             reservation.clone(),
             ManagedMailboxWake(Arc::downgrade(self)),
+            Arc::downgrade(&consent_lifetime),
         ));
         let job = ManagedMailboxJob {
+            consent_lifetime,
+            consent_issued: AtomicBool::new(false),
             request: Some(request),
             actor: Some(actor),
             cancellation,
@@ -334,6 +341,8 @@ impl ManagedMailboxWake {
 
 /// Admitted request custody, not journal acceptance or permission to execute later.
 pub(crate) struct ManagedMailboxJob {
+    consent_lifetime: Arc<AtomicBool>,
+    consent_issued: AtomicBool,
     request: Option<JobRequest>,
     actor: Option<ManagedCommandActor>,
     cancellation: CancellationToken,
@@ -348,6 +357,27 @@ enum JobRequest {
     },
 }
 impl ManagedMailboxJob {
+    /// Only the claimed invocation in this owned job can issue this one-shot
+    /// source. A retained prompt must not keep the invocation/lease alive.
+    pub(crate) fn execution_consent(
+        &self,
+    ) -> Option<crate::interactive_prompts::ExecutionConsentSource> {
+        let JobRequest::Model(invocation) = self.request.as_ref()? else {
+            return None;
+        };
+        let ManagedCommandActor::Model(lease) = self.actor.as_ref()? else {
+            return None;
+        };
+        if self.observer_gone() || self.consent_issued.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        crate::interactive_prompts::ExecutionConsentSource::from_admitted(
+            invocation,
+            lease,
+            &self.consent_lifetime,
+            self.cancellation.clone(),
+        )
+    }
     pub(crate) fn command(&self) -> &ManagedSubagentCommand {
         match self.request.as_ref().expect("live job") {
             JobRequest::Model(invocation) => invocation.command(),
