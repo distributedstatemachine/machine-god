@@ -419,11 +419,23 @@ pub(super) fn approved_relationship(
     Box::pin(async move {
         if let JournalMutation::Relationship {
             parent_id: Some(parent),
-            ..
+            parent_owner,
         } = &mutation
-            && let Err(code) = relationship::check_graph(&env, &snapshot.head.id, parent).await
         {
-            return Outcome::reject(job, &env.operation, code);
+            match relationship::parent_owner(&env, job.lease(), parent).await {
+                Ok(owner) if parent_owner.as_ref() == Some(&owner) => {}
+                Ok(_) => {
+                    return Outcome::reject(
+                        job,
+                        &env.operation,
+                        ManagedFailureCode::StaleGeneration,
+                    );
+                }
+                Err(code) => return Outcome::reject(job, &env.operation, code),
+            }
+            if let Err(code) = relationship::check_graph(&env, &snapshot.head.id, parent).await {
+                return Outcome::reject(job, &env.operation, code);
+            }
         }
         publish(
             job,

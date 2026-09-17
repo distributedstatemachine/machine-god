@@ -26,19 +26,9 @@ pub(super) async fn execute(
         let id = request
             .parent_id
             .unwrap_or_else(|| actor.session_id.to_string());
-        let owner = if id == actor.session_id.as_str() {
-            actor
-        } else {
-            let parent = match load(&env, &id).await {
-                Ok(value) => value,
-                Err(code) => return Outcome::reject(job, &env.operation, code),
-            };
-            if !authorized(job.lease(), &parent)
-                || parent.head.status == ManagedAgentState::Archived
-            {
-                return Outcome::reject(job, &env.operation, ManagedFailureCode::PermissionDenied);
-            }
-            parent.head.transcript
+        let owner = match parent_owner(&env, job.lease(), &id).await {
+            Ok(owner) => owner,
+            Err(code) => return Outcome::reject(job, &env.operation, code),
         };
         if let Err(code) = check_graph(&env, &snapshot.head.id, &id).await {
             return Outcome::reject(job, &env.operation, code);
@@ -95,6 +85,27 @@ pub(super) async fn execute(
         ManagedOutcome::RelationshipChanged,
     )
     .await
+}
+
+// Consent can outlive another command on the proposed parent. Use the same
+// eligibility checks before requesting consent and inside serialized publication.
+pub(super) async fn parent_owner(
+    env: &Environment,
+    actor: &super::ManagedCommandActor,
+    id: &str,
+) -> Result<super::JournalTranscript, ManagedFailureCode> {
+    let owner = principal_owner(actor);
+    if id == owner.session_id.as_str() {
+        return Ok(owner);
+    }
+    let parent = load(env, id).await?;
+    if !authorized(actor, &parent)
+        || parent.head.status == ManagedAgentState::Archived
+        || parent.head.intent == Some(super::JournalIntent::Archive)
+    {
+        return Err(ManagedFailureCode::PermissionDenied);
+    }
+    Ok(parent.head.transcript)
 }
 
 pub(super) async fn check_graph(

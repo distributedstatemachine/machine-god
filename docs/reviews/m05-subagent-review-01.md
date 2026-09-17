@@ -112,3 +112,51 @@ exactly-once transfer/failed-admission custody; factory regressions exercise bot
 settlement orderings with held actual workers. Controller tests separately cover
 retained refresh retirement and non-cancelling deferred activation. These are
 compositional tests, not a claimed full MCP tool-to-manager deadlock reproduction.
+
+## Complete managed-agent feature: second reviewed candidate
+
+Candidate `6d87002d00d8cd0ef57dc07939385332cce79614` passed the complete
+replacement local gate before fresh whole-feature review against
+`6d6364c6ee3b1540505749b10b2527df39ddf5be`. Both exact Rust 1.94.1 builds,
+formatting, Clippy, release helpers, workspace/doc tests, focused runtime checks,
+269 repository Python tests, documentation/upstream/Unicode checks, dependency
+policy/audit and platform/Apple ABI checks passed. Linux used unprivileged default
+concurrency and macOS serial runtime execution, without overlapping their runtime
+gates. Logs remain under `/tmp/mg-managed-implementation.V0ZGg1/`, including
+`managed-full-runtime-linux-6d87002d-r2.log` and
+`managed-full-runtime-macos-6d87002d.log`. The initial Linux invocation failed
+before tests because `grep -q` closed a test-list pipe early. Its log is retained;
+the corrected preflight consumes the full listing. This was a gate-command error,
+not a source fix or product-test failure.
+
+Fresh read-only general reviewers rejected this candidate:
+
+- `m65_r2_correctness`: P1 nonresident close permanently retries a policy-invalid
+  restore after accepting archive intent; P2 production child runtimes omit model
+  capability catalogs and suppress named effort; P2 delayed relationship consent
+  can publish a now-archived parent.
+- `m65_r2_lifecycle`: P1 production create/restore/reconciliation performs blocking
+  store work on the manager's polling thread. In particular, a held transcript
+  lock stalls sibling execution, cancellation and host progress. The separate
+  preliminary failed-preparation/TLS suspicion was not confirmed as a finding.
+- `m65_r2_resources`: P1 journal directory-entry limits are checked only after
+  publication, leaving an unreconcilable ambiguity at capacity; P2 a suppressed
+  duration deadline drops the sole timer without arming a later child's deadline.
+
+These were source-established findings, not runtime reproductions. Neither review
+performed builds, tests or measurements. Their passing local candidate evidence
+does not cover the identified failures, and no remote delivery was attempted.
+All three finished review worktrees were verified clean and removed. Isolated
+implementation worktrees are separate from those frozen review checkouts.
+
+Replacement implementation combines coordinator-owned relationship eligibility,
+cleanup-only policy restriction, shared-deadline rearming and prepublication
+directory-entry admission with isolated catalog-capability and controlled-worker
+preparation repairs. Regression tests cover delayed consent after archive,
+nonresident close under a stricter caller, suppressed duration wakeups, directory
+pressure/orphan/reopen headroom, actual provider effort selection, held transcript
+locks and actual worker/TLS completion. These are added tests pending execution,
+not a claim of passing replacement gates. An early native-only compile found a
+test referencing an HTTP-gated public catalog export; its import now uses the
+internal module path. The failed compile log is retained as
+`managed-r2-coordinator-compile-preparation-pending.log` in the same log directory.

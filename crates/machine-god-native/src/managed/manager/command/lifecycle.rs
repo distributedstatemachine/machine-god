@@ -67,7 +67,7 @@ pub(super) async fn execute(
             if !env.capacity {
                 return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
             }
-            if let Err(code) = repair_before_reopen(&env, &snapshot, origin(job.lease())).await {
+            if let Err(code) = settle_saved_lifetime(&env, &snapshot, origin(job.lease())).await {
                 return Outcome::reject(job, &env.operation, code);
             }
             if !job.lease().is_live() {
@@ -149,7 +149,7 @@ pub(super) async fn execute(
             }
             if archive {
                 loop {
-                    if repair_before_reopen(&env, &snapshot, origin(job.lease()))
+                    if settle_saved_lifetime(&env, &snapshot, origin(job.lease()))
                         .await
                         .is_ok()
                     {
@@ -191,11 +191,27 @@ pub(super) async fn execute(
     }
 }
 
-async fn repair_before_reopen(
+async fn settle_saved_lifetime(
     env: &Environment,
     snapshot: &JournalSnapshot,
     origin: super::ManagedRuntimeOrigin,
 ) -> Result<(), ManagedFailureCode> {
+    // This runtime only repairs saved delivery evidence and retires. It never
+    // admits work, so closing a saved child must not require its former execution
+    // policy. Restrict the temporary owner to both the saved and caller policies;
+    // leave the durable configuration untouched for a later explicit reopen.
+    let mut configuration = snapshot.head.configuration.clone();
+    configuration.permission_mode = match (origin.policy.mode(), configuration.permission_mode) {
+        (crate::PermissionMode::Ask, _) | (_, super::ManagedPermissionMode::Ask) => {
+            super::ManagedPermissionMode::Ask
+        }
+        (crate::PermissionMode::Auto, _) | (_, super::ManagedPermissionMode::Auto) => {
+            super::ManagedPermissionMode::Auto
+        }
+        (crate::PermissionMode::Yolo, super::ManagedPermissionMode::Yolo) => {
+            super::ManagedPermissionMode::Yolo
+        }
+    };
     let mut original = prepare(
         env,
         ManagedRuntimeRequest {
@@ -204,7 +220,7 @@ async fn repair_before_reopen(
             generation: snapshot.head.generation,
             transcript: snapshot.head.transcript.clone(),
             journal_owner: env.owner.clone(),
-            configuration: snapshot.head.configuration.clone(),
+            configuration,
             origin: Some(origin),
             now_ms: env.now_ms,
         },

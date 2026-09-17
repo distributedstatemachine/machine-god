@@ -60,7 +60,25 @@ impl Reservation {
     }
     fn refresh(&self) -> Result<(), Error> {
         let used = fs::scan_usage(&self.shared.root, self.shared.limits)?;
-        self.shared.state.lock().map_err(|_| Error::Invalid)?.used = used;
+        let mut state = self.shared.state.lock().map_err(|_| Error::Invalid)?;
+        state.used = used.bytes;
+        state.entries = used.entries;
+        Ok(())
+    }
+    fn reserve_entries(&self, new_page: bool) -> Result<(), Error> {
+        // The exclusive operation slot reserves this peak until publication or
+        // reconciliation finishes. Keep one spare entry after publication for
+        // owner-epoch replacement, even if a failed head replacement leaves its
+        // staging file behind. A new head uses that same staging slot.
+        let additional = usize::from(new_page) + 2;
+        let state = self.shared.state.lock().map_err(|_| Error::Invalid)?;
+        if state
+            .entries
+            .checked_add(additional)
+            .is_none_or(|n| n > self.shared.limits.directory_entries)
+        {
+            return Err(Error::Limit);
+        }
         Ok(())
     }
 }
@@ -294,6 +312,7 @@ fn publish(
     };
     validation::head(&head, shared.limits)?;
     let candidate = encode(&head, shared.limits.head_bytes)?;
+    reservation.reserve_entries(page.is_some())?;
     let receipt = JournalReceipt {
         identity: Arc::downgrade(shared),
         operation: reservation.operation,
@@ -460,7 +479,8 @@ pub(super) fn reconcile(
     fs::validate_owner(shared)?;
     let old = {
         let mut state = shared.state.lock().map_err(|_| Error::Invalid)?;
-        state.used = used;
+        state.used = used.bytes;
+        state.entries = used.entries;
         state.reserved = 0;
         state.pending.take()
     };

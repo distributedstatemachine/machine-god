@@ -68,6 +68,7 @@ pub(super) struct Factory {
     engine: Engine,
     next: AtomicU64,
     pub prepared: AtomicU64,
+    pub prepared_modes: Mutex<Vec<ManagedPermissionMode>>,
     pub cleanup: Arc<AtomicBool>,
     pub ambiguous: AtomicBool,
     pub reconcile: Arc<AtomicBool>,
@@ -93,6 +94,10 @@ impl ManagedRuntimeFactory for Arc<Factory> {
         let this = self.clone();
         Box::pin(async move {
             this.prepared.fetch_add(1, Ordering::Relaxed);
+            this.prepared_modes
+                .lock()
+                .unwrap()
+                .push(request.configuration.permission_mode);
             let session = match request.kind {
                 ManagedRuntimePreparationKind::Create => this
                     .engine
@@ -375,6 +380,7 @@ impl Fixture {
             engine,
             next: AtomicU64::new(1),
             prepared: AtomicU64::new(0),
+            prepared_modes: Mutex::default(),
             cleanup: Arc::new(AtomicBool::new(true)),
             ambiguous: AtomicBool::new(false),
             reconcile: Arc::new(AtomicBool::new(false)),

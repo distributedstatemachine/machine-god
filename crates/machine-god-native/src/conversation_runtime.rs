@@ -31,6 +31,9 @@ use crate::{
 };
 
 mod managed_commands;
+mod model_catalog;
+#[cfg(feature = "ai-gateway-http")]
+pub(crate) use model_catalog::SharedModelCatalog;
 #[path = "acp/resource_queue.rs"]
 mod resource_queue;
 pub(crate) use managed_commands::NativeManagedCommandSnapshot;
@@ -175,6 +178,7 @@ struct RuntimeState {
     generation: u64,
     saved_generation: Option<u64>,
     catalog: Option<Arc<NativeModelCatalog>>,
+    managed_catalog: Option<model_catalog::ManagedModelCatalog>,
     queue: VecDeque<QueuedJob>,
     bytes: usize,
     next_id: u64,
@@ -286,6 +290,7 @@ impl NativeConversationRuntime {
                 generation: 0,
                 saved_generation,
                 catalog: None,
+                managed_catalog: None,
                 queue: VecDeque::new(),
                 bytes: 0,
                 next_id: 1,
@@ -337,7 +342,18 @@ impl NativeConversationRuntime {
     }
 
     pub(crate) fn activate_routes(&self) -> bool {
-        self.routes_ready_to_publish() && self.lifecycle.publish_routes()
+        if !self.routes_ready_to_publish() || !self.lifecycle.publish_routes() {
+            return false;
+        }
+        // A prepared foreground's explicit catalog stays private until its
+        // original route publication succeeds. Children never publish it.
+        let previous = self
+            .state
+            .lock()
+            .expect("runtime state poisoned")
+            .publish_catalog();
+        drop(previous);
+        true
     }
 
     /// Private foreground preparation may set metadata and settle the original
@@ -690,8 +706,7 @@ impl NativeConversationRuntime {
         self.state
             .lock()
             .expect("runtime state poisoned")
-            .catalog
-            .clone()
+            .catalog_snapshot()
     }
 
     /// Accepts new runtime settings immediately, even while a turn/save is active.
@@ -737,12 +752,12 @@ impl NativeConversationRuntime {
         catalog: Arc<NativeModelCatalog>,
     ) -> Result<(), NativeConversationRuntimeError> {
         let _permit = self.lifecycle.acquire()?;
-        let previous = self
-            .state
-            .lock()
-            .expect("runtime state poisoned")
-            .catalog
-            .replace(catalog);
+        let previous = {
+            let mut state = self.state.lock().expect("runtime state poisoned");
+            let local = state.catalog.replace(catalog);
+            let shared = state.publish_catalog();
+            (local, shared)
+        };
         drop(previous);
         Ok(())
     }
@@ -1091,8 +1106,8 @@ impl NativeConversationRuntime {
         };
         state.bytes -= job.bytes;
         let unsupported = NativeModelCapabilities::default();
-        let capabilities = state
-            .catalog
+        let catalog = state.catalog_snapshot();
+        let capabilities = catalog
             .as_ref()
             .and_then(|catalog| catalog.details(state.preferences.model()))
             .map_or(&unsupported, |entry| entry.capabilities());
@@ -1357,7 +1372,7 @@ impl NativeRuntimeQuiescence {
         let state = self.state.lock().expect("runtime state poisoned");
         Ok(NativeQuiescentSelectionSnapshot {
             model_preferences: state.preferences.clone(),
-            model_catalog: state.catalog.clone(),
+            model_catalog: state.catalog_snapshot(),
             permission_policy,
         })
     }

@@ -239,6 +239,14 @@ impl ManagedManager {
                                 progress = true;
                             }
                         }
+                        // Suppression can remove the earliest deadline without
+                        // staging a journal write. Install the next timer/change
+                        // subscription now, even when the outer pump will sleep.
+                        let mut next = self.notices.wait_deadline(self.cancellation.clone());
+                        if let Poll::Ready(Err(_)) = Pin::new(&mut next).poll_rearm(cx) {
+                            return Err(ManagedRuntimeError::Invalid);
+                        }
+                        self.deadline = Some(next);
                     }
                     Poll::Ready(Err(_)) => {
                         self.deadline.take();

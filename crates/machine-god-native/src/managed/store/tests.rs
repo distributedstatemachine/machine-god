@@ -8,6 +8,7 @@ use rustix::fs::{Mode, OFlags};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::AtomicU64;
 
+mod directory_capacity;
 mod events;
 mod skills;
 mod workspace;

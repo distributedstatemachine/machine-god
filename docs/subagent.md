@@ -534,6 +534,10 @@ presenting the exact child generation/revision and old/new parent incarnations,
 then checks it again after the answer. Cancellation drops the pending prompt.
 Every positive answer applies only to that frozen proposal; turn/session choices
 never install a reusable relationship grant or bypass later human consent.
+Before publishing an approved relationship, the serialized command lane rechecks
+the proposed parent's transcript identity, caller access and current eligibility.
+A parent that is archived or already has a close intent cannot acquire a new
+child through an earlier consent answer.
 
 The manager polls its mailbox, child streams, actual cleanup and notice delivery
 independently of terminal output. A captured control head pauses only its target's
@@ -543,6 +547,10 @@ journal operation slot. Configuration changes affect future accepted work only.
 Each queued work retains its own model, effort, permission mode and normalized
 notification policy. Runtime preparation for messages/resume/reopen uses the
 current authenticated caller's captured origin and rejects policy escalation.
+Closing a nonresident child only restores an owner for saved-delivery repair and
+retirement, never for execution. That temporary owner's permission mode is the
+stricter of the saved child mode and current caller mode. The durable child
+configuration stays unchanged, and explicit reopen still rejects escalation.
 
 Journal publication, receipt reconciliation and execution admission have separate
 states. Busy/limit pressure retains the original FIFO operation. Ambiguity parks
@@ -845,6 +853,11 @@ the configured operation reservation. Counts, identity/string bounds and bounded
 list deserialization cover structural overhead. Full 65,536-byte messages and
 32 milestones remain supported, including JSON escaping. Serialized size limits
 reject without truncation.
+Directory-entry admission reserves the new page and head staging entry before
+publication, with an additional slot kept for atomic owner-epoch replacement.
+That headroom survives an orphaned staging file so a full journal remains
+readable and can be reopened. Capacity rejection leaves the original head and
+receipt state untouched; orphan files remain charged after reconciliation.
 
 The operation slot returns Busy rather than blocking the native event loop;
 the manager retains an unaccepted FIFO submission for retry and never reports
@@ -966,6 +979,9 @@ or timer. Clock calls, timer destruction and caller waker operations occur outsi
 the notice registry lock; the deadline observer is weak and performs no notice
 emission itself. Root composition supplies actual state observations and owns
 journal publication, wake-driven polling and lifecycle integration.
+After a consumed deadline, even a suppressed duration observation immediately
+rearms the next shared timer. Already-due work blocked by pressure retains a
+change subscription without a ready-loop or an idle per-child timer.
 
 ## Per-principal MCP routing
 
@@ -1272,6 +1288,14 @@ stricter, using configured patterns without parent grants or saved rules. Explic
 model/effort settings override the captured preferences; saved child selection
 does not silently override this work's selection. Parent transcript and undo
 history are never copied.
+The explicitly supplied validated model catalog is shared within one host-service
+allocation, separately from each child's preferences. Children resolve supported
+capabilities from that host snapshot at work admission, including after restore
+and configuration changes. Foreground catalog refresh affects later admissions,
+not an already admitted turn; a staged foreground publishes its private catalog
+only after route activation. Missing or unsupported capability declarations omit
+named effort rather than infer support or borrow another host's catalog. This
+shared data source performs no network discovery and owns no runtime.
 
 Session preparation has its own bounded journal-bound worker cohort, including
 actual future destruction; a ready runtime is handed off only after this exact
@@ -1288,6 +1312,14 @@ its outcome belongs to the published generation. Cancelling an individual refres
 not cancel the shared job. Owner settlement releases unpublished peer custody
 without closing the published MCP runtime or authentication service, so a
 persistent child can accept subsequent work after cancellation.
+Create, restore and initial-publication reconciliation perform filesystem work
+only on those attributed owned workers. Exact-store access uses cancellable,
+nonblocking session-lock admission, so a contended transcript does not block the
+outer manager's polling thread. Success, error and ambiguous preparation results
+wait for actual worker/TLS settlement. Abandonment cancels the original access
+while worker custody retains the journal owner; an uncertain initial publication
+keeps its exact candidate across reconciliation and worker-admission failure,
+without allocating or blindly publishing another transcript.
 MCP close owns independent cancellation and a separately bounded cleanup cohort.
 It drives retained startup/peer settlement concurrently with original admission
 completion, so retained startup cannot wait on its own undriven receipt. Exact

@@ -24,6 +24,7 @@ pub(super) struct NativeHostServices {
     pub terminal_lifecycle: Option<NativeTerminalLifecycleRequester>,
     pub terminal_background: Option<NativeTerminalBackgroundRequester>,
     pub model_routes: Option<Arc<NativeConversationModelRoutes>>,
+    pub managed_model_catalog: crate::conversation_runtime::SharedModelCatalog,
     pub observations: Option<Arc<NativeConversationObservations>>,
     pub permissions: Option<Arc<NativePermissionController>>,
     pub permission_preparation: Option<Arc<super::permissions::SharedPermissionPreparation>>,

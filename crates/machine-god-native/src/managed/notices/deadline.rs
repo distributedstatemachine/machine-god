@@ -70,9 +70,22 @@ impl NoticeDeadline {
         }
     }
 }
-impl Future for NoticeDeadline {
-    type Output = Result<(), NoticeError>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+impl NoticeDeadline {
+    /// Subscribe immediately after observing a deadline. If another deadline is
+    /// already due but cannot progress (for example inbox pressure), retain its
+    /// change waker without repeatedly reporting readiness and spinning the host.
+    pub(crate) fn poll_rearm(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), NoticeError>> {
+        self.poll_deadline(cx, false)
+    }
+
+    fn poll_deadline(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        report_due: bool,
+    ) -> Poll<Result<(), NoticeError>> {
         assert!(!self.done, "notice deadline polled after completion");
         if Pin::new(self.cancelled.as_mut().expect("live cancellation observer"))
             .poll(cx)
@@ -123,7 +136,11 @@ impl Future for NoticeDeadline {
             return Poll::Pending;
         };
         if now >= deadline {
-            return self.finish(Ok(()));
+            return if report_due {
+                self.finish(Ok(()))
+            } else {
+                Poll::Pending
+            };
         }
         if self.sleep.is_none() {
             let clock = self.clock.clone();
@@ -148,7 +165,14 @@ impl Future for NoticeDeadline {
         };
         match result {
             Err(error) => self.finish(Err(error)),
-            Ok(Some(actual)) if after >= actual => self.finish(Ok(())),
+            Ok(Some(actual)) if after >= actual => {
+                self.sleep.take();
+                if report_due {
+                    self.finish(Ok(()))
+                } else {
+                    Poll::Pending
+                }
+            }
             Ok(Some(actual)) if actual == deadline => self.finish(Err(NoticeError::ClockViolation)),
             Ok(_) => {
                 self.sleep.take();
@@ -157,6 +181,12 @@ impl Future for NoticeDeadline {
                 Poll::Pending
             }
         }
+    }
+}
+impl Future for NoticeDeadline {
+    type Output = Result<(), NoticeError>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.poll_deadline(cx, true)
     }
 }
 impl Drop for NoticeDeadline {

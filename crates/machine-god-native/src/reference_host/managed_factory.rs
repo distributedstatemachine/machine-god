@@ -460,7 +460,8 @@ impl SharedManagedRuntimeFactoryOptions {
                 .set_model_preferences(preferences)
                 .map_err(|_| ManagedRuntimeError::Invalid)?;
         }
-        Ok(runtime)
+        Ok(runtime
+            .with_managed_model_catalog(self.services.managed_model_catalog.clone(), foreground))
     }
 }
 

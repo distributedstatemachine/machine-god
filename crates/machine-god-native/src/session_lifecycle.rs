@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 mod initial;
 #[cfg(all(
     feature = "ai-gateway-http",

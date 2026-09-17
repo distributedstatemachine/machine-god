@@ -5,7 +5,9 @@ mod delivery;
 mod events;
 mod fixture;
 mod foreground;
+mod notice_deadline;
 mod observation;
+mod relationship;
 use fixture::Fixture;
 use futures_executor::block_on;
 use machine_god_core::{ManagedFailureCode, ManagedRequested, ManagedSubagentAuthority};
@@ -541,6 +543,68 @@ fn permission_escalation_fails_before_runtime_preparation() {
         Some(ManagedFailureCode::PermissionDenied)
     );
     assert_eq!(fixture.factory.prepared.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn closing_nonresident_child_restricts_repair_without_changing_saved_policy() {
+    use machine_god_core::{ManagedAgentState, ManagedPermissionMode};
+    let mut fixture = Fixture::new(vec![]);
+    assert!(
+        fixture
+            .command(serde_json::json!({
+                "create": {"name": "saved-worker", "mode": "persistent"}
+            }))
+            .ok
+    );
+    fixture.restart_manager();
+    let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    let mut configuration = snapshot.head.configuration.clone();
+    configuration.permission_mode = ManagedPermissionMode::Yolo;
+    assert!(matches!(
+        block_on(
+            fixture
+                .journal
+                .mutate(snapshot, JournalMutation::Configure(configuration))
+        ),
+        Ok(store::JournalPublication::Confirmed(_))
+    ));
+    assert!(
+        fixture
+            .command(serde_json::json!({
+                "lifecycle": {"id": "child-1", "action": "close"}
+            }))
+            .ok
+    );
+    assert_eq!(
+        fixture.factory.prepared_modes.lock().unwrap().last(),
+        Some(&ManagedPermissionMode::Ask)
+    );
+    let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    assert_eq!(snapshot.head.status, ManagedAgentState::Archived);
+    assert_eq!(
+        snapshot.head.configuration.permission_mode,
+        ManagedPermissionMode::Yolo
+    );
+    assert!(fixture.factory.provider.requests().is_empty());
+    let reopen = fixture.command(serde_json::json!({
+        "lifecycle": {"id": "child-1", "action": "reopen"}
+    }));
+    assert_eq!(
+        reopen.error_code,
+        Some(ManagedFailureCode::PermissionDenied)
+    );
+    assert!(
+        fixture
+            .command(serde_json::json!({
+                "create": {"name": "subsequent-worker", "mode": "persistent"}
+            }))
+            .ok
+    );
+    fixture.manager.request_shutdown();
+    block_on(std::future::poll_fn(|cx| {
+        fixture.manager.poll_shutdown(cx, 101)
+    }))
+    .unwrap();
 }
 
 #[test]

@@ -105,7 +105,7 @@ pub(super) fn page_name(reference: &super::JournalPageRef) -> String {
 pub(super) fn acquire(
     root: &OwnedFd,
     limits: JournalLimits,
-) -> Result<(OwnedFd, usize, u64), Error> {
+) -> Result<(OwnedFd, Usage, u64), Error> {
     validate_private(root, true).map_err(|_| Error::Invalid)?;
     let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
     let owner = match rustix::fs::openat(
@@ -133,8 +133,13 @@ pub(super) fn acquire(
     rustix::fs::fsync(root).map_err(|_| Error::Persistence)?;
     let used = scan_usage(root, limits)?;
     if used
+        .bytes
         .checked_add(2 * FILE_OVERHEAD + 40)
         .is_none_or(|n| n > limits.aggregate_bytes)
+        || used
+            .entries
+            .checked_add(1)
+            .is_none_or(|n| n > limits.directory_entries)
     {
         return Err(Error::Limit);
     }
@@ -191,7 +196,12 @@ pub(super) fn validate_owner(shared: &Shared) -> Result<(), Error> {
     validate_link(&shared.root, OWNER, &shared.owner_lock).map_err(|_| Error::Conflict)
 }
 
-pub(super) fn scan_usage(root: &OwnedFd, limits: JournalLimits) -> Result<usize, Error> {
+pub(super) struct Usage {
+    pub bytes: usize,
+    pub entries: usize,
+}
+
+pub(super) fn scan_usage(root: &OwnedFd, limits: JournalLimits) -> Result<Usage, Error> {
     let directory = rustix::fs::openat(root, ".", READ | OFlags::DIRECTORY, Mode::empty())
         .map_err(|_| Error::Persistence)?;
     let mut stream = Dir::new(directory).map_err(|_| Error::Persistence)?;
@@ -228,7 +238,10 @@ pub(super) fn scan_usage(root: &OwnedFd, limits: JournalLimits) -> Result<usize,
             return Err(Error::Limit);
         }
     }
-    Ok(used)
+    Ok(Usage {
+        bytes: used,
+        entries: count,
+    })
 }
 
 pub(super) fn head_candidates(

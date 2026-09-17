@@ -106,6 +106,7 @@ struct Shared {
 }
 struct Accounting {
     used: usize,
+    entries: usize,
     reserved: usize,
     pending: Option<transaction::PendingPublication>,
     next_operation: u64,
@@ -152,7 +153,8 @@ impl ManagedJournal {
                             limits,
                             busy: AtomicBool::new(false),
                             state: Mutex::new(Accounting {
-                                used,
+                                used: used.bytes,
+                                entries: used.entries,
                                 reserved: 0,
                                 pending: None,
                                 next_operation: 1,

@@ -1,9 +1,9 @@
-use super::super::catalog::{NativeManagedCatalogError, NativeManagedCatalogFilter};
+use super::super::catalog::{
+    NativeManagedCatalogError, NativeManagedCatalogFilter, NativeManagedCatalogPage,
+};
 use super::*;
 
-fn read_page(
-    fixture: &mut Fixture,
-) -> Result<crate::NativeManagedCatalogPage, NativeManagedCatalogError> {
+fn read_page(fixture: &mut Fixture) -> Result<NativeManagedCatalogPage, NativeManagedCatalogError> {
     block_on(std::future::poll_fn(|cx| {
         let progress = fixture.manager.poll_progress(cx, 100);
         assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");

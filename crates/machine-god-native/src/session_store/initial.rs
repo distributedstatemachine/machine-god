@@ -1,13 +1,16 @@
 //! Exact initial-publication confirmation; observation alone is not durability.
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 use super::{
-    FileSessionStore, SessionNames, ensure_regular, lock_exclusive, map_io_error, open_lock,
-    revision_conflict, serialization_failed, serialize_record, sync_file, validate_record_json,
+    FileSessionScanControl, FileSessionScanError, FileSessionStore, SessionNames, ensure_regular,
+    lock_exclusive, map_io_error, open_lock, revision_conflict, serialize_record, sync_file,
 };
+use super::{serialization_failed, validate_record_json};
 use crate::NativeSessionMetadata;
-use machine_god_core::{
-    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStoreError,
-};
+#[cfg(any(test, feature = "ai-gateway-http"))]
+use machine_god_core::SessionRevision;
+use machine_god_core::{SessionId, SessionIncarnationId, SessionRecord, SessionStoreError};
+#[cfg(any(test, feature = "ai-gateway-http"))]
 use rustix::{
     fd::AsFd,
     fs::{AtFlags, Mode, OFlags},
@@ -31,9 +34,37 @@ pub(super) fn initial_record(
     Ok(record)
 }
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 impl FileSessionStore {
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn create_record_with_metadata_controlled(
+        &self,
+        id: SessionId,
+        incarnation: SessionIncarnationId,
+        metadata: &NativeSessionMetadata,
+        control: &FileSessionScanControl,
+    ) -> Result<SessionRecord, FileSessionScanError> {
+        let mut record = initial_record(id, incarnation, metadata)?;
+        self.save_controlled(&mut record, None, control)?;
+        Ok(record)
+    }
+
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn confirm_initial_record_controlled(
+        &self,
+        id: SessionId,
+        incarnation: SessionIncarnationId,
+        metadata: &NativeSessionMetadata,
+        control: &FileSessionScanControl,
+    ) -> Result<Option<SessionRecord>, FileSessionScanError> {
+        self.confirm_initial_record_with_control(id, incarnation, metadata, Some(control), |file| {
+            sync_file(file)
+        })
+    }
+
     /// Reconcile only the exact canonical bytes originally published by typed
     /// creation. Never rewrite, regenerate, or execute anything on uncertainty.
+    #[cfg(test)]
     pub(crate) fn confirm_initial_record(
         &self,
         id: SessionId,
@@ -43,19 +74,36 @@ impl FileSessionStore {
         self.confirm_initial_record_with(id, incarnation, metadata, |file| sync_file(file))
     }
 
+    #[cfg(test)]
     fn confirm_initial_record_with(
         &self,
         id: SessionId,
         incarnation: SessionIncarnationId,
         metadata: &NativeSessionMetadata,
-        mut sync: impl FnMut(rustix::fd::BorrowedFd<'_>) -> Result<(), rustix::io::Errno>,
+        sync: impl FnMut(rustix::fd::BorrowedFd<'_>) -> Result<(), rustix::io::Errno>,
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
+        self.confirm_initial_record_with_control(id, incarnation, metadata, None, sync)
+            .map_err(FileSessionScanError::ordinary)
+    }
+
+    fn confirm_initial_record_with_control(
+        &self,
+        id: SessionId,
+        incarnation: SessionIncarnationId,
+        metadata: &NativeSessionMetadata,
+        control: Option<&FileSessionScanControl>,
+        mut sync: impl FnMut(rustix::fd::BorrowedFd<'_>) -> Result<(), rustix::io::Errno>,
+    ) -> Result<Option<SessionRecord>, FileSessionScanError> {
+        super::check_scan(control)?;
         let mut expected = initial_record(id, incarnation, metadata)?;
         expected.revision = SessionRevision(1);
         let bytes = serialize_record(&expected)?;
         let names = SessionNames::for_id(&expected.id);
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
-        let _guard = lock_exclusive(&lock)?;
+        let _guard = match control {
+            Some(control) => control.lock(&lock)?,
+            None => lock_exclusive(&lock)?,
+        };
         let file = match rustix::fs::openat(
             &self.root,
             &names.data,
@@ -69,31 +117,32 @@ impl FileSessionStore {
                 sync(self.root.as_fd()).map_err(map_io_error)?;
                 return Ok(None);
             }
-            Err(error) => return Err(map_io_error(error)),
+            Err(error) => return Err(map_io_error(error).into()),
         };
         let observed = ensure_regular(&file)?;
         if usize::try_from(observed.st_size).ok() != Some(bytes.len()) {
-            return Err(revision_conflict());
+            return Err(revision_conflict().into());
         }
         // Expected bytes are bounded typed metadata, not an arbitrary transcript.
         // Stream comparison retains one fixed buffer and one overflow byte.
         let mut offset = 0;
         let mut chunk = [0_u8; 4096];
         loop {
+            super::check_scan(control)?;
             let limit = (bytes.len() - offset + 1).min(chunk.len());
             let read = match rustix::io::read(&file, &mut chunk[..limit]) {
                 Ok(read) => read,
                 Err(rustix::io::Errno::INTR) => continue,
-                Err(error) => return Err(map_io_error(error)),
+                Err(error) => return Err(map_io_error(error).into()),
             };
             if read == 0 {
                 if offset != bytes.len() {
-                    return Err(revision_conflict());
+                    return Err(revision_conflict().into());
                 }
                 break;
             }
             if bytes.get(offset..offset + read) != Some(&chunk[..read]) {
-                return Err(revision_conflict());
+                return Err(revision_conflict().into());
             }
             offset += read;
         }
@@ -103,12 +152,13 @@ impl FileSessionStore {
         let linked = rustix::fs::statat(&self.root, &names.data, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(map_io_error)?;
         if !same_version(&observed, &retained) || !same_version(&retained, &linked) {
-            return Err(revision_conflict());
+            return Err(revision_conflict().into());
         }
         Ok(Some(expected))
     }
 }
 
+#[cfg(any(test, feature = "ai-gateway-http"))]
 fn same_version(left: &rustix::fs::Stat, right: &rustix::fs::Stat) -> bool {
     left.st_dev == right.st_dev
         && left.st_ino == right.st_ino

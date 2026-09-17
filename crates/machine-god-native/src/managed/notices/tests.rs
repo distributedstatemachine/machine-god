@@ -614,6 +614,37 @@ fn cancellation_drop_and_competing_timer_refund_only_the_exact_observer() {
     assert_eq!(clock.active(), 0);
 }
 
+#[test]
+fn rearm_under_due_pressure_keeps_change_subscription_without_ready_spin() {
+    let clock = Clock::new();
+    let manager = manager(&clock);
+    let work = work(&manager, "child", interval_policy(10, None));
+    manager.start_work(&work, nz(1), None).unwrap();
+    clock.advance(10);
+    let mut deadline = manager.wait_deadline(CancellationToken::new());
+    assert_eq!(
+        Pin::new(&mut deadline).poll_rearm(&mut Context::from_waker(noop_waker_ref())),
+        Poll::Pending
+    );
+    assert_eq!(clock.active(), 0);
+    assert_eq!(
+        poll(&mut manager.wait_deadline(CancellationToken::new())),
+        Poll::Ready(Err(NoticeError::Busy))
+    );
+    assert_eq!(poll(&mut deadline), Poll::Ready(Ok(())));
+    assert!(
+        manager
+            .observe_due(&observe(&work, 2, ManagedAgentState::Running))
+            .is_ok()
+    );
+    let mut next = manager.wait_deadline(CancellationToken::new());
+    assert_eq!(
+        Pin::new(&mut next).poll_rearm(&mut Context::from_waker(noop_waker_ref())),
+        Poll::Pending
+    );
+    assert_eq!(clock.active(), 1);
+}
+
 fn maximal_instant(base: Instant) -> Instant {
     let mut low = 0u64;
     let mut high = u64::MAX;

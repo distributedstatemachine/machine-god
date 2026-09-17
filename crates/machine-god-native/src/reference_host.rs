@@ -1872,6 +1872,7 @@ impl NativeReferenceHost {
                 terminal_lifecycle,
                 terminal_background,
                 model_routes,
+                managed_model_catalog: crate::conversation_runtime::SharedModelCatalog::default(),
                 observations,
                 permission_preparation: permissions
                     .as_ref()

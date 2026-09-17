@@ -1,5 +1,11 @@
 //! Retained exact candidate for managed runtime creation and explicit repair.
 
+#[cfg(all(
+    feature = "ai-gateway-http",
+    any(target_os = "linux", target_os = "macos")
+))]
+mod controlled;
+
 use super::{
     LifecycleOperation, NativeSessionLifecycle, NativeSessionLifecycleError,
     NativeSessionLifecycleErrorKind, map_store_error,
@@ -26,6 +32,7 @@ impl NativeSessionLifecycle {
 
     /// Reserve the exact candidate before any initial publication. The caller
     /// retains this receipt across errors instead of regenerating its identity.
+    #[cfg(test)]
     pub(crate) fn prepare_initial(
         &self,
         id: SessionId,
@@ -64,6 +71,7 @@ pub(crate) struct NativeInitialSession {
 }
 
 impl NativeInitialSession {
+    #[cfg(test)]
     pub(crate) fn publish(
         &mut self,
     ) -> BoxFuture<'_, Result<Session, NativeSessionLifecycleError>> {
@@ -87,6 +95,7 @@ impl NativeInitialSession {
 
     /// Explicit synchronization, not readback-as-confirmation. A caller keeps
     /// this same receipt on errors; neither this nor publish retries creation.
+    #[cfg(test)]
     pub(crate) fn reconcile(
         &mut self,
     ) -> BoxFuture<'_, Result<Option<Session>, NativeSessionLifecycleError>> {
@@ -110,6 +119,7 @@ impl NativeInitialSession {
         })
     }
 
+    #[cfg(test)]
     async fn load_exact(
         &self,
         expected: SessionRecord,
