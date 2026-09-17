@@ -5,20 +5,40 @@ use std::sync::atomic::Ordering;
 const NAME: &str = "pty-worker";
 const PARENT: &[u8] = b"parent draft stays";
 
+fn catalog(terminal: &mut Terminal, filter: &str, row: Option<&str>) {
+    const HEADING: &str = "Agents & processes · clipped previews\r\n";
+    const END: &str = "Arrows select/scroll · /create /configure /processes\r\n\r\x1b[2K> \x1b[3G";
+    let heading = format!("{HEADING}Catalog({filter})\r\n");
+    // Observe one complete, nonbusy frame, not a row/footer left by a pending
+    // catalog. The final composer is physical output, not a flush ACK; the
+    // driver's exact-frame deferred-selection tests cover that separate race.
+    terminal.wait_for_output("complete nonbusy managed catalog", |output| {
+        let Some(start) = output
+            .windows(HEADING.len())
+            .rposition(|window| window == HEADING.as_bytes())
+        else {
+            return false;
+        };
+        let frame = &output[start..];
+        frame.starts_with(heading.as_bytes())
+            && frame.ends_with(END.as_bytes())
+            && row.is_none_or(|row| frame.windows(row.len()).any(|part| part == row.as_bytes()))
+    });
+}
+
 fn open(terminal: &mut Terminal) {
     terminal.output.clear();
     terminal.send(b"\x18");
-    terminal.wait_for(b"Catalog(Current)\r\n");
-    terminal.wait_for(b"Arrows select/scroll");
+    catalog(terminal, "Current", None);
 }
 
 fn line(terminal: &mut Terminal, text: &str) {
     terminal.output.clear();
     terminal.send(text.as_bytes());
-    // The edited composer must be physically presented before Enter can use
-    // its new native frame. A same-chunk Enter deliberately grants no ACK.
-    // Slash commands also occur in the menu footer; only the complete edited
-    // composer (including its cursor placement) acknowledges this input.
+    // Observe the edited composer before submitting it. A same-chunk Enter
+    // deliberately grants no ACK.
+    // Slash commands also occur in the menu footer; observe the complete edited
+    // composer, including its cursor placement, without mistaking it for an ACK.
     assert!(text.is_ascii() && text.len() < 76);
     let composer = format!("\r\x1b[2K> {text}\x1b[{}G", text.len() + 3);
     terminal.wait_for(composer.as_bytes());
@@ -32,10 +52,9 @@ fn create(terminal: &mut Terminal) {
         &format!("/create {{\"name\":\"{NAME}\",\"mode\":\"persistent\"}}"),
     );
     terminal.wait_for(b"Created");
-    terminal.wait_for(b"Catalog(Current)\r\n");
+    catalog(terminal, "Current", Some("pty-worker [Idle, g1]"));
     line(terminal, "/refresh");
-    terminal.wait_for(b"Catalog(Current)\r\n");
-    terminal.wait_for(b"pty-worker [Idle, g1]");
+    catalog(terminal, "Current", Some("pty-worker [Idle, g1]"));
 }
 
 fn parent(terminal: &mut Terminal) {
@@ -77,7 +96,7 @@ fn release_cli_managed_create_archive_and_reopen_survive_process_restart() {
     let mut terminal = Terminal::spawn(&mut fixture.release_command());
     terminal.wait_for(b"> ");
     open(&mut terminal);
-    terminal.wait_for(b"pty-worker [Idle, g1]");
+    catalog(&mut terminal, "Current", Some("pty-worker [Idle, g1]"));
     line(&mut terminal, "/close");
     terminal.wait_for(b"ConfirmClose\r\n");
     terminal.wait_for(b"Close and archive this agent?");
@@ -85,8 +104,7 @@ fn release_cli_managed_create_archive_and_reopen_survive_process_restart() {
     terminal.wait_for(b"LifecycleChanged");
     terminal.wait_for(b"Agent(Status)\r\n");
     line(&mut terminal, "/archived");
-    terminal.wait_for(b"Catalog(Archived)\r\n");
-    terminal.wait_for(b"pty-worker [Archived, g1]");
+    catalog(&mut terminal, "Archived", Some("pty-worker [Archived, g1]"));
     parent(&mut terminal);
     finish(terminal);
 
@@ -94,15 +112,14 @@ fn release_cli_managed_create_archive_and_reopen_survive_process_restart() {
     terminal.wait_for(b"> ");
     open(&mut terminal);
     line(&mut terminal, "/archived");
-    terminal.wait_for(b"Catalog(Archived)\r\n");
-    terminal.wait_for(b"pty-worker [Archived, g1]");
+    catalog(&mut terminal, "Archived", Some("pty-worker [Archived, g1]"));
     line(&mut terminal, "/reopen");
     terminal.wait_for(b"LifecycleChanged");
-    terminal.wait_for(b"Catalog(Archived)\r\n");
+    catalog(&mut terminal, "Archived", None);
     // Reopen advances generation; select it afresh instead of reusing an old
     // editor, observation or draft as authority for the replacement runtime.
     line(&mut terminal, "/current");
-    terminal.wait_for(b"pty-worker [Idle, g2]");
+    catalog(&mut terminal, "Current", Some("pty-worker [Idle, g2]"));
     parent(&mut terminal);
     finish(terminal);
 }

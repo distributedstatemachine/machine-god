@@ -301,26 +301,28 @@ impl Terminal {
     }
 
     pub fn wait_for(&mut self, bytes: &[u8]) {
+        self.wait_for_output(&String::from_utf8_lossy(bytes), |output| {
+            output.windows(bytes.len()).any(|window| window == bytes)
+        });
+    }
+
+    pub fn wait_for_output(&mut self, description: &str, ready: impl Fn(&[u8]) -> bool) {
         let deadline = Instant::now() + DEADLINE;
         loop {
             self.drain();
-            if self
-                .output
-                .windows(bytes.len())
-                .any(|window| window == bytes)
-            {
+            if ready(&self.output) {
                 return;
             }
             assert!(
                 self.child.poll().is_none(),
                 "CLI exited before expected output {:?}: {}",
-                String::from_utf8_lossy(bytes),
+                description,
                 String::from_utf8_lossy(&self.output)
             );
             assert!(
                 Instant::now() < deadline,
                 "CLI output deadline waiting for {:?}: {}",
-                String::from_utf8_lossy(bytes),
+                description,
                 String::from_utf8_lossy(&self.output)
             );
             std::thread::sleep(Duration::from_millis(2));

@@ -206,3 +206,47 @@ direct signaling, preserves every direct error and observation failure, adds no
 wait or global scan, and leaves final quiescence and actual reap obligations
 intact. Replacement focused/full gates and three fresh whole-feature reviews
 remain required; diagnosis is not an acceptance review.
+
+Candidate `22d0068c` passed both complete build gates, static/platform checks,
+the native Apple ABI probe and both new Darwin dispatch regressions. Its first
+macOS background filter reported 112 passes and one failure: the valid one-shot
+inventory helper produced no output within the original 250 ms deadline.
+Collection correctly rejected it; the delay before first output remains
+unattributed. The source paths involved are unchanged from the feature base.
+Ten isolated repetitions and a later complete background filter passed unchanged
+(113 passes, two private-helper entrypoints ignored), as did all 17 remaining
+managed repair tests. Those repetitions are not an inventory cause or source fix.
+The initial failure and diagnostic logs remain retained alongside the recheck.
+
+The subsequent Linux run passed its focused native and CLI selections, then
+failed the complete CLI suite: 597 passes, one failure and six private-helper
+entrypoints ignored. The managed PTY child-conversation test sent Enter after
+catalog creation/refresh and received the stale/busy/not-displayed input notice
+instead of opening the conversation. The full native/doc/Python runtime stages
+and full macOS runtime were not reached. Its focused earlier invocation passed;
+this does not resolve the failure under normal CLI-suite concurrency. Logs use
+the candidate SHA under the same retained directory. No fresh acceptance review
+or remote delivery was attempted for this failed gate.
+
+Read-only diagnosis established a visible-frame/flush-acknowledgement gap:
+the renderer writes the composer before the separate output flush, and input
+polling can precede consumption of even an already-ready flush acknowledgement.
+An Enter received there binds no displayed frame and is rejected permanently.
+The captured failure does not distinguish that ordering from a still-pending or
+partially rendered catalog. Waiting for composer bytes alone cannot establish
+native display acknowledgement. The physical fixture now observes one complete
+nonbusy catalog, including its expected row and final composer, rather than
+combining substrings from different frames. Product repair and deterministic
+delayed-acknowledgement coverage are separate from that fixture correction.
+
+The replacement retains at most one bare catalog selection with the original
+editor, native frame and local render revision. It waits for that exact real
+flush acknowledgement and revokes on intervening mixed/edit/partial input,
+navigation, replacement, modal ownership and shutdown. Commands, messages and
+close confirmations do not defer; native polling order and progress are unchanged.
+Nine deterministic regressions force delayed/already-ready acknowledgements,
+stale native/local revisions, receipt-before-decode ordering and revocation.
+The existing blocked-output child-progress regression retains its execution
+assertions and now checks pending selection rather than the old rejection.
+This implementation and fixture correction still require execution and fresh
+whole-feature acceptance; earlier passing repetitions are not their evidence.

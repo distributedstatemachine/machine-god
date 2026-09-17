@@ -594,7 +594,13 @@ inspection results and pending commands without replacing its parent runtime.
 Editor identities and rendered frame revisions are distinct. A typed navigation
 action requires the exact current frame's successful flush acknowledgement;
 resize, replacement, retirement and a different owner's frame cannot authorize
-an action. Close first opens a separate confirmation frame. Its confirmed command
+an action. A single bare Enter on an empty, selectable, nonbusy catalog may
+retain one pending selection for its exact rendered editor/frame and local
+render revision. Only that frame's real flush acknowledgement can admit it;
+intervening input, edits or view invalidation revoke it. Mixed input chunks,
+commands and child messages never acquire deferred selection authority, and
+visible composer bytes are not a flush acknowledgement.
+Close first opens a separate confirmation frame. Its confirmed command
 still checks the original observed journal head. Closing a view cancels pending
 preacceptance intent and retains the original request through settlement, without
 turning view closure into durable child cancellation.

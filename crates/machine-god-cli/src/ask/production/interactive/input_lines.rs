@@ -23,6 +23,8 @@ pub(super) enum InputBinding {
     Agents {
         editor: machine_god_native::NativeManagedEditorIdentity,
         frame: Option<machine_god_native::NativeManagedFrameIdentity>,
+        /// Exact selectable catalog render, not display authority until its flush ACK.
+        pending_frame: Option<(machine_god_native::NativeManagedFrameIdentity, u64)>,
     },
     Skills {
         epoch: NativeSkillDraftIdentity,
@@ -52,6 +54,9 @@ impl InputBinding {
     /// remove authority from every event subsequently decoded from this chunk.
     fn revoke_mixed_deferred_selection(&mut self, bytes: &[u8]) {
         match self {
+            Self::Agents { pending_frame, .. } if !matches!(bytes, b"\r" | b"\n") => {
+                *pending_frame = None;
+            }
             Self::Skills { pending_frame, .. }
                 if bytes
                     .iter()

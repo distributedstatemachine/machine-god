@@ -23,6 +23,7 @@ impl Driver {
             self.sync_agent_draft_editor(&InputBinding::Agents {
                 editor: view.editor,
                 frame: None,
+                pending_frame: None,
             });
         }
         self.invalidate_agents();
@@ -84,6 +85,7 @@ impl Driver {
             self.sync_agent_draft_editor(&InputBinding::Agents {
                 editor: editor.clone(),
                 frame: None,
+                pending_frame: None,
             });
             self.invalidate_agents();
             self.note(b"\n[agent draft edit rejected; previous draft retained]\n");

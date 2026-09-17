@@ -6,6 +6,8 @@ use native::{NativeManagedInteractiveStartup, NativeManagedNavigationRoute as Ro
 use std::io::Write as _;
 #[path = "agents/models.rs"]
 mod models;
+#[path = "agents/selection_ack.rs"]
+mod selection_ack;
 #[path = "agents/skills.rs"]
 mod skills;
 
@@ -511,6 +513,7 @@ fn catalog_and_process_refresh_consume_only_admitted_local_command_text() {
             &InputBinding::Agents {
                 editor,
                 frame: None,
+                pending_frame: None,
             },
         );
         assert_eq!(harness.driver.input.raw_draft(), Some(("/refresh", 8)));
@@ -971,7 +974,7 @@ fn held_agent_flush_does_not_authorize_enter_or_hold_child_execution() {
         harness.input_writer.write_all(b"\x18").unwrap();
         hold_frame(&mut harness).await;
         harness.input_writer.write_all(b"\r").unwrap();
-        input_until(&mut harness, |driver| driver.notice.is_some()).await;
+        input_until(&mut harness, Driver::has_pending_agents_selection).await;
         assert!(matches!(harness.driver.owner.managed_navigation().unwrap().route, Route::Catalog(_)));
         let child = harness.driver.owner.managed_agents()[0].id.clone();
         let mut response = harness.driver.owner.request_managed_command(

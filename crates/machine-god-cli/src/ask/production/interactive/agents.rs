@@ -19,6 +19,10 @@ pub(super) struct Ui {
     parent: BackgroundOutputOwner,
     drawn: Option<NativeManagedFrameIdentity>,
     acknowledged: Option<NativeManagedFrameIdentity>,
+    render_revision: Option<u64>,
+    acknowledged_revision: Option<u64>,
+    pending_frame: Option<(NativeManagedFrameIdentity, u64)>,
+    pending_selection: Option<InputBinding>,
     draft_dirty: bool,
     detail_offset: usize,
     detail_source: Option<NativeManagedFrameIdentity>,
@@ -60,6 +64,10 @@ impl Driver {
             parent: principal(&self.owner),
             drawn: None,
             acknowledged: None,
+            render_revision: Some(0),
+            acknowledged_revision: None,
+            pending_frame: None,
+            pending_selection: None,
             draft_dirty: true,
             detail_offset: 0,
             detail_source: None,
@@ -69,6 +77,15 @@ impl Driver {
     }
 
     pub(super) fn sync_agents(&mut self) {
+        if self.agents.as_ref().is_some_and(|ui| {
+            ui.pending_frame.as_ref().is_some_and(|(frame, _)| {
+                self.owner.managed_navigation().is_none_or(|view| {
+                    view.frame != *frame || view.busy || !matches!(view.route, Route::Catalog(_))
+                })
+            })
+        }) {
+            self.discard_pending_agents_selection();
+        }
         if self.owner.managed_navigation().is_none()
             && let Some(ui) = self.agents.take()
         {
@@ -91,15 +108,39 @@ impl Driver {
         let ui = self.agents.as_ref()?;
         Some(InputBinding::Agents {
             editor: view.editor,
+            pending_frame: ui
+                .pending_frame
+                .as_ref()
+                .filter(|(frame, _)| {
+                    *frame == view.frame
+                        && !view.busy
+                        && matches!(view.route, Route::Catalog(_))
+                        && self.input.raw_draft() == Some(("", 0))
+                })
+                .cloned(),
             frame: ui
                 .acknowledged
                 .as_ref()
-                .filter(|frame| **frame == view.frame)
+                .filter(|frame| {
+                    **frame == view.frame
+                        && ui
+                            .pending_frame
+                            .as_ref()
+                            .is_none_or(|(_, revision)| ui.acknowledged_revision == Some(*revision))
+                })
                 .cloned(),
         })
     }
 
     pub(super) fn acknowledge_agents(&mut self, binding: &InputBinding) {
+        if self.shutting_down
+            || !self.scope_active
+            || self.modal.is_some()
+            || self.saved_rule.is_some()
+        {
+            self.discard_pending_agents_selection();
+            return;
+        }
         if let InputBinding::Agents {
             frame: Some(frame), ..
         } = binding
@@ -107,10 +148,99 @@ impl Driver {
             && let Some(ui) = &mut self.agents
         {
             ui.acknowledged = Some(frame.clone());
+            if let InputBinding::Agents {
+                pending_frame: Some(pending),
+                ..
+            } = binding
+                && ui.pending_frame.as_ref() == Some(pending)
+            {
+                ui.acknowledged_revision = Some(pending.1);
+            }
+        }
+        let intent = self
+            .agents
+            .as_mut()
+            .and_then(|ui| ui.pending_selection.take());
+        if let Some(intent @ InputBinding::Agents { .. }) = intent
+            && let (
+                InputBinding::Agents {
+                    pending_frame: expected,
+                    ..
+                },
+                InputBinding::Agents {
+                    pending_frame: actual,
+                    ..
+                },
+            ) = (&intent, binding)
+            && expected == actual
+            && self.pending_agents_selection_current(&intent)
+        {
+            self.select_pending_agent(&intent);
+        }
+    }
+
+    pub(super) fn discard_pending_agents_selection(&mut self) {
+        if let Some(ui) = &mut self.agents {
+            ui.pending_frame = None;
+            ui.pending_selection = None;
+            ui.acknowledged_revision = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_pending_agents_selection(&self) -> bool {
+        self.agents
+            .as_ref()
+            .is_some_and(|ui| ui.pending_selection.is_some())
+    }
+
+    fn pending_agents_selection_current(&self, binding: &InputBinding) -> bool {
+        let InputBinding::Agents {
+            editor,
+            pending_frame: Some(pending),
+            ..
+        } = binding
+        else {
+            return false;
+        };
+        !self.shutting_down
+            && self.scope_active
+            && self.modal.is_none()
+            && self.saved_rule.is_none()
+            && self.input.raw_draft() == Some(("", 0))
+            && self
+                .agents
+                .as_ref()
+                .is_some_and(|ui| ui.pending_frame.as_ref() == Some(pending))
+            && self.owner.managed_navigation().is_some_and(|view| {
+                view.editor == *editor
+                    && view.frame == pending.0
+                    && !view.busy
+                    && matches!(view.route, Route::Catalog(_))
+            })
+    }
+
+    fn select_pending_agent(&mut self, binding: &InputBinding) {
+        let InputBinding::Agents {
+            pending_frame: Some((frame, revision)),
+            ..
+        } = binding
+        else {
+            return;
+        };
+        if self.agents.as_ref().is_some_and(|ui| {
+            ui.acknowledged.as_ref() == Some(frame) && ui.acknowledged_revision == Some(*revision)
+        }) {
+            // Only catalog navigation; never reinterpret retained input as a
+            // command, message, form submission or close confirmation.
+            let _ = self.owner.submit_managed_frame(frame, Action::Select, "");
+            self.discard_pending_agents_selection();
+            self.sync_agents();
         }
     }
 
     pub(super) fn invalidate_agents(&mut self) {
+        self.discard_pending_agents_selection();
         if let Some(ui) = &mut self.agents {
             ui.drawn = None;
             ui.acknowledged = None;
@@ -121,6 +251,9 @@ impl Driver {
     }
 
     pub(super) fn agents_event(&mut self, event: &ComposerEvent, binding: &InputBinding) -> bool {
+        if !matches!(event, ComposerEvent::Submit(line) if line.is_empty()) {
+            self.discard_pending_agents_selection();
+        }
         if matches!(event, ComposerEvent::AgentsRequested) {
             if let InputBinding::Agents { editor, .. } = binding
                 && self
@@ -137,7 +270,7 @@ impl Driver {
             }
             return true;
         }
-        let InputBinding::Agents { editor, frame } = binding else {
+        let InputBinding::Agents { editor, frame, .. } = binding else {
             return false;
         };
         if self
@@ -145,6 +278,21 @@ impl Driver {
             .managed_navigation()
             .is_none_or(|view| view.editor != *editor)
         {
+            return true;
+        }
+        if frame.is_none()
+            && matches!(event, ComposerEvent::Submit(line) if line.is_empty())
+            && self.pending_agents_selection_current(binding)
+        {
+            if self.agents.as_ref().is_some_and(|ui| {
+                ui.pending_frame
+                    .as_ref()
+                    .is_some_and(|(_, revision)| ui.acknowledged_revision == Some(*revision))
+            }) {
+                self.select_pending_agent(binding);
+            } else if let Some(ui) = &mut self.agents {
+                ui.pending_selection.get_or_insert_with(|| binding.clone());
+            }
             return true;
         }
         if self.scroll_agents(event, frame.as_ref()) {
@@ -446,7 +594,22 @@ impl Driver {
         };
         ui.drawn = Some(view.frame.clone());
         ui.draft_dirty = false;
+        ui.render_revision = ui
+            .render_revision
+            .and_then(|revision| revision.checked_add(1));
+        ui.pending_frame = ui
+            .render_revision
+            .filter(|_| {
+                frame.selectable
+                    && !view.busy
+                    && matches!(view.route, Route::Catalog(_))
+                    && draft == ("", 0)
+            })
+            .map(|revision| (view.frame.clone(), revision));
+        ui.pending_selection = None;
+        ui.acknowledged_revision = None;
         let confirm = Some(InputBinding::Agents {
+            pending_frame: ui.pending_frame.clone(),
             frame: (frame.selectable
                 && (view.form.is_none() || ui.form_editor.as_ref() == Some(&view.editor))
                 && (view.models.is_none() || ui.form_editor.as_ref() == Some(&view.editor))

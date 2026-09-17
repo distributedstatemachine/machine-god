@@ -58,6 +58,7 @@ impl Driver {
             self.sync_agent_query_editor(&InputBinding::Agents {
                 editor: editor.clone(),
                 frame: None,
+                pending_frame: None,
             });
             self.invalidate_agents();
             self.note(b"\n[query rejected; previous query retained]\n");

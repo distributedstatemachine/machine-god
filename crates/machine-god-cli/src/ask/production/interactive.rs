@@ -780,6 +780,7 @@ impl Driver {
             return;
         }
         self.shutting_down = true;
+        self.discard_pending_agents_selection();
         if let Some(picker) = &mut self.picker {
             picker.close();
         }

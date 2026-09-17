@@ -379,6 +379,9 @@ impl Driver {
     }
 
     fn poll_raw_input(&mut self, cx: &mut Context<'_>, binding: InputBinding, now_ms: i64) {
+        if !matches!(binding, InputBinding::Agents { .. }) {
+            self.discard_pending_agents_selection();
+        }
         if binding.picker_view().is_none() {
             self.revoke_pending_picker_selection();
         }
@@ -390,11 +393,13 @@ impl Driver {
         let mut edit_failed = false;
         let mut received_nonselection = false;
         let mut received_non_picker_selection = false;
+        let mut received_non_agent_selection = false;
         let polled = self.input.poll_event_observed(
             cx,
             binding,
             context,
             |bytes| {
+                received_non_agent_selection = !matches!(bytes, b"\r" | b"\n");
                 received_non_picker_selection = bytes.iter().any(|byte| *byte != b'\r');
                 received_nonselection = bytes
                     .iter()
@@ -423,6 +428,9 @@ impl Driver {
                 }
             },
         );
+        if received_non_agent_selection {
+            self.discard_pending_agents_selection();
+        }
         if received_non_picker_selection {
             self.revoke_pending_picker_selection();
         }
