@@ -123,7 +123,7 @@ pub(super) async fn mutate_admitted(
     .await
 }
 
-async fn confirm(
+pub(super) async fn confirm(
     journal: &ManagedJournal,
     gate: &RetryGate,
     lease: Option<&super::super::actor::ManagedCommandActor>,
@@ -137,7 +137,17 @@ async fn confirm(
             Ok(JournalPublication::Confirmed(snapshot)) => return Ok(*snapshot),
             Ok(JournalPublication::Ambiguous(receipt)) => break receipt,
             Ok(JournalPublication::NotApplied) => return Err(Failure::NotApplied),
+            Err(JournalError::Limit) if lease.is_some() => {
+                // This command has not been accepted. Queue, encoded-size and
+                // retained-storage limits cannot be repaired by occupying the
+                // serialized journal lane: accepted work may need that lane to
+                // drain the full FIFO. Return the bounded rejection instead.
+                return Err(Failure::Rejected(JournalError::Limit));
+            }
             Err(JournalError::Busy | JournalError::Limit) => {
+                // Already-accepted internal work has no admitted command lease.
+                // Keep its exact settlement custody, including under limits;
+                // neither a rejection nor observer loss can undo acceptance.
                 gate.blocked(ManagerBlock::Capacity).await;
             }
             Err(error) => return Err(Failure::Rejected(error)),

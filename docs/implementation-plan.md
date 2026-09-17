@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34954002729` (`GREEN`)
 - Active branch: `agent/m65-managed-subagents`
 - Active phase: `M05 complete managed-agent tool and CLI implementation`
-- Next gate: `verify execution-time relationship consent across ACP and CLI with focused and complete Linux/macOS gates, then three fresh whole-feature reviews`
+- Next gate: `fix the reviewed preacceptance FIFO-limit deadlock, run focused and complete Linux/macOS replacement gates, then three fresh whole-feature reviews`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills, MCP and ACP are delivered.

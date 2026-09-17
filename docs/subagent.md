@@ -471,8 +471,11 @@ the registered principal/turn; public IDs cannot supply this admission.
 The outer manager polls one FIFO and owns each dequeued command, admitted lease,
 original context, cancellation token and reply. A queue entry is not durable
 acceptance or authorization to execute after its original admission retires.
-The manager retains a Busy/Limit head job without bypassing it; only confirmed
-journal acceptance may schedule effects.
+The manager retains a Busy head job for explicit capacity retry. A definite
+preacceptance journal Limit instead rejects the command with `ResourceLimit`
+and releases its command lane, allowing previously accepted FIFO work and
+subsequent commands to progress. Only confirmed journal acceptance may schedule
+effects.
 
 One aggregate mailbox budget covers queued commands, dequeued in-flight jobs and
 completed replies with slow observers. Defaults are 64 requests and 256 MiB of
@@ -560,7 +563,12 @@ stricter of the saved child mode and current caller mode. The durable child
 configuration stays unchanged, and explicit reopen still rejects escalation.
 
 Journal publication, receipt reconciliation and execution admission have separate
-states. Busy/limit pressure retains the original FIFO operation. Ambiguity parks
+states. Busy pressure retains the original FIFO operation. A definite Limit
+before command acceptance returns `ResourceLimit`; it cannot park an overflowing
+message behind the accepted work that must drain to free queue capacity.
+Already-accepted internal writes, including settlement after a durable cancel
+or close intent, retain their original custody on capacity pressure.
+Ambiguity parks
 on explicit retry with its original proposal and resources; capacity becoming
 available does not automatically retry an uncertain publication. Cancellation
 intent precedes the signal, and ordinary lifecycle observers wait for settlement.

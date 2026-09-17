@@ -332,3 +332,31 @@ The retained log is
 `/tmp/mg-managed-implementation.V0ZGg1/managed-denial-repair-macos-9a735e2e.log`.
 This verifies those narrow corrections, not whole-feature acceptance; full
 runtime gates were not started for the candidate with the known ACP defect.
+
+Candidate `1386575a2fb398b43fd2580754d5d37d4af33fb4` integrated exact
+execution-time consent, the incoming repository banner changes and bounded
+verified-mirror failover for the pinned Zig benchmark download. Its complete
+local Linux/macOS build, runtime, static and platform gates passed. Linux native
+passed 4,015 tests; macOS native passed 4,022 tests. The CLI suites passed 609
+and 611 tests respectively, and all 275 repository Python tests passed.
+Logs remain under `/tmp/mg-managed-implementation.V0ZGg1/`, including
+`managed-full-runtime-linux-1386575a.log` and
+`managed-full-runtime-macos-1386575a.log`. These are local regression results,
+not remote delivery or performance evidence.
+
+The fresh R3 correctness reviewer (`m65_r3_correctness`) rejected that candidate
+with one source-backed P1: a persistent child's default 64-item FIFO returned
+`JournalError::Limit` on the next submission, but durability confirmation parked
+that command as capacity pressure. Its active command paused the target and
+occupied the sole journal lane needed to remove accepted FIFO work, admit
+cancellation or publish sibling writes. Explicit retry reused the same full
+snapshot. No runtime reproduction was claimed by the source-only reviewer.
+The other two review tracks did not start because the host rejected new threads
+with its thread-limit error; this was not a three-track acceptance cycle.
+
+The correction distinguishes definite preacceptance Limit rejection from Busy
+retry and already-accepted settlement. A rejected command returns `ResourceLimit`
+without holding the journal lane. Internal writes after durable acceptance and
+ambiguous publication retain their original custody. The R3 reviewer then
+became a fix author and is not an independent acceptance reviewer of that fix.
+Focused regression results and complete replacement acceptance remain required.
