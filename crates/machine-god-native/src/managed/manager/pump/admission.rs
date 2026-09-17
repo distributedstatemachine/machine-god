@@ -5,7 +5,7 @@ use super::{
 
 impl ManagedManager {
     pub(super) fn admit_next(&mut self, cx: &mut Context<'_>, now_ms: i64) -> bool {
-        const LANES: usize = 7;
+        const LANES: usize = 8;
         // At most one catalog read before giving ordinary durable work its next
         // turn. A retained page is bounded and cannot delay child execution.
         if !self.catalog.yield_to_work() && (self.begin_observation() || self.begin_catalog()) {
@@ -30,7 +30,7 @@ impl ManagedManager {
             return true;
         }
         // Rotate on actual admission, not polling frequency. Each ready lane
-        // receives a turn within seven admissions (plus the shared read allowance).
+        // receives a turn within eight admissions (plus the shared read allowance).
         // A parked mailbox head cannot hide another lane's accepted custody.
         for offset in 0..LANES {
             let lane = (self.next_admission + offset) % LANES;
@@ -42,6 +42,7 @@ impl ManagedManager {
                 4 => self.admit_child_start(),
                 5 => self.begin_delivery(cx),
                 6 => self.begin_replay(cx),
+                7 => self.begin_saved_reopen(now_ms),
                 _ => unreachable!("bounded admission lane"),
             };
             if admitted {
@@ -243,8 +244,11 @@ impl ManagedManager {
     }
     pub(in crate::managed::manager) fn has_capacity(&self) -> bool {
         let reserved = self.reserved_foregrounds();
-        let resident =
-            self.children.len() + self.retiring.len() + self.foregrounds.len() + reserved;
+        let resident = self.children.len()
+            + self.retiring.len()
+            + self.foregrounds.len()
+            + self.saved_lifetimes.len()
+            + reserved;
         resident < self.limits.residents
             && self
                 .parents
@@ -252,6 +256,11 @@ impl ManagedManager {
                 .filter(|parent| parent.context.strong_count() > 0)
                 .count()
                 + reserved
+                + self
+                    .saved_lifetimes
+                    .iter()
+                    .map(super::super::saved_lifetime::Pending::context_reservation)
+                    .sum::<usize>()
                 < 64
             && (resident + 1)
                 .checked_mul(self.journal.resident_reservation_bytes())
@@ -308,7 +317,7 @@ impl ManagedManager {
         }
         Ok(())
     }
-    fn environment(
+    pub(in crate::managed::manager) fn environment(
         &self,
         now_ms: i64,
         operation: String,
@@ -332,17 +341,36 @@ impl ManagedManager {
                     )
                 })
                 .collect(),
+            retiring: self
+                .retiring
+                .iter()
+                .map(|retired| {
+                    let owner = retired.prepared.owner.principal().owner();
+                    crate::managed::store::JournalTranscript {
+                        session_id: owner.session_id().clone(),
+                        incarnation: owner.session_incarnation_id().clone(),
+                    }
+                })
+                .collect(),
             controls: self
                 .children
                 .iter()
                 .filter(|child| child.control_requested)
                 .map(|child| child.snapshot.head.id.clone())
+                .chain(
+                    self.saved_lifetimes
+                        .iter()
+                        .map(|pending| pending.id().to_owned()),
+                )
+                .collect(),
+            saved_lifetimes: self
+                .saved_lifetimes
+                .iter()
+                .map(|pending| pending.id().to_owned())
                 .collect(),
             now_ms,
             operation,
             wait_finished,
-            repaired_heads: self.repaired_heads.clone(),
-            notices: self.notices.clone(),
         }
     }
 }

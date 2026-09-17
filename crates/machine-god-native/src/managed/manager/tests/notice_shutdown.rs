@@ -856,12 +856,38 @@ fn rejected_restored_admission_retains_outbox_until_clear() {
 
 #[test]
 fn nonresident_close_saved_delivery_yields_to_sibling_commands() {
-    saved_lifetime_yields(false);
+    saved_lifetime_yields(false, SavedFinish::Continue);
 }
 
 #[test]
 fn nonresident_reopen_saved_delivery_yields_and_waits_for_old_resources() {
-    saved_lifetime_yields(true);
+    saved_lifetime_yields(true, SavedFinish::Continue);
+}
+
+#[test]
+fn nonresident_close_shutdown_retains_accepted_saved_lifetime() {
+    saved_lifetime_yields(false, SavedFinish::Shutdown);
+}
+
+#[test]
+fn nonresident_reopen_shutdown_settles_old_lifetime_without_new_generation() {
+    saved_lifetime_yields(true, SavedFinish::Shutdown);
+}
+
+#[test]
+fn nonresident_close_keeps_accepted_intent_after_original_actor_retires() {
+    saved_lifetime_yields(false, SavedFinish::CallerRetired);
+}
+
+#[test]
+fn nonresident_reopen_revalidates_original_actor_after_old_cleanup() {
+    saved_lifetime_yields(true, SavedFinish::CallerRetired);
+}
+
+enum SavedFinish {
+    Continue,
+    Shutdown,
+    CallerRetired,
 }
 
 fn finish_response(
@@ -885,7 +911,7 @@ fn finish_response(
 }
 
 #[allow(clippy::too_many_lines)] // One original lifecycle across saved evidence, blocked clear and resource closure.
-fn saved_lifetime_yields(reopen: bool) {
+fn saved_lifetime_yields(reopen: bool, finish: SavedFinish) {
     use machine_god_core::{ManagedAgentState, ManagedHistoryItem, ManagedHistoryKind};
 
     let (mut f, store, control) = fixture();
@@ -946,9 +972,10 @@ fn saved_lifetime_yields(reopen: bool) {
     let prepared_before = f.factory.prepared.load(Ordering::Acquire);
     control.pause_clear.store(true, Ordering::Release);
     let operation = format!("operation-{}", f.manager.next_operation);
-    let (_admission, invocation) = f.invocation(serde_json::json!({
+    let (admission, invocation) = f.invocation(serde_json::json!({
         "lifecycle": {"id": "child-2", "action": if reopen { "reopen" } else { "close" }}
     }));
+    let mut admission = Some(admission);
     let requester = f.requester.clone();
     let mut original = requester.execute(invocation, CancellationToken::new());
     let mut cx = Context::from_waker(Waker::noop());
@@ -974,8 +1001,48 @@ fn saved_lifetime_yields(reopen: bool) {
         std::thread::yield_now();
     }
     let yielded = sibling_result.is_some();
+    if yielded {
+        let prepared = f.factory.prepared.load(Ordering::Acquire);
+        for command in [
+            serde_json::json!({"lifecycle": {"id": "child-2", "action": "close"}}),
+            serde_json::json!({"lifecycle": {"id": "child-2", "action": "reopen"}}),
+        ] {
+            let result = f.command(command);
+            assert_eq!(
+                result.error_code,
+                Some(machine_god_core::ManagedFailureCode::ResourceLimit)
+            );
+        }
+        if reopen {
+            let result = f.command(serde_json::json!({
+                "configure": {"id": "child-2", "name": "must not replace original custody"}
+            }));
+            assert_eq!(
+                result.error_code,
+                Some(machine_god_core::ManagedFailureCode::ResourceLimit)
+            );
+        }
+        assert!(
+            f.command(serde_json::json!({
+                "inspect": {"id": "child-2", "sections": ["status"]}
+            }))
+            .ok
+        );
+        assert_eq!(f.factory.prepared.load(Ordering::Acquire), prepared);
+    }
     if reopen {
         f.factory.cleanup.store(false, Ordering::Release);
+    }
+    if matches!(finish, SavedFinish::Shutdown) {
+        assert!(f.manager.poll_shutdown(&mut cx, 100).is_pending());
+        assert!(has_outbox(&store));
+        // Closing the mailbox retires observers, not the accepted manager job.
+        assert!(matches!(
+            original.as_mut().poll(&mut cx),
+            Poll::Ready(Err(machine_god_core::ManagedSubagentError::Unavailable))
+        ));
+    } else if matches!(finish, SavedFinish::CallerRetired) {
+        drop(admission.take());
     }
     control.release();
     if reopen {
@@ -985,24 +1052,41 @@ fn saved_lifetime_yields(reopen: bool) {
             prepared_before + 1,
             "new generation cannot precede original resource closure"
         );
-        assert!(original.as_mut().poll(&mut cx).is_pending());
+        if matches!(finish, SavedFinish::Shutdown) {
+            assert!(f.manager.poll_shutdown(&mut cx, 100).is_pending());
+        } else {
+            assert!(original.as_mut().poll(&mut cx).is_pending());
+        }
         f.factory.cleanup.store(true, Ordering::Release);
     }
     // Release every deliberate hold before reporting a RED assertion, so the
     // original accepted close and Fixture's owned cleanup can always finish.
-    let result = finish_response(&mut f, &mut original);
+    let result = if matches!(finish, SavedFinish::Shutdown) {
+        shutdown(&mut f);
+        None
+    } else {
+        Some(finish_response(&mut f, &mut original))
+    };
     let sibling_result = sibling_result.unwrap_or_else(|| finish_response(&mut f, &mut sibling));
-    assert!(
-        result.ok && sibling_result.ok,
-        "{result:?}; {sibling_result:?}"
-    );
-    assert_eq!(result.operation_id, operation);
+    let reopened = reopen && matches!(finish, SavedFinish::Continue);
+    if let Some(result) = result {
+        if reopen && !reopened {
+            assert_eq!(
+                result.error_code,
+                Some(machine_god_core::ManagedFailureCode::CallerUnavailable)
+            );
+        } else {
+            assert!(result.ok, "{result:?}");
+        }
+        assert_eq!(result.operation_id, operation);
+    }
+    assert!(sibling_result.ok, "{sibling_result:?}");
     f.drive(|f| f.manager.active.is_none());
     let snapshot = block_on(f.journal.inspect("child-2".into())).unwrap();
-    assert_eq!(snapshot.head.generation, if reopen { 2 } else { 1 });
+    assert_eq!(snapshot.head.generation, if reopened { 2 } else { 1 });
     assert_eq!(
         snapshot.head.status,
-        if reopen {
+        if reopened {
             ManagedAgentState::Idle
         } else {
             ManagedAgentState::Archived
@@ -1023,4 +1107,78 @@ fn saved_lifetime_yields(reopen: bool) {
         charged,
         "saved-lifetime preparation escaped resident accounting"
     );
+}
+
+#[test]
+fn retiring_saved_owner_fences_close_and_reopen_but_not_inspect() {
+    let mut f = Fixture::new(vec![]);
+    assert!(
+        f.command(serde_json::json!({
+            "create": {"name": "old owner", "mode": "persistent"}
+        }))
+        .ok
+    );
+    f.factory.cleanup.store(false, Ordering::Release);
+    assert!(
+        f.command(serde_json::json!({
+            "lifecycle": {"id": "child-1", "action": "close"}
+        }))
+        .ok
+    );
+    f.drive(|f| !f.manager.retiring.is_empty() && f.manager.active.is_none());
+    let prepared = f.factory.prepared.load(Ordering::Acquire);
+    let mut results = Vec::new();
+    for action in ["close", "reopen"] {
+        let (_admission, invocation) = f.invocation(serde_json::json!({
+            "lifecycle": {"id": "child-1", "action": action}
+        }));
+        let requester = f.requester.clone();
+        let mut response = requester.execute(invocation, CancellationToken::new());
+        let mut cx = Context::from_waker(Waker::noop());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut result = None;
+        while std::time::Instant::now() < deadline {
+            if let Poll::Ready(value) = response.as_mut().poll(&mut cx) {
+                result = Some(value.unwrap());
+                break;
+            }
+            assert!(!matches!(
+                f.manager.poll_progress(&mut cx, 100),
+                Poll::Ready(Err(_))
+            ));
+            std::thread::yield_now();
+        }
+        results.push(result);
+        if results.last().unwrap().is_none() {
+            break;
+        }
+    }
+    let no_duplicate = f.factory.prepared.load(Ordering::Acquire) == prepared;
+    let rejected = results.len() == 2
+        && results.iter().all(|result| {
+            result.as_ref().is_some_and(|result| {
+                result.error_code == Some(machine_god_core::ManagedFailureCode::ResourceLimit)
+            })
+        });
+    if rejected {
+        assert!(
+            f.command(serde_json::json!({
+                "inspect": {"id": "child-1", "sections": ["status"]}
+            }))
+            .ok
+        );
+    }
+    f.factory.cleanup.store(true, Ordering::Release);
+    f.drive(|f| f.manager.retiring.is_empty() && f.manager.active.is_none());
+    assert!(
+        no_duplicate && rejected,
+        "retiring owner was displaced: {results:?}"
+    );
+    assert!(
+        f.command(serde_json::json!({
+            "lifecycle": {"id": "child-1", "action": "reopen"}
+        }))
+        .ok
+    );
+    shutdown(&mut f);
 }

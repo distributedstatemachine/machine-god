@@ -193,6 +193,9 @@ impl ManagedManager {
             parent.in_flight = false;
         }
         for snapshot in outcome.snapshots {
+            for pending in &mut self.saved_lifetimes {
+                pending.refresh_snapshot(&snapshot);
+            }
             if let Some(child) = self
                 .children
                 .iter_mut()
@@ -291,6 +294,12 @@ impl ManagedManager {
                             })
                             .or_else(|| retiring_runtime(&self.retiring, &parent.context))
                             .or_else(|| {
+                                super::saved_lifetime::runtime_for_notice(
+                                    &self.saved_lifetimes,
+                                    &parent.context,
+                                )
+                            })
+                            .or_else(|| {
                                 super::foreground::runtime_for_notice(
                                     &self.foregrounds,
                                     &parent.context,
@@ -329,6 +338,12 @@ impl ManagedManager {
                         drain: None,
                     })
                     .or_else(|| retiring_runtime(&self.retiring, &parent.context))
+                    .or_else(|| {
+                        super::saved_lifetime::runtime_for_notice(
+                            &self.saved_lifetimes,
+                            &parent.context,
+                        )
+                    })
                     .or_else(|| {
                         super::foreground::runtime_for_notice(&self.foregrounds, &parent.context)
                     })
@@ -404,8 +419,9 @@ fn reconcile(
     })
 }
 
-// A saved-lifetime command already owns its restoration/retirement custody.
-// Reuse the same exact validation, without introducing another ACK format.
+// Test adapter for validating a complete fixed receipt. Production admission
+// always calls one `validation::step` and yields to the finite manager round.
+#[cfg(test)]
 pub(super) async fn reconcile_sources(
     journal: &ManagedJournal,
     gate: &Arc<durability::RetryGate>,

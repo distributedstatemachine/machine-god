@@ -13,6 +13,7 @@ mod projection;
 mod pump;
 mod replay;
 mod reservation;
+mod saved_lifetime;
 #[cfg(test)]
 mod tests;
 mod waiting;
@@ -181,6 +182,7 @@ pub(crate) struct ManagedManager {
     limits: ManagerLimits,
     children: Vec<Child>,
     retiring: Vec<Retiring>,
+    saved_lifetimes: Vec<saved_lifetime::Pending>,
     foregrounds: Vec<foreground::Foreground>,
     foreground_reservations: Vec<Weak<reservation::State>>,
     reservation_wake: Arc<futures_util::task::AtomicWaker>,
@@ -192,7 +194,6 @@ pub(crate) struct ManagedManager {
     pending_job: Option<(ManagedMailboxJob, Option<bool>, String)>,
     retained_notices: Vec<WorkNoticeRef>,
     parents: Vec<delivery::Parent>,
-    repaired_heads: Arc<std::sync::Mutex<Vec<JournalSnapshot>>>,
     replay: replay::Replay,
     replay_reset: bool,
     retry: Arc<durability::RetryGate>,
@@ -238,6 +239,7 @@ impl ManagedManager {
             limits,
             children: Vec::new(),
             retiring: Vec::new(),
+            saved_lifetimes: Vec::new(),
             foregrounds: Vec::new(),
             foreground_reservations: Vec::new(),
             reservation_wake: Arc::new(futures_util::task::AtomicWaker::new()),
@@ -249,7 +251,6 @@ impl ManagedManager {
             pending_job: None,
             retained_notices: Vec::new(),
             parents: Vec::new(),
-            repaired_heads: Arc::default(),
             replay: replay::Replay::default(),
             replay_reset: false,
             retry: Arc::new(durability::RetryGate::default()),
@@ -312,6 +313,7 @@ impl ManagedManager {
         }
         if self.children.is_empty()
             && self.retiring.is_empty()
+            && self.saved_lifetimes.is_empty()
             && self.foregrounds.is_empty()
             && !self.has_foreground_reservations()
             && self.active.is_none()
@@ -338,6 +340,7 @@ impl ManagedManager {
         ManagerProgress {
             residents: self.children.len()
                 + self.retiring.len()
+                + self.saved_lifetimes.len()
                 + self.foregrounds.len()
                 + self.reserved_foregrounds(),
             executing: self
@@ -384,6 +387,9 @@ impl Drop for ManagedManager {
         }
         for child in &mut self.retiring {
             child.prepared.resources.begin_close();
+        }
+        for pending in &mut self.saved_lifetimes {
+            pending.begin_close();
         }
         // Factory resources retain their journal-owner clones through actual cleanup.
         // Dropping RunSettlement never manufactures a successful completion.

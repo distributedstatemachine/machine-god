@@ -1,6 +1,6 @@
 //! Serialized control operations. The original mailbox job remains owned here.
 mod create;
-mod lifecycle;
+pub(super) mod lifecycle;
 mod relationship;
 
 use super::super::{
@@ -34,12 +34,12 @@ pub(super) struct Environment {
     pub factory: Arc<dyn ManagedRuntimeFactory>,
     pub capacity: bool,
     pub residents: Vec<(String, JournalTranscript, bool)>,
+    pub retiring: Vec<JournalTranscript>,
     pub controls: Vec<String>,
+    pub saved_lifetimes: Vec<String>,
     pub now_ms: i64,
     pub operation: String,
     pub wait_finished: Option<bool>,
-    pub repaired_heads: Arc<std::sync::Mutex<Vec<JournalSnapshot>>>,
-    pub notices: Arc<super::super::notices::ManagedNotices>,
 }
 pub(super) struct Outcome {
     pub job: ManagedMailboxJob,
@@ -53,6 +53,10 @@ pub(super) enum Action {
     Reply(ManagedSubagentResult),
     Cancel,
     Archive,
+    SavedLifetime {
+        reopen: bool,
+        preparation: super::saved_lifetime::Preparation,
+    },
     Wait(ManagedInspect),
     Approval {
         proposal: ManagedRelationshipProposal,
@@ -107,6 +111,11 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
         // A UI row cannot silently retarget a reopened or concurrently changed head.
         if !job.lease().matches_observation(&snapshot) {
             return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);
+        }
+        if !matches!(command, ManagedSubagentCommand::Inspect(_))
+            && env.saved_lifetimes.contains(id)
+        {
+            return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
         }
         // Reading retained evidence does not need a new owner epoch or borrow
         // credits from a later command. Projection observes lost-owner work as

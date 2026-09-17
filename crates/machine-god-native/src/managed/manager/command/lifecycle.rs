@@ -22,6 +22,13 @@ pub(super) async fn execute(
         .iter()
         .any(|(id, _, busy)| id == &request.id && *busy);
     let resident = env.residents.iter().any(|(id, _, _)| id == &request.id);
+    if matches!(
+        request.action,
+        ManagedLifecycleAction::Close | ManagedLifecycleAction::Reopen
+    ) && env.retiring.contains(&snapshot.head.transcript)
+    {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
+    }
     match request.action {
         ManagedLifecycleAction::Resume => {
             if busy || snapshot.head.intent.is_some() {
@@ -56,59 +63,32 @@ pub(super) async fn execute(
             .await
         }
         ManagedLifecycleAction::Reopen => {
-            if busy || snapshot.head.status != ManagedAgentState::Archived {
+            if snapshot.head.status != ManagedAgentState::Archived {
                 return Outcome::reject(job, &env.operation, ManagedFailureCode::InvalidState);
+            }
+            if resident {
+                return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
             }
             if !permitted(job.lease(), snapshot.head.configuration.permission_mode) {
                 return Outcome::reject(job, &env.operation, ManagedFailureCode::PermissionDenied);
             }
-            let Some(generation) = snapshot.head.generation.checked_add(1) else {
+            if snapshot.head.generation.checked_add(1).is_none() {
                 return Outcome::reject(
                     job,
                     &env.operation,
                     ManagedFailureCode::GenerationExhausted,
                 );
-            };
+            }
             if !env.capacity {
                 return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
             }
-            if let Err(code) = settle_saved_lifetime(&env, &snapshot, origin(job.lease())).await {
-                return Outcome::reject(job, &env.operation, code);
-            }
-            if !job.lease().is_live() {
-                return Outcome::reject(job, &env.operation, ManagedFailureCode::CallerUnavailable);
-            }
-            let prepared = match prepare(
-                &env,
-                ManagedRuntimeRequest {
-                    kind: ManagedRuntimePreparationKind::Restore,
-                    child_id: snapshot.head.id.clone(),
-                    generation,
-                    transcript: snapshot.head.transcript.clone(),
-                    journal_owner: env.owner.clone(),
-                    configuration: snapshot.head.configuration.clone(),
-                    origin: Some(origin(job.lease())),
-                    now_ms: env.now_ms,
-                },
-            )
-            .await
-            {
-                Ok(value) => value,
-                Err(code) => return Outcome::reject(job, &env.operation, code),
-            };
-            let transcript = snapshot.head.transcript.clone();
-            publish(
-                job,
-                env,
-                snapshot,
-                Some(prepared),
-                JournalMutation::Reopen(transcript),
-                ManagedOutcome::LifecycleChanged,
-            )
-            .await
+            saved_lifetime(job, env, snapshot, true)
         }
         ManagedLifecycleAction::Cancel | ManagedLifecycleAction::Close => {
             let archive = request.action == ManagedLifecycleAction::Close;
+            if archive && !resident && !env.capacity {
+                return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
+            }
             let intent = if archive {
                 JournalIntent::Archive
             } else {
@@ -155,21 +135,9 @@ pub(super) async fn execute(
                 };
             }
             if archive {
-                loop {
-                    if settle_saved_lifetime(&env, &snapshot, origin(job.lease()))
-                        .await
-                        .is_ok()
-                    {
-                        break;
-                    }
-                    // The close intent is already durable. Keep the original
-                    // job until its exact old lifetime can be settled.
-                    env.gate.blocked(super::ManagerBlock::Preparation).await;
-                }
+                return saved_lifetime(job, env, snapshot, false);
             }
-            let mutation = if archive {
-                JournalMutation::Archive
-            } else if let Some(work) = snapshot.head.queue.first() {
+            let mutation = if let Some(work) = snapshot.head.queue.first() {
                 JournalMutation::HeadState {
                     work_id: work.id.clone(),
                     status: ManagedQueueStatus::Cancelled,
@@ -199,16 +167,18 @@ pub(super) async fn execute(
     }
 }
 
-async fn settle_saved_lifetime(
-    env: &Environment,
-    snapshot: &JournalSnapshot,
-    origin: super::ManagedRuntimeOrigin,
-) -> Result<(), ManagedFailureCode> {
+fn saved_lifetime(
+    job: ManagedMailboxJob,
+    env: Environment,
+    snapshot: JournalSnapshot,
+    reopen: bool,
+) -> Outcome {
     // This runtime only repairs saved delivery evidence and retires. It never
     // admits work, so closing a saved child must not require its former execution
     // policy. Restrict the temporary owner to both the saved and caller policies;
     // leave the durable configuration untouched for a later explicit reopen.
     let mut configuration = snapshot.head.configuration.clone();
+    let origin = origin(job.lease());
     configuration.permission_mode = match (origin.policy.mode(), configuration.permission_mode) {
         (crate::PermissionMode::Ask, _) | (_, super::ManagedPermissionMode::Ask) => {
             super::ManagedPermissionMode::Ask
@@ -220,72 +190,93 @@ async fn settle_saved_lifetime(
             super::ManagedPermissionMode::Yolo
         }
     };
-    let mut original = prepare(
-        env,
+    let request = ManagedRuntimeRequest {
+        kind: ManagedRuntimePreparationKind::Restore,
+        child_id: snapshot.head.id.clone(),
+        generation: snapshot.head.generation,
+        transcript: snapshot.head.transcript.clone(),
+        journal_owner: env.owner.clone(),
+        configuration,
+        origin: Some(origin),
+        now_ms: env.now_ms,
+    };
+    let preparation = Box::pin(async move {
+        loop {
+            match prepare(&env, request.clone()).await {
+                Ok(prepared) => return Ok(prepared),
+                Err(code) if reopen => return Err(code),
+                Err(_) => env.gate.blocked(super::ManagerBlock::Preparation).await,
+            }
+        }
+    });
+    Outcome {
+        job,
+        snapshot: Some(snapshot),
+        prepared: None,
+        action: Action::SavedLifetime {
+            reopen,
+            preparation,
+        },
+        replay_changed: !reopen,
+    }
+}
+
+/// Resume only after the original saved owner, outbox and resources are gone.
+pub(in crate::managed::manager) async fn resume_reopen(
+    job: ManagedMailboxJob,
+    env: Environment,
+    expected: JournalSnapshot,
+) -> Outcome {
+    if !job.lease().is_live() {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::CallerUnavailable);
+    }
+    let snapshot = match env.journal.inspect(expected.head.id.clone()).await {
+        Ok(snapshot) => snapshot,
+        Err(_) => return Outcome::reject(job, &env.operation, ManagedFailureCode::StoreFailure),
+    };
+    if snapshot.head != expected.head || !job.lease().matches_observation(&snapshot) {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);
+    }
+    if !super::authorized(job.lease(), &snapshot)
+        || !permitted(job.lease(), snapshot.head.configuration.permission_mode)
+    {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::PermissionDenied);
+    }
+    if snapshot.head.status != ManagedAgentState::Archived || snapshot.head.intent.is_some() {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::InvalidState);
+    }
+    let Some(generation) = snapshot.head.generation.checked_add(1) else {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::GenerationExhausted);
+    };
+    if !env.capacity {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::ResourceLimit);
+    }
+    let prepared = match prepare(
+        &env,
         ManagedRuntimeRequest {
             kind: ManagedRuntimePreparationKind::Restore,
             child_id: snapshot.head.id.clone(),
-            generation: snapshot.head.generation,
+            generation,
             transcript: snapshot.head.transcript.clone(),
             journal_owner: env.owner.clone(),
-            configuration,
-            origin: Some(origin),
+            configuration: snapshot.head.configuration.clone(),
+            origin: Some(origin(job.lease())),
             now_ms: env.now_ms,
         },
     )
-    .await?;
-    if let Some(context) = &original.notice_context
-        && let Some(delivery) = context.delivery()
+    .await
     {
-        loop {
-            let mut snapshots = Vec::new();
-            let result = super::super::delivery::reconcile_sources(
-                &env.journal,
-                &env.gate,
-                &delivery,
-                &mut snapshots,
-            )
-            .await;
-            {
-                let mut repaired = env.repaired_heads.lock().unwrap();
-                for snapshot in snapshots {
-                    if let Some(existing) = repaired
-                        .iter_mut()
-                        .find(|head| head.head.id == snapshot.head.id)
-                    {
-                        *existing = snapshot;
-                    } else {
-                        repaired.push(snapshot);
-                    }
-                }
-            }
-            if let Ok(identities) = result
-                && context
-                    .confirm_source_acknowledgements(&delivery, &identities)
-                    .is_ok()
-            {
-                env.notices
-                    .acknowledge_recovered(delivery.originals())
-                    .map_err(|_| ManagedFailureCode::StoreFailure)?;
-                break;
-            }
-            env.gate.blocked(super::ManagerBlock::Journal).await;
-        }
-        loop {
-            match original.runtime.clear_notice_delivery(&delivery).await {
-                Ok(_) => break,
-                Err(_) => env.gate.blocked(super::ManagerBlock::Journal).await,
-            }
-        }
-    }
-    // No old-generation runtime/principal or cleanup obligation crosses the
-    // subsequent generation publication. Preparation remains effects-free.
-    original.resources.begin_close();
-    loop {
-        match std::future::poll_fn(|cx| original.resources.poll_closed(cx)).await {
-            Ok(()) => break,
-            Err(_) => env.gate.blocked(super::ManagerBlock::Cleanup).await,
-        }
-    }
-    Ok(())
+        Ok(prepared) => prepared,
+        Err(code) => return Outcome::reject(job, &env.operation, code),
+    };
+    let transcript = snapshot.head.transcript.clone();
+    publish(
+        job,
+        env,
+        snapshot,
+        Some(prepared),
+        JournalMutation::Reopen(transcript),
+        ManagedOutcome::LifecycleChanged,
+    )
+    .await
 }

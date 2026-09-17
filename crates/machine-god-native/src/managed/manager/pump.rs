@@ -35,6 +35,7 @@ impl ManagedManager {
             progress |= self.poll_foreground_reservations(cx);
             progress |= self.pump_waiters(cx);
             progress |= self.poll_delivery_clears(cx);
+            progress |= self.poll_saved_lifetimes(cx, now_ms);
             let len = self.children.len();
             for offset in 0..len {
                 let index = (self.round_robin + offset) % len;
@@ -65,16 +66,6 @@ impl ManagedManager {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Result<bool, ManagedRuntimeError> {
-        for snapshot in self.repaired_heads.lock().unwrap().drain(..) {
-            self.replay_reset = true;
-            if let Some(child) = self
-                .children
-                .iter_mut()
-                .find(|child| child.snapshot.head.id == snapshot.head.id)
-            {
-                child.snapshot = snapshot;
-            }
-        }
         let Some(mut active) = self.active.take() else {
             return Ok(false);
         };
@@ -251,8 +242,31 @@ impl ManagedManager {
         Ok(true)
     }
     #[allow(clippy::too_many_lines)] // One result atomically updates resident and response ownership.
-    fn apply_outcome(&mut self, mut outcome: command::Outcome, operation: String, _now_ms: i64) {
+    pub(in crate::managed::manager) fn apply_outcome(
+        &mut self,
+        mut outcome: command::Outcome,
+        operation: String,
+        _now_ms: i64,
+    ) {
         self.replay_reset |= outcome.replay_changed;
+        if let command::Action::SavedLifetime {
+            reopen,
+            preparation,
+        } = outcome.action
+        {
+            self.saved_lifetimes
+                .push(super::saved_lifetime::Pending::new(
+                    outcome.job,
+                    outcome
+                        .snapshot
+                        .take()
+                        .expect("saved lifecycle owns its exact head"),
+                    operation,
+                    reopen,
+                    preparation,
+                ));
+            return;
+        }
         if let Some(context) = outcome
             .prepared
             .as_ref()
@@ -315,6 +329,9 @@ impl ManagedManager {
             });
         }
         match outcome.action {
+            command::Action::SavedLifetime { .. } => {
+                unreachable!("saved custody transferred above")
+            }
             command::Action::Reply(result) => {
                 if let Some(index) = resident {
                     self.refresh_relationship(index);
