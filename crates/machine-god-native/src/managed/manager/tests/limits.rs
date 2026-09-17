@@ -713,7 +713,7 @@ fn journal_pressure_settles_owned_writes_and_interrupts_fifo_without_starting_su
     assert!(
         fixture
             .command(serde_json::json!({"inspect": {
-                "id": "child-1", "sections": ["status", "queue"]
+                "id": "child-1", "sections": ["status"]
             }}))
             .ok
     );
