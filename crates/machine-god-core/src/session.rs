@@ -2205,6 +2205,12 @@ async fn run_turn_inner(
                     };
 
                     if denied {
+                        emitter
+                            .emit(TurnEvent::ToolDenied {
+                                call_id: call_id.clone(),
+                                tool_name: call_name.clone(),
+                            })
+                            .await;
                         (
                             ToolOutput {
                                 content: json!({

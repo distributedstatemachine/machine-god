@@ -1,6 +1,6 @@
 use crate::{
     BoxFuture, EventSinkError, ModelEvent, PermissionDecision, PermissionRequest, SessionId,
-    SessionIncarnationId, StopReason, TokenUsage, ToolCall, ToolOutput, TurnId,
+    SessionIncarnationId, StopReason, TokenUsage, ToolCall, ToolName, ToolOutput, TurnId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,11 @@ pub enum TurnEvent {
     },
     ToolStarted {
         call: ToolCall,
+    },
+    /// The exact call was denied by permission policy, without execution.
+    ToolDenied {
+        call_id: crate::ToolCallId,
+        tool_name: ToolName,
     },
     ToolFinished {
         call_id: crate::ToolCallId,

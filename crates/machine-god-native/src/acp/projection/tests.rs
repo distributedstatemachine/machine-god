@@ -176,6 +176,24 @@ fn tool_projection_preserves_exact_numbers_and_only_observed_status() {
 }
 
 #[test]
+fn denied_tool_projection_closes_the_exact_pending_call_without_execution() {
+    let denied = project_event(&event(TurnEvent::ToolDenied {
+        call_id: context().call_id,
+        tool_name: machine_god_core::ToolName::new("write_file").unwrap(),
+    }))
+    .unwrap()
+    .unwrap();
+    assert_eq!(denied["sessionUpdate"], "tool_call_update");
+    assert_eq!(denied["toolCallId"], "actual-call");
+    assert_eq!(denied["title"], "write_file");
+    assert_eq!(denied["kind"], "edit");
+    assert_eq!(denied["status"], "failed");
+    assert_eq!(denied["rawOutput"]["code"], "permission_denied");
+    assert!(denied.get("rawInput").is_none());
+    assert_eq!(denied["_meta"]["machineGod"]["turnId"], "actual-turn");
+}
+
+#[test]
 fn terminal_engine_and_provider_events_never_finalize_prompt() {
     for payload in [
         TurnEvent::Completed {

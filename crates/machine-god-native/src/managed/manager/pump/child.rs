@@ -270,6 +270,18 @@ impl ManagedManager {
             TurnEvent::PermissionResolved { .. } => {
                 Self::transition(child, ManagedQueueStatus::Running);
             }
+            TurnEvent::ToolDenied { tool_name, .. } => {
+                // Core binds the denied occurrence to the actual call. Neither
+                // permission capability shape nor reusable provider IDs supply
+                // that correlation, and denial never creates a started entry.
+                Self::tool(
+                    child,
+                    event.sequence,
+                    now_ms,
+                    tool_name.to_string(),
+                    ManagedToolPhase::Denied,
+                );
+            }
             TurnEvent::ToolStarted { call } => {
                 if child.tools.len() < 64 {
                     child.tools.push((call.id, call.name.to_string()));

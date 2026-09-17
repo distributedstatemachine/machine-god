@@ -6,8 +6,8 @@ use machine_god_core::{
 };
 use machine_god_core::{ManagedEvent, ManagedEventKind, ManagedReceipt};
 use machine_god_testkit::{
-    InMemorySessionStore, PermissionStep, ScriptedPermissionHandler, ScriptedPreparedTool,
-    ToolPrepareStep, ToolStep,
+    InMemorySessionStore, PermissionStep, RecordingEventSink, ScriptedPermissionHandler,
+    ScriptedPreparedTool, ToolPrepareStep, ToolStep,
 };
 
 fn receipt(result: machine_god_core::ManagedSubagentResult) -> ManagedReceipt {
@@ -270,6 +270,7 @@ fn denied_tool_activity_survives_paging_archive_and_restart_without_execution() 
         })
     };
     let permissions = ScriptedPermissionHandler::new([deny(), allow(), deny(), allow()]);
+    let observed = RecordingEventSink::new();
     let mut fixture = Fixture::with_engine_setup(
         vec![
             // A preparation failure emits no permission event; correlation must not shift.
@@ -284,6 +285,7 @@ fn denied_tool_activity_survives_paging_archive_and_restart_without_execution() 
         |engine| {
             engine
                 .permission_handler(permissions.clone())
+                .event_sink(observed.clone())
                 .tool(blocked.clone())
                 .tool(approved.clone())
                 .tool(broken.clone())
@@ -333,6 +335,30 @@ fn denied_tool_activity_survives_paging_archive_and_restart_without_execution() 
     assert!(broken.invocations().is_empty());
     assert_eq!(approved.invocations().len(), 2);
     assert_eq!(permissions.requests().len(), 4);
+    let actual = observed.events();
+    let denied: Vec<_> = actual
+        .iter()
+        .filter_map(|event| match &event.payload {
+            machine_god_core::TurnEvent::ToolDenied { call_id, tool_name } => {
+                Some((call_id.as_str(), tool_name.as_str(), &event.turn_id))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(denied.len(), 2);
+    assert!(
+        denied
+            .iter()
+            .all(|(id, name, _)| *id == "reused" && *name == "blocked_write")
+    );
+    assert_ne!(denied[0].2, denied[1].2);
+    for event in actual {
+        let encoded = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            serde_json::from_value::<machine_god_core::EngineEvent>(encoded).unwrap(),
+            event
+        );
+    }
     receipt(fixture.command(serde_json::json!({"lifecycle":{"id":"child-1","action":"close"}})));
     fixture.drive(|f| f.manager.children.is_empty() && f.manager.retiring.is_empty());
     assert_eq!(tool_activity(&mut fixture), activity);
@@ -355,4 +381,54 @@ fn settled_activity(fixture: &mut Fixture) {
         fixture.manager.children[0].snapshot.head.status,
         ManagedAgentState::Idle
     );
+}
+
+#[test]
+fn permission_failure_or_cancellation_does_not_invent_denied_tool_activity() {
+    for cancel in [false, true] {
+        let tool = activity_tool(
+            "unexecuted",
+            vec![ToolPrepareStep::Prepared {
+                capability: Capability::Filesystem {
+                    access: FilesystemAccess::Write,
+                    path: "scripted-only".into(),
+                },
+                arguments: serde_json::json!({}),
+            }],
+            vec![],
+        );
+        let permissions = ScriptedPermissionHandler::new([if cancel {
+            PermissionStep::Pending
+        } else {
+            PermissionStep::Error(machine_god_core::PermissionError::new(
+                "unavailable",
+                "permission unavailable",
+            ))
+        }]);
+        let mut fixture = Fixture::with_engine_setup(
+            vec![tool_round(&[("original", "unexecuted")])],
+            InMemorySessionStore::default(),
+            |engine| engine.permission_handler(permissions).tool(tool.clone()),
+        );
+        receipt(fixture.command(
+            serde_json::json!({"create":{"name":"worker","mode":"persistent","prompt":"activity"}}),
+        ));
+        if cancel {
+            fixture.drive(|f| {
+                f.manager.children[0].snapshot.head.status == ManagedAgentState::AwaitingApproval
+            });
+            receipt(
+                fixture
+                    .command(serde_json::json!({"lifecycle":{"id":"child-1","action":"cancel"}})),
+            );
+            settled_activity(&mut fixture);
+        } else {
+            fixture.drive(|f| {
+                f.manager.children[0].snapshot.head.status == ManagedAgentState::Failed
+                    && !f.manager.children[0].busy()
+            });
+        }
+        assert!(tool_activity(&mut fixture).is_empty());
+        assert!(tool.invocations().is_empty());
+    }
 }

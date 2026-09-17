@@ -53,6 +53,20 @@ pub fn project_event(event: &EngineEvent) -> Result<Option<Value>, ProjectionErr
             event: ModelEvent::ToolCall { call },
         } => tool_call(call, "tool_call", "pending")?,
         TurnEvent::ToolStarted { call } => tool_call(call, "tool_call_update", "in_progress")?,
+        TurnEvent::ToolDenied { call_id, tool_name } => json!({
+            "sessionUpdate":"tool_call_update",
+            "toolCallId":call_id.as_str(),
+            "title":tool_name.as_str(),
+            "kind":tool_kind(tool_name.as_str()),
+            "status":"failed",
+            "content":[{"type":"content","content":{
+                "type":"text","text":"tool execution was denied by policy"
+            }}],
+            "rawOutput":{
+                "code":"permission_denied",
+                "message":"tool execution was denied by policy"
+            }
+        }),
         TurnEvent::ToolFinished { call_id, output } => {
             protocol::validate_value(&output.content, 5).map_err(|_| ProjectionError::Limit)?;
             let text = match &output.content {
