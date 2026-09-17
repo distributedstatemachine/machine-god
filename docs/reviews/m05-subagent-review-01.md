@@ -281,3 +281,24 @@ and Cargo exited 101 from SIGTERM. This is an interrupted gate, not a passing
 native suite or a deadline-only restart. Full macOS runtime was not started.
 The original runtime and three `managed-live-hang-*-linux-a4b0ca24.log` captures
 remain in the retained log directory. Fresh replacement gates remain required.
+
+Candidate `ecdba60e` passed both complete build gates, static/platform checks,
+focused macOS checks and the complete Linux runtime gate, including all 269
+repository Python tests. The Linux native suite passed 4,011 tests, including
+the previously parked close/reopen fixture under normal concurrency. The full
+macOS CLI suite passed 609 tests; the native suite then finished with 4,017
+passes, one failure and twelve private-helper entrypoints ignored. Remaining
+macOS integration and doc tests were not reached. Both exact runtime logs remain
+under `/tmp/mg-managed-implementation.V0ZGg1/`; no acceptance review or remote
+delivery was attempted for this candidate.
+
+The failure was `close_signal_denial_requires_positive_exit_and_retains_force_retry`:
+its graceful-close assertion observed `Signaled(15)` rather than `Signaled(9)`.
+Read-only diagnosis traced the fixture's EPERM injection to group dispatch only.
+The new macOS retained-leader fallback legitimately delivered the same TERM
+directly, so the injection no longer represented a denied signal. The correction
+adds a separate test-only direct-dispatch denial and arms both paths in this
+fixture. Existing group-only fallback tests and production signaling remain
+unchanged. The original assertions still require graceful escalation to KILL,
+failed force-close retention and actual reap after a subsequent force retry.
+Fresh focused and complete replacement gates remain required.

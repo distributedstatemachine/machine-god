@@ -1884,6 +1884,14 @@ mod tests {
 
     #[test]
     fn close_signal_denial_requires_positive_exit_and_retains_force_retry() {
+        struct SignalDenial(NonZeroU32);
+        impl Drop for SignalDenial {
+            fn drop(&mut self) {
+                crate::background_process::inject_group_signal_eperm_for_test(self.0, 0);
+                #[cfg(target_os = "macos")]
+                crate::background_process::inject_retained_leader_signal_eperm_for_test(self.0, 0);
+            }
+        }
         let _guard = crate::background_process::GROUP_SNAPSHOT_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1895,14 +1903,19 @@ mod tests {
             );
             read_until(&mut pty, b"ready");
             let mut process = pty.process.take().unwrap();
+            let denial = SignalDenial(pty.pid);
             crate::background_process::inject_group_signal_eperm_for_test(pty.pid, 1);
+            // Deny the actual signal, not just the group syscall: Darwin may
+            // legitimately dispatch that same signal to its retained leader.
+            #[cfg(target_os = "macos")]
+            crate::background_process::inject_retained_leader_signal_eperm_for_test(pty.pid, 1);
             let first = process.terminal_close(force, |phase| {
                 if matches!(phase, TerminalClosePhase::Close) {
                     drop(pty.master.take());
                     pty.read_closed = true;
                 }
             });
-            crate::background_process::inject_group_signal_eperm_for_test(pty.pid, 0);
+            drop(denial);
             let observed = process.terminal_poll();
             pty.process = Some(process);
             if force {

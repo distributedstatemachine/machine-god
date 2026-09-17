@@ -183,6 +183,10 @@ static GROUP_SIGNAL_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 static GROUP_SIGNAL_EPERM_GROUP: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static GROUP_SIGNAL_EPERM_REMAINING: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, target_os = "macos"))]
+static RETAINED_LEADER_SIGNAL_EPERM_PID: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, target_os = "macos"))]
+static RETAINED_LEADER_SIGNAL_EPERM_REMAINING: AtomicUsize = AtomicUsize::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static OBSERVED_GROUP_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -5608,6 +5612,17 @@ fn signal_group_or_confirm_exited_leader(
             observed
         },
         |group, signal| {
+            #[cfg(test)]
+            let dispatched = if consume_injected_failure(
+                &RETAINED_LEADER_SIGNAL_EPERM_PID,
+                &RETAINED_LEADER_SIGNAL_EPERM_REMAINING,
+                group.as_raw_nonzero().get().cast_unsigned(),
+            ) {
+                Err(rustix::io::Errno::PERM)
+            } else {
+                rustix::process::kill_process(group, signal)
+            };
+            #[cfg(not(test))]
             let dispatched = rustix::process::kill_process(group, signal);
             #[cfg(test)]
             {
@@ -7595,6 +7610,17 @@ pub(crate) fn inject_group_signal_eperm_for_test(group: NonZeroU32, count: usize
         &GROUP_SIGNAL_EPERM_GROUP,
         &GROUP_SIGNAL_EPERM_REMAINING,
         group,
+        count,
+    );
+}
+
+/// Separate from group-only denial so fallback fixtures still dispatch a real signal.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn inject_retained_leader_signal_eperm_for_test(leader: NonZeroU32, count: usize) {
+    inject_failures(
+        &RETAINED_LEADER_SIGNAL_EPERM_PID,
+        &RETAINED_LEADER_SIGNAL_EPERM_REMAINING,
+        leader,
         count,
     );
 }
