@@ -10,6 +10,7 @@ mod foreground;
 mod limits;
 mod notice_deadline;
 mod notice_parent;
+mod notice_shutdown;
 mod observation;
 mod relationship;
 use fixture::Fixture;

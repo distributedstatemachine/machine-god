@@ -72,6 +72,8 @@ pub(super) struct Factory {
     pub cleanup: Arc<AtomicBool>,
     pub ambiguous: AtomicBool,
     pub reconcile: Arc<AtomicBool>,
+    notices: Mutex<Option<Arc<super::super::super::notices::ManagedNotices>>>,
+    notice_sessions: Mutex<Vec<Session>>,
 }
 impl ManagedRuntimeFactory for Arc<Factory> {
     fn allocate_identity(
@@ -120,6 +122,20 @@ impl ManagedRuntimeFactory for Arc<Factory> {
                     .await
                     .unwrap();
             }
+            let notices = this.notices.lock().unwrap().clone();
+            let notice_context = notices.map(|notices| {
+                this.notice_sessions.lock().unwrap().push(session.clone());
+                Arc::new(
+                    super::super::super::prompt_context::ParentNoticeContext::new(
+                        &session,
+                        super::super::super::notices::NoticePrincipal {
+                            id: request.child_id.clone(),
+                            generation: std::num::NonZeroU64::new(request.generation).unwrap(),
+                        },
+                        &notices,
+                    ),
+                )
+            });
             let (conversation, owner) = NativeConversation::from_session(session)
                 .unwrap()
                 .with_permission_controller(
@@ -138,12 +154,16 @@ impl ManagedRuntimeFactory for Arc<Factory> {
                     &this.contexts,
                 )
                 .unwrap();
+            let conversation = match &notice_context {
+                Some(context) => conversation.with_notice_context(context).unwrap(),
+                None => conversation,
+            };
             let runtime = Arc::new(
                 NativeConversationRuntime::new(conversation, preferences(), None).unwrap(),
             );
             let prepared = PreparedManagedRuntime {
                 skills: None,
-                notice_context: None,
+                notice_context,
                 runtime,
                 owner,
                 resources: Box::new(Resources {
@@ -256,6 +276,19 @@ pub(super) fn preferences() -> NativeModelPreferences {
     NativeModelPreferences::new("model", NativeReasoningEffort::default(), false).unwrap()
 }
 impl Fixture {
+    pub fn enable_child_notices(&self) {
+        *self.factory.notices.lock().unwrap() = Some(self.manager.notices.clone());
+    }
+    pub fn actual_notice_session(&self, id: &str) -> Session {
+        self.factory
+            .notice_sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|session| session.id().as_str() == id)
+            .unwrap()
+            .clone()
+    }
     pub fn child_session(&self, id: &str) -> Session {
         block_on(
             self.factory
@@ -335,6 +368,9 @@ impl Fixture {
             .unwrap()
     }
     pub fn new(steps: Vec<ModelProviderStep>) -> Self {
+        Self::with_store(steps, InMemorySessionStore::default())
+    }
+    pub fn with_store(steps: Vec<ModelProviderStep>, store: impl SessionStore) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let path = std::env::temp_dir().join(format!(
             "mg-managed-manager-{}-{}",
@@ -366,7 +402,7 @@ impl Fixture {
         let engine = Engine::builder()
             .provider(provider.clone())
             .shared_permission_handler(permissions.clone())
-            .session_store(InMemorySessionStore::default())
+            .session_store(store)
             .build()
             .unwrap();
         let factory = Arc::new(Factory {
@@ -384,6 +420,8 @@ impl Fixture {
             cleanup: Arc::new(AtomicBool::new(true)),
             ambiguous: AtomicBool::new(false),
             reconcile: Arc::new(AtomicBool::new(false)),
+            notices: Mutex::default(),
+            notice_sessions: Mutex::default(),
         });
         let workers = NativeOwnedWorkerScope::new();
         let journal = block_on(ManagedJournal::open(

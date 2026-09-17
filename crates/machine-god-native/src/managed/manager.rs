@@ -311,7 +311,14 @@ impl ManagedManager {
             && self.waiters.is_empty()
             && self.approvals.is_empty()
             && self.ready_jobs.is_empty()
-            && self.parents.iter().all(|parent| parent.clearing.is_none())
+            && self.parents.iter().all(|parent| {
+                parent.clear.is_none()
+                    && parent.clearing.is_none()
+                    && parent
+                        .context
+                        .upgrade()
+                        .is_none_or(|context| !context.has_pending_delivery())
+            })
         {
             Poll::Ready(Ok(()))
         } else {

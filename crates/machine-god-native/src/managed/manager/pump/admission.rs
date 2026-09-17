@@ -15,11 +15,12 @@ impl ManagedManager {
         if !self.catalog.yield_to_work() && (self.begin_observation() || self.begin_catalog()) {
             return Ok(true);
         }
-        if let Some(index) = self
-            .children
-            .iter()
-            .position(|child| child.closing && !child.busy() && child.actual_settled)
-        {
+        if let Some(index) = self.children.iter().position(|child| {
+            child.closing
+                && !child.busy()
+                && child.actual_settled
+                && !child.prepared.runtime.notice_cleanup_pending()
+        }) {
             let mut child = self.children.remove(index);
             self.retire_child_notice(&mut child);
             self.retiring.push(Retiring {

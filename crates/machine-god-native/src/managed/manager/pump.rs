@@ -389,6 +389,14 @@ impl ManagedManager {
                 && let Poll::Ready(result) = retired.prepared.resources.poll_closed(cx)
             {
                 result?;
+                // Failed admission can retire a restored candidate with an
+                // original saved delivery. Peer closure is not its source ACK
+                // or metadata-clear receipt; keep the exact owner available to
+                // the delivery lane until both kinds of custody settle.
+                if retired.prepared.runtime.notice_cleanup_pending() {
+                    index += 1;
+                    continue;
+                }
                 self.retiring.remove(index);
                 self.retry.retry_capacity();
                 progress = true;

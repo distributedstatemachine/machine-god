@@ -413,3 +413,47 @@ immutability and pre-count incarnation-filtering assertions remain unchanged.
 The exact focused failure log remains
 `/tmp/mg-managed-implementation.V0ZGg1/managed-focused-macos-58fa92f5.log`.
 Neither complete runtime suite nor acceptance review ran for this candidate.
+
+Candidate `022c0083e495a8e2435057bd014ec05116c89c2e` passed the complete
+replacement Linux/macOS local gate after the staging fixture correction.
+Linux native passed 4,028 tests and macOS native passed 4,035; CLI suites passed
+609 and 611 respectively, and all 275 repository Python tests passed. Exact
+build, focused, static/platform and full runtime logs remain under
+`/tmp/mg-managed-implementation.V0ZGg1/` with the `022c0083` suffix. These are
+local regression results, not remote delivery or performance evidence.
+
+The fresh R5 correctness reviewer (`m65_r5_correctness`) rejected that candidate
+with one source-backed P2: host shutdown could move a settled child into
+retirement before its parent-notice source acknowledgements and delivery-outbox
+clear settled. Clear dispatch excludes closing children and cannot address
+retirees; completed retirement can drop the original notice context even while
+a clear future retains the runtime. The shutdown predicate could then report
+success with an uncleared saved outbox. Explicit later restoration can recover
+that original outbox; the finding is false graceful-shutdown completion, not
+history deletion. The source-only reviewer ran no tests. The lifecycle track
+could not start because the host rejected new threads; the resource track did
+not start. This was not three-track acceptance, and the candidate was not pushed.
+The R5 reviewer subsequently became the correction's fix author and cannot count
+as an independent acceptance reviewer of the replacement candidate.
+
+The correction uses complete runtime notice-custody checks before explicit
+archive, shutdown retirement and resident removal. Rejected restored preparations
+can own recovered deliveries too: their exact retained runtime/context remains
+available to the existing clear driver after peer/worker closure. Final shutdown
+also checks retained clear and uncertain context custody. Resolution retains
+normal runtime admission and exact context matching; no label-based authority or
+new execution is introduced. Seven regressions cover acknowledgement pending,
+paused clear and capacity, committed-error retry, dropped clear repair, saved and
+uncertain recovery, explicit close, and rejected restored admission.
+
+The test-only component `4c206f573537f9d63b1c6fc7ed91aa990d8fb846`, applied to
+unchanged `022c0083` production code, compiled with exact Rust 1.94.1 and a fresh
+release-helper build. On macOS the exact
+`shutdown_ack_pending_clears_child_outbox_before_success` regression failed in
+0.16 seconds at its assertion that successful shutdown must clear the original
+outbox (exit 101). The retained log is
+`/tmp/mg-managed-implementation.V0ZGg1/managed-shutdown-red-runtime-4c206f57.log`.
+This is executed reproduction of the finding, not a fixed-code acceptance result.
+The rejected-restoration test component `7b1254ca` and production correction
+`2d0e12f1` are integrated with it. Focused execution, complete replacement gates
+and three fresh independent reviews remain required.

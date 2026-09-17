@@ -215,6 +215,7 @@ impl ManagedManager {
                                 runtime: child.prepared.runtime.clone(),
                                 drain: None,
                             })
+                            .or_else(|| retiring_runtime(&self.retiring, &parent.context))
                             .or_else(|| {
                                 super::foreground::runtime_for_notice(
                                     &self.foregrounds,
@@ -253,6 +254,7 @@ impl ManagedManager {
                         runtime: child.prepared.runtime.clone(),
                         drain: None,
                     })
+                    .or_else(|| retiring_runtime(&self.retiring, &parent.context))
                     .or_else(|| {
                         super::foreground::runtime_for_notice(&self.foregrounds, &parent.context)
                     })
@@ -267,6 +269,29 @@ impl ManagedManager {
         }
         progress
     }
+}
+
+fn retiring_runtime(
+    retiring: &[super::Retiring],
+    context: &Weak<ParentNoticeContext>,
+) -> Option<ClearTarget> {
+    // A rejected restored candidate can already own a recovered delivery.
+    // It has no child row, but retains this exact runtime and context through
+    // peer/worker closure. That closure does not retire runtime metadata admission.
+    retiring
+        .iter()
+        .find(|retired| {
+            !retired.prepared.runtime.status().active
+                && retired
+                    .prepared
+                    .notice_context
+                    .as_ref()
+                    .is_some_and(|original| context.ptr_eq(&Arc::downgrade(original)))
+        })
+        .map(|retired| ClearTarget {
+            runtime: retired.prepared.runtime.clone(),
+            drain: None,
+        })
 }
 
 fn reconcile(

@@ -121,14 +121,10 @@ impl ManagedManager {
         }
         if child.control_requested && !child.busy() && child.actual_settled {
             if child.snapshot.head.intent == Some(JournalIntent::Archive) {
-                if child
-                    .prepared
-                    .notice_context
-                    .as_ref()
-                    .is_some_and(|context| context.delivery().is_some())
-                {
+                if child.prepared.runtime.notice_cleanup_pending() {
                     // Exact source ACK and parent clear must settle before this
-                    // source/runtime incarnation is retired.
+                    // source/runtime incarnation is retired. A saved outbox or
+                    // uncertain publication has custody even without a receipt.
                     return Ok(progress);
                 }
                 child.pending.push_back(ChildWrite {
@@ -167,7 +163,11 @@ impl ManagedManager {
             }
             progress = true;
         }
-        if (self.closing || child.closing) && !child.busy() && child.actual_settled {
+        if (self.closing || child.closing)
+            && !child.busy()
+            && child.actual_settled
+            && !child.prepared.runtime.notice_cleanup_pending()
+        {
             if let Some(job) = child.control.take() {
                 let result = command::receipt(
                     child.control_operation.as_deref().unwrap(),
@@ -180,6 +180,8 @@ impl ManagedManager {
             // Removal is deferred to admit_next so the fair iteration's indices stay stable.
             child.closing = true;
         }
+        // Until notice custody settles, leave the child in this normal lane so
+        // its original clear can still be driven before retirement.
         Ok(progress)
     }
     pub(super) fn start_child(
