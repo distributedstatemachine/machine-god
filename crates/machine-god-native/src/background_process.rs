@@ -5590,9 +5590,35 @@ fn signal_group_or_confirm_exited_leader(
         errno: signal_result.err().map(rustix::io::Errno::raw_os_error),
         phase_proved_only_leader,
         confirmation: "not-run",
+        direct_dispatch: None,
         accepted: false,
     };
-    match signal_result {
+    #[cfg(target_os = "macos")]
+    let classified = classify_darwin_group_signal(
+        signal_result,
+        group,
+        signal,
+        phase_proved_only_leader,
+        |group| {
+            let observed = observe_leader(group);
+            #[cfg(test)]
+            {
+                diagnostic.confirmation = leader_confirmation_label(&observed);
+            }
+            observed
+        },
+        |group, signal| {
+            let dispatched = rustix::process::kill_process(group, signal);
+            #[cfg(test)]
+            {
+                diagnostic.direct_dispatch =
+                    Some(dispatched.map_err(rustix::io::Errno::raw_os_error));
+            }
+            dispatched
+        },
+    );
+    #[cfg(target_os = "linux")]
+    let classified = match signal_result {
         Err(rustix::io::Errno::PERM)
             if phase_proved_only_leader && {
                 let observed = observe_leader(group);
@@ -5607,20 +5633,46 @@ fn signal_group_or_confirm_exited_leader(
             // NOWAIT observation and process-group snapshot from this exact
             // signal phase already prove that the only remaining member is the
             // exited retained leader; do not add another global table scan.
-            #[cfg(test)]
-            {
-                diagnostic.accepted = true;
-            }
             Ok(())
         }
-        result => {
-            let classified = classify_group_signal(result);
-            #[cfg(test)]
-            {
-                diagnostic.accepted = classified.is_ok();
+        result => classify_group_signal(result).map_err(LeaderObservationFailure::Operation),
+    };
+    #[cfg(test)]
+    {
+        diagnostic.accepted = classified.is_ok();
+    }
+    classified
+}
+
+#[cfg(target_os = "macos")]
+fn classify_darwin_group_signal(
+    result: Result<(), rustix::io::Errno>,
+    group: rustix::process::Pid,
+    signal: rustix::process::Signal,
+    phase_proved_only_leader: bool,
+    observe: impl FnOnce(
+        rustix::process::Pid,
+    ) -> Result<Option<BackgroundProcessExit>, LeaderObservationFailure>,
+    dispatch_retained: impl FnOnce(
+        rustix::process::Pid,
+        rustix::process::Signal,
+    ) -> Result<(), rustix::io::Errno>,
+) -> Result<(), LeaderObservationFailure> {
+    match result {
+        Err(rustix::io::Errno::PERM) if phase_proved_only_leader => match observe(group)? {
+            Some(_) => Ok(()),
+            None => {
+                // XNU's group walk can skip an exiting, nonreferenceable leader
+                // before NOWAIT exposes its exit. The unreaped child still pins
+                // this identity, and positive-PID kill can dispatch to that same
+                // retained process. This is the requested signal, not signal-0
+                // or proof of exit: final group/member checks and reap still run.
+                // In particular, ESRCH does not confirm this fallback succeeded.
+                dispatch_retained(group, signal)
+                    .map_err(|_| LeaderObservationFailure::Operation(cleanup_error()))
             }
-            classified.map_err(LeaderObservationFailure::Operation)
-        }
+        },
+        result => classify_group_signal(result).map_err(LeaderObservationFailure::Operation),
     }
 }
 
@@ -5644,6 +5696,7 @@ struct GroupSignalDiagnostic {
     errno: Option<i32>,
     phase_proved_only_leader: bool,
     confirmation: &'static str,
+    direct_dispatch: Option<Result<(), i32>>,
     accepted: bool,
 }
 
@@ -5657,8 +5710,8 @@ impl fmt::Display for GroupSignalDiagnostic {
         };
         write!(
             formatter,
-            "background group signal rejected: signal={signal} errno={:?} phase_only_leader={} confirmation={}",
-            self.errno, self.phase_proved_only_leader, self.confirmation
+            "background group signal rejected: signal={signal} errno={:?} phase_only_leader={} confirmation={} direct_dispatch={:?}",
+            self.errno, self.phase_proved_only_leader, self.confirmation, self.direct_dispatch
         )
     }
 }
@@ -12537,16 +12590,241 @@ mod process_regression_tests {
                 errno: Some(libc::EPERM),
                 phase_proved_only_leader: true,
                 confirmation: "not-run",
+                direct_dispatch: None,
                 accepted: true, // Formatting this fixture must not emit a Drop diagnostic.
             };
             assert_eq!(
                 diagnostic.to_string(),
                 format!(
-                    "background group signal rejected: signal={label} errno=Some({}) phase_only_leader=true confirmation=not-run",
+                    "background group signal rejected: signal={label} errno=Some({}) phase_only_leader=true confirmation=not-run direct_dispatch=None",
                     libc::EPERM
                 )
             );
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "explicit decision table covers every authority and dispatch outcome"
+    )]
+    fn darwin_retained_leader_dispatch_requires_exact_eperm_and_fresh_wait_authority() {
+        use rustix::{io::Errno, process::Signal};
+        let group = rustix::process::Pid::from_raw(42).unwrap();
+        for signal in [Signal::TERM, Signal::KILL] {
+            for (group_result, sole_leader, observed, direct_result, expected, calls) in [
+                (Ok(()), true, Ok(None), Ok(()), "ok", &[][..]),
+                (Err(Errno::SRCH), true, Ok(None), Ok(()), "ok", &[][..]),
+                (Err(Errno::IO), true, Ok(None), Ok(()), "cleanup", &[][..]),
+                (
+                    Err(Errno::PERM),
+                    false,
+                    Ok(None),
+                    Ok(()),
+                    "cleanup",
+                    &[][..],
+                ),
+                (
+                    Err(Errno::PERM),
+                    true,
+                    Ok(Some(BackgroundProcessExit::Exited(7))),
+                    Ok(()),
+                    "ok",
+                    &["observe"][..],
+                ),
+                (
+                    Err(Errno::PERM),
+                    true,
+                    Err(LeaderObservationFailure::LostAuthority),
+                    Ok(()),
+                    "lost",
+                    &["observe"][..],
+                ),
+                (
+                    Err(Errno::PERM),
+                    true,
+                    Err(LeaderObservationFailure::Operation(wait_error())),
+                    Ok(()),
+                    "wait",
+                    &["observe"][..],
+                ),
+                (
+                    Err(Errno::PERM),
+                    true,
+                    Ok(None),
+                    Ok(()),
+                    "ok",
+                    &["observe", "dispatch"][..],
+                ),
+                (
+                    Err(Errno::PERM),
+                    true,
+                    Ok(None),
+                    Err(Errno::PERM),
+                    "cleanup",
+                    &["observe", "dispatch"][..],
+                ),
+                (
+                    Err(Errno::PERM),
+                    true,
+                    Ok(None),
+                    Err(Errno::SRCH),
+                    "cleanup",
+                    &["observe", "dispatch"][..],
+                ),
+                (
+                    Err(Errno::PERM),
+                    true,
+                    Ok(None),
+                    Err(Errno::IO),
+                    "cleanup",
+                    &["observe", "dispatch"][..],
+                ),
+            ] {
+                let actions = std::cell::RefCell::new(Vec::new());
+                let result = classify_darwin_group_signal(
+                    group_result,
+                    group,
+                    signal,
+                    sole_leader,
+                    |actual| {
+                        assert_eq!(actual, group);
+                        actions.borrow_mut().push("observe");
+                        observed
+                    },
+                    |actual, requested| {
+                        assert_eq!(actual, group);
+                        assert_eq!(
+                            requested, signal,
+                            "fallback must dispatch the original signal"
+                        );
+                        actions.borrow_mut().push("dispatch");
+                        direct_result
+                    },
+                );
+                let outcome = match result {
+                    Ok(()) => "ok",
+                    Err(LeaderObservationFailure::LostAuthority) => "lost",
+                    Err(LeaderObservationFailure::Operation(error)) => match error.kind() {
+                        BackgroundProcessErrorKind::Wait => "wait",
+                        BackgroundProcessErrorKind::Cleanup => "cleanup",
+                        _ => panic!("unexpected fallback error"),
+                    },
+                };
+                assert_eq!(outcome, expected);
+                assert_eq!(
+                    actions.into_inner(),
+                    calls,
+                    "no extra observation or dispatch"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one retained child exercises live dispatch, escalation, final proofs and reap"
+    )]
+    fn darwin_eperm_fallback_signals_live_retained_leader_without_claiming_quiescence() {
+        let directory = TestDirectory::new("darwin-eperm-live-leader");
+        let ready = directory.0.join("ready");
+        let reap_permit =
+            reserve_child_reap_authority().expect("reserve test child reap authority");
+        let child = Command::new("/bin/sh")
+            .args(["-c", "trap '' TERM; : > ready; exec /bin/sleep 30"])
+            .current_dir(&directory.0)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn TERM-ignoring retained leader");
+        let leader = NonZeroU32::new(child.id()).unwrap();
+        let group = rustix::process::Pid::from_raw(i32::try_from(leader.get()).unwrap()).unwrap();
+        let mut process = TestProcessGroupGuard {
+            child: Some(child),
+            reap_permit: Some(reap_permit),
+            group,
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut observation = ObservationBackoff::retry();
+        while !ready.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "leader did not install TERM disposition"
+            );
+            observation.sleep_until_and_advance(deadline);
+        }
+        assert!(matches!(observe_leader(group), Ok(None)));
+        let authority = GroupSnapshotAuthority::default();
+        let snapshot_guard = GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        reset_group_snapshots_for_test(leader);
+        reset_group_signal_attempts_for_test(leader);
+        inject_group_signal_eperm_for_test(leader, 3);
+        let mut captured = CapturedMemberUnion::new();
+        let mut failures = CleanupFailures::default();
+        let mut force_signals = false;
+        let phase = cleanup_group_signal_phase(
+            group,
+            rustix::process::Signal::TERM,
+            &mut force_signals,
+            &mut failures,
+            &authority,
+            &mut captured,
+        );
+        assert!(
+            phase == CleanupSignalPhase::Active,
+            "dispatch success is not exit evidence"
+        );
+        failures
+            .finish()
+            .expect("actual retained-leader TERM dispatch succeeds");
+        assert!(!force_signals);
+        assert!(
+            matches!(observe_leader(group), Ok(None)),
+            "ignored TERM leaves the retained child alive"
+        );
+        assert!(process.child.is_some() && process.reap_permit.is_some());
+        assert!(captured.iter().any(|member| member.pid == group));
+        assert_eq!(group_signal_attempts_for_test(), 1);
+        assert_eq!(
+            group_snapshots_for_test(),
+            1,
+            "fallback reuses the phase snapshot"
+        );
+
+        cleanup_child_with_captured_expected(
+            &mut process.child,
+            &mut process.reap_permit,
+            group,
+            Duration::ZERO,
+            Some(BackgroundProcessExit::Signaled(libc::SIGKILL)),
+            true,
+            (&authority, captured),
+        )
+        .expect("KILL escalation still proves group quiescence and reaps the exact leader");
+        assert!(process.child.is_none() && process.reap_permit.is_none());
+        assert!(matches!(
+            observe_leader(group),
+            Err(LeaderObservationFailure::LostAuthority)
+        ));
+        assert_eq!(
+            group_signal_attempts_for_test(),
+            3,
+            "one initial TERM plus ordinary TERM/KILL cleanup"
+        );
+        assert_eq!(
+            group_snapshots_for_test(),
+            5,
+            "one initial phase plus all four ordinary cleanup scans"
+        );
+        drop(snapshot_guard);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

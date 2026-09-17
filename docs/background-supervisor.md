@@ -414,7 +414,15 @@ or quarantines the exact child. Positive reaping or known loss of wait authority
 discharges the collector handle before outer cleanup; known `ECHILD` never
 leads to a numeric kill, and remains a snapshot failure. Permission denial is
 never disappearance evidence. The EPERM path reuses its phase snapshot and
-adds no global scan; a surviving
+adds no global scan. On macOS, if that snapshot contains exactly the retained
+leader and a fresh NOWAIT observation has no exit status, cleanup attempts the
+same signal directly against that leader. Only a successful direct signal call is
+accepted; direct EPERM, ESRCH and all other errors remain cleanup failures.
+This covers Darwin's exiting-but-not-yet-waitable leader transition without
+assuming the leader has exited. Observation failure or lost wait authority
+prevents the fallback, and signal-call success never replaces the remaining
+group/captured-member quiescence proofs or bounded reap. Linux retains its
+existing signaling behavior. A surviving
 credential-changed member therefore produces a fixed cleanup failure. The
 numeric group identity is not consulted after it becomes reusable. Linux
 formats repeated descriptor-relative PID components in a fixed ten-byte stack

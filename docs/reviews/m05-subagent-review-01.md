@@ -174,3 +174,35 @@ full runtime gate started. The tests now settle replay before out-of-band journa
 reads, without changing consent or publication assertions. Failed and remaining
 focused logs are retained under the same log directory. Replacement verification
 is still required; passing builds alone do not establish feature acceptance.
+
+Candidate `e9522d58` passed both complete build gates, static/platform checks,
+the native Apple ABI probe, 17 focused repair tests on each platform, and the
+full Linux runtime/doc gate with 269 Python tests. The serial macOS runtime gate
+failed `background_process::integration_tests::abort_and_drop_revoke_pipe_authority`
+at its prepared-child abort: group TERM returned EPERM, the phase snapshot proved
+only the leader, NOWAIT had no exit status, and the first bounded reap later
+succeeded. The native suite reported 4,015 passing tests and one failure;
+remaining integration/doc tests were not reached. The original test passed ten
+unchanged isolated repetitions, but broader background-process execution then
+reproduced the identical failure in
+`pipe_mode_requires_controller_before_release_and_null_rejects_attachment`.
+Neither repetition establishes a cause or source fix. All failed and diagnostic
+logs remain under `/tmp/mg-managed-implementation.V0ZGg1/` with the candidate SHA.
+
+Read-only source diagnosis found a feasible Darwin transition: `P_REF_DEAD`
+precedes waitable `SZOMB`; group iteration can skip that leader and return EPERM,
+while direct-PID signaling accepts it through `pzfind`. The evidence is Apple's
+[direct-PID signaling](https://github.com/apple-oss-distributions/xnu/blob/ac9718fb1af618d5ce8678d0dc6e8a58f252216f/bsd/kern/kern_sig.c#L1381),
+[process lookup](https://github.com/apple-oss-distributions/xnu/blob/ac9718fb1af618d5ce8678d0dc6e8a58f252216f/bsd/kern/kern_proc.c#L2631),
+and [exit ordering](https://github.com/apple-oss-distributions/xnu/blob/ac9718fb1af618d5ce8678d0dc6e8a58f252216f/bsd/kern/kern_exit.c#L2269)
+in public XNU `12377.121.6`, not the exact installed `12377.160.73` build.
+This is a source-supported mechanism, not instrumented attribution of either
+failure. A signal-zero probe cannot distinguish it from a running leader.
+
+The correction instead retries the actual same signal directly against the
+retained leader, only on macOS after EPERM, the sole-leader phase proof and a
+fresh successful NOWAIT observation without status. It accepts only successful
+direct signaling, preserves every direct error and observation failure, adds no
+wait or global scan, and leaves final quiescence and actual reap obligations
+intact. Replacement focused/full gates and three fresh whole-feature reviews
+remain required; diagnosis is not an acceptance review.
