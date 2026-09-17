@@ -499,3 +499,51 @@ local names `wakes` and `waker`. Static policy and platform checks passed;
 no runtime stage started. Renaming the counter to `notifications` preserves
 every assertion and changes no production behavior. The replacement candidate
 still requires the complete local gate and three fresh whole-feature reviews.
+
+Candidate `a042eac208ab5972a2b0d753bd7b5f8a0f17d783` passed the complete exact
+Rust 1.94.1 local replacement gate. Linux passed 609 CLI and 4,037 native tests,
+workspace integrations and doctests, plus all 275 Python checks. macOS passed
+611 CLI and 4,044 native tests, workspace integrations and doctests. Both fresh
+release helpers, focused regressions, static policy/audit and platform checks
+passed. All six delivery and seven shutdown regressions passed on both platforms,
+including the previously hanging external-clear/context-retirement scenario.
+Logs remain under `/tmp/mg-managed-implementation.V0ZGg1/` with `a042eac2` suffixes.
+
+Fresh R6 correctness review rejected this candidate with one P2 finding at
+`managed/manager/command/lifecycle.rs:165`: explicit cancellation of accepted
+queued or interrupted work can take the direct intent/head-settlement path
+without publishing its frozen enabled cancellation notice. After host shutdown
+and restart, nonresident interrupted work can therefore be successfully cancelled
+while its parent permanently misses the notice. Only runtime completion sets
+the terminal-notice flag; replay cannot recover a notice never journaled. The
+review was source-only, not an executed reproduction. No other actionable finding
+was reported. Lifecycle review could not start despite an initial attempt, retry,
+and another attempt after an old thread disappeared; each hit the host thread
+limit. Resource review did not start. Unused review worktrees were removed.
+There was no three-track acceptance or push. The correctness reviewer now owns
+the correction and is not independent for replacement acceptance.
+
+Test-only component `f515ab3beb6e3ce290dfa8ddfc7b2e9a6cd23796`, against unchanged
+`a042eac2` production code, reproduced both cancellation-notice omissions on
+unprivileged Linux with exact Rust 1.94.1 and the fresh release CLI/helper.
+`cancellation_before_initial_execution_publishes_original_without_a_turn` and
+`nonresident_cancel_after_shutdown_preserves_frozen_enabled_notice` both failed
+at the assertion requiring one original cancellation notice: observed zero,
+expected one (exit 101; two failures in 0.10 seconds). The test-only build passed.
+Logs are `managed-cancel-red-build-f515ab3b.log` and
+`managed-cancel-red-runtime-f515ab3b.log` in the retained gate directory above.
+This establishes the original failure, not acceptance of a correction.
+
+Correction component `c60878b291fc69768b25e12b916090e0e07547e5` publishes the
+cancellation original and FIFO-head removal in one journal transaction. The
+manager derives frozen notification policy and actual attempt identity from
+durable originals, with the exact current relationship target. This also handles
+nonresident and never-started work without restoring a runtime or executing a
+provider turn. Confirmed cancellation retires the live emitter so replay cannot
+duplicate the terminal notice. Only explicit cancel intent creates the notice;
+archive/close stays silent. Disabled policy and detached relationships stay silent.
+Eight manager regressions cover pre-start/restart, frozen policy, FIFO, idle
+repeat, active cancel, explicit retry and close. Two store regressions cover
+exact target rejection and all four publication fault phases, reconciliation
+failure and restart. Author formatting and diff checks passed; fixed-code runtime
+execution and replacement independent acceptance have not yet run.

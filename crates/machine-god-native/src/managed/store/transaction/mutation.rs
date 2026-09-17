@@ -44,6 +44,12 @@ pub(super) fn apply(
             current: *status,
             reason: failure.clone(),
         }),
+        JournalMutation::CancelHead { work_id, .. } => Some(ManagedEventKind::WorkTransition {
+            work_item_id: work_id.clone(),
+            previous: head.queue.first().map(|work| work.status),
+            current: Status::Cancelled,
+            reason: None,
+        }),
         JournalMutation::Configure(_) => Some(ManagedEventKind::Configured),
         JournalMutation::Milestone {
             operation_id,
@@ -162,6 +168,39 @@ fn apply_inner(
                 status,
                 failure,
             }]);
+        }
+        JournalMutation::CancelHead { work_id, notice } => {
+            let mut records = Vec::new();
+            if let Some(notice) = notice {
+                use crate::managed::notices::{NoticeEvent, NoticeTerminal};
+                if notice.source.work_id != work_id
+                    || notice.target.relationship_generation.get() != head.revision - 1
+                    || notice.event
+                        != (NoticeEvent::Terminal {
+                            outcome: NoticeTerminal::Cancelled,
+                        })
+                    || head.parent_id.as_deref() != Some(notice.target.parent.id.as_str())
+                    || head.parent_generation != Some(notice.target.parent.generation.get())
+                    || head
+                        .parent_owner
+                        .as_ref()
+                        .is_none_or(|parent| parent.incarnation != notice.target.parent_incarnation)
+                {
+                    return Err(Error::Invalid);
+                }
+                records = apply_inner(
+                    head,
+                    JournalMutation::AppendHistory(vec![JournalRecord::Notice(notice)]),
+                    limits,
+                )?;
+            }
+            change_state(head, &work_id, Status::Cancelled, None)?;
+            records.push(JournalRecord::WorkState {
+                work_id,
+                status: Status::Cancelled,
+                failure: None,
+            });
+            return Ok(records);
         }
         JournalMutation::Intent(intent) => {
             head.intent = Some(intent);

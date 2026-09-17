@@ -176,6 +176,17 @@ impl ManagedManager {
                             }
                         }
                         WriteAfter::Terminal => {
+                            if child.notice_terminal == Some(ManagedQueueStatus::Cancelled) {
+                                // Cancellation and its original notice were published
+                                // atomically. Retire this live attempt's emitter so
+                                // replay, not a second terminal emission, exposes it.
+                                if let Some(notice) = child.notice.take() {
+                                    let _ = self.notices.stop_work(&notice);
+                                    self.retained_notices.push(notice);
+                                }
+                                child.notice_terminal = None;
+                                child.notice_started = false;
+                            }
                             child.work.take();
                             child.notice_attempt = None;
                             child.assistant.clear();

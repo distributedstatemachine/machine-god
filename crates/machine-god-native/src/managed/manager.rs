@@ -1,5 +1,6 @@
 //! Outer native managed-agent ownership, independent of the foreground UI.
 
+mod cancellation;
 pub(crate) mod catalog;
 mod command;
 mod delivery;

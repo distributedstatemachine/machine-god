@@ -313,6 +313,13 @@ remain normally cancellable. Submission/wait cancellation and host teardown
 are not durable user cancellation; only an admitted lifecycle command requests
 that mutation. Persistent cancellation returns idle; one-off cancellation is
 terminal. Close archives/settles, not deletes; reopen does not implicitly retry.
+Explicit cancellation also handles accepted work that has never started or is
+interrupted and nonresident after restart. It uses that work's frozen notification
+policy and durable attempt identity, not the child's later configuration, and
+requires no runtime restoration or provider turn. An enabled cancellation notice
+and removal of the original FIFO head share one confirmed journal publication;
+ambiguous publication retains the original operation rather than inventing a
+second notice. Disabled policy and detached relationships create no parent notice.
 The manager owns aggregate scheduling, residency, queue, byte and waiter budgets;
 core has no foreground admission counters or detached worker loop.
 

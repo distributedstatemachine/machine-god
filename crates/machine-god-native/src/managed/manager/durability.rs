@@ -92,6 +92,16 @@ pub(super) fn mutate(
     mutation: JournalMutation,
 ) -> BoxFuture<'static, Result<JournalSnapshot, Failure>> {
     Box::pin(async move {
+        let mutation = loop {
+            match super::cancellation::prepare(&journal, &snapshot, &mutation).await {
+                Ok(Some(mutation)) => break mutation,
+                Ok(None) => break mutation,
+                Err(Failure::Rejected(JournalError::Busy | JournalError::Limit)) => {
+                    gate.blocked(ManagerBlock::Capacity).await;
+                }
+                Err(error) => return Err(error),
+            }
+        };
         confirm(&journal, &gate, None, || {
             journal.mutate(snapshot.clone(), mutation.clone())
         })

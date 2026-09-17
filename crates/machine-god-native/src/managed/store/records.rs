@@ -157,6 +157,11 @@ pub(crate) enum JournalMutation {
         status: ManagedQueueStatus,
         failure: Option<String>,
     },
+    /// One confirmed publication owns both cancellation delivery and FIFO removal.
+    CancelHead {
+        work_id: String,
+        notice: Option<crate::managed::notices::ManagedNotice>,
+    },
     Intent(JournalIntent),
     /// Finish a confirmed cancellation intent when no queued work exists.
     CancelIdle,
