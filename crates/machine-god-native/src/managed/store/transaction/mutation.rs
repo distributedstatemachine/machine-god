@@ -79,7 +79,8 @@ pub(super) fn apply(
         | JournalMutation::ResolveHead { .. }
         | JournalMutation::Archive
         | JournalMutation::Reopen(_)
-        | JournalMutation::Recover => Some(ManagedEventKind::LifecycleChanged {
+        | JournalMutation::Recover
+        | JournalMutation::InterruptForPressure => Some(ManagedEventKind::LifecycleChanged {
             previous: head.status,
             current: head.status,
         }),
@@ -320,7 +321,7 @@ fn apply_inner(
             };
             head.intent = None;
         }
-        JournalMutation::Recover => {
+        JournalMutation::Recover | JournalMutation::InterruptForPressure => {
             recover(head);
         }
     }

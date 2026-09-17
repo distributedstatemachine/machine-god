@@ -107,6 +107,9 @@ struct Shared {
 struct Accounting {
     used: usize,
     entries: usize,
+    protected_bytes: usize,
+    protected_entries: usize,
+    headroom_low: bool,
     reserved: usize,
     pending: Option<transaction::PendingPublication>,
     next_operation: u64,
@@ -155,6 +158,9 @@ impl ManagedJournal {
                             state: Mutex::new(Accounting {
                                 used: used.bytes,
                                 entries: used.entries,
+                                protected_bytes: used.protected_bytes,
+                                protected_entries: used.protected_entries,
+                                headroom_low: used.headroom_low,
                                 reserved: 0,
                                 pending: None,
                                 next_operation: 1,
@@ -179,6 +185,12 @@ impl ManagedJournal {
     /// mailbox payloads retain their separate aggregate owners and limits.
     pub(crate) fn resident_reservation_bytes(&self) -> usize {
         self.shared.limits.head_bytes * 4 + 256 * 1024
+    }
+
+    /// Observation only: producers stop before spending accepted settlement credits.
+    /// An ordinary in-flight publication does not by itself signal pressure.
+    pub(crate) fn ordinary_publication_available(&self) -> bool {
+        transaction::capacity::ordinary_available(&self.shared)
     }
 
     fn run<T: Send + 'static>(

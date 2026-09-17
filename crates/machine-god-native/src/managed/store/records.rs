@@ -83,6 +83,11 @@ pub(crate) struct JournalHead {
     pub next_sequence: u64,
     /// Last inspectable event, independent of later transcript/notice maintenance pages.
     pub last_event_sequence: u64,
+    /// Durable credits for already accepted work and exact source acknowledgements.
+    pub cleanup_bytes: usize,
+    pub cleanup_entries: usize,
+    #[serde(deserialize_with = "notice_reservations")]
+    pub notice_reservations: Vec<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -189,6 +194,8 @@ pub(crate) enum JournalMutation {
     Archive,
     Reopen(JournalTranscript),
     Recover,
+    /// Native pressure settlement, never a durable user cancellation.
+    InterruptForPressure,
 }
 
 #[derive(Clone, Debug)]
@@ -292,6 +299,9 @@ fn bounded<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>, const N: usize
 }
 fn queue<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<JournalWorkRef>, D::Error> {
     bounded::<D, _, 256>(d)
+}
+fn notice_reservations<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u64>, D::Error> {
+    bounded::<D, _, 4096>(d)
 }
 fn skill_references<'de, D: serde::Deserializer<'de>>(
     d: D,

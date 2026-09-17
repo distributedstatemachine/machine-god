@@ -91,6 +91,7 @@ pub(super) fn relationship(
     }
 }
 pub(super) fn head(head: &JournalHead, limits: JournalLimits) -> Result<(), Error> {
+    super::capacity::Protection::from_head(head, limits)?;
     id(&head.id)?;
     configuration(&head.configuration)?;
     relationship(

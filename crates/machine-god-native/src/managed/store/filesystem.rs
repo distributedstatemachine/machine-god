@@ -199,6 +199,9 @@ pub(super) fn validate_owner(shared: &Shared) -> Result<(), Error> {
 pub(super) struct Usage {
     pub bytes: usize,
     pub entries: usize,
+    pub protected_bytes: usize,
+    pub protected_entries: usize,
+    pub headroom_low: bool,
 }
 
 pub(super) fn scan_usage(root: &OwnedFd, limits: JournalLimits) -> Result<Usage, Error> {
@@ -207,6 +210,9 @@ pub(super) fn scan_usage(root: &OwnedFd, limits: JournalLimits) -> Result<Usage,
     let mut stream = Dir::new(directory).map_err(|_| Error::Persistence)?;
     let mut count = 0;
     let mut used = 0_usize;
+    let mut protected_bytes = 0_usize;
+    let mut protected_entries = 0_usize;
+    let mut headroom_low = false;
     for entry in &mut stream {
         let entry = entry.map_err(|_| Error::Persistence)?;
         let name = entry.file_name();
@@ -237,10 +243,30 @@ pub(super) fn scan_usage(root: &OwnedFd, limits: JournalLimits) -> Result<Usage,
         if used > limits.aggregate_bytes {
             return Err(Error::Limit);
         }
+        if name.starts_with("h-") {
+            let bytes = read(root, name, limits.head_bytes)?.ok_or(Error::Conflict)?;
+            let head: super::JournalHead =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Invalid)?;
+            if head_name(&head.id) != name {
+                return Err(Error::Invalid);
+            }
+            let protection = super::transaction::capacity::Protection::from_head(&head, limits)?;
+            protected_bytes = protected_bytes
+                .checked_add(protection.bytes)
+                .ok_or(Error::Limit)?;
+            protected_entries = protected_entries
+                .checked_add(protection.entries)
+                .ok_or(Error::Limit)?;
+            headroom_low |= bytes.len().saturating_add(4096) > limits.head_bytes
+                || head.notice_reservations.len() >= 4092;
+        }
     }
     Ok(Usage {
         bytes: used,
         entries: count,
+        protected_bytes,
+        protected_entries,
+        headroom_low,
     })
 }
 

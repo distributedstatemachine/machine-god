@@ -1,3 +1,4 @@
+pub(super) mod capacity;
 mod mutation;
 mod validation;
 
@@ -63,6 +64,9 @@ impl Reservation {
         let mut state = self.shared.state.lock().map_err(|_| Error::Invalid)?;
         state.used = used.bytes;
         state.entries = used.entries;
+        state.protected_bytes = used.protected_bytes;
+        state.protected_entries = used.protected_entries;
+        state.headroom_low = used.headroom_low;
         Ok(())
     }
     fn reserve_entries(&self, new_page: bool) -> Result<(), Error> {
@@ -203,6 +207,9 @@ pub(super) fn create(
         history_tail: None,
         next_sequence: 1,
         last_event_sequence: 0,
+        cleanup_bytes: 0,
+        cleanup_entries: 0,
+        notice_reservations: Vec::new(),
     };
     let mut records = if let Some(work) = create.initial_work {
         mutation::enqueue(&mut head, work, shared.limits)?
@@ -213,7 +220,15 @@ pub(super) fn create(
         0,
         mutation::event(&head, machine_god_core::ManagedEventKind::Created)?,
     );
-    publish(shared, reservation, None, None, head, records)
+    publish(
+        shared,
+        reservation,
+        None,
+        None,
+        head,
+        records,
+        capacity::Admission::New,
+    )
 }
 pub(super) fn mutate(
     shared: &Arc<Shared>,
@@ -223,13 +238,16 @@ pub(super) fn mutate(
     let reservation = Reservation::acquire(shared)?;
     let source = check_snapshot(shared, &snapshot)?;
     if snapshot.head.owner_epoch != shared.epoch {
-        if !matches!(mutation, JournalMutation::Recover) {
+        if !matches!(mutation, JournalMutation::Recover)
+            && !archived_acknowledgement(&snapshot.head, &mutation)
+        {
             return Err(Error::RecoveryRequired);
         }
     } else if matches!(mutation, JournalMutation::Recover) {
         return Err(Error::Conflict);
     }
     let expected = snapshot.digest;
+    let admission = capacity::Admission::mutation(&mutation);
     let mut head = snapshot.head;
     head.owner_epoch = shared.epoch;
     head.revision = head.revision.checked_add(1).ok_or(Error::Exhausted)?;
@@ -241,7 +259,23 @@ pub(super) fn mutate(
         Some(&source),
         head,
         records,
+        admission,
     )
+}
+
+fn archived_acknowledgement(head: &JournalHead, mutation: &JournalMutation) -> bool {
+    // Archived sources cannot reactivate. The manager has proved exact original
+    // envelopes/checkpoints against this immutable snapshot before submitting
+    // ACKs; record validation still checks recipient/checkpoint consistency.
+    // Transfer owner epoch in that same credited publication, not a preceding
+    // generic recovery write. Mixed history and unreserved ACKs cannot use it.
+    head.status == machine_god_core::ManagedAgentState::Archived
+        && matches!(mutation, JournalMutation::AppendHistory(records)
+        if !records.is_empty() && records.iter().all(|record| matches!(record,
+            JournalRecord::NoticeAcknowledged { identity, .. }
+                if identity.source.source.id == head.id
+                    && head.notice_reservations.binary_search(&identity.source_sequence.get()).is_ok()
+        )))
 }
 
 fn bind_event_sequence(head: &mut JournalHead, records: &[JournalRecord]) -> Result<(), Error> {
@@ -259,6 +293,7 @@ fn bind_event_sequence(head: &mut JournalHead, records: &[JournalRecord]) -> Res
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Exact source custody and admission class share one publication.
 fn publish(
     shared: &Arc<Shared>,
     mut reservation: Reservation,
@@ -266,7 +301,10 @@ fn publish(
     source: Option<&Arc<fs::Source>>,
     mut head: JournalHead,
     mut records: Vec<JournalRecord>,
+    admission: capacity::Admission,
 ) -> Result<JournalPublication, Error> {
+    let original_capacity = capacity::Protection::from_head(&head, shared.limits)?;
+    capacity::prepare(&mut head, &records, shared.limits, admission)?;
     let previous = head.history_tail.clone();
     bind_event_sequence(&mut head, &records)?;
     records.push(JournalRecord::Control(JournalControl {
@@ -313,6 +351,16 @@ fn publish(
         Some((reference, bytes))
     };
     validation::head(&head, shared.limits)?;
+    // The fixed-size credit fields may change their decimal encoded length.
+    // Reserve the full configured head staging bound before final serialization.
+    capacity::admit(
+        shared,
+        &mut head,
+        original_capacity,
+        page.as_ref().map_or(0, |(_, bytes)| bytes.len()),
+        admission,
+        source.is_none(),
+    )?;
     let candidate = encode(&head, shared.limits.head_bytes)?;
     reservation.reserve_entries(page.is_some())?;
     let receipt = JournalReceipt {
@@ -483,6 +531,9 @@ pub(super) fn reconcile(
         let mut state = shared.state.lock().map_err(|_| Error::Invalid)?;
         state.used = used.bytes;
         state.entries = used.entries;
+        state.protected_bytes = used.protected_bytes;
+        state.protected_entries = used.protected_entries;
+        state.headroom_low = used.headroom_low;
         state.reserved = 0;
         state.pending.take()
     };
