@@ -8,6 +8,54 @@ fn staged(prepared: PreparedNotice) -> StagedNotice {
 }
 
 #[test]
+fn notice_size_count_matches_json_without_an_encoded_buffer() {
+    let manager = ManagedNotices::new(NoticeLimits::default(), Clock::new()).unwrap();
+    let work = work(&manager, "child", started_policy());
+    let stage = staged(manager.prepare_durable_start(&work, nz(1), None).unwrap());
+    let mut notice = stage.notice().clone();
+    notice.source.source.id = "snow 雪\n\"quote\"".into();
+    notice.history = Some(NoticeHistoryRef {
+        record_id: "\\escaped".into(),
+        source_sequence: nz(1),
+    });
+    let encoded = serde_json::to_vec(&notice).unwrap();
+    assert_eq!(
+        super::super::state::encoded_notice_bytes(&notice, encoded.len()),
+        Ok(encoded.len())
+    );
+    for limit in [0, 1, encoded.len() - 1] {
+        assert_eq!(
+            super::super::state::encoded_notice_bytes(&notice, limit),
+            Err(NoticeError::Capacity)
+        );
+    }
+}
+
+#[test]
+fn tiny_durable_notice_limits_refund_publication_without_staging() {
+    for notice_bytes in [1, 16, 128] {
+        let manager = ManagedNotices::new(
+            NoticeLimits {
+                notice_bytes,
+                ..NoticeLimits::default()
+            },
+            Clock::new(),
+        )
+        .unwrap();
+        let work = work(&manager, "child", started_policy());
+        assert!(matches!(
+            manager.prepare_durable_start(&work, nz(1), None),
+            Err(NoticeError::Capacity)
+        ));
+        assert_eq!(manager.usage().publication_records, 0);
+        assert_eq!(manager.usage().publication_bytes, 0);
+        assert_eq!(manager.usage().retained_records, 0);
+        assert_eq!(manager.usage().retained_bytes, 0);
+        assert!(manager.pending_notice(&work).unwrap().is_none());
+    }
+}
+
+#[test]
 fn durable_terminal_bypasses_full_inbox_without_refunding_held_snapshot() {
     let clock = Clock::new();
     let manager = ManagedNotices::new(

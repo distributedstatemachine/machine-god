@@ -992,6 +992,9 @@ parent prompt for child shutdown. Interval and milestone admission retain the
 ordinary inbox bounds. Releasing the last charged snapshot wakes capacity
 waiters outside the registry lock. Replay can restore a deferred original while
 its live work tracker remains, without advancing that tracker's timer or cursor.
+Envelope copies are checked against the configured payload bound before durable
+staging. Exact JSON size validation counts borrowed serialization fragments
+without building an encoded buffer, including when a tiny limit rejects input.
 
 Every interval is one actual observed state with an exact first/last tick range,
 coalesced interval count and explicit gap flag. Late observation never synthesizes

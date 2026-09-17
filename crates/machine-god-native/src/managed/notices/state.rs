@@ -295,6 +295,29 @@ impl Inner {
         let Some(parent) = &work.relationship.parent else {
             return Ok(PreparedNotice::Suppressed);
         };
+        let incarnation = work
+            .relationship
+            .parent_incarnation
+            .as_ref()
+            .ok_or(NoticeError::InvalidInput)?;
+        // These are the only heap-backed fields copied by a durable start or
+        // terminal envelope. Reject an impossible limit before those copies;
+        // exact JSON framing/escaping is counted without allocation below.
+        if durable {
+            let copied = [
+                work.identity.source.source.id.len(),
+                work.identity.source.work_id.len(),
+                parent.id.len(),
+                incarnation.as_str().len(),
+                history.map_or(0, |history| history.record_id.len()),
+            ]
+            .into_iter()
+            .try_fold(0_usize, usize::checked_add)
+            .ok_or(NoticeError::Capacity)?;
+            if copied > self.limits.notice_bytes {
+                return Err(NoticeError::Capacity);
+            }
+        }
         // Reserve before envelope copies or encoding scratch. Lost observers
         // and ambiguous publication retain this exact finite allocation charge.
         let publication = if durable {
@@ -302,7 +325,8 @@ impl Inner {
                 .count
                 .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
                 .map_err(|_| NoticeError::Capacity)?;
-            // Envelope plus geometrically grown serialization scratch.
+            // Conservative envelope/publication headroom. Length validation
+            // uses no serialized buffer, including on oversized input.
             let charge = 3 * self.limits.notice_bytes
                 + std::mem::size_of::<NoticeRecord>()
                 + std::mem::size_of::<PendingNotice>();
@@ -320,11 +344,7 @@ impl Inner {
             source_sequence: sequence,
             target: NoticeTarget {
                 parent: parent.clone(),
-                parent_incarnation: work
-                    .relationship
-                    .parent_incarnation
-                    .clone()
-                    .ok_or(NoticeError::InvalidInput)?,
+                parent_incarnation: incarnation.clone(),
                 relationship_generation: work.relationship.generation,
             },
             event,
@@ -351,16 +371,11 @@ impl Inner {
         publication: Option<RecordReservation>,
     ) -> Result<Arc<NoticeRecord>, NoticeError> {
         let next = state.next_id()?;
-        let encoded_bytes = serde_json::to_vec(&notice)
-            .map_err(|_| NoticeError::InvalidInput)?
-            .len();
+        let encoded_bytes = encoded_notice_bytes(&notice, self.limits.notice_bytes)?;
         let charge = encoded_bytes
             .checked_add(std::mem::size_of::<NoticeRecord>())
             .and_then(|bytes| bytes.checked_add(std::mem::size_of::<PendingNotice>()))
             .ok_or(NoticeError::Capacity)?;
-        if encoded_bytes > self.limits.notice_bytes {
-            return Err(NoticeError::Capacity);
-        }
         let full = self.budget.count.load(Ordering::Acquire) >= self.limits.records
             || self
                 .budget
@@ -467,6 +482,7 @@ impl Inner {
                 };
             }
             let id = work.identity.id;
+            encoded_notice_bytes(notice, self.limits.notice_bytes)?;
             let record = self.reserve_record(state, id, notice.clone(), None)?;
             state.queue.push_back(record);
             if reference.is_some() {
@@ -1061,6 +1077,34 @@ fn valid_id(value: &str) -> Result<(), NoticeError> {
     }
     Ok(())
 }
+pub(super) fn encoded_notice_bytes(
+    notice: &ManagedNotice,
+    limit: usize,
+) -> Result<usize, NoticeError> {
+    // serde streams borrowed fragments into two integers, never an encoded
+    // allocation that can grow past a small configured notice limit.
+    struct Count {
+        bytes: usize,
+        limit: usize,
+    }
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.bytes = self
+                .bytes
+                .checked_add(bytes.len())
+                .filter(|size| *size <= self.limit)
+                .ok_or(std::io::ErrorKind::WriteZero)?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count { bytes: 0, limit };
+    serde_json::to_writer(&mut count, notice).map_err(|_| NoticeError::Capacity)?;
+    Ok(count.bytes)
+}
+
 fn valid_principal(value: &NoticePrincipal) -> Result<(), NoticeError> {
     valid_id(&value.id)
 }

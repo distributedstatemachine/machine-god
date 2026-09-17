@@ -250,7 +250,7 @@ fn full_notice_inbox_does_not_require_a_parent_prompt_to_shutdown() {
         let tokens = batch
             .entries()
             .iter()
-            .map(|entry| entry.token())
+            .map(crate::managed::notices::NoticeBatchEntry::token)
             .collect::<Vec<_>>();
         f.manager.notices.acknowledge(&batch, &tokens).unwrap();
         drop(batch);

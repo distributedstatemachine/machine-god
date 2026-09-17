@@ -686,3 +686,17 @@ ACK/outbox clear, retained snapshot pressure, deferred replay with a live tracke
 and shutdown without another provider turn; it has not yet been executed.
 All component edits are integrated into the feature branch. Author checks do
 not replace the full integrated local gate or three fresh independent reviews.
+
+Integrated candidate `403a7563c1fc5fdd16d5149705341b5387bccfb1` stopped at
+Linux and macOS warnings-denied Clippy (both exit 101): the notice-pressure
+regression used a redundant closure around `NoticeBatchEntry::token`. Static
+policy/audit and platform checks passed. No runtime stage or independent review
+started; replacing the closure with its method reference preserves the test.
+
+Coordinator integration inspection also found that the new publication charge
+could undercount transient copies/serialization for very small configured notice
+limits. The correction checks copied payload size before staging, counts exact
+JSON bytes without an encoded allocation, and rejects oversized replay envelopes
+before cloning. Added tests compare Unicode/escaping counts with actual JSON,
+exercise exact and undersized limits, and check full charge refunds after tiny
+limit rejection. These are implementation checks, not independent acceptance.
