@@ -5,6 +5,9 @@ use super::{
 };
 use crate::managed::store::{JournalError, JournalHistoryCursor};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Default)]
 pub(super) struct Progress {
     processed: u64,
