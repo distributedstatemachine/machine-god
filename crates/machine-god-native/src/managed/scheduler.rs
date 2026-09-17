@@ -249,6 +249,13 @@ impl RunRef {
         self.resolve()
             .is_ok_and(|(inner, identity)| inner.is_executing(identity.id))
     }
+    /// Weak observation only. The manager defers dependency binding while a
+    /// FIFO successor is not yet admitted; `begin_wait` still validates the
+    /// actual source, target, graph and capacity atomically.
+    pub(crate) fn is_wait_target(&self) -> bool {
+        self.resolve()
+            .is_ok_and(|(inner, identity)| inner.is_wait_target(identity.id))
+    }
     pub(crate) fn acquire(&self) -> Acquire {
         Acquire::new(self.clone())
     }

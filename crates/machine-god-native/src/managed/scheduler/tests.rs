@@ -192,6 +192,37 @@ fn one_slot_handoff_a_to_b_then_back_to_a() {
     assert_eq!(scheduler.snapshot().waiters, 0);
     assert_eq!(scheduler.snapshot().dependencies, 0);
 }
+
+#[test]
+fn dependency_target_observation_excludes_unadmitted_and_retired_runs() {
+    let scheduler = scheduler(1, 2, 2);
+    let mut a = Node::new(&scheduler, "a");
+    let mut b = Node::new(&scheduler, "b");
+    let reference = b.reference();
+    assert!(!reference.is_wait_target());
+    assert_eq!(poll(&mut a.run().acquire()), Poll::Ready(Ok(())));
+    let mut acquisition = b.run().acquire();
+    assert!(!reference.is_wait_target(), "unpolled acquisition is inert");
+    assert_eq!(poll(&mut acquisition), Poll::Pending);
+    assert!(
+        reference.is_wait_target(),
+        "queued targets can receive quota"
+    );
+    a.finish();
+    a.complete();
+    assert_eq!(poll(&mut acquisition), Poll::Ready(Ok(())));
+    assert!(reference.is_wait_target());
+    b.finish();
+    assert!(
+        reference.is_wait_target(),
+        "actual cleanup remains observable"
+    );
+    b.complete();
+    assert!(
+        !reference.is_wait_target(),
+        "weak observation cannot retain a run"
+    );
+}
 #[test]
 fn cycles_self_and_unschedulable_targets_do_not_release_the_caller() {
     let scheduler = scheduler(3, 4, 4);

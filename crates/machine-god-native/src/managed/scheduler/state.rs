@@ -249,6 +249,14 @@ impl Inner {
                 matches!(slot.phase, Phase::Executing(_)) && !slot.handle.is_cancelled()
             })
     }
+    pub(super) fn is_wait_target(&self, id: u64) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .runs
+            .get(&id)
+            .is_some_and(|slot| slot.phase != Phase::Registered)
+    }
     #[cfg(test)]
     pub(super) fn snapshot(&self) -> SchedulerSnapshot {
         let state = self
