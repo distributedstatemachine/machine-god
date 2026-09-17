@@ -48,7 +48,12 @@ pub(super) async fn step(
         .inspect(id.clone())
         .await
         .map_err(|_| ManagedRuntimeError::Persistence)?;
-    if snapshot.recovery_required() {
+    // Archived heads cannot execute or replay work. Their original ACK reserve
+    // funds the exact ACK publication, including its atomic owner-epoch repair,
+    // rather than an unrelated generic recovery publication first.
+    if snapshot.recovery_required()
+        && snapshot.head.status != machine_god_core::ManagedAgentState::Archived
+    {
         snapshot = durability::mutate(
             journal.clone(),
             gate.clone(),

@@ -770,6 +770,8 @@ invalidate the validation frontier rather than admitting a stale original.
 Discarding a superseded read retry clears only that wait's blocked-status
 observation; it neither clears a newer wait nor triggers mutation retries.
 This bounds work per admission, not total scans across an arbitrary history.
+Archived replay sources are skipped without a generic owner-recovery publication;
+their retained history remains readable without consuming cleanup credits.
 
 Serialized durable admission rotates across child writes, approved relationships,
 completed waits, captured mailbox requests, accepted child starts, delivery and
@@ -780,6 +782,13 @@ writes before loading its exact head. Unchanged inspections do not reset replay.
 A second lifecycle request while an original accepted control awaits actual
 cleanup returns retryable `resource_limit`; it cannot replace the first observer.
 The caller may explicitly retry once that settlement completes.
+
+Inspect waits follow the child's current FIFO run. Run replacement settles the
+existing dependency leg and fairly reacquires caller quota before validating a
+successor edge. The original request, absolute deadline and cancellation custody
+remain intact, including the interval between dependency legs. Weak readiness
+observations defer binding to an unadmitted or retired run; authoritative cycle
+validation remains in the scheduler.
 
 Managed tool activity includes one `Denied` record for each actual core policy
 denial. The original event sequence distinguishes reused provider call IDs
@@ -928,6 +937,24 @@ publication, with an additional slot kept for atomic owner-epoch replacement.
 That headroom survives an orphaned staging file so a full journal remains
 readable and can be reopened. Capacity rejection leaves the original head and
 receipt state untouched; orphan files remain charged after reconciliation.
+
+Acceptance also preserves the configured four-head/eight-page operation allowance
+and persisted byte/entry credits for already-accepted settlement. An active FIFO
+reserves ten bounded 256 KiB cleanup publications, four future source-ACK envelopes,
+and one cleanup publication per queued successor. Empty creation reserves four
+maintenance publications. Each unit additionally covers the configured head bound
+and file-entry overhead; directory accounting retains staging and owner-epoch
+spares. Each durable original reserves an independent 64 KiB ACK-page allowance,
+reconstructed on reopen and released only by its validated acknowledgement.
+Archive releases unused cleanup credits, never original source-ACK obligations.
+New work, retry/reopen and a new cancel/close intent must fund their full reserve
+before confirmation and may reject under pressure. There is no promise of
+unlimited subsequent recovery or close publications after credits are exhausted.
+Capacity observation grants no authority. Producers must stop before consuming
+protected credits; already-owned writes and notices retain settlement custody.
+Pressure interrupts accepted FIFO work without inventing user cancellation or
+discarding an already accepted explicit intent. Heads/history remain readable;
+no automatic pruning or retry authority is introduced.
 
 The operation slot returns Busy rather than blocking the native event loop;
 the manager retains an unaccepted FIFO submission for retry and never reports
@@ -1218,6 +1245,13 @@ publishing an ACK against stale evidence. Failed read-only validation parks its
 retry outside the journal lane; already-started mutation reconciliation retains
 the original publication custody. Shutdown retains unfinished delivery frontiers
 even after a weak parent observer disappears.
+After owner restart, an archived source can atomically repair its owner epoch
+with an ACK-only publication for still-reserved exact originals, without an
+uncredited generic recovery page. The manager first proves the original envelope
+and recipient checkpoint against immutable source evidence. The store accepts
+only reserved source sequences with consistent recipients/checkpoints; mixed
+history, nonarchived recovery and execution/reactivation are excluded from this
+exception.
 Private subset confirmation updates only that
 receipt's bounded progress bits; stale, foreign or invalid subsets cannot clear
 another batch. After every original is confirmed, an explicit admitted metadata

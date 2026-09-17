@@ -791,3 +791,26 @@ helper evidence. All-feature Clippy found two admission-refactor style issues:
 the lane constant followed statements, and infallible admission returned `Result`.
 The coordinator moved the constant and removed the unnecessary wrappers through
 the pump caller. Exact replacement checks remain due after the remaining fixes.
+
+Store component `42554e7d26f0840562409e7a2707ea03867bd69b` passed 46 store,
+six manager-limit and four catalog tests on exact Rust 1.94.1. Its regression
+reproduced the legal confirmed-publication/read-admission failure before the fix.
+Credit-inclusive tests cover actual protected-byte spending, fourteen exact
+cleanup/ACK directory credits, exhausted readable reopen, accepted FIFO archive,
+pressure interruption without user intent, seventy idle histories under unchanged
+defaults, and archived exact-ACK owner-epoch transfer. The integrated manager
+producer cutoff and complete replacement gates remain required.
+
+Wait component `0f55e1b5da164bdca958f903cb4dc92615897f1b` passed 18 scheduler
+and 83 default-feature manager tests (0.01 and 18.74 seconds) after reproducing
+the FIFO-successor cycle failure. It retains the original request/deadline and
+cancellation custody through fair reacquisition and successor validation; tests
+include cancellation in the between-leg gap and unadmitted-run readiness.
+Both author trees were clean at handoff; neither ran the full replacement gate.
+
+Coordinator integration skips generic recovery for archived replay sources and
+uses the store's exact archived-ACK repair exception in ordinary delivery. A
+related remaining path was also identified: nonresident close/reopen's saved
+lifetime helper loops through delivery pages inside one command admission.
+It requires a retained lifecycle continuation through manager-owned delivery and
+actual cleanup before this repair series can claim bounded delivery integration.

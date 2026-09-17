@@ -181,7 +181,7 @@ async fn step(
             .map_err(|_| ())?;
         if let Some(entry) = page.entries.first() {
             let mut snapshot = journal.inspect(entry.id.clone()).await.map_err(|_| ())?;
-            if snapshot.recovery_required() {
+            if snapshot.recovery_required() && snapshot.head.status != ManagedAgentState::Archived {
                 snapshot = durability::mutate(
                     journal.clone(),
                     gate.clone(),
