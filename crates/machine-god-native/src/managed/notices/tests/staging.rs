@@ -43,6 +43,11 @@ fn original_incarnation_survives_staging_and_filters_before_bounded_selection() 
     let replacement = machine_god_core::SessionIncarnationId::new("replacement").unwrap();
     let mut changed = relationship("parent");
     changed.parent_incarnation = Some(replacement.clone());
+    assert_eq!(
+        manager.set_relationship(&old_work, &changed),
+        Err(NoticeError::StaleSource)
+    );
+    changed.generation = nz(2);
     manager.set_relationship(&old_work, &changed).unwrap();
     drop(stage);
     let recovered = manager.pending_notice(&old_work).unwrap().unwrap();

@@ -400,3 +400,16 @@ replay, close/reopen and explicit reparent/detach, consent across parent-generat
 change, malformed relationship triples, historical target mismatches and direct
 foreign-incarnation exclusion. Compilation, focused execution, full replacement
 gates and independent acceptance remain required for the integrated correction.
+
+Candidate `58fa92f551278792bbfd9ac1f3fca73316847f09` passed both complete
+build stages, including fresh release helpers, and static/platform checks.
+Focused macOS eviction/restoration, direct-inbox and historical-target,
+relationship-consent, and prompt-context regressions passed. The notice staging
+suite then rejected its new fixture's relationship update with `StaleSource`:
+the fixture changed incarnation but reused relationship revision 1. Production
+correctly requires a strictly increasing relationship revision. The fixture now
+asserts that stale rejection before advancing to revision 2; original-envelope
+immutability and pre-count incarnation-filtering assertions remain unchanged.
+The exact focused failure log remains
+`/tmp/mg-managed-implementation.V0ZGg1/managed-focused-macos-58fa92f5.log`.
+Neither complete runtime suite nor acceptance review ran for this candidate.
