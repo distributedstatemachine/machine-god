@@ -5,7 +5,7 @@ use super::super::{
     store::{JournalCatalogCursor, JournalHistoryCursor, JournalTranscript},
 };
 use super::{
-    Active, BoxFuture, JournalMutation, JournalRecord, JournalSnapshot, ManagedAgentState,
+    Active, BoxFuture, Context, JournalMutation, JournalRecord, JournalSnapshot, ManagedAgentState,
     ManagedJournal, ManagedManager, ManagerBlock, durability,
 };
 use machine_god_core::ManagedNotifications;
@@ -20,7 +20,19 @@ pub(super) struct Replay {
     source: Option<(JournalSnapshot, Option<JournalHistoryCursor>)>,
     catalog_done: bool,
     pending: Option<(ManagedNotice, JournalTranscript)>,
+    validation: Option<Validation>,
+    retry: Option<BoxFuture<'static, ()>>,
     pub(super) done: bool,
+}
+// One resumable join against an exact source snapshot, never a history-sized
+// future holding the manager's serialized journal lane.
+struct Validation {
+    snapshot: JournalSnapshot,
+    original: ManagedNotice,
+    cursor: Option<JournalHistoryCursor>,
+    original_seen: bool,
+    parent_checked: bool,
+    parent: Option<JournalTranscript>,
 }
 pub(super) struct Outcome {
     replay: Replay,
@@ -28,13 +40,19 @@ pub(super) struct Outcome {
     error: bool,
 }
 impl ManagedManager {
-    pub(super) fn begin_replay(&mut self) -> bool {
+    pub(super) fn begin_replay(&mut self, cx: &mut Context<'_>) -> bool {
         if self.closing || self.active.is_some() {
             return false;
         }
         if self.replay_reset {
             self.replay = Replay::default();
             self.replay_reset = false;
+        }
+        if let Some(retry) = &mut self.replay.retry {
+            if retry.as_mut().poll(cx).is_pending() {
+                return false;
+            }
+            self.replay.retry = None;
         }
         if let Some((notice, transcript)) = self.replay.pending.as_ref() {
             let eligible = self
@@ -69,8 +87,17 @@ impl ManagedManager {
                             return false;
                         }
                     }
-                    // A live tracker already owns its actual emissions.
-                    Err(NoticeError::Busy) => {}
+                    // A live tracker can own a confirmed original whose
+                    // publication was deferred under inbox pressure. Restore
+                    // that exact envelope without changing its timer/cursor.
+                    Err(NoticeError::Busy) => {
+                        if matches!(
+                            self.notices.restore_durable_original(notice),
+                            Err(NoticeError::Capacity)
+                        ) {
+                            return false;
+                        }
+                    }
                     Err(_) => return false,
                 }
             }
@@ -94,11 +121,10 @@ impl ManagedManager {
             self.retry.clone(),
             state,
             targets,
-            false,
         )));
         true
     }
-    pub(super) fn finish_replay(&mut self, outcome: Outcome) {
+    pub(super) fn finish_replay(&mut self, mut outcome: Outcome) {
         if let Some(snapshot) = outcome.snapshot
             && let Some(child) = self
                 .children
@@ -108,24 +134,14 @@ impl ManagedManager {
             child.snapshot = snapshot;
         }
         if outcome.error {
-            let targets = self
-                .parents
-                .iter()
-                .filter(|parent| parent.active)
-                .filter_map(|parent| parent.context.upgrade())
-                .filter(|context| !context.is_retired())
-                .map(|context| Arc::downgrade(&context))
-                .collect();
-            self.active = Some(Active::Replay(advance(
-                self.journal.clone(),
-                self.retry.clone(),
-                outcome.replay,
-                targets,
-                true,
-            )));
-        } else {
-            self.replay = outcome.replay;
+            // Failed read-only validation owns no mutation custody. Park its
+            // retry separately so it cannot hide a queued cancel or shutdown.
+            let gate = self.retry.clone();
+            outcome.replay.retry = Some(Box::pin(async move {
+                gate.blocked(ManagerBlock::Journal).await;
+            }));
         }
+        self.replay = outcome.replay;
     }
 }
 fn advance(
@@ -133,12 +149,8 @@ fn advance(
     gate: Arc<durability::RetryGate>,
     mut replay: Replay,
     targets: Vec<Weak<ParentNoticeContext>>,
-    retry: bool,
 ) -> BoxFuture<'static, Outcome> {
     Box::pin(async move {
-        if retry {
-            gate.blocked(ManagerBlock::Journal).await;
-        }
         let mut snapshot = None;
         let result = step(&journal, &gate, &mut replay, &targets, &mut snapshot).await;
         Outcome {
@@ -155,6 +167,9 @@ async fn step(
     targets: &[Weak<ParentNoticeContext>],
     repaired: &mut Option<JournalSnapshot>,
 ) -> Result<(), ()> {
+    if replay.validation.is_some() {
+        return validate_page(journal, replay, targets).await;
+    }
     if replay.source.is_none() {
         if replay.catalog_done {
             replay.done = true;
@@ -196,21 +211,15 @@ async fn step(
             .iter()
             .filter_map(Weak::upgrade)
             .any(|context| context.principal() == &original.target.parent && !context.is_retired())
-        && !acknowledged(journal, snapshot, original).await?
-        && let Some(transcript) = historical_parent(
-            journal,
-            snapshot,
-            original.target.relationship_generation.get(),
-            &original.target.parent,
-        )
-        .await?
-        && transcript.incarnation == original.target.parent_incarnation
-        && targets.iter().filter_map(Weak::upgrade).any(|context| {
-            context.principal() == &original.target.parent
-                && context.matches_transcript(&transcript)
-        })
     {
-        replay.pending = Some((original.clone(), transcript));
+        replay.validation = Some(Validation {
+            snapshot: snapshot.clone(),
+            original: original.clone(),
+            cursor: None,
+            original_seen: false,
+            parent_checked: false,
+            parent: None,
+        });
     }
     if let Some(next) = page.next {
         replay.source.as_mut().unwrap().1 = Some(next);
@@ -219,59 +228,61 @@ async fn step(
     }
     Ok(())
 }
-async fn historical_parent(
+async fn validate_page(
     journal: &ManagedJournal,
-    snapshot: &JournalSnapshot,
-    revision: u64,
-    parent: &super::super::notices::NoticePrincipal,
-) -> Result<Option<JournalTranscript>, ()> {
-    let mut cursor = None;
-    loop {
-        let page = journal
-            .history(snapshot.clone(), cursor, 100)
-            .await
-            .map_err(|_| ())?;
-        for record in page.records {
-            if let JournalRecord::Control(control) = record
-                && control.revision == revision
+    replay: &mut Replay,
+    targets: &[Weak<ParentNoticeContext>],
+) -> Result<(), ()> {
+    let validation = replay.validation.as_mut().unwrap();
+    let page = journal
+        .history(validation.snapshot.clone(), validation.cursor.clone(), 100)
+        .await
+        .map_err(|_| ())?;
+    let original = &validation.original;
+    let mut acknowledged = false;
+    for record in page.records {
+        match record {
+            JournalRecord::NoticeAcknowledged {
+                identity, target, ..
+            } if identity == original.identity() && target == original.target => {
+                acknowledged = true;
+                break;
+            }
+            JournalRecord::Notice(notice) if notice == *original => {
+                validation.original_seen = true;
+            }
+            JournalRecord::Control(control)
+                if control.revision == original.target.relationship_generation.get() =>
             {
-                return Ok((control.parent_generation == Some(parent.generation.get())
-                    && control.parent_id.as_deref() == Some(parent.id.as_str()))
+                validation.parent_checked = true;
+                validation.parent = (control.parent_generation
+                    == Some(original.target.parent.generation.get())
+                    && control.parent_id.as_deref() == Some(original.target.parent.id.as_str()))
                 .then_some(control.parent_owner)
-                .flatten());
+                .flatten();
             }
+            _ => {}
         }
-        let Some(next) = page.next else {
-            return Ok(None);
-        };
-        cursor = Some(next);
     }
-}
-async fn acknowledged(
-    journal: &ManagedJournal,
-    snapshot: &JournalSnapshot,
-    original: &ManagedNotice,
-) -> Result<bool, ()> {
-    let mut cursor = None;
-    loop {
-        let page = journal
-            .history(snapshot.clone(), cursor, 100)
-            .await
-            .map_err(|_| ())?;
-        for record in page.records {
-            match record {
-                JournalRecord::NoticeAcknowledged {
-                    identity, target, ..
-                } if identity == original.identity() && target == original.target => {
-                    return Ok(true);
-                }
-                JournalRecord::Notice(notice) if notice == *original => return Ok(false),
-                _ => {}
-            }
-        }
-        let Some(next) = page.next else {
+    if acknowledged {
+        replay.validation = None;
+    } else if (validation.original_seen && validation.parent_checked) || page.next.is_none() {
+        if !validation.original_seen {
             return Err(());
-        };
-        cursor = Some(next);
+        }
+        let validation = replay.validation.take().unwrap();
+        if let Some(transcript) = validation.parent
+            && transcript.incarnation == validation.original.target.parent_incarnation
+            && targets.iter().filter_map(Weak::upgrade).any(|context| {
+                !context.is_retired()
+                    && context.principal() == &validation.original.target.parent
+                    && context.matches_transcript(&transcript)
+            })
+        {
+            replay.pending = Some((validation.original, transcript));
+        }
+    } else {
+        validation.cursor = page.next;
     }
+    Ok(())
 }

@@ -604,3 +604,75 @@ warnings-denied Clippy (both exit 101): the changed foreground regression lacked
 the `ManagedFailureCode` import and retained an unused `ManagedSubagentAuthority`
 import. The replacement corrects those test imports without changing production
 behavior. Neither runtime tests nor independent reviews started for this candidate.
+
+Candidate `a3a2641f63f0996b2f9489b146ab8ab4d409a5d3` passed the complete exact
+Rust 1.94.1 replacement gate. Linux passed 609 CLI and 4,050 native tests,
+workspace integrations/doctests and all 275 Python checks (204.983 seconds).
+macOS passed 611 CLI and 4,057 native tests (814.62 seconds), workspace
+integrations and doctests. Both fresh release helpers, focused managed tests,
+all-feature warnings-denied Clippy, static policy/audit and platform checks
+passed. The native-only builds retained their 26 existing unused-code warnings.
+The macOS release build took 27m35s; a process sample established active LLVM
+code generation, not a hung build. Gate logs retain the `a3a2641f` suffix.
+
+Three fresh R8 reviewers independently completed source review of that exact
+candidate against `7cadf2f2ea13ef392797903ad190c0ce3ba92654`. These were
+ordinary isolated adversarial agents, not Bugbot; they did not rerun runtime
+tests. All four findings reject the candidate:
+
+- Correctness (`m65_r8_correctness`), P2: denied child tool attempts had no
+  journal producer. Core emitted neither started nor finished events for denial,
+  and manager permission observations retained no exact tool-call identity.
+- Lifecycle (`m65_r8_lifecycle`), P2: hidden Models/Skills menu state leaked
+  into modal composer context, imposing the 256-byte picker limit on valid
+  answers, retaining submitted text and misinterpreting LF/Ctrl-J.
+- Resources (`m65_r8_resources`), P1: a full ordinary notice inbox prevented
+  terminal publication and actual manager shutdown without a parent prompt ACK.
+- Resources, P2: original ACK and historical-parent validation could scan whole
+  histories inside one active replay future, withholding the journal lane from
+  sibling control commands and shutdown.
+
+The same three reviewers subsequently authored component fixes and therefore
+are not fresh reviewers for replacement acceptance. The coordinator owns replay
+fairness and integration. No M65 branch push or three-track acceptance followed.
+
+Lifecycle test-only `48dd08e7` reproduced both modal bugs on Rust 1.94.1:
+long answers returned `TooLong`, and submitting `1` retained draft `1`.
+Component `76dbf1bb` gates menu/history/form context from the actual retained
+input owner, preserving an earlier agent-owned paste. Its two regressions,
+32 raw-input tests and 35 composer tests passed. Driver fixture checks stopped
+at the missing fresh release-helper prerequisite; they were not counted as
+passing or replaced with weaker checks.
+
+Notice-pressure test-only `d872c5f7` had an incorrect setup predicate: a
+persistent child becomes Idle, not Completed. The coordinator stopped only that
+owned test process; it is not product-failure evidence. Corrected bounded
+test-only `3393f9292011aa63ac4324f99319f8c5f5019a53` failed on unchanged
+production under unprivileged Linux/Rust 1.94.1 in 2.10 seconds with
+`full notice inbox prevented actual manager shutdown` (exit 101). The log is
+`managed-notice-pressure-red-3393f929.log` in the retained gate directory.
+Component `528f7caa` adds a separately charged single durable-publication slot,
+retains exact originals and snapshot charges, and wakes capacity waiters.
+Replacement focused execution and complete gates remain required.
+
+Correctness's initial regression reused provider call IDs inside one turn,
+which core rejects, and waited for Idle. That exact test was stopped and its
+fixture corrected to reuse IDs across two actual FIFO turns with a terminal
+failure assertion. Clean test-only `c2acfc53a494f312a1d5923cef408244961d1ab8`
+then failed on unchanged production with four approved activity records versus
+six expected records including two denials (Rust 1.94.1, exit 101, 1.43 seconds).
+Neither the invalid fixture nor author work constitutes replacement acceptance.
+
+Replay test-only `235c29da` initially failed compilation because its sibling
+module could not access the existing fixture. Corrected test-only `b456d211`
+widens only test-fixture visibility and reproduced the finding on unchanged
+production under unprivileged Linux/Rust 1.94.1: one admission scanned the
+entire historical relationship (exit 101, 0.14 seconds). Its build retained the
+existing native-only warnings plus a test-only private-interface warning;
+the integration narrows that helper method rather than suppressing the warning.
+The fresh production helper came from the same unchanged production source.
+Logs retain `managed-replay-red-` and the complete test-only SHA suffix.
+The coordinator correction joins original/ACK/parent validation in resumable
+100-record steps, checks exact snapshots between admissions, and parks failed
+read-only retries outside the command lane. Mutation reconciliation retains its
+existing original custody. Fixed-code execution and fresh acceptance remain due.

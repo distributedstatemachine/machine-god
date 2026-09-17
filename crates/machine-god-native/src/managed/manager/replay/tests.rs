@@ -22,8 +22,12 @@ fn append(
     *snapshot
 }
 
-#[test]
-fn historical_notice_validation_yields_before_scanning_an_entire_history() {
+fn history_fixture() -> (
+    Fixture,
+    Arc<ParentNoticeContext>,
+    JournalSnapshot,
+    ManagedNotice,
+) {
     let nz = |n| NonZeroU64::new(n).unwrap();
     let mut fixture = Fixture::new(vec![]);
     assert!(
@@ -104,6 +108,12 @@ fn historical_notice_validation_yields_before_scanning_an_entire_history() {
         parent,
         &fixture.manager.notices,
     ));
+    (fixture, context, snapshot, original)
+}
+
+#[test]
+fn historical_notice_validation_yields_before_scanning_an_entire_history() {
+    let (fixture, context, snapshot, original) = history_fixture();
     let targets = vec![Arc::downgrade(&context)];
     let mut replay = Replay {
         source: Some((snapshot, None)),
@@ -144,4 +154,69 @@ fn historical_notice_validation_yields_before_scanning_an_entire_history() {
     );
     assert!(repaired.is_none());
     assert!(fixture.factory.provider.requests().is_empty());
+}
+
+#[test]
+fn validation_rejects_a_changed_source_snapshot_between_admissions() {
+    let (mut fixture, context, snapshot, _) = history_fixture();
+    let targets = vec![Arc::downgrade(&context)];
+    let mut replay = Replay {
+        source: Some((snapshot.clone(), None)),
+        ..Replay::default()
+    };
+    let mut repaired = None;
+    block_on(step(
+        &fixture.journal,
+        &fixture.manager.retry,
+        &mut replay,
+        &targets,
+        &mut repaired,
+    ))
+    .unwrap();
+    assert!(replay.validation.is_some());
+    append(
+        &mut fixture,
+        snapshot,
+        JournalMutation::Relationship {
+            parent_id: None,
+            parent_owner: None,
+            parent_generation: None,
+        },
+    );
+    assert!(
+        block_on(step(
+            &fixture.journal,
+            &fixture.manager.retry,
+            &mut replay,
+            &targets,
+            &mut repaired
+        ))
+        .is_err()
+    );
+    assert!(replay.pending.is_none());
+}
+
+#[test]
+fn failed_replay_read_does_not_hold_the_command_or_shutdown_lane() {
+    let mut fixture = Fixture::new(vec![]);
+    fixture.manager.replay_reset = false;
+    fixture.manager.finish_replay(Outcome {
+        replay: Replay::default(),
+        snapshot: None,
+        error: true,
+    });
+    assert!(fixture.manager.active.is_none());
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(!fixture.manager.begin_replay(&mut cx));
+    assert!(fixture.manager.replay.retry.is_some());
+    assert!(
+        fixture
+            .command(serde_json::json!({
+                "create":{"name":"unblocked","mode":"persistent"}
+            }))
+            .ok
+    );
+    assert!(fixture.factory.provider.requests().is_empty());
+    // Fixture drop performs actual manager/resource shutdown without an
+    // explicit retry or a parent prompt to unblock read-only validation.
 }

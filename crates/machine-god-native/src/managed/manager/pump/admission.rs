@@ -200,7 +200,7 @@ impl ManagedManager {
         if self.begin_delivery() {
             return Ok(true);
         }
-        if self.begin_replay() {
+        if self.begin_replay(cx) {
             return Ok(true);
         }
         Ok(self.begin_observation() || self.begin_catalog())

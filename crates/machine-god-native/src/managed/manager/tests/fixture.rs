@@ -469,7 +469,10 @@ impl Fixture {
             workers,
         }
     }
-    pub fn invocation(&self, command: serde_json::Value) -> (Admission, ManagedSubagentInvocation) {
+    pub(super) fn invocation(
+        &self,
+        command: serde_json::Value,
+    ) -> (Admission, ManagedSubagentInvocation) {
         let arguments =
             serde_json::Value::Object(serde_json::Map::from_iter([("command".into(), command)]));
         ManagedSubagentCommand::decode(arguments.clone()).expect("valid fixture command");

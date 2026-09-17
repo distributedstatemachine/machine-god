@@ -761,6 +761,13 @@ or replaced source generations, and neither starts timers nor resumes execution.
 Confirmed source acknowledgements remove exact replayed originals before an
 outbox clear permits another snapshot. Parent registration restarts this bounded
 scan so an absent or retired target never requires an unbounded in-memory queue.
+Original and historical-parent validation share one resumable scan of the exact
+source snapshot, reading at most 100 records (and the journal's 512 KiB page
+budget) per admission. Every page releases the serialized journal lane for
+commands and cleanup. Read-only retry waits also release that lane; an uncertain
+recovery mutation retains its original publication custody. Source changes
+invalidate the validation frontier rather than admitting a stale original.
+This bounds work per admission, not total scans across an arbitrary history.
 
 ## Native management form drafts
 
@@ -790,6 +797,12 @@ under the original observed child/revision; no model call, parent model change,
 or implicit restart follows. Leaving the menu cannot carry query input into a
 child prompt. Shutdown and parent transitions cancel owned catalog loads, and
 shutdown waits for their settlement before reporting the session closed.
+
+Menu, history and form composer rules follow the actual retained input owner,
+not a hidden navigation view. Modal and saved-rule answers retain their own
+limits and submission/reset semantics even while a child menu is open. An
+already-started agent-owned paste keeps its original owner through an overlay;
+later modal input cannot inherit that menu's picker keys or 256-byte query cap.
 
 The native create/configure form model retains one bounded draft with separate
 name, model, standalone prompt, reasoning effort, milestones and timer fields.
@@ -962,6 +975,17 @@ retirement prevents a later confirmation from exposing that staged candidate
 and never revives a stopped timer; its confirmed journal history remains intact.
 Already-visible notices keep the existing stop/close behavior. Exact restored
 durable originals use a distinct replay path that starts no timers or execution.
+
+Manager start and terminal publication can reserve one separate, global staging
+slot when the ordinary inbox is full. Its charge is bounded by three maximum
+encoded notices plus fixed record/transition storage, including serialization
+scratch, and survives lost or retained staged observers. Exact confirmation
+advances the original cursor but defers inbox visibility to durable replay; it
+does not synthesize an acknowledgement, drop an older notice, or require a new
+parent prompt for child shutdown. Interval and milestone admission retain the
+ordinary inbox bounds. Releasing the last charged snapshot wakes capacity
+waiters outside the registry lock. Replay can restore a deferred original while
+its live work tracker remains, without advancing that tracker's timer or cursor.
 
 Every interval is one actual observed state with an exact first/last tick range,
 coalesced interval count and explicit gap flag. Late observation never synthesizes
