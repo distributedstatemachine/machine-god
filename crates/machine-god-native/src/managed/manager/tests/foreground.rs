@@ -10,8 +10,8 @@ use crate::managed::store::JournalTranscript;
 use futures_executor::block_on;
 use futures_util::StreamExt;
 use machine_god_core::{
-    CancellationToken, ManagedConfiguration, ManagedNotifications, ManagedPermissionMode,
-    ManagedSubagentAuthority, SessionId, SessionIncarnationId,
+    CancellationToken, ManagedConfiguration, ManagedFailureCode, ManagedNotifications,
+    ManagedPermissionMode, SessionId, SessionIncarnationId,
 };
 use std::{
     sync::{Arc, atomic::Ordering},

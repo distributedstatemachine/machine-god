@@ -598,3 +598,9 @@ settles before reuse. Unresolved saved-notice custody stays retained; the
 requester receives a limit result and explicitly retries after repair. Replacement
 tests, the complete local gate and three fresh whole-feature reviews remain
 required. Coordinator remediation is not an independent acceptance review.
+
+Candidate `22cd2154cc9f6d831c2fcb51c86a4ea257559901` stopped at Linux and macOS
+warnings-denied Clippy (both exit 101): the changed foreground regression lacked
+the `ManagedFailureCode` import and retained an unused `ManagedSubagentAuthority`
+import. The replacement corrects those test imports without changing production
+behavior. Neither runtime tests nor independent reviews started for this candidate.
