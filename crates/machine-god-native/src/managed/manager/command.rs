@@ -108,11 +108,11 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
         if !job.lease().matches_observation(&snapshot) {
             return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);
         }
-        // Archived history is immutable inspection evidence. Reading it does
-        // not need a new owner epoch or borrow credits from a later command.
-        let recovered = snapshot.recovery_required()
-            && !(snapshot.head.status == ManagedAgentState::Archived
-                && matches!(command, ManagedSubagentCommand::Inspect(_)));
+        // Reading retained evidence does not need a new owner epoch or borrow
+        // credits from a later command. Projection observes lost-owner work as
+        // interrupted without fabricating a durable recovery publication.
+        let recovered =
+            snapshot.recovery_required() && !matches!(command, ManagedSubagentCommand::Inspect(_));
         // Recovery never executes work or signals cancellation. It only records interruption.
         if recovered {
             snapshot = match durability::mutate_admitted(
@@ -139,7 +139,10 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
                 ManagedSubagentCommand::Inspect(request) => {
                     if env.wait_finished.is_none()
                         && request.wait.as_ref().is_some_and(|wait| {
-                            !wait.satisfied(snapshot.head.generation, snapshot.head.status)
+                            !wait.satisfied(
+                                snapshot.head.generation,
+                                super::projection::observed_status(&snapshot),
+                            )
                         })
                     {
                         return Outcome {

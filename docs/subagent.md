@@ -108,6 +108,12 @@ queued/running/awaiting_approval are not. Timeout returns an inspection with
 wait_timed_out status, not durable cancellation. Native owns dependency-wait
 admission, cycle detection, released execution quota and bounded waiters.
 
+Inspection never publishes owner recovery merely to read retained evidence.
+Old-owner pending/running/approval work is projected as interrupted, including
+initial wait eligibility, while the original snapshot remains unchanged for
+history and cursor validation. Archived and already-settled work retain their
+stored states. Mutating commands still require explicit admitted recovery.
+
 `ManagedSubagentResult` preserves the envelope: ok, operation_id, child_id,
 status, error_code, retryable, requested and cursor. Status/error codes are closed
 typed tags, never raw host diagnostics. Requested data is a receipt, inspection
@@ -772,6 +778,8 @@ observation; it neither clears a newer wait nor triggers mutation retries.
 This bounds work per admission, not total scans across an arbitrary history.
 Archived replay sources are skipped without a generic owner-recovery publication;
 their retained history remains readable without consuming cleanup credits.
+Replay likewise avoids no-op recovery for already-quiescent sources. Old-owner
+live FIFO work still requires durable interruption before replay proceeds.
 
 Serialized durable admission rotates across child writes, approved relationships,
 completed waits, captured mailbox requests, accepted child starts, delivery and
@@ -1245,13 +1253,14 @@ publishing an ACK against stale evidence. Failed read-only validation parks its
 retry outside the journal lane; already-started mutation reconciliation retains
 the original publication custody. Shutdown retains unfinished delivery frontiers
 even after a weak parent observer disappears.
-After owner restart, an archived source can atomically repair its owner epoch
+After owner restart, an archived or otherwise quiescent source can repair its owner epoch
 with an ACK-only publication for still-reserved exact originals, without an
 uncredited generic recovery page. The manager first proves the original envelope
 and recipient checkpoint against immutable source evidence. The store accepts
 only reserved source sequences with consistent recipients/checkpoints; mixed
-history, nonarchived recovery and execution/reactivation are excluded from this
-exception.
+history and execution/reactivation are excluded from this exception. A nonarchived
+source with pending/running/approval work must first persist explicit recovery;
+an already-quiescent source preserves its queue, status and accepted intent.
 Private subset confirmation updates only that
 receipt's bounded progress bits; stale, foreign or invalid subsets cannot clear
 another batch. After every original is confirmed, an explicit admitted metadata

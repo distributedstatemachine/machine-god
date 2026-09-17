@@ -814,3 +814,17 @@ related remaining path was also identified: nonresident close/reopen's saved
 lifetime helper loops through delivery pages inside one command admission.
 It requires a retained lifecycle continuation through manager-owned delivery and
 actual cleanup before this repair series can claim bounded delivery integration.
+
+Pressure components `24f0240d`, `a2ee5366`, `162bf2e2` and `4e3dc970`
+were integrated with the delivery and store changes. Author combined `b1f904ac`
+passed 85 default-feature manager tests, including all eleven pressure tests,
+on Rust 1.94.1 in 41.85 seconds. The restart fixture originally requested an
+unsupported `queue` inspection section; correcting it to `status` changed only
+the fixture. No full replacement gate or fresh review is claimed.
+
+Coordinator integration makes all inspections read-only and projects lost-owner
+live work as interrupted without changing the snapshot used for validation.
+Store component `6fbad133` permits exact reserved ACK-only owner repair for
+quiescent sources as well as archived ones; replay and delivery skip generic
+recovery only when it would not change work state. Actual owner-reopen integration
+tests and the saved-lifetime continuation remain part of the same R9 repair.

@@ -6,12 +6,45 @@ use super::{
 };
 use machine_god_core::{
     ManagedAgentState, ManagedCursor, ManagedFailureCode, ManagedInspect, ManagedInspectSection,
-    ManagedInspection, ManagedInspectionSourceError, ManagedQueuedMessage, ManagedRequested,
-    ManagedResultStatus, ManagedSubagentResult,
+    ManagedInspection, ManagedInspectionSourceError, ManagedQueueStatus, ManagedQueuedMessage,
+    ManagedRequested, ManagedResultStatus, ManagedSubagentResult,
 };
 use std::sync::Mutex;
 
 pub(super) struct SelectionIdentity;
+
+/// Lost owner execution is observed as interrupted without publishing recovery
+/// just to read. Retain the original snapshot for cursor and history validation.
+pub(super) fn observed_status(snapshot: &JournalSnapshot) -> ManagedAgentState {
+    if snapshot.recovery_required() && snapshot.head.recovery_changes_work() {
+        ManagedAgentState::Interrupted
+    } else {
+        snapshot.head.status
+    }
+}
+
+fn live_queue_status(status: ManagedQueueStatus) -> bool {
+    matches!(
+        status,
+        ManagedQueueStatus::Pending
+            | ManagedQueueStatus::Running
+            | ManagedQueueStatus::AwaitingApproval
+    )
+}
+
+fn observed_queue_status(
+    snapshot: &JournalSnapshot,
+    status: ManagedQueueStatus,
+) -> ManagedQueueStatus {
+    if snapshot.recovery_required()
+        && snapshot.head.status != ManagedAgentState::Archived
+        && live_queue_status(status)
+    {
+        ManagedQueueStatus::Interrupted
+    } else {
+        status
+    }
+}
 #[derive(Clone)]
 pub(crate) struct ManagedSelection(Weak<SelectionIdentity>);
 pub(crate) struct ManagedChildProjection {
@@ -155,7 +188,7 @@ pub(super) async fn inspect(
     let mut projection = ManagedInspection {
         child_id: snapshot.head.id.clone(),
         generation: snapshot.head.generation,
-        status: selected(ManagedInspectSection::Status).then_some(snapshot.head.status),
+        status: selected(ManagedInspectSection::Status).then(|| observed_status(snapshot)),
         configuration: selected(ManagedInspectSection::Configuration)
             .then(|| snapshot.head.configuration.clone()),
         relationship_selected: selected(ManagedInspectSection::Relationship),
@@ -204,7 +237,7 @@ pub(super) async fn inspect(
                 id: work.id,
                 source_id: work.source_id,
                 content: work.content,
-                status: reference.status,
+                status: observed_queue_status(snapshot, reference.status),
                 cancellation_reason: None,
                 created_at_ms: work.accepted_at_ms,
             });
@@ -327,4 +360,66 @@ pub(super) fn prefix(text: &str, max: usize) -> (String, bool) {
         end -= 1;
     }
     (text[..end].to_owned(), end != text.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::managed::manager::tests::Fixture;
+    use futures_executor::block_on;
+    use machine_god_testkit::ModelProviderStep;
+
+    #[test]
+    fn old_owner_projection_interrupts_only_live_work_without_mutating_evidence() {
+        let mut fixture = Fixture::new(vec![ModelProviderStep::pending()]);
+        assert!(
+            fixture
+                .command(serde_json::json!({"create": {
+                    "name": "source", "mode": "persistent", "prompt": "retained work"
+                }}))
+                .ok
+        );
+        fixture.drive(|f| f.manager.active.is_none());
+        let mut snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+        let original = snapshot.clone();
+        assert!(!snapshot.recovery_required());
+        assert_eq!(observed_status(&snapshot), snapshot.head.status);
+        // Pure projection cases: these modified observations never authorize a
+        // journal mutation or runtime operation.
+        snapshot.head.owner_epoch = 0;
+        for status in [
+            ManagedQueueStatus::Pending,
+            ManagedQueueStatus::Running,
+            ManagedQueueStatus::AwaitingApproval,
+            ManagedQueueStatus::Interrupted,
+            ManagedQueueStatus::Failed,
+            ManagedQueueStatus::Cancelled,
+            ManagedQueueStatus::Completed,
+        ] {
+            snapshot.head.queue[0].status = status;
+            snapshot.head.status = ManagedAgentState::Failed;
+            let before = snapshot.head.clone();
+            assert_eq!(
+                observed_queue_status(&snapshot, status),
+                if live_queue_status(status) {
+                    ManagedQueueStatus::Interrupted
+                } else {
+                    status
+                }
+            );
+            assert_eq!(
+                observed_status(&snapshot),
+                if live_queue_status(status) {
+                    ManagedAgentState::Interrupted
+                } else {
+                    ManagedAgentState::Failed
+                }
+            );
+            assert_eq!(snapshot.head, before);
+        }
+        snapshot.head.status = ManagedAgentState::Archived;
+        assert_eq!(observed_status(&snapshot), ManagedAgentState::Archived);
+        let after = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+        assert_eq!(after.head, original.head);
+    }
 }
