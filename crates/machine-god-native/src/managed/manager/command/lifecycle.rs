@@ -230,9 +230,8 @@ pub(in crate::managed::manager) async fn resume_reopen(
     if !job.lease().is_live() {
         return Outcome::reject(job, &env.operation, ManagedFailureCode::CallerUnavailable);
     }
-    let snapshot = match env.journal.inspect(expected.head.id.clone()).await {
-        Ok(snapshot) => snapshot,
-        Err(_) => return Outcome::reject(job, &env.operation, ManagedFailureCode::StoreFailure),
+    let Ok(snapshot) = env.journal.inspect(expected.head.id.clone()).await else {
+        return Outcome::reject(job, &env.operation, ManagedFailureCode::StoreFailure);
     };
     if snapshot.head != expected.head || !job.lease().matches_observation(&snapshot) {
         return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);

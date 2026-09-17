@@ -884,6 +884,7 @@ fn nonresident_reopen_revalidates_original_actor_after_old_cleanup() {
     saved_lifetime_yields(true, SavedFinish::CallerRetired);
 }
 
+#[derive(Clone, Copy)]
 enum SavedFinish {
     Continue,
     Shutdown,

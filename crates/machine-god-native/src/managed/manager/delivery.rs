@@ -276,35 +276,14 @@ impl ManagedManager {
                     }
                     Err(NativeConversationRuntimeError::Busy) => parent.clear = Some(delivery),
                     Err(_) => {
-                        let runtime = self
-                            .children
-                            .iter()
-                            .find(|child| {
-                                child
-                                    .prepared
-                                    .notice_context
-                                    .as_ref()
-                                    .is_some_and(|context| {
-                                        parent.context.ptr_eq(&Arc::downgrade(context))
-                                    })
-                            })
-                            .map(|child| ClearTarget {
-                                runtime: child.prepared.runtime.clone(),
-                                drain: None,
-                            })
-                            .or_else(|| retiring_runtime(&self.retiring, &parent.context))
-                            .or_else(|| {
-                                super::saved_lifetime::runtime_for_notice(
-                                    &self.saved_lifetimes,
-                                    &parent.context,
-                                )
-                            })
-                            .or_else(|| {
-                                super::foreground::runtime_for_notice(
-                                    &self.foregrounds,
-                                    &parent.context,
-                                )
-                            });
+                        let runtime = clear_runtime(
+                            &self.children,
+                            &self.retiring,
+                            &self.saved_lifetimes,
+                            &self.foregrounds,
+                            &parent.context,
+                            false,
+                        );
                         if let Some(runtime) = runtime {
                             let retry = self.retry.clone();
                             parent.clearing = Some(Box::pin(async move {
@@ -319,34 +298,14 @@ impl ManagedManager {
             }
             if parent.clearing.is_none()
                 && parent.clear.is_some()
-                && let Some(runtime) = self
-                    .children
-                    .iter()
-                    .find(|child| {
-                        !child.busy()
-                            && !child.closing
-                            && child
-                                .prepared
-                                .notice_context
-                                .as_ref()
-                                .is_some_and(|context| {
-                                    parent.context.ptr_eq(&Arc::downgrade(context))
-                                })
-                    })
-                    .map(|child| ClearTarget {
-                        runtime: child.prepared.runtime.clone(),
-                        drain: None,
-                    })
-                    .or_else(|| retiring_runtime(&self.retiring, &parent.context))
-                    .or_else(|| {
-                        super::saved_lifetime::runtime_for_notice(
-                            &self.saved_lifetimes,
-                            &parent.context,
-                        )
-                    })
-                    .or_else(|| {
-                        super::foreground::runtime_for_notice(&self.foregrounds, &parent.context)
-                    })
+                && let Some(runtime) = clear_runtime(
+                    &self.children,
+                    &self.retiring,
+                    &self.saved_lifetimes,
+                    &self.foregrounds,
+                    &parent.context,
+                    true,
+                )
             {
                 let delivery = parent.clear.as_ref().unwrap().clone();
                 parent.clearing = Some(Box::pin(async move {
@@ -358,6 +317,33 @@ impl ManagedManager {
         }
         progress
     }
+}
+
+fn clear_runtime(
+    children: &[super::Child],
+    retiring: &[super::Retiring],
+    saved: &[super::saved_lifetime::Pending],
+    foregrounds: &[super::foreground::Foreground],
+    context: &Weak<ParentNoticeContext>,
+    idle_child_only: bool,
+) -> Option<ClearTarget> {
+    children
+        .iter()
+        .find(|child| {
+            (!idle_child_only || (!child.busy() && !child.closing))
+                && child
+                    .prepared
+                    .notice_context
+                    .as_ref()
+                    .is_some_and(|original| context.ptr_eq(&Arc::downgrade(original)))
+        })
+        .map(|child| ClearTarget {
+            runtime: child.prepared.runtime.clone(),
+            drain: None,
+        })
+        .or_else(|| retiring_runtime(retiring, context))
+        .or_else(|| super::saved_lifetime::runtime_for_notice(saved, context))
+        .or_else(|| super::foreground::runtime_for_notice(foregrounds, context))
 }
 
 fn retiring_runtime(
