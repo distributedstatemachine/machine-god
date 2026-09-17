@@ -828,3 +828,24 @@ Store component `6fbad133` permits exact reserved ACK-only owner repair for
 quiescent sources as well as archived ones; replay and delivery skip generic
 recovery only when it would not change work state. Actual owner-reopen integration
 tests and the saved-lifetime continuation remain part of the same R9 repair.
+
+Actual owner-reopen test component `eb3beca0` and follow-up `8ba78a7f` cover
+archived/quiescent ACK credit use, rejection of a foreign checkpoint, required
+live-work recovery, preservation of accepted intent, and read-only lost-owner
+projection. The quiescent delivery and replay regressions first failed because
+generic recovery consumed an unavailable publication allowance. On the integrated
+consumer code, all four delivery, five replay and 46 store tests passed.
+
+Coordinator `549bdb14` compiled the native unit-test binary successfully; its
+all-feature Clippy gate rejected `transaction::publish` at 108 lines. Component
+`43fdfc36` extracts cohesive page validation/encoding without moving publication
+effects or reservation custody; all 55 focused tests passed again (0.65, 0.38
+and 9.27 seconds respectively). Logs are `r9-delivery-recovery-focused.log`,
+`r9-readonly-integration-build.log` and `r9-readonly-integration-clippy.log` in
+the retained gate directory. The coordinator intentionally terminated the
+superseded intermediate release build before integrating this correction; no
+fresh release or full replacement gate is claimed for that rejected candidate.
+The same component's default-feature targeted `too_many_lines` Clippy passed;
+its existing dead-code warnings remain outside that narrow check. Root formatting
+and bounded documentation checks passed after integration. The clean resource
+worktree was removed after exact scoped comparison, with commits retained.
