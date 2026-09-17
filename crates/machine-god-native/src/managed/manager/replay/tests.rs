@@ -1,0 +1,147 @@
+use super::*;
+use crate::managed::{
+    manager::tests::Fixture,
+    notices::{NoticeEvent, NoticePrincipal, NoticeTarget, NoticeTerminal, WorkNoticeIdentity},
+    store::JournalPublication,
+};
+use futures_executor::block_on;
+use machine_god_core::{ManagedHistoryItem, ManagedHistoryKind};
+use std::num::NonZeroU64;
+
+fn append(
+    fixture: &mut Fixture,
+    snapshot: JournalSnapshot,
+    mutation: JournalMutation,
+) -> JournalSnapshot {
+    let JournalPublication::Confirmed(snapshot) =
+        block_on(fixture.journal.mutate(snapshot, mutation)).unwrap()
+    else {
+        panic!("confirmed test mutation");
+    };
+    fixture.manager.children[0].snapshot = *snapshot.clone();
+    *snapshot
+}
+
+#[test]
+fn historical_notice_validation_yields_before_scanning_an_entire_history() {
+    let nz = |n| NonZeroU64::new(n).unwrap();
+    let mut fixture = Fixture::new(vec![]);
+    assert!(
+        fixture
+            .command(serde_json::json!({
+                "create":{"name":"source","mode":"persistent"}
+            }))
+            .ok
+    );
+    fixture.drive(|f| f.manager.active.is_none());
+    let session = fixture.notice_session();
+    let parent = NoticePrincipal {
+        id: "notice-parent".into(),
+        generation: nz(1),
+    };
+    let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    let mut snapshot = append(
+        &mut fixture,
+        snapshot,
+        JournalMutation::Relationship {
+            parent_id: Some(parent.id.clone()),
+            parent_generation: Some(1),
+            parent_owner: Some(JournalTranscript {
+                session_id: session.id(),
+                incarnation: session.incarnation_id(),
+            }),
+        },
+    );
+    let relationship = snapshot.head.revision;
+    // The original relationship is older than three bounded validation pages.
+    for _ in 0..4 {
+        snapshot = append(
+            &mut fixture,
+            snapshot,
+            JournalMutation::AppendHistory(
+                (0..90)
+                    .map(|_| {
+                        JournalRecord::History(ManagedHistoryItem {
+                            kind: ManagedHistoryKind::Conversation,
+                            work_id: None,
+                            user: None,
+                            assistant: Some("retained history".into()),
+                            user_truncated: false,
+                            assistant_truncated: false,
+                        })
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    let original = ManagedNotice {
+        source: WorkNoticeIdentity {
+            source: NoticePrincipal {
+                id: "child-1".into(),
+                generation: nz(1),
+            },
+            work_id: "original-work".into(),
+            work_generation: nz(1),
+        },
+        source_sequence: nz(snapshot.head.next_sequence),
+        target: NoticeTarget {
+            parent: parent.clone(),
+            parent_incarnation: session.incarnation_id(),
+            relationship_generation: nz(relationship),
+        },
+        event: NoticeEvent::Terminal {
+            outcome: NoticeTerminal::Completed,
+        },
+        history: None,
+    };
+    snapshot = append(
+        &mut fixture,
+        snapshot,
+        JournalMutation::AppendHistory(vec![JournalRecord::Notice(original.clone())]),
+    );
+    let context = Arc::new(ParentNoticeContext::new(
+        &session,
+        parent,
+        &fixture.manager.notices,
+    ));
+    let targets = vec![Arc::downgrade(&context)];
+    let mut replay = Replay {
+        source: Some((snapshot, None)),
+        ..Replay::default()
+    };
+    let mut repaired = None;
+    block_on(step(
+        &fixture.journal,
+        &fixture.manager.retry,
+        &mut replay,
+        &targets,
+        &mut repaired,
+    ))
+    .unwrap();
+    assert!(
+        replay.pending.is_none(),
+        "a single replay admission scanned the entire historical relationship"
+    );
+    let mut admissions = 1;
+    while replay.pending.is_none() && admissions < 10 {
+        block_on(step(
+            &fixture.journal,
+            &fixture.manager.retry,
+            &mut replay,
+            &targets,
+            &mut repaired,
+        ))
+        .unwrap();
+        admissions += 1;
+    }
+    assert!(
+        admissions >= 5,
+        "validation did not yield between bounded pages"
+    );
+    assert_eq!(
+        replay.pending.as_ref().map(|(notice, _)| notice),
+        Some(&original)
+    );
+    assert!(repaired.is_none());
+    assert!(fixture.factory.provider.requests().is_empty());
+}

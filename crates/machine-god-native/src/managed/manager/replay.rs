@@ -11,6 +11,9 @@ use super::{
 use machine_god_core::ManagedNotifications;
 use std::sync::{Arc, Weak};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Default)]
 pub(super) struct Replay {
     catalog: Option<JournalCatalogCursor>,
