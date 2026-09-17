@@ -803,11 +803,18 @@ fn journal_pressure_preserves_previously_accepted_archive_until_actual_cleanup()
             .all(|work| work.status == ManagedQueueStatus::Interrupted)
     );
     assert_eq!(fixture.factory.provider.requests().len(), 1);
+    let filler = fixture
+        .manager
+        .children
+        .iter()
+        .position(|child| child.snapshot.head.id == "child-2")
+        .unwrap();
+    exhaust_ordinary_history(&mut fixture, filler);
     fixture.restart_manager();
     let inspected = fixture.command(serde_json::json!({"inspect": {
         "id": "child-1", "sections": ["status"]
     }}));
-    assert!(inspected.ok || inspected.error_code == Some(ManagedFailureCode::ResourceLimit));
+    assert!(inspected.ok);
     assert_eq!(fixture.manager.retry.issue(), None);
 }
 

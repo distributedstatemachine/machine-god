@@ -108,9 +108,13 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
         if !job.lease().matches_observation(&snapshot) {
             return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);
         }
-        let recovered = snapshot.recovery_required();
+        // Archived history is immutable inspection evidence. Reading it does
+        // not need a new owner epoch or borrow credits from a later command.
+        let recovered = snapshot.recovery_required()
+            && !(snapshot.head.status == ManagedAgentState::Archived
+                && matches!(command, ManagedSubagentCommand::Inspect(_)));
         // Recovery never executes work or signals cancellation. It only records interruption.
-        if snapshot.recovery_required() {
+        if recovered {
             snapshot = match durability::mutate_admitted(
                 &env.journal,
                 &env.gate,
