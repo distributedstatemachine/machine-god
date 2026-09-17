@@ -42,7 +42,7 @@ impl ManagedManager {
             }
             progress |= self.pump_notices(cx)?;
             if self.active.is_none() {
-                progress |= self.admit_next(cx, now_ms)?;
+                progress |= self.admit_next(cx, now_ms);
             }
             changed |= progress;
             if !progress {

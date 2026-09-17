@@ -4,15 +4,12 @@ use super::{
 };
 
 impl ManagedManager {
-    pub(super) fn admit_next(
-        &mut self,
-        cx: &mut Context<'_>,
-        now_ms: i64,
-    ) -> Result<bool, ManagedRuntimeError> {
+    pub(super) fn admit_next(&mut self, cx: &mut Context<'_>, now_ms: i64) -> bool {
+        const LANES: usize = 7;
         // At most one catalog read before giving ordinary durable work its next
         // turn. A retained page is bounded and cannot delay child execution.
         if !self.catalog.yield_to_work() && (self.begin_observation() || self.begin_catalog()) {
-            return Ok(true);
+            return true;
         }
         if let Some(index) = self.children.iter().position(|child| {
             child.closing
@@ -26,23 +23,22 @@ impl ManagedManager {
                 prepared: child.prepared,
                 settlement: child.settlement,
             });
-            return Ok(true);
+            return true;
         }
         // Candidate reservations precede new allocations, not accepted work.
         if !self.closing && self.waiting_foreground() && self.evict_idle_child(None) {
-            return Ok(true);
+            return true;
         }
         // Rotate on actual admission, not polling frequency. Each ready lane
         // receives a turn within seven admissions (plus the shared read allowance).
         // A parked mailbox head cannot hide another lane's accepted custody.
-        const LANES: usize = 7;
         for offset in 0..LANES {
             let lane = (self.next_admission + offset) % LANES;
             let admitted = match lane {
                 0 => self.admit_child_write(),
                 1 => self.admit_approval(now_ms),
                 2 => self.admit_ready_wait(now_ms),
-                3 => self.admit_mailbox(now_ms)?,
+                3 => self.admit_mailbox(now_ms),
                 4 => self.admit_child_start(),
                 5 => self.begin_delivery(cx),
                 6 => self.begin_replay(cx),
@@ -50,10 +46,10 @@ impl ManagedManager {
             };
             if admitted {
                 self.next_admission = (lane + 1) % LANES;
-                return Ok(true);
+                return true;
             }
         }
-        Ok(self.begin_observation() || self.begin_catalog())
+        self.begin_observation() || self.begin_catalog()
     }
 
     fn admit_child_write(&mut self) -> bool {
@@ -118,7 +114,7 @@ impl ManagedManager {
         true
     }
 
-    fn admit_mailbox(&mut self, now_ms: i64) -> Result<bool, ManagedRuntimeError> {
+    fn admit_mailbox(&mut self, now_ms: i64) -> bool {
         // Freeze only the captured target; finish its already-buffered writes
         // before loading the command's exact head. Unrelated children keep moving.
         if self
@@ -126,7 +122,7 @@ impl ManagedManager {
             .as_ref()
             .is_some_and(|(job, _, _)| self.target_has_pending_writes(job_target(job)))
         {
-            return Ok(false);
+            return false;
         }
         if let Some((job, wait_finished, operation)) = self.pending_job.take() {
             if let ManagedSubagentCommand::Message(ManagedMessage::Milestone(request)) =
@@ -134,7 +130,7 @@ impl ManagedManager {
             {
                 let name = request.name.clone();
                 self.milestone(job, &name, operation);
-                return Ok(true);
+                return true;
             }
             let target = match job.command() {
                 ManagedSubagentCommand::Inspect(value) => Some(value.id.clone()),
@@ -172,7 +168,7 @@ impl ManagedManager {
                 if !foreground_waiting && !self.retiring.is_empty() {
                     self.pending_job = Some((job, wait_finished, operation));
                     if evicted {
-                        return Ok(true);
+                        return true;
                     }
                     // Retain the FIFO head, but let other lanes make progress.
                 } else {
@@ -182,7 +178,7 @@ impl ManagedManager {
                         &operation,
                         machine_god_core::ManagedFailureCode::ResourceLimit,
                     )));
-                    return Ok(true);
+                    return true;
                 }
             } else {
                 let environment = self.environment(now_ms, operation.clone(), wait_finished);
@@ -191,10 +187,10 @@ impl ManagedManager {
                     target,
                     operation,
                 });
-                return Ok(true);
+                return true;
             }
         }
-        Ok(false)
+        false
     }
 
     fn admit_child_start(&mut self) -> bool {

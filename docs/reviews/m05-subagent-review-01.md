@@ -783,3 +783,11 @@ Coordinator integration retains the resumable delivery signature and shutdown
 custody checks; its exact combined checks remain due. The journal/pressure and
 FIFO-successor fixes are separate components of the same rejected-candidate repair,
 not new delivered features.
+
+Integrated `dd9e954e` passed all 86 default-feature manager tests. The selected
+helper run is retained in `r9-integrated-delivery-pump-focused-selected-helper.log`;
+an earlier invocation had a mistyped unused helper path and is not the selected
+helper evidence. All-feature Clippy found two admission-refactor style issues:
+the lane constant followed statements, and infallible admission returned `Result`.
+The coordinator moved the constant and removed the unnecessary wrappers through
+the pump caller. Exact replacement checks remain due after the remaining fixes.
