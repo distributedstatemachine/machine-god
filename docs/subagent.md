@@ -769,6 +769,12 @@ recovery mutation retains its original publication custody. Source changes
 invalidate the validation frontier rather than admitting a stale original.
 This bounds work per admission, not total scans across an arbitrary history.
 
+Managed tool activity includes one `Denied` record for each actual core policy
+denial. The original event sequence distinguishes reused provider call IDs
+across turns; capability labels and permission-request IDs are not correlation
+keys. Denied attempts remain pageable after archival and restart without
+claiming tool execution or duplicating approved started/finished records.
+
 ## Native management form drafts
 
 `NativeModelPicker` owns a pure, bounded model-menu projection over one shared

@@ -1066,6 +1066,13 @@ likewise becomes a fixed generic model-visible result, allowing the next model
 round to recover without copying tool-specific diagnostics into the
 transcript. A policy infrastructure error fails the turn.
 
+An actual policy denial emits `ToolDenied { call_id, tool_name }` with the
+bounded original call identity, without arguments or policy-reason text. It
+emits neither `ToolStarted` nor `ToolFinished` and starts no execution. Event
+session/incarnation/turn/sequence identity distinguishes repeated provider call
+IDs in different turns. Permission-handler errors and cancelled approval waits
+do not synthesize denial observations.
+
 An allowed tool receives a [`ToolContext`](crate::ToolContext) containing the
 session ID, session incarnation ID, turn ID, and call ID, plus exactly the JSON
 arguments returned by its successful preflight. A tool that implements

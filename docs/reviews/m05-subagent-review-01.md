@@ -676,3 +676,13 @@ The coordinator correction joins original/ACK/parent validation in resumable
 100-record steps, checks exact snapshots between admissions, and parks failed
 read-only retries outside the command lane. Mutation reconciliation retains its
 existing original custody. Fixed-code execution and fresh acceptance remain due.
+
+Correctness component `f45533c9` adds the explicit core denial observation,
+managed durable activity producer and ACP failed-call projection. Author checks
+passed four managed event tests, 17 ACP projection tests, 98 core unit tests
+and 71 testkit permission/tool-loop tests under Rust 1.94.1. Component
+`c931cac4` adds a bounded integrated notice regression for real parent checkpoint
+ACK/outbox clear, retained snapshot pressure, deferred replay with a live tracker
+and shutdown without another provider turn; it has not yet been executed.
+All component edits are integrated into the feature branch. Author checks do
+not replace the full integrated local gate or three fresh independent reviews.

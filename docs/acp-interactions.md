@@ -17,6 +17,11 @@ sequence labels in `_meta.machineGod`; those labels are data, not authority.
 Provider stops and terminal engine events never emit a final prompt response:
 only the separately finalized native interactive outcome can do so.
 
+An explicit core `ToolDenied` observation projects a failed `tool_call_update`
+with its original call ID/name and fixed `permission_denied` output. It does
+not infer denial from a permission-request ID, emit a synthetic started call,
+or expose policy-reason text.
+
 Local commands occupy the same single active-prompt lane, independently of a
 pending session selection. Close and replacement can cancel a native command;
 its exact control receipt remains with the old session until output acquisition.
