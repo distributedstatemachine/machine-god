@@ -188,18 +188,18 @@ fn external_clear_wakes_shutdown_and_survives_context_drop_before_manager_poll()
     fixture.manager.register_parent_context(&context).unwrap();
     fixture.drive(|f| f.manager.active.is_none() && f.manager.parents[0].clear.is_some());
     assert!(!delivered.is_cleared());
-    let wakes = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let waker = Waker::from(wakes.clone());
+    let notifications = Arc::new(WakeCount(AtomicUsize::new(0)));
+    let waker = Waker::from(notifications.clone());
     assert!(
         fixture
             .manager
             .poll_shutdown(&mut Context::from_waker(&waker), 103)
             .is_pending()
     );
-    let before = wakes.0.load(Ordering::Acquire);
+    let before = notifications.0.load(Ordering::Acquire);
     block_on(conversation.clear_notice_delivery(&delivered)).unwrap();
     assert!(delivered.is_cleared());
-    assert!(wakes.0.load(Ordering::Acquire) > before);
+    assert!(notifications.0.load(Ordering::Acquire) > before);
     assert!(
         !session
             .record()

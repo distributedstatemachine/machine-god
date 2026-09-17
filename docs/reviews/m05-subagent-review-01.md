@@ -492,3 +492,10 @@ clear waking shutdown before context retirement and context drop without clear
 confirmation; existing error/drop tests assert confirmation only after repair.
 Formatting and diff checks passed in the fix-author worktree. Focused and full
 replacement execution and three fresh independent reviews remain required.
+
+Candidate `4c7c452b3ba71eed06556f76bb8164c183df0d5e` stopped at warnings-denied
+Clippy on both Linux and macOS: the new external-clear regression used similar
+local names `wakes` and `waker`. Static policy and platform checks passed;
+no runtime stage started. Renaming the counter to `notifications` preserves
+every assertion and changes no production behavior. The replacement candidate
+still requires the complete local gate and three fresh whole-feature reviews.
