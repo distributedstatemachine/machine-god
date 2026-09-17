@@ -873,3 +873,17 @@ Neither build reached release/runtime gates. Follow-up `1fe6c15e` uses let-else,
 derives Copy/Clone for that enum and shares the exact-context runtime lookup,
 preserving lookup order and the distinct fresh-clear idle-child condition.
 The corrected source requires a complete replacement gate before fresh review.
+
+Integrated `bae06b54d6a6c522ea6e956909b3ec5cb165ec18` passed both platforms'
+warnings-denied all-feature Clippy, workspace/native test compilation and fresh
+locked release builds, plus static policy/audit and FreeBSD/WASI/Apple compilation.
+The Linux focused managed and CLI filters passed. Its full workspace run stopped
+in the CLI suite at 610 passed, one failed and six ignored: the actual release
+process-restart scenario rejected reopening an archived agent instead of returning
+`LifecycleChanged`. A standalone run of the same exact test reproduced the failure
+in 10.24 seconds. Logs are `managed-full-runtime-linux-bae06b54.log` and
+`r9-reopen-release-red-bae06b54.log` in the retained gate directory. The remaining
+workspace tests, Rust doctests, Python suite and macOS runtime stages were not reached;
+no full-gate success or fresh review is claimed. The correction must preserve
+original observed admission while distinguishing owned lifecycle progress from
+external stale changes, then pass the complete replacement gate.
