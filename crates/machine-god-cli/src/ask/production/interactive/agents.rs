@@ -250,24 +250,48 @@ impl Driver {
         }
     }
 
-    pub(super) fn agents_event(&mut self, event: &ComposerEvent, binding: &InputBinding) -> bool {
+    fn pending_agents_event(&mut self, event: &ComposerEvent, binding: &InputBinding) -> bool {
         if !matches!(event, ComposerEvent::Submit(line) if line.is_empty()) {
             self.discard_pending_agents_selection();
+            return false;
+        }
+        if !matches!(binding, InputBinding::Agents { frame: None, .. })
+            || !self.pending_agents_selection_current(binding)
+        {
+            return false;
+        }
+        if self.agents.as_ref().is_some_and(|ui| {
+            ui.pending_frame
+                .as_ref()
+                .is_some_and(|(_, revision)| ui.acknowledged_revision == Some(*revision))
+        }) {
+            self.select_pending_agent(binding);
+        } else if let Some(ui) = &mut self.agents {
+            ui.pending_selection.get_or_insert_with(|| binding.clone());
+        }
+        true
+    }
+
+    fn toggle_agents(&mut self, binding: &InputBinding) {
+        if let InputBinding::Agents { editor, .. } = binding
+            && self
+                .owner
+                .managed_navigation()
+                .is_some_and(|view| view.editor == *editor)
+        {
+            self.owner.close_managed_navigation();
+            self.sync_agents();
+        } else if matches!(binding, InputBinding::Command) || self.skills_command_binding(binding) {
+            self.open_agents();
+        }
+    }
+
+    pub(super) fn agents_event(&mut self, event: &ComposerEvent, binding: &InputBinding) -> bool {
+        if self.pending_agents_event(event, binding) {
+            return true;
         }
         if matches!(event, ComposerEvent::AgentsRequested) {
-            if let InputBinding::Agents { editor, .. } = binding
-                && self
-                    .owner
-                    .managed_navigation()
-                    .is_some_and(|view| view.editor == *editor)
-            {
-                self.owner.close_managed_navigation();
-                self.sync_agents();
-            } else if matches!(binding, InputBinding::Command)
-                || self.skills_command_binding(binding)
-            {
-                self.open_agents();
-            }
+            self.toggle_agents(binding);
             return true;
         }
         let InputBinding::Agents { editor, frame, .. } = binding else {
@@ -278,21 +302,6 @@ impl Driver {
             .managed_navigation()
             .is_none_or(|view| view.editor != *editor)
         {
-            return true;
-        }
-        if frame.is_none()
-            && matches!(event, ComposerEvent::Submit(line) if line.is_empty())
-            && self.pending_agents_selection_current(binding)
-        {
-            if self.agents.as_ref().is_some_and(|ui| {
-                ui.pending_frame
-                    .as_ref()
-                    .is_some_and(|(_, revision)| ui.acknowledged_revision == Some(*revision))
-            }) {
-                self.select_pending_agent(binding);
-            } else if let Some(ui) = &mut self.agents {
-                ui.pending_selection.get_or_insert_with(|| binding.clone());
-            }
             return true;
         }
         if self.scroll_agents(event, frame.as_ref()) {

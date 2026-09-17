@@ -250,3 +250,12 @@ The existing blocked-output child-progress regression retains its execution
 assertions and now checks pending selection rather than the old rejection.
 This implementation and fixture correction still require execution and fresh
 whole-feature acceptance; earlier passing repetitions are not their evidence.
+
+Candidate `8b54fecd` passed static policy/audit and platform/Apple ABI compilation,
+but both build gates stopped at Clippy: the added pending-selection handling
+expanded `agents_event` to 117 lines against the existing 100-line limit.
+Pending-selection and navigation-toggle handling are extracted into helpers
+without changing admission or revocation conditions. An intermediate focused
+Clippy run still counted 102 lines after only the first extraction; its log is
+retained too. Neither build reached runtime tests; both failed build logs
+remain retained under the candidate SHA.
