@@ -160,3 +160,8 @@ not a claim of passing replacement gates. An early native-only compile found a
 test referencing an HTTP-gated public catalog export; its import now uses the
 internal module path. The failed compile log is retained as
 `managed-r2-coordinator-compile-preparation-pending.log` in the same log directory.
+
+Candidate `c0cd4da3` passed static policy/audit and platform/Apple ABI compilation,
+but both Linux and macOS Clippy rejected one unused import in the new preparation
+regressions. Neither platform reached runtime tests. The import was removed;
+both failed build logs remain retained for the replacement gate.

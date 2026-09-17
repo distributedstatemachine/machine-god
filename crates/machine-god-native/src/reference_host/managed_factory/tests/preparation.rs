@@ -1,10 +1,7 @@
 use super::super::preparation::set_worker_hook;
 use super::*;
 use sha2::{Digest, Sha256};
-use std::{
-    future::Future,
-    sync::{Mutex, mpsc},
-};
+use std::sync::{Mutex, mpsc};
 
 fn names(id: &SessionId) -> (String, String) {
     let mut digest = Sha256::new();
