@@ -705,3 +705,26 @@ The parked-read retry also receives exact issue-observation ownership: dropping
 a superseded validation wait clears its own stale blocked status without
 clearing a newer wait or authorizing a mutation retry. A focused ownership test
 covers both ordinary drop and overlapping same-kind waits.
+
+Candidate `b741edbfe70971becdecfce6d9f080fa6f985436` passed Linux and macOS
+warnings-denied all-feature Clippy, static policy/audit and platform compilation.
+Its early Linux replay run failed one of four tests (exit 101): extracting
+`history_fixture` had dropped the actual session before returning its weak
+notice-context witness. The missing pending notice therefore reflected an
+invalid test lifetime, not evidence to weaken production witness validation.
+The other three replay tests, 31 notice tests, nine notice-shutdown tests and
+four managed-event tests passed. This includes the previously unexecuted
+`c931cac4` deferred-replay integration regression. The failed candidate is not
+accepted; the macOS release build was still active when these checks completed.
+
+Test-only component `c433e698ba8438313ff20a7c89353ee377968b2c` retains the
+actual session in both fixture callers and adds live/dropped witness assertions
+without changing production validation or existing replay assertions. With a
+fresh locked release-helper selection on exact Rust 1.94.1 unprivileged Linux,
+all 48 focused tests passed: four replay, 31 notice, nine notice-shutdown and
+four managed-event tests (exit zero). Logs are
+`managed-r8-focused-linux-b741edbf.log`,
+`managed-r8-adjacent-linux-b741edbf.log` and
+`managed-r8-focused-linux-c433e698.log` in the retained gate directory.
+These focused checks do not establish the full replacement gate or independent
+whole-feature acceptance.
