@@ -30,7 +30,10 @@ ZIG_VERSION = "0.16.0"
 DOWNLOAD_BASE = f"https://ziglang.org/download/{ZIG_VERSION}"
 MARKER_NAME = ".machine-god-zig.json"
 DOWNLOAD_TIMEOUT_SECONDS = 300
-DOWNLOAD_RETRIES = 3
+DOWNLOAD_TOTAL_TIMEOUT_SECONDS = 930
+# Reviewed subset of https://ziglang.org/download/community-mirrors.txt.
+# Mirrors supply bytes only; the repository's pinned size/hash remain authority.
+DOWNLOAD_MIRRORS = ("https://pkg.hexops.org/zig", "https://zig.linus.dev/zig")
 CACHE_LOCK_NAME = ".machine-god-zig.lock"
 ACTIVE_LOCK_NAME = ".machine-god-zig-active.lock"
 LEASE_NAME = ".machine-god-zig.lease"
@@ -237,36 +240,62 @@ def download_archive(
         "3",
         "--proto",
         "=https",
+        "--proto-redir",
+        "=https",
         "--tlsv1.2",
         "--connect-timeout",
         "30",
-        "--max-time",
-        str(DOWNLOAD_TIMEOUT_SECONDS),
         "--speed-limit",
         "1024",
         "--speed-time",
         "60",
-        "--retry",
-        str(DOWNLOAD_RETRIES),
-        "--retry-all-errors",
-        "--retry-delay",
-        "2",
-        "--retry-max-time",
-        "900",
         "--max-filesize",
         str(spec.size),
         "--output",
         str(destination),
-        spec.url,
     ]
+    sources = [
+        f"{mirror}/{spec.archive_name}?source=machine-god-benchmarks"
+        for mirror in DOWNLOAD_MIRRORS
+    ] + [spec.url]
+    deadline = time.monotonic() + DOWNLOAD_TOTAL_TIMEOUT_SECONDS
+    last_failure = "download deadline exhausted"
+    verified = False
     try:
-        completed = run(command, check=False, timeout=930)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ProvisionError(f"could not download {spec.url}: {error}") from error
-    if completed.returncode != 0:
-        raise ProvisionError(f"could not download {spec.url}")
-    if validated_archive(destination, spec) is None:
-        raise ProvisionError("downloaded Zig archive failed bounded validation")
+        for source in sources:
+            # Never resume or combine partial bytes from different sources.
+            destination.unlink(missing_ok=True)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_failure = "download deadline exhausted"
+                break
+            timeout = min(DOWNLOAD_TIMEOUT_SECONDS, remaining)
+            try:
+                completed = run(
+                    [*command, "--max-time", str(timeout), source],
+                    check=False,
+                    timeout=timeout,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                last_failure = f"{source}: {error}"
+                continue
+            if completed.returncode != 0:
+                last_failure = f"{source}: curl exited {completed.returncode}"
+                continue
+            if validated_archive(destination, spec) is None:
+                last_failure = f"{source}: archive failed bounded validation"
+                continue
+            if time.monotonic() >= deadline:
+                last_failure = "download deadline exhausted"
+                break
+            verified = True
+            return
+        raise ProvisionError(
+            f"could not download verified {spec.archive_name}: {last_failure}"
+        )
+    finally:
+        if not verified:
+            destination.unlink(missing_ok=True)
 
 
 def extract_archive(

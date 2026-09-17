@@ -68,6 +68,18 @@ hosts. Keeping the toolchain outside the checkout prevents its large ignored
 library tree from entering repository-cleanliness scans. Each run re-hashes the
 retained official archive, extracts a fresh toolchain, passes that executable
 explicitly to the harness, and removes the extraction on success or failure.
+Missing archives are tried once each from a fixed reviewed pair of HTTPS
+community mirrors (`pkg.hexops.org/zig`, then `zig.linus.dev/zig`), with the
+canonical versioned `ziglang.org` URL as the last fallback. Mirror requests
+identify this automation through the `source` query parameter, following the
+[Zig mirror guidance](https://ziglang.org/download/community-mirrors/).
+Each transfer and subprocess is limited to 300 seconds within one 930-second
+download deadline; HTTPS-only redirects, TLS, redirect-count, file-size and
+slow-transfer bounds remain enforced. Failed or invalid attempts discard their
+bytes before the next source. Every source must match the repository-pinned
+version, exact archive size and SHA256 before atomic cache publication; no
+mirror-provided checksum or metadata is trusted. This exact-byte pin does not
+discover or admit a different toolchain version.
 The wrapper forwards `SIGHUP`, `SIGINT`, and `SIGTERM` to the active child
 process group, whose numeric identity remains reserved by a readiness-handshaked,
 unreaped private anchor through final group signaling. The first handled signal

@@ -24,6 +24,7 @@ from scripts import provision_zig
 
 class ProvisionZigTests(unittest.TestCase):
     def test_supported_hosts_are_pinned(self) -> None:
+        self.assertEqual(provision_zig.ZIG_VERSION, "0.16.0")
         self.assertEqual(
             provision_zig.host_spec("Darwin", "arm64").target,
             "aarch64-macos",
@@ -32,6 +33,188 @@ class ProvisionZigTests(unittest.TestCase):
             provision_zig.host_spec("Linux", "x86_64").sha256,
             "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
         )
+        self.assertEqual(provision_zig.host_spec("Linux", "x86_64").size, 55_478_392)
+
+    def test_download_first_verified_mirror_stops_with_existing_security_bounds(self) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / spec.archive_name
+            destination.write_bytes(b"previous partial")
+
+            def fake_run(command, *, check, timeout):
+                self.assertFalse(check)
+                self.assertEqual(timeout, 300)
+                self.assertFalse(destination.exists())
+                self.assertEqual(command[0], "/fake/curl")
+                for flag, value in (
+                    ("--proto", "=https"), ("--proto-redir", "=https"),
+                    ("--max-redirs", "3"), ("--connect-timeout", "30"),
+                    ("--max-time", "300"), ("--speed-limit", "1024"),
+                    ("--speed-time", "60"), ("--max-filesize", str(spec.size)),
+                    ("--output", str(destination)),
+                ):
+                    self.assertEqual(command[command.index(flag) + 1], value)
+                for flag in ("--fail", "--show-error", "--silent", "--location", "--tlsv1.2"):
+                    self.assertIn(flag, command)
+                for flag in ("--retry", "--retry-all-errors", "--insecure", "--continue-at"):
+                    self.assertNotIn(flag, command)
+                self.assertEqual(
+                    command[-1],
+                    "https://pkg.hexops.org/zig/zig-test-host-0.16.0.tar.xz"
+                    "?source=machine-god-benchmarks",
+                )
+                destination.write_bytes(payload)
+                return subprocess.CompletedProcess(command, 0)
+
+            run = mock.Mock(side_effect=fake_run)
+            with (
+                mock.patch.object(provision_zig.shutil, "which", return_value="/fake/curl"),
+                mock.patch.object(provision_zig.time, "monotonic", return_value=0),
+            ):
+                provision_zig.download_archive(destination, spec, run)
+                self.assertEqual(run.call_count, 1)
+            self.assertEqual(destination.read_bytes(), payload)
+
+    def test_download_mirror_failure_advances_without_reusing_partial_bytes(self) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        for failure in ("exit", "timeout", "oserror"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                destination = Path(temporary) / spec.archive_name
+                sources = []
+
+                def fake_run(command, *, check, timeout):
+                    self.assertFalse(check)
+                    self.assertLessEqual(timeout, 300)
+                    self.assertFalse(destination.exists())
+                    sources.append(command[-1])
+                    if len(sources) == 1:
+                        destination.write_bytes(b"partial")
+                        if failure == "timeout":
+                            raise subprocess.TimeoutExpired(command, timeout)
+                        if failure == "oserror":
+                            raise OSError("injected transfer failure")
+                        return subprocess.CompletedProcess(command, 22)
+                    destination.write_bytes(payload)
+                    return subprocess.CompletedProcess(command, 0)
+
+                with mock.patch.object(provision_zig.shutil, "which", return_value="/fake/curl"):
+                    provision_zig.download_archive(destination, spec, fake_run)
+                self.assertEqual(sources, [
+                    f"https://pkg.hexops.org/zig/{spec.archive_name}?source=machine-god-benchmarks",
+                    f"https://zig.linus.dev/zig/{spec.archive_name}?source=machine-god-benchmarks",
+                ])
+                self.assertEqual(destination.read_bytes(), payload)
+
+    def test_download_corrupt_and_oversized_mirrors_require_verified_origin_before_publication(self) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        sources = []
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archives" / spec.archive_name
+
+            def fake_run(command, *, check, timeout):
+                self.assertFalse(check)
+                self.assertLessEqual(timeout, 300)
+                self.assertFalse(archive.exists())
+                destination = Path(command[command.index("--output") + 1])
+                self.assertFalse(destination.exists())
+                sources.append(command[-1])
+                destination.write_bytes((b"x" * len(payload), payload + b"x", payload)[len(sources) - 1])
+                return subprocess.CompletedProcess(command, 0)
+
+            with mock.patch.object(provision_zig.shutil, "which", return_value="/fake/curl"):
+                self.assertEqual(provision_zig.ensure_archive(root, spec, fake_run), archive.resolve())
+            self.assertEqual(len(sources), 3)
+            self.assertEqual(sources[-1], spec.url)
+            self.assertEqual(archive.read_bytes(), payload)
+            self.assertEqual(list(archive.parent.iterdir()), [archive])
+
+    def test_download_exhaustion_cleans_invalid_bytes_and_never_publishes(self) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        sources = []
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def fake_run(command, *, check, timeout):
+                self.assertFalse(check)
+                self.assertLessEqual(timeout, 300)
+                sources.append(command[-1])
+                destination = Path(command[command.index("--output") + 1])
+                self.assertFalse(destination.exists())
+                destination.write_bytes(b"x" * len(payload))
+                return subprocess.CompletedProcess(command, 0)
+
+            with (
+                mock.patch.object(provision_zig.shutil, "which", return_value="/fake/curl"),
+                self.assertRaisesRegex(provision_zig.ProvisionError, "bounded validation"),
+            ):
+                provision_zig.ensure_archive(root, spec, fake_run)
+            self.assertEqual(len(sources), 3)
+            self.assertEqual(sources[-1], spec.url)
+            self.assertEqual(list((root / "archives").iterdir()), [])
+
+    def test_download_total_deadline_caps_remaining_transfer_and_stops_fallback(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        elapsed = 0
+        timeouts = []
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / spec.archive_name
+
+            def fake_run(command, *, check, timeout):
+                nonlocal elapsed
+                self.assertFalse(check)
+                self.assertEqual(float(command[command.index("--max-time") + 1]), timeout)
+                timeouts.append(timeout)
+                # Model elapsed setup/scheduling time as well as the transfer.
+                elapsed = 920 if len(timeouts) == 1 else 930
+                destination.write_bytes(b"partial")
+                raise subprocess.TimeoutExpired(command, timeout)
+
+            with (
+                mock.patch.object(provision_zig.shutil, "which", return_value="/fake/curl"),
+                mock.patch.object(provision_zig.time, "monotonic", side_effect=lambda: elapsed),
+                self.assertRaisesRegex(provision_zig.ProvisionError, "deadline exhausted"),
+            ):
+                provision_zig.download_archive(destination, spec, fake_run)
+            self.assertEqual(timeouts, [300, 10])
+            self.assertFalse(destination.exists())
+
+    def test_download_rejects_verified_bytes_returned_after_total_deadline(self) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        elapsed = 0
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / spec.archive_name
+
+            def fake_run(command, *, check, timeout):
+                nonlocal elapsed
+                self.assertFalse(check)
+                self.assertEqual(timeout, 300)
+                elapsed = 930
+                destination.write_bytes(payload)
+                return subprocess.CompletedProcess(command, 0)
+
+            with (
+                mock.patch.object(provision_zig.shutil, "which", return_value="/fake/curl"),
+                mock.patch.object(provision_zig.time, "monotonic", side_effect=lambda: elapsed),
+                self.assertRaisesRegex(provision_zig.ProvisionError, "deadline exhausted"),
+            ):
+                provision_zig.download_archive(destination, spec, fake_run)
+            self.assertFalse(destination.exists())
 
     def test_unknown_host_fails_closed(self) -> None:
         with self.assertRaisesRegex(provision_zig.ProvisionError, "unsupported"):
