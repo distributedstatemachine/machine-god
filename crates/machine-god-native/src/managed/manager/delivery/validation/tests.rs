@@ -444,9 +444,37 @@ fn ack_repair_requires_live_work_recovery_and_preserves_quiescent_accepted_inten
         JournalMutation::Intent(JournalIntent::Cancel),
     );
     assert!(snapshot.head.recovery_changes_work());
+    // Pure predicate inputs only: these clones never enter publication or
+    // become execution/receipt authority. Intent does not affect Recover's work changes.
+    let mut evidence = snapshot.head.clone();
+    for (status, changes) in [
+        (ManagedQueueStatus::Pending, true),
+        (ManagedQueueStatus::Running, true),
+        (ManagedQueueStatus::AwaitingApproval, true),
+        (ManagedQueueStatus::Interrupted, false),
+        (ManagedQueueStatus::Failed, false),
+        (ManagedQueueStatus::Completed, false),
+        (ManagedQueueStatus::Cancelled, false),
+    ] {
+        evidence.queue[0].status = status;
+        assert_eq!(evidence.recovery_changes_work(), changes);
+    }
+    evidence.status = ManagedAgentState::Archived;
+    evidence.queue[0].status = ManagedQueueStatus::Pending;
+    assert!(!evidence.recovery_changes_work());
     drop(journal);
     let journal = fixture.open().unwrap();
     let snapshot = block_on(journal.inspect("source".into())).unwrap();
+    assert_eq!(snapshot.head.status, ManagedAgentState::Queued);
+    assert_eq!(
+        crate::managed::manager::projection::observed_status(&snapshot),
+        ManagedAgentState::Interrupted
+    );
+    assert_eq!(snapshot.head.queue[0].status, ManagedQueueStatus::Pending);
+    assert_eq!(
+        block_on(journal.inspect("source".into())).unwrap().head,
+        snapshot.head
+    );
     let receipt = delivered.context.delivery().unwrap();
     let ack = JournalMutation::AppendHistory(vec![JournalRecord::NoticeAcknowledged {
         identity: delivered.original.identity(),
