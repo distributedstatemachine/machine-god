@@ -547,3 +547,260 @@ fn replenished_mailbox_traffic_cannot_starve_accepted_work_or_ready_waits() {
         "unchanged inspections repeatedly reset durable replay"
     );
 }
+
+fn exhaust_ordinary_history(fixture: &mut Fixture, index: usize) {
+    let filler = JournalRecord::History(machine_god_core::ManagedHistoryItem {
+        kind: machine_god_core::ManagedHistoryKind::Conversation,
+        work_id: None,
+        user: Some("\0".repeat(16 * 1024)),
+        assistant: Some("\0".repeat(16 * 1024)),
+        user_truncated: false,
+        assistant_truncated: false,
+    });
+    for _ in 0..64 {
+        if !fixture.journal.ordinary_publication_available() {
+            return;
+        }
+        let JournalPublication::Confirmed(snapshot) = block_on(fixture.journal.mutate(
+            fixture.manager.children[index].snapshot.clone(),
+            JournalMutation::AppendHistory(vec![filler.clone(), filler.clone()]),
+        ))
+        .unwrap() else {
+            panic!("confirmed bounded ordinary history publication");
+        };
+        fixture.manager.children[index].snapshot = *snapshot;
+    }
+    panic!("finite journal did not reach its protected settlement reserve");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One finite-budget interruption across publication, cleanup and restart.
+fn journal_pressure_settles_owned_writes_and_interrupts_fifo_without_starting_successors() {
+    let mut fixture = Fixture::with_journal_limits(
+        vec![ModelProviderStep::pending()],
+        store::JournalLimits {
+            head_bytes: 16 * 1024,
+            page_bytes: 512 * 1024,
+            aggregate_bytes: 16 * 1024 * 1024,
+            ..store::JournalLimits::default()
+        },
+    );
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "running", "mode": "persistent", "prompt": "original",
+                "notifications": {"started": true}
+            }}))
+            .ok
+    );
+    fixture.drive(|f| f.factory.provider.requests().len() == 1);
+    for content in ["successor-a", "successor-b"] {
+        assert!(
+            fixture
+                .command(serde_json::json!({"message": {"send": {
+                    "id": "child-1", "content": content
+                }}}))
+                .ok
+        );
+    }
+    fixture.drive(|f| {
+        f.manager.active.is_none()
+            && f.manager.replay.done
+            && f.manager.children[0].pending.is_empty()
+            && !f.manager.children[0].notice_started
+    });
+    fixture.manager.limits.work_per_poll = 1;
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "not-started", "mode": "one_off", "prompt": "accepted-unstarted"
+            }}))
+            .ok
+    );
+    assert_eq!(fixture.factory.provider.requests().len(), 1);
+    let queue: Vec<_> = fixture.manager.children[0]
+        .snapshot
+        .head
+        .queue
+        .iter()
+        .map(|work| work.id.clone())
+        .collect();
+    fixture.manager.children[0].pending.push_back(ChildWrite {
+        mutation: JournalMutation::AppendHistory(vec![JournalRecord::History(
+            machine_god_core::ManagedHistoryItem {
+                kind: machine_god_core::ManagedHistoryKind::Conversation,
+                work_id: Some(queue[0].clone()),
+                user: Some("owned-before-pressure".into()),
+                assistant: None,
+                user_truncated: false,
+                assistant_truncated: false,
+            },
+        )]),
+        after: WriteAfter::Observe,
+    });
+    exhaust_ordinary_history(&mut fixture, 1);
+    fixture.factory.cleanup.store(false, Ordering::Release);
+    fixture.drive(|f| {
+        f.manager
+            .children
+            .iter()
+            .all(|child| child.snapshot.head.status == ManagedAgentState::Interrupted)
+            && f.manager.children[0].settlement.is_some()
+    });
+    assert!(!fixture.manager.children[0].actual_settled);
+    assert_eq!(fixture.manager.retry.issue(), None);
+    assert_eq!(fixture.factory.provider.requests().len(), 1);
+    assert!(
+        fixture
+            .command(serde_json::json!({"inspect": {
+                "id": "child-2", "sections": ["status"]
+            }}))
+            .ok
+    );
+    fixture.factory.cleanup.store(true, Ordering::Release);
+    fixture.drive(|f| {
+        f.manager
+            .children
+            .iter()
+            .all(|child| !child.busy() && child.actual_settled)
+            && f.manager.active.is_none()
+            && f.manager.replay.done
+    });
+    let snapshot = fixture.manager.children[0].snapshot.clone();
+    assert_eq!(
+        snapshot
+            .head
+            .queue
+            .iter()
+            .map(|work| work.id.clone())
+            .collect::<Vec<_>>(),
+        queue
+    );
+    assert!(
+        snapshot
+            .head
+            .queue
+            .iter()
+            .all(|work| work.status == ManagedQueueStatus::Interrupted)
+    );
+    assert!(snapshot.head.intent.is_none());
+    let mut cursor = None;
+    let mut owned = 0;
+    let mut interrupted = 0;
+    loop {
+        let page = block_on(fixture.journal.history(snapshot.clone(), cursor, 100)).unwrap();
+        for record in page.records {
+            match record {
+                JournalRecord::History(item) => {
+                    owned += usize::from(item.user.as_deref() == Some("owned-before-pressure"));
+                    interrupted +=
+                        usize::from(item.kind == machine_god_core::ManagedHistoryKind::Interrupted);
+                }
+                JournalRecord::Notice(notice) => assert!(!matches!(
+                    notice.event,
+                    crate::managed::notices::NoticeEvent::Terminal { .. }
+                )),
+                _ => {}
+            }
+        }
+        let Some(next) = page.next else {
+            break;
+        };
+        cursor = Some(next);
+    }
+    assert_eq!((owned, interrupted), (1, 1));
+    fixture.restart_manager();
+    assert!(
+        fixture
+            .command(serde_json::json!({"inspect": {
+                "id": "child-1", "sections": ["status", "queue"]
+            }}))
+            .ok
+    );
+    assert_eq!(fixture.factory.provider.requests().len(), 1);
+}
+
+#[test]
+fn journal_pressure_preserves_previously_accepted_archive_until_actual_cleanup() {
+    let mut fixture = Fixture::with_journal_limits(
+        vec![ModelProviderStep::pending()],
+        store::JournalLimits {
+            head_bytes: 16 * 1024,
+            page_bytes: 512 * 1024,
+            aggregate_bytes: 16 * 1024 * 1024,
+            ..store::JournalLimits::default()
+        },
+    );
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "running", "mode": "persistent", "prompt": "original"
+            }}))
+            .ok
+    );
+    fixture.drive(|f| f.factory.provider.requests().len() == 1);
+    assert!(
+        fixture
+            .command(serde_json::json!({"message": {"send": {
+                "id": "child-1", "content": "accepted-successor"
+            }}}))
+            .ok
+    );
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "filler", "mode": "persistent"
+            }}))
+            .ok
+    );
+    fixture.manager.limits.work_per_poll = 1;
+    fixture.factory.cleanup.store(false, Ordering::Release);
+    let (_admission, invocation) = fixture.invocation(serde_json::json!({"lifecycle": {
+        "id": "child-1", "action": "close"
+    }}));
+    let requester = fixture.requester.clone();
+    let mut response = requester.execute(invocation, CancellationToken::new());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(response.as_mut().poll(&mut cx).is_pending());
+    fixture.drive(|f| {
+        f.manager.children[0].control.is_some()
+            && f.manager.children[0].snapshot.head.intent == Some(store::JournalIntent::Archive)
+    });
+    exhaust_ordinary_history(&mut fixture, 1);
+    fixture.drive(|f| {
+        f.manager.children[0].settlement.is_some()
+            && f.manager.children[0].work.is_none()
+            && f.manager.children[0].pending.is_empty()
+            && f.manager.active.is_none()
+    });
+    assert!(response.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(
+        fixture.manager.children[0].snapshot.head.intent,
+        Some(store::JournalIntent::Archive)
+    );
+    assert_eq!(fixture.manager.retry.issue(), None);
+    fixture.factory.cleanup.store(true, Ordering::Release);
+    let result = block_on(std::future::poll_fn(|cx| {
+        if let Poll::Ready(result) = response.as_mut().poll(cx) {
+            return Poll::Ready(result.unwrap());
+        }
+        let progress = fixture.manager.poll_progress(cx, 100);
+        assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");
+        if progress.is_ready() {
+            cx.waker().wake_by_ref();
+        }
+        Poll::Pending
+    }));
+    assert!(result.ok);
+    let snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+    assert_eq!(snapshot.head.status, ManagedAgentState::Archived);
+    assert!(snapshot.head.intent.is_none());
+    assert!(
+        snapshot
+            .head
+            .queue
+            .iter()
+            .all(|work| work.status == ManagedQueueStatus::Interrupted)
+    );
+    assert_eq!(fixture.factory.provider.requests().len(), 1);
+}

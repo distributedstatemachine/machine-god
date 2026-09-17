@@ -13,7 +13,12 @@ impl ManagedManager {
         cx: &mut Context<'_>,
         now_ms: i64,
     ) -> Result<bool, ManagedRuntimeError> {
-        if self.children[index].work.is_some() && !self.register_notice(index)? {
+        if self.children[index].work.is_some()
+            && (!self.children[index].pressure_interrupted
+                || self.children[index].notice_started
+                || self.children[index].notice_terminal.is_some())
+            && !self.register_notice(index)?
+        {
             return Ok(false);
         }
         let command_pending = self.command_target_pending(&self.children[index].snapshot.head.id);
@@ -69,7 +74,10 @@ impl ManagedManager {
                     child.admission_pending = false;
                     child.starting.take();
                     child.turn = Some(turn);
-                    if self.closing || child.snapshot.head.intent.is_some() {
+                    if self.closing
+                        || child.pressure_interrupted
+                        || child.snapshot.head.intent.is_some()
+                    {
                         let _ = child.prepared.runtime.request_active_cancel();
                     }
                     return Ok(true);
@@ -95,7 +103,29 @@ impl ManagedManager {
                 }
             }
         }
+        if child.pressure_interrupted
+            && child.work.is_none()
+            && child.starting.is_none()
+            && child.turn.is_none()
+            && child.pending.is_empty()
+            && child.snapshot.head.intent.is_none()
+            && child.snapshot.head.queue.iter().any(|work| {
+                matches!(
+                    work.status,
+                    ManagedQueueStatus::Pending
+                        | ManagedQueueStatus::Running
+                        | ManagedQueueStatus::AwaitingApproval
+                )
+            })
+        {
+            child.pending.push_back(ChildWrite {
+                mutation: JournalMutation::InterruptForPressure,
+                after: WriteAfter::Observe,
+            });
+            progress = true;
+        }
         if self.closing
+            && !child.pressure_interrupted
             && child.work.is_none()
             && child.starting.is_none()
             && child.turn.is_none()
@@ -250,6 +280,18 @@ impl ManagedManager {
         now_ms: i64,
         shutdown: bool,
     ) {
+        if child.pressure_interrupted {
+            // Continue driving the actual core turn and cleanup, but do not
+            // create new history/permission/tool observations after the cutoff.
+            if matches!(
+                event.payload,
+                TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
+            ) {
+                child.turn.take();
+                Self::finish_child(child, ManagedQueueStatus::Interrupted, shutdown);
+            }
+            return;
+        }
         match event.payload {
             TurnEvent::Started => child.notice_started = true,
             TurnEvent::Model {
@@ -360,7 +402,7 @@ impl ManagedManager {
         };
         let status = if child.snapshot.head.intent.is_some() {
             ManagedQueueStatus::Cancelled
-        } else if shutdown {
+        } else if shutdown || child.pressure_interrupted {
             ManagedQueueStatus::Interrupted
         } else {
             status
@@ -387,10 +429,15 @@ impl ManagedManager {
             after: WriteAfter::Observe,
         });
         child.pending.push_back(ChildWrite {
-            mutation: JournalMutation::HeadState {
-                work_id: work.id.clone(),
-                status,
-                failure: (status == ManagedQueueStatus::Failed).then(|| "child turn failed".into()),
+            mutation: if child.pressure_interrupted && child.snapshot.head.intent.is_none() {
+                JournalMutation::InterruptForPressure
+            } else {
+                JournalMutation::HeadState {
+                    work_id: work.id.clone(),
+                    status,
+                    failure: (status == ManagedQueueStatus::Failed)
+                        .then(|| "child turn failed".into()),
+                }
             },
             after: WriteAfter::Terminal,
         });

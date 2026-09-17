@@ -378,6 +378,25 @@ impl Fixture {
         store: impl SessionStore,
         configure: impl FnOnce(EngineBuilder) -> EngineBuilder,
     ) -> Self {
+        Self::with_engine_and_journal(steps, store, configure, store::JournalLimits::default())
+    }
+    pub fn with_journal_limits(
+        steps: Vec<ModelProviderStep>,
+        limits: store::JournalLimits,
+    ) -> Self {
+        Self::with_engine_and_journal(
+            steps,
+            InMemorySessionStore::default(),
+            |engine| engine,
+            limits,
+        )
+    }
+    fn with_engine_and_journal(
+        steps: Vec<ModelProviderStep>,
+        store: impl SessionStore,
+        configure: impl FnOnce(EngineBuilder) -> EngineBuilder,
+        limits: store::JournalLimits,
+    ) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let path = std::env::temp_dir().join(format!(
             "mg-managed-manager-{}-{}",
@@ -436,7 +455,7 @@ impl Fixture {
         let journal = block_on(ManagedJournal::open(
             std::fs::File::open(path.join("journal")).unwrap().into(),
             workers.clone(),
-            store::JournalLimits::default(),
+            limits,
         ))
         .unwrap();
         let mailbox =

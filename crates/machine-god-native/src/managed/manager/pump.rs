@@ -1,6 +1,7 @@
 //! Fair bounded outer polling. No dependency on terminal frames or stdout.
 mod admission;
 mod child;
+mod pressure;
 use super::super::store::{JournalError, JournalIntent};
 use super::{
     Active, Arc, Child, ChildWrite, Context, JournalMutation, JournalRecord, JournalWork,
@@ -26,7 +27,9 @@ impl ManagedManager {
         let mut changed = false;
         for _ in 0..self.limits.work_per_poll {
             self.capture_mailbox(cx)?;
-            let mut progress = self.poll_active(cx, now_ms)?;
+            let mut progress = self.observe_journal_pressure();
+            progress |= self.poll_active(cx, now_ms)?;
+            progress |= self.observe_journal_pressure();
             progress |= self.poll_foregrounds(cx)?;
             progress |= self.poll_retiring(cx)?;
             progress |= self.poll_foreground_reservations(cx);
@@ -148,9 +151,15 @@ impl ManagedManager {
                                 let _ = self.notices.stop_work(&notice);
                                 self.retained_notices.push(notice);
                             }
-                            if self.closing {
+                            child.pressure_interrupted |=
+                                !self.journal.ordinary_publication_available();
+                            if self.closing || child.pressure_interrupted {
                                 child.work = Some(work);
-                                Self::finish_child(child, ManagedQueueStatus::Interrupted, true);
+                                Self::finish_child(
+                                    child,
+                                    ManagedQueueStatus::Interrupted,
+                                    self.closing,
+                                );
                             } else if Self::start_child(child, work.clone(), now_ms).is_err() {
                                 child.work = Some(work);
                                 Self::finish_child(child, ManagedQueueStatus::Failed, false);
@@ -216,7 +225,14 @@ impl ManagedManager {
                     .iter_mut()
                     .find(|child| child.snapshot.head.id == *id)
                     .ok_or(ManagedRuntimeError::Invalid)?;
+                child.pressure_interrupted |= !self.journal.ordinary_publication_available();
                 match result {
+                    Ok(_) if child.pressure_interrupted && child.snapshot.head.intent.is_none() => {
+                        child.pending.push_back(ChildWrite {
+                            mutation: JournalMutation::InterruptForPressure,
+                            after: WriteAfter::Observe,
+                        });
+                    }
                     Ok(work) => child.pending.push_back(ChildWrite {
                         mutation: JournalMutation::HeadState {
                             work_id: work.id.clone(),
@@ -284,6 +300,7 @@ impl ManagedManager {
                     control: None,
                     control_operation: None,
                     control_requested: false,
+                    pressure_interrupted: false,
                     notice_started: false,
                     notice_terminal: None,
                     notice_attempt: None,

@@ -126,6 +126,19 @@ impl ManagedManager {
                 continue;
             }
             let child = &mut self.children[index];
+            if child.pressure_interrupted
+                && !child.notice_started
+                && child.notice_terminal.is_none()
+            {
+                if let Some(work) = child.notice.take() {
+                    self.notices
+                        .stop_work(&work)
+                        .map_err(|_| ManagedRuntimeError::Invalid)?;
+                    self.retained_notices.push(work);
+                    progress = true;
+                }
+                continue;
+            }
             let Some(work) = &child.notice else {
                 continue;
             };
@@ -182,7 +195,7 @@ impl ManagedManager {
             }
             progress = true;
         }
-        if !self.closing {
+        if !self.closing && self.journal.ordinary_publication_available() {
             if self.deadline.is_none() {
                 self.deadline = Some(self.notices.wait_deadline(self.cancellation.clone()));
             }
@@ -191,7 +204,8 @@ impl ManagedManager {
                     Poll::Ready(Ok(())) => {
                         self.deadline.take();
                         for child in &mut self.children {
-                            if !child.pending.is_empty()
+                            if child.pressure_interrupted
+                                || !child.pending.is_empty()
                                 || child.notice_started
                                 || child.notice_terminal.is_some()
                             {
@@ -263,6 +277,13 @@ impl ManagedManager {
             job.complete(Ok(command::rejected(
                 &operation,
                 ManagedFailureCode::CallerUnavailable,
+            )));
+            return;
+        }
+        if child.pressure_interrupted || !self.journal.ordinary_publication_available() {
+            job.complete(Ok(command::rejected(
+                &operation,
+                ManagedFailureCode::ResourceLimit,
             )));
             return;
         }

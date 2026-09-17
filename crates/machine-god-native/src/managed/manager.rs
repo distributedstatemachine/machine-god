@@ -106,6 +106,7 @@ struct Child {
     control: Option<ManagedMailboxJob>,
     control_operation: Option<String>,
     control_requested: bool,
+    pressure_interrupted: bool,
     notice_started: bool,
     notice_terminal: Option<ManagedQueueStatus>,
 }

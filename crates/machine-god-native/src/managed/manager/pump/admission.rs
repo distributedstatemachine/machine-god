@@ -194,7 +194,7 @@ impl ManagedManager {
     }
 
     fn admit_child_start(&mut self) -> bool {
-        if !self.closing {
+        if !self.closing && self.journal.ordinary_publication_available() {
             for offset in 0..self.children.len() {
                 let index = (self.next_start + offset) % self.children.len();
                 let child = &self.children[index];
@@ -203,13 +203,18 @@ impl ManagedManager {
                     && child.snapshot.head.intent.is_none()
                     && !child.closing
                     && !self.command_target_pending(&child.snapshot.head.id)
-                    && let Some(work) = child
+                    && child
                         .snapshot
                         .head
                         .queue
                         .first()
-                        .filter(|work| work.status == ManagedQueueStatus::Pending)
+                        .is_some_and(|work| work.status == ManagedQueueStatus::Pending)
                 {
+                    // Only an explicitly accepted Pending head can enter here
+                    // after pressure interrupted the previous FIFO attempt.
+                    self.children[index].pressure_interrupted = false;
+                    let child = &self.children[index];
+                    let work = child.snapshot.head.queue.first().unwrap();
                     self.active = Some(Active::Load {
                         id: child.snapshot.head.id.clone(),
                         future: self.journal.read_work(work.page.clone()),
