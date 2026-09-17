@@ -2,6 +2,7 @@ use super::super::catalog::{
     NativeManagedCatalogError, NativeManagedCatalogFilter, NativeManagedCatalogPage,
 };
 use super::*;
+mod reopen;
 
 fn read_page(fixture: &mut Fixture) -> Result<NativeManagedCatalogPage, NativeManagedCatalogError> {
     block_on(std::future::poll_fn(|cx| {

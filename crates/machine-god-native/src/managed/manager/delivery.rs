@@ -28,9 +28,15 @@ pub(super) struct Pending {
 pub(super) struct Outcome {
     pub context: Weak<ParentNoticeContext>,
     pub delivery: NoticeDelivery,
-    pub snapshots: Vec<JournalSnapshot>,
+    pub snapshots: Vec<Repair>,
     pub result: Result<Vec<NoticeIdentity>, ManagedRuntimeError>,
     pending: Option<Pending>,
+}
+
+/// Exact publication provenance, not a refreshed observation of arbitrary state.
+pub(super) struct Repair {
+    pub before: crate::managed::store::JournalHead,
+    pub snapshot: JournalSnapshot,
 }
 
 pub(super) struct ClearTarget {
@@ -192,10 +198,11 @@ impl ManagedManager {
         {
             parent.in_flight = false;
         }
-        for snapshot in outcome.snapshots {
+        for repair in outcome.snapshots {
             for pending in &mut self.saved_lifetimes {
-                pending.refresh_snapshot(&snapshot);
+                pending.refresh_snapshot(&repair);
             }
+            let snapshot = repair.snapshot;
             if let Some(child) = self
                 .children
                 .iter_mut()
@@ -412,7 +419,7 @@ pub(super) async fn reconcile_sources(
     journal: &ManagedJournal,
     gate: &Arc<durability::RetryGate>,
     delivery: &NoticeDelivery,
-    snapshots: &mut Vec<JournalSnapshot>,
+    snapshots: &mut Vec<Repair>,
 ) -> Result<Vec<NoticeIdentity>, ManagedRuntimeError> {
     let mut progress = validation::Progress::default();
     while !validation::step(journal, gate, delivery, &mut progress, snapshots).await? {}

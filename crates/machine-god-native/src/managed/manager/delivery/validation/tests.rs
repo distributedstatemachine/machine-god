@@ -274,7 +274,7 @@ fn checked_step(
     journal: &ManagedJournal,
     delivery: &NoticeDelivery,
     progress: &mut Progress,
-    repaired: &mut Vec<JournalSnapshot>,
+    repaired: &mut Vec<Repair>,
 ) -> Result<bool, ManagedRuntimeError> {
     let gate = Arc::new(durability::RetryGate::default());
     let mut future = Box::pin(step(journal, &gate, delivery, progress, repaired));

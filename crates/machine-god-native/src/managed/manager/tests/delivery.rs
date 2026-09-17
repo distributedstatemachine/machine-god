@@ -107,7 +107,10 @@ fn original_for_target(
     original
 }
 
-fn deliver(fixture: &Fixture, session: &Session) -> (Arc<ParentNoticeContext>, NativeConversation) {
+pub(super) fn deliver(
+    fixture: &Fixture,
+    session: &Session,
+) -> (Arc<ParentNoticeContext>, NativeConversation) {
     deliver_generation(fixture, session, 1)
 }
 

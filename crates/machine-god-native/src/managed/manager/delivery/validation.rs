@@ -1,7 +1,7 @@
 //! One source-history page per manager journal admission.
 use super::{
     Arc, JournalMutation, JournalRecord, JournalSnapshot, ManagedJournal, ManagedNotice,
-    ManagedRuntimeError, NoticeCheckpoint, NoticeDelivery, durability,
+    ManagedRuntimeError, NoticeCheckpoint, NoticeDelivery, Repair, durability,
 };
 use crate::managed::store::{JournalError, JournalHistoryCursor};
 
@@ -27,7 +27,7 @@ pub(super) async fn step(
     gate: &Arc<durability::RetryGate>,
     delivery: &NoticeDelivery,
     progress: &mut Progress,
-    repaired: &mut Vec<JournalSnapshot>,
+    repaired: &mut Vec<Repair>,
 ) -> Result<bool, ManagedRuntimeError> {
     let originals = delivery.originals();
     if originals.is_empty() || originals.len() > 64 {
@@ -55,6 +55,7 @@ pub(super) async fn step(
     // funds the exact ACK publication, including its atomic owner-epoch repair,
     // rather than an unrelated generic recovery publication first.
     if snapshot.recovery_required() && snapshot.head.recovery_changes_work() {
+        let before = snapshot.head.clone();
         snapshot = durability::mutate(
             journal.clone(),
             gate.clone(),
@@ -63,7 +64,10 @@ pub(super) async fn step(
         )
         .await
         .map_err(|_| ManagedRuntimeError::Persistence)?;
-        repaired.push(snapshot.clone());
+        repaired.push(Repair {
+            before,
+            snapshot: snapshot.clone(),
+        });
     }
     if progress.source.is_none() {
         progress.source = Some(Source {
@@ -103,6 +107,7 @@ pub(super) async fn step(
         })
         .collect();
     if !records.is_empty() {
+        let before = snapshot.head.clone();
         snapshot = durability::mutate(
             journal.clone(),
             gate.clone(),
@@ -111,7 +116,7 @@ pub(super) async fn step(
         )
         .await
         .map_err(|_| ManagedRuntimeError::Persistence)?;
-        repaired.push(snapshot);
+        repaired.push(Repair { before, snapshot });
     }
     for (index, notice) in originals.iter().enumerate() {
         if &notice.source.source.id == id {

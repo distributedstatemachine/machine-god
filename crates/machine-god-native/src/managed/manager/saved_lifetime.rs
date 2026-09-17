@@ -55,7 +55,14 @@ impl Pending {
         } if prepared.notice_context.is_some()))
     }
 
-    pub(super) fn refresh_snapshot(&mut self, snapshot: &JournalSnapshot) {
+    pub(super) fn refresh_snapshot(&mut self, repair: &delivery::Repair) {
+        let snapshot = &repair.snapshot;
+        // Reopen is not accepted yet: a confirmed ACK may advance its fence
+        // only from the exact retained head, never across an external change.
+        // Close already owns durable intent and must keep settling that intent.
+        if self.reopen && self.snapshot.head != repair.before {
+            return;
+        }
         if self.snapshot.head.id == snapshot.head.id
             && self.snapshot.head.generation == snapshot.head.generation
             && self.snapshot.head.transcript == snapshot.head.transcript

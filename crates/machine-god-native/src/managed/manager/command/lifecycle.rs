@@ -233,7 +233,10 @@ pub(in crate::managed::manager) async fn resume_reopen(
     let Ok(snapshot) = env.journal.inspect(expected.head.id.clone()).await else {
         return Outcome::reject(job, &env.operation, ManagedFailureCode::StoreFailure);
     };
-    if snapshot.head != expected.head || !job.lease().matches_observation(&snapshot) {
+    // execute checked the original observed row before its owned recovery.
+    // This retained head follows only that admission's confirmed maintenance;
+    // checking the historical row again would reject our own revision changes.
+    if snapshot.head != expected.head {
         return Outcome::reject(job, &env.operation, ManagedFailureCode::StaleGeneration);
     }
     if !super::authorized(job.lease(), &snapshot)

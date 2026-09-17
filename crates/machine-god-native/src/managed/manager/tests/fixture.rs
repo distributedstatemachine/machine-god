@@ -640,6 +640,37 @@ impl Fixture {
         )
         .unwrap();
     }
+
+    pub fn restart_journal_owner(&mut self) {
+        self.manager.request_shutdown();
+        block_on(std::future::poll_fn(|cx| {
+            self.manager.poll_shutdown(cx, 101)
+        }))
+        .unwrap();
+        // An empty stand-in lets the fixture release every original manager
+        // and journal lease before reopening the same actual directory.
+        let standby = self.path.join("journal-standby");
+        std::fs::create_dir(&standby).unwrap();
+        std::fs::set_permissions(&standby, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let standby = block_on(ManagedJournal::open(
+            std::fs::File::open(standby).unwrap().into(),
+            self.workers.clone(),
+            store::JournalLimits::default(),
+        ))
+        .unwrap();
+        let old = std::mem::replace(&mut self.journal, standby);
+        self.restart_manager();
+        drop(old);
+        self.journal = block_on(ManagedJournal::open(
+            std::fs::File::open(self.path.join("journal"))
+                .unwrap()
+                .into(),
+            self.workers.clone(),
+            store::JournalLimits::default(),
+        ))
+        .unwrap();
+        self.restart_manager();
+    }
 }
 
 fn capture_invocation(
