@@ -849,3 +849,17 @@ The same component's default-feature targeted `too_many_lines` Clippy passed;
 its existing dead-code warnings remain outside that narrow check. Root formatting
 and bounded documentation checks passed after integration. The clean resource
 worktree was removed after exact scoped comparison, with commits retained.
+
+Saved-lifetime test component `4a12fd25` reproduced a nonresident close holding
+the command lane during an actual parent outbox clear, blocking an unrelated
+configure. Component `989573d4` parks old preparation and cleanup, transfers close
+intent to resident archive settlement, and returns reopen through an eighth fair
+lane only after old delivery/resources settle. Exact retiring transcript owners
+fence duplicate preparation; pending targets reject competing mutations without
+blocking inspection. The first ten nonresident and subsequent 95 manager tests
+passed. A broader run passed 97 of 99: two shutdown fixtures incorrectly expected
+pending observers after mailbox closure, which intentionally returns Unavailable
+while retaining manager cleanup. Corrected fixtures preserve actual-cleanup,
+original-intent and no-new-generation assertions; their final run remains due.
+Root integration proceeds to the full replacement gate on this frozen source,
+not to delivery or a new independent acceptance claim.

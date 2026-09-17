@@ -760,6 +760,19 @@ the old generation, repairs and acknowledges its original delivery, clears the
 outbox and confirms actual old-resource closure; only then may it prepare and
 publish the new generation. No envelope or checkpoint is retargeted.
 
+Nonresident close/reopen retains the original job and one resident/context
+reservation while preparing the saved lifetime outside the command lane. Close
+transfers its durable intent into ordinary resident archive cleanup. Reopen
+registers the old owner only for cleanup: paged source reconciliation, exact
+outbox clear and actual resource closure complete before the old runtime drops.
+Its original operation then rejoins fair command admission and rechecks the
+exact head and caller authority before preparing the new generation. Competing
+mutations of a pending lifecycle target are rejected; inspection remains
+read-only. An exact transcript/incarnation still held by a retiring owner also
+fences saved close/reopen preparation until actual cleanup completes. Shutdown
+settles accepted close intent and old cleanup without publishing a new reopen
+generation; caller retirement likewise cannot authorize that new generation.
+
 History replay holds one catalog/source frontier and one candidate, pages through
 nonresident histories, and admits only typed confirmed originals for an exact
 registered target. It checks source acknowledgement records, excludes archived
@@ -782,8 +795,9 @@ Replay likewise avoids no-op recovery for already-quiescent sources. Old-owner
 live FIFO work still requires durable interruption before replay proceeds.
 
 Serialized durable admission rotates across child writes, approved relationships,
-completed waits, captured mailbox requests, accepted child starts, delivery and
-replay. A ready lane receives a turn within seven successful lane admissions,
+completed waits, captured mailbox requests, accepted child starts, delivery,
+replay and saved-lifetime reopen continuations. A ready lane receives a turn
+within eight successful lane admissions,
 plus the shared bounded catalog/read allowance. A parked mailbox head cannot hide
 unrelated accepted work. Commands and completed waits drain their target's buffered
 writes before loading its exact head. Unchanged inspections do not reset replay.
