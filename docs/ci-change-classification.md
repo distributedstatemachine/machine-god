@@ -13,7 +13,8 @@ contexts for branch protection.
 
 CI classifies independent concerns instead of assigning a single full or
 documentation-only label. A documentation concern is selected by changes to
-`AGENTS.md`, `README.md`, Markdown below `docs/`, the bounded documentation
+`AGENTS.md`, `README.md`, the README image `assets/banner.png`, Markdown below
+`docs/`, the bounded documentation
 checker, or its tests. The four code-coupled documents request focused checks:
 
 - `docs/core-api.md` runs `machine-god-core` doctests;

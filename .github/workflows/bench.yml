@@ -70,11 +70,13 @@ jobs:
             documentation:
               - 'AGENTS.md'
               - 'README.md'
+              - 'assets/banner.png'
               - 'docs/**/*.md'
             non_documentation:
               - '**'
               - '!AGENTS.md'
               - '!README.md'
+              - '!assets/banner.png'
               - '!docs/**/*.md'
       - name: Select the applicable gate
         id: route

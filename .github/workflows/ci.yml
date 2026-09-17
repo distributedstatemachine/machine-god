@@ -98,16 +98,19 @@ jobs:
             documentation:
               - 'AGENTS.md'
               - 'README.md'
+              - 'assets/banner.png'
               - 'docs/**/*.md'
             non_documentation:
               - '**'
               - '!AGENTS.md'
               - '!README.md'
+              - '!assets/banner.png'
               - '!docs/**/*.md'
             unclassified:
               - '**'
               - '!AGENTS.md'
               - '!README.md'
+              - '!assets/banner.png'
               - '!docs/**/*.md'
               - '!.github/workflows/**'
               - '!.gitignore'
@@ -233,6 +236,7 @@ jobs:
             documentation_policy:
               - 'AGENTS.md'
               - 'README.md'
+              - 'assets/banner.png'
               - 'docs/**/*.md'
               - 'scripts/check_documentation.py'
               - 'tests/test_documentation_policy.py'
