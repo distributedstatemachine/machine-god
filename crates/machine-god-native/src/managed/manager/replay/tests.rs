@@ -5,7 +5,7 @@ use crate::managed::{
     store::JournalPublication,
 };
 use futures_executor::block_on;
-use machine_god_core::{ManagedHistoryItem, ManagedHistoryKind};
+use machine_god_core::{ManagedHistoryItem, ManagedHistoryKind, Session};
 use std::{future::Future, num::NonZeroU64};
 
 fn append(
@@ -24,6 +24,7 @@ fn append(
 
 fn history_fixture() -> (
     Fixture,
+    Session,
     Arc<ParentNoticeContext>,
     JournalSnapshot,
     ManagedNotice,
@@ -108,12 +109,19 @@ fn history_fixture() -> (
         parent,
         &fixture.manager.notices,
     ));
-    (fixture, context, snapshot, original)
+    // The context intentionally holds only a weak witness. Its actual session
+    // owner must remain alive while the caller exercises replay validation.
+    (fixture, session, context, snapshot, original)
 }
 
 #[test]
 fn historical_notice_validation_yields_before_scanning_an_entire_history() {
-    let (fixture, context, snapshot, original) = history_fixture();
+    let (fixture, session, context, snapshot, original) = history_fixture();
+    let transcript = JournalTranscript {
+        session_id: session.id(),
+        incarnation: session.incarnation_id(),
+    };
+    assert!(context.matches_transcript(&transcript));
     let targets = vec![Arc::downgrade(&context)];
     let mut replay = Replay {
         source: Some((snapshot, None)),
@@ -154,11 +162,13 @@ fn historical_notice_validation_yields_before_scanning_an_entire_history() {
     );
     assert!(repaired.is_none());
     assert!(fixture.factory.provider.requests().is_empty());
+    drop(session);
+    assert!(!context.matches_transcript(&transcript));
 }
 
 #[test]
 fn validation_rejects_a_changed_source_snapshot_between_admissions() {
-    let (mut fixture, context, snapshot, _) = history_fixture();
+    let (mut fixture, _session, context, snapshot, _) = history_fixture();
     let targets = vec![Arc::downgrade(&context)];
     let mut replay = Replay {
         source: Some((snapshot.clone(), None)),
