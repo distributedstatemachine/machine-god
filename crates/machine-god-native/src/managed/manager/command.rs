@@ -111,11 +111,12 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
         let recovered = snapshot.recovery_required();
         // Recovery never executes work or signals cancellation. It only records interruption.
         if snapshot.recovery_required() {
-            snapshot = match durability::mutate(
-                env.journal.clone(),
-                env.gate.clone(),
+            snapshot = match durability::mutate_admitted(
+                &env.journal,
+                &env.gate,
                 snapshot,
                 JournalMutation::Recover,
+                job.lease(),
             )
             .await
             {

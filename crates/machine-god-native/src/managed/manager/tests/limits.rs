@@ -803,4 +803,113 @@ fn journal_pressure_preserves_previously_accepted_archive_until_actual_cleanup()
             .all(|work| work.status == ManagedQueueStatus::Interrupted)
     );
     assert_eq!(fixture.factory.provider.requests().len(), 1);
+    fixture.restart_manager();
+    let inspected = fixture.command(serde_json::json!({"inspect": {
+        "id": "child-1", "sections": ["status"]
+    }}));
+    assert!(inspected.ok || inspected.error_code == Some(ManagedFailureCode::ResourceLimit));
+    assert_eq!(fixture.manager.retry.issue(), None);
+}
+
+struct PressureClock(std::sync::Mutex<Instant>);
+impl NativeMcpRuntimeClock for PressureClock {
+    fn now(&self) -> Instant {
+        *self.0.lock().unwrap()
+    }
+    fn sleep_until(&self, deadline: Instant) -> machine_god_core::BoxFuture<'_, ()> {
+        // Tests advance and poll explicitly; no ambient timer or wall-clock wait.
+        Box::pin(std::future::poll_fn(move |_| {
+            if self.now() >= deadline {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        }))
+    }
+}
+
+#[test]
+fn journal_pressure_confirms_the_owned_interval_but_stops_later_deadlines() {
+    let mut fixture = Fixture::with_journal_limits(
+        vec![ModelProviderStep::pending()],
+        store::JournalLimits {
+            head_bytes: 16 * 1024,
+            page_bytes: 512 * 1024,
+            aggregate_bytes: 16 * 1024 * 1024,
+            ..store::JournalLimits::default()
+        },
+    );
+    let clock = Arc::new(PressureClock(std::sync::Mutex::new(Instant::now())));
+    fixture.manager.clock = clock.clone();
+    fixture.manager.notices = Arc::new(
+        ManagedNotices::new(
+            crate::managed::notices::NoticeLimits::default(),
+            clock.clone(),
+        )
+        .unwrap(),
+    );
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "reporting", "mode": "persistent", "prompt": "pending forever",
+                "notifications": {"report_interval_ms": 1}
+            }}))
+            .ok
+    );
+    fixture.drive(|f| f.factory.provider.requests().len() == 1);
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "filler", "mode": "persistent"
+            }}))
+            .ok
+    );
+    fixture.drive(|f| {
+        f.manager.active.is_none()
+            && f.manager.replay.done
+            && f.manager.children[0].pending.is_empty()
+            && !f.manager.children[0].notice_started
+    });
+    *clock.0.lock().unwrap() += std::time::Duration::from_millis(2);
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(fixture.manager.pump_notices(&mut cx).unwrap());
+    assert!(matches!(
+        fixture.manager.children[0].pending.front().unwrap().after,
+        WriteAfter::Notice { stage: Some(_), .. }
+    ));
+    exhaust_ordinary_history(&mut fixture, 1);
+    *clock.0.lock().unwrap() += std::time::Duration::from_millis(100);
+    fixture.drive(|f| {
+        f.manager.children[0].snapshot.head.status == ManagedAgentState::Interrupted
+            && !f.manager.children[0].busy()
+            && f.manager.children[0].actual_settled
+            && f.manager.active.is_none()
+            && f.manager.replay.done
+    });
+    let snapshot = fixture.manager.children[0].snapshot.clone();
+    let mut cursor = None;
+    let mut intervals = 0;
+    loop {
+        let page = block_on(fixture.journal.history(snapshot.clone(), cursor, 100)).unwrap();
+        for record in page.records {
+            if let JournalRecord::Notice(notice) = record {
+                intervals += usize::from(matches!(
+                    notice.event,
+                    crate::managed::notices::NoticeEvent::Interval { .. }
+                ));
+                assert!(!matches!(
+                    notice.event,
+                    crate::managed::notices::NoticeEvent::Terminal { .. }
+                ));
+            }
+        }
+        let Some(next) = page.next else {
+            break;
+        };
+        cursor = Some(next);
+    }
+    assert_eq!(intervals, 1);
+    assert!(fixture.manager.children[0].notice.is_none());
+    assert_eq!(fixture.manager.retry.issue(), None);
+    assert_eq!(fixture.factory.provider.requests().len(), 1);
 }
