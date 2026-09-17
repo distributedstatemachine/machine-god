@@ -180,6 +180,64 @@ fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()
 }
 
+#[test]
+fn full_notice_inbox_does_not_require_a_parent_prompt_to_shutdown() {
+    use crate::managed::notices::{ManagedNotices, NoticeLimits};
+    use machine_god_core::ManagedAgentState;
+    use std::time::{Duration, Instant};
+
+    let mut f = Fixture::new(vec![completed()]);
+    f.manager.notices = Arc::new(
+        ManagedNotices::new(
+            NoticeLimits {
+                records: 1,
+                ..NoticeLimits::default()
+            },
+            f.manager.clock.clone(),
+        )
+        .unwrap(),
+    );
+    assert!(
+        f.command(serde_json::json!({"create": {
+            "name": "worker", "mode": "persistent", "prompt": "finish",
+            "notifications": {"started": true}
+        }}))
+        .ok
+    );
+    f.drive(|f| {
+        f.manager.children[0].snapshot.head.status == ManagedAgentState::Completed
+            && f.manager.children[0].work.is_none()
+            && f.manager.children[0].actual_settled
+            && f.manager.active.is_none()
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut cx = Context::from_waker(Waker::noop());
+    let stopped = loop {
+        match f.manager.poll_shutdown(&mut cx, 101) {
+            Poll::Ready(result) => {
+                result.unwrap();
+                break true;
+            }
+            Poll::Pending if Instant::now() >= deadline => break false,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    };
+    // On the unfixed candidate, release only the original in-memory fixture
+    // projection before asserting, so Fixture::drop cannot hang the test runner.
+    if !stopped {
+        let batch = f
+            .manager
+            .notices
+            .snapshot(&NoticePrincipal { id: "parent".into(), generation: nz(1) }, 1, 64 * 1024)
+            .unwrap();
+        let tokens = batch.entries().iter().map(|entry| entry.token()).collect::<Vec<_>>();
+        f.manager.notices.acknowledge(&batch, &tokens).unwrap();
+        drop(batch);
+        shutdown(&mut f);
+    }
+    assert!(stopped, "full notice inbox prevented actual manager shutdown");
+}
+
 fn context(f: &Fixture) -> Arc<ParentNoticeContext> {
     f.manager
         .children
