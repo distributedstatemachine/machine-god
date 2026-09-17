@@ -545,6 +545,8 @@ mod tests {
     use machine_god_native::NativeInteractiveInputSource;
     use std::{future::poll_fn, io::Write, os::fd::OwnedFd, time::Duration};
 
+    #[path = "modal_context_tests.rs"]
+    mod modal_context_tests;
     #[path = "skills_tests.rs"]
     mod skills_tests;
 
