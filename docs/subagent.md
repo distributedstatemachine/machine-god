@@ -1199,7 +1199,16 @@ creating a new prompt, turn, notice, replay, or timer; the original checkpoint
 evidence remains unchanged. It cannot settle a still-live uncertain prompt slot.
 
 The manager verifies each exact original source notice before durably recording
-its source acknowledgement. Private subset confirmation updates only that
+its source acknowledgement. Ordinary delivery reconciliation retains one bounded
+source-validation frontier per parent and releases journal admission after at
+most one 100-record/512 KiB history page. Parent delivery lanes rotate between
+admissions; sibling commands and accepted child writes can progress between pages.
+An intervening source-head change restarts that source's validation rather than
+publishing an ACK against stale evidence. Failed read-only validation parks its
+retry outside the journal lane; already-started mutation reconciliation retains
+the original publication custody. Shutdown retains unfinished delivery frontiers
+even after a weak parent observer disappears.
+Private subset confirmation updates only that
 receipt's bounded progress bits; stale, foreign or invalid subsets cannot clear
 another batch. After every original is confirmed, an explicit admitted metadata
 save removes only the outbox. Recovery/clear errors and dropped in-flight futures

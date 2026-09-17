@@ -197,7 +197,7 @@ impl ManagedManager {
                 }
             }
         }
-        if self.begin_delivery() {
+        if self.begin_delivery(cx) {
             return Ok(true);
         }
         if self.begin_replay(cx) {

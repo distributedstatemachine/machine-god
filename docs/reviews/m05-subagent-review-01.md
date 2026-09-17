@@ -728,3 +728,47 @@ four managed-event tests (exit zero). Logs are
 `managed-r8-focused-linux-c433e698.log` in the retained gate directory.
 These focused checks do not establish the full replacement gate or independent
 whole-feature acceptance.
+
+### R9 complete-feature review and replacement work
+
+Candidate `52c68c4208e660678ab8f8eb4a299e9895a2dee4` passed the full replacement
+local gate on Rust 1.94.1: Linux CLI 611/native 4,065 tests, macOS CLI 613/native
+4,072 tests, workspace integrations/doctests and 275 repository Python tests.
+Formatting, warnings-denied all-feature Clippy, fresh locked release helpers,
+static policy/audit and FreeBSD/WASI/Apple platform checks passed. Exact logs
+retain the `52c68c42` suffix in `/tmp/mg-managed-implementation.V0ZGg1`.
+The earlier `b741edbf` macOS focused runner stopped on a shell quoting error
+before executing tests, after its release build succeeded. Corrected replacement
+commands passed shell syntax checks before the complete candidate run.
+
+Three fresh ordinary independent source reviewers inspected this exact clean
+candidate against `7cadf2f2ea13ef392797903ad190c0ce3ba92654`; none edited files
+or claimed to rerun the supplied gates. Their complete reports reject it:
+
+- Correctness: a second cancel/close can displace the first accepted control
+  observer while actual cleanup remains pending (one P2).
+- Lifecycle: a whole-child FIFO waiter retains an obsolete target-run dependency,
+  allowing a successor wait cycle to evade rejection (one P2).
+- Resources: confirmed journal growth can exhaust all subsequent operation
+  admission permanently (P1); continuous mailbox commands can starve accepted
+  child writes/starts and completed waits (P2); source ACK validation holds the
+  journal lane across lifetime-sized history scans (P2).
+
+The coordinator's delivery regression reproduced the last finding on unchanged
+production: one admitted delivery scanned the entire 360-record retained history
+before returning (one test failed, exit 101, 1.12 seconds). Evidence is retained in
+`r9-delivery-red-exact.log`. The initial short-name `--exact` invocation ran zero
+tests and is not evidence; the corrected fully qualified invocation ran the test.
+Replacement code makes ordinary source validation resumable between bounded
+pages, retains exact original custody and parks failed reads outside the lane.
+Author tests, complete replacement gates and fresh reviews remain required.
+
+The coordinator's delivery component subsequently passed all nine delivery tests
+and all 84 default-feature manager tests under Rust 1.94.1 (3.16 and 20.31 seconds).
+The additional regressions cover restarting a changed source frontier without a
+stale ACK and retaining in-flight delivery when another parent registration
+prunes dead observers. Retained progress uses bounded cursors and bitsets, not a
+full head per parent. Logs are `r9-delivery-focused.log` and
+`r9-delivery-manager-focused.log`. All-feature Clippy identified one
+`single_match_else` style lint; the equivalent `if let` correction is included.
+These author checks do not establish the full replacement gate or acceptance.

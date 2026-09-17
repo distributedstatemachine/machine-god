@@ -315,6 +315,7 @@ impl ManagedManager {
             && self.parents.iter().all(|parent| {
                 parent.clear.is_none()
                     && parent.clearing.is_none()
+                    && parent.pending.is_none()
                     && parent
                         .context
                         .upgrade()

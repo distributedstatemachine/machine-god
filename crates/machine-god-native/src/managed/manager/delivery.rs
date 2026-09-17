@@ -1,4 +1,5 @@
 //! Source-side delivery reconciliation. Parent cleanup remains its own lifecycle operation.
+mod validation;
 use super::super::{
     notices::{ManagedNotice, NoticeIdentity},
     prompt_context::{NoticeCheckpoint, NoticeDelivery, ParentNoticeContext},
@@ -14,14 +15,22 @@ pub(super) struct Parent {
     pub active: bool,
     pub completed: Option<NoticeCheckpoint>,
     pub clear: Option<NoticeDelivery>,
+    pub pending: Option<Pending>,
+    retry: Option<BoxFuture<'static, ()>>,
+    in_flight: bool,
     pub clearing:
         Option<BoxFuture<'static, (NoticeDelivery, Result<(), NativeConversationRuntimeError>)>>,
+}
+pub(super) struct Pending {
+    delivery: NoticeDelivery,
+    progress: validation::Progress,
 }
 pub(super) struct Outcome {
     pub context: Weak<ParentNoticeContext>,
     pub delivery: NoticeDelivery,
     pub snapshots: Vec<JournalSnapshot>,
     pub result: Result<Vec<NoticeIdentity>, ManagedRuntimeError>,
+    pending: Option<Pending>,
 }
 
 pub(super) struct ClearTarget {
@@ -63,7 +72,11 @@ impl ManagedManager {
             return Err(ManagedRuntimeError::Unavailable);
         }
         self.parents.retain(|parent| {
-            parent.context.strong_count() > 0 || parent.clear.is_some() || parent.clearing.is_some()
+            parent.context.strong_count() > 0
+                || parent.clear.is_some()
+                || parent.clearing.is_some()
+                || parent.pending.is_some()
+                || parent.in_flight
         });
         let weak = Arc::downgrade(context);
         if let Some(parent) = self
@@ -96,6 +109,9 @@ impl ManagedManager {
             active,
             completed: None,
             clear: None,
+            pending: None,
+            retry: None,
+            in_flight: false,
             clearing: None,
         });
         self.replay_reset |= active;
@@ -128,31 +144,54 @@ impl ManagedManager {
         self.replay_reset = true;
         Ok(())
     }
-    pub(super) fn begin_delivery(&mut self) -> bool {
+    pub(super) fn begin_delivery(&mut self, cx: &mut Context<'_>) -> bool {
         if self.active.is_some() {
             return false;
         }
         for parent in &mut self.parents {
-            let Some(context) = parent.context.upgrade() else {
-                continue;
-            };
-            let Some(delivery) = context.delivery() else {
-                continue;
-            };
-            if parent.completed.as_ref() == Some(delivery.checkpoint()) {
-                continue;
+            if let Some(retry) = &mut parent.retry {
+                if retry.as_mut().poll(cx).is_pending() {
+                    continue;
+                }
+                parent.retry = None;
             }
+            let pending = if let Some(pending) = parent.pending.take() {
+                pending
+            } else {
+                let Some(delivery) = parent
+                    .context
+                    .upgrade()
+                    .and_then(|context| context.delivery())
+                else {
+                    continue;
+                };
+                if parent.completed.as_ref() == Some(delivery.checkpoint()) {
+                    continue;
+                }
+                Pending {
+                    delivery,
+                    progress: validation::Progress::default(),
+                }
+            };
+            parent.in_flight = true;
             self.active = Some(Active::Delivery(reconcile(
                 self.journal.clone(),
                 self.retry.clone(),
                 parent.context.clone(),
-                delivery,
+                pending,
             )));
             return true;
         }
         false
     }
     pub(super) fn finish_delivery(&mut self, outcome: Outcome) -> Result<(), ManagedRuntimeError> {
+        if let Some(parent) = self
+            .parents
+            .iter_mut()
+            .find(|parent| parent.context.ptr_eq(&outcome.context))
+        {
+            parent.in_flight = false;
+        }
         for snapshot in outcome.snapshots {
             if let Some(child) = self
                 .children
@@ -161,6 +200,26 @@ impl ManagedManager {
             {
                 child.snapshot = snapshot;
             }
+        }
+        if let Some(pending) = outcome.pending {
+            if let Some(index) = self
+                .parents
+                .iter()
+                .position(|parent| parent.context.ptr_eq(&outcome.context))
+            {
+                // Retain the exact receipt even if its weak observer retires.
+                // Rotate between parents so a long source cannot monopolize delivery.
+                let mut parent = self.parents.remove(index);
+                parent.pending = Some(pending);
+                if outcome.result.is_err() {
+                    let gate = self.retry.clone();
+                    parent.retry = Some(Box::pin(async move {
+                        gate.blocked(ManagerBlock::Journal).await;
+                    }));
+                }
+                self.parents.push(parent);
+            }
+            return Ok(());
         }
         let identities = outcome.result?;
         self.replay_reset = true;
@@ -313,156 +372,51 @@ fn reconcile(
     journal: ManagedJournal,
     gate: Arc<durability::RetryGate>,
     context: Weak<ParentNoticeContext>,
-    delivery: NoticeDelivery,
+    mut pending: Pending,
 ) -> BoxFuture<'static, Outcome> {
     Box::pin(async move {
         let mut snapshots = Vec::new();
-        let result = reconcile_sources(&journal, &gate, &delivery, &mut snapshots).await;
+        let step = validation::step(
+            &journal,
+            &gate,
+            &pending.delivery,
+            &mut pending.progress,
+            &mut snapshots,
+        )
+        .await;
+        let result = match &step {
+            Ok(true) => Ok(pending
+                .delivery
+                .originals()
+                .iter()
+                .map(ManagedNotice::identity)
+                .collect()),
+            Ok(false) => Ok(Vec::new()),
+            Err(error) => Err(*error),
+        };
         Outcome {
             context,
-            delivery,
+            delivery: pending.delivery.clone(),
             snapshots,
             result,
+            pending: (!matches!(step, Ok(true))).then_some(pending),
         }
     })
 }
-pub(super) fn retry(
-    journal: ManagedJournal,
-    gate: Arc<durability::RetryGate>,
-    context: Weak<ParentNoticeContext>,
-    delivery: NoticeDelivery,
-) -> BoxFuture<'static, Outcome> {
-    Box::pin(async move {
-        gate.blocked(ManagerBlock::Journal).await;
-        reconcile(journal, gate, context, delivery).await
-    })
-}
+
+// A saved-lifetime command already owns its restoration/retirement custody.
+// Reuse the same exact validation, without introducing another ACK format.
 pub(super) async fn reconcile_sources(
     journal: &ManagedJournal,
     gate: &Arc<durability::RetryGate>,
     delivery: &NoticeDelivery,
     snapshots: &mut Vec<JournalSnapshot>,
 ) -> Result<Vec<NoticeIdentity>, ManagedRuntimeError> {
-    let originals = delivery.originals();
-    if originals.is_empty() || originals.len() > 64 {
-        return Err(ManagedRuntimeError::Invalid);
-    }
-    let mut processed = Vec::<String>::new();
-    let mut acknowledged = Vec::new();
-    for original in originals {
-        let source = &original.source.source.id;
-        if processed.contains(source) {
-            continue;
-        }
-        processed.push(source.clone());
-        let selected: Vec<_> = originals
-            .iter()
-            .filter(|notice| notice.source.source.id == *source)
-            .collect();
-        let mut snapshot = journal
-            .inspect(source.clone())
-            .await
-            .map_err(|_| ManagedRuntimeError::Persistence)?;
-        if snapshot.recovery_required() {
-            snapshot = durability::mutate(
-                journal.clone(),
-                gate.clone(),
-                snapshot,
-                JournalMutation::Recover,
-            )
-            .await
-            .map_err(|_| ManagedRuntimeError::Persistence)?;
-        }
-        let acked =
-            source_acknowledgements(journal, &snapshot, &selected, delivery.checkpoint()).await?;
-        let records: Vec<_> = selected
-            .iter()
-            .zip(acked)
-            .filter(|(_, acked)| !acked)
-            .map(|(notice, _)| JournalRecord::NoticeAcknowledged {
-                identity: notice.identity(),
-                target: notice.target.clone(),
-                checkpoint: delivery.checkpoint().clone(),
-            })
-            .collect();
-        if !records.is_empty() {
-            snapshot = durability::mutate(
-                journal.clone(),
-                gate.clone(),
-                snapshot,
-                JournalMutation::AppendHistory(records),
-            )
-            .await
-            .map_err(|_| ManagedRuntimeError::Persistence)?;
-        }
-        snapshots.push(snapshot);
-        acknowledged.extend(
-            selected
-                .into_iter()
-                .map(super::super::notices::ManagedNotice::identity),
-        );
-    }
-    Ok(acknowledged)
-}
-
-/// Validate the immutable originals and their historical recipients before any ACK write.
-async fn source_acknowledgements(
-    journal: &ManagedJournal,
-    snapshot: &JournalSnapshot,
-    selected: &[&ManagedNotice],
-    expected_checkpoint: &NoticeCheckpoint,
-) -> Result<Vec<bool>, ManagedRuntimeError> {
-    let mut found = vec![false; selected.len()];
-    let mut lineage = vec![false; selected.len()];
-    let mut acked = vec![false; selected.len()];
-    let mut cursor = None;
-    loop {
-        let page = journal
-            .history(snapshot.clone(), cursor, 100)
-            .await
-            .map_err(|_| ManagedRuntimeError::Persistence)?;
-        for record in page.records {
-            match record {
-                JournalRecord::Control(control) => {
-                    for (index, original) in selected.iter().enumerate() {
-                        if control.revision == original.target.relationship_generation.get() {
-                            lineage[index] = control.parent_generation
-                                == Some(original.target.parent.generation.get())
-                                && control.parent_id.as_deref()
-                                    == Some(original.target.parent.id.as_str())
-                                && control.parent_owner.as_ref().is_some_and(|owner| {
-                                    owner.session_id == expected_checkpoint.session_id
-                                        && owner.incarnation == expected_checkpoint.incarnation_id
-                                        && owner.incarnation == original.target.parent_incarnation
-                                });
-                        }
-                    }
-                }
-                JournalRecord::Notice(notice) => {
-                    if let Some(index) = selected.iter().position(|original| **original == notice) {
-                        found[index] = true;
-                    }
-                }
-                JournalRecord::NoticeAcknowledged {
-                    identity,
-                    target,
-                    checkpoint,
-                } if &checkpoint == expected_checkpoint => {
-                    if let Some(index) = selected.iter().position(|original| {
-                        original.identity() == identity && original.target == target
-                    }) {
-                        acked[index] = true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if found.iter().all(|value| *value) && lineage.iter().all(|value| *value) {
-            return Ok(acked);
-        }
-        let Some(next) = page.next else {
-            return Err(ManagedRuntimeError::Invalid);
-        };
-        cursor = Some(next);
-    }
+    let mut progress = validation::Progress::default();
+    while !validation::step(journal, gate, delivery, &mut progress, snapshots).await? {}
+    Ok(delivery
+        .originals()
+        .iter()
+        .map(ManagedNotice::identity)
+        .collect())
 }

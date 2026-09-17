@@ -5,8 +5,8 @@ use super::super::store::{JournalError, JournalIntent};
 use super::{
     Active, Arc, Child, ChildWrite, Context, JournalMutation, JournalRecord, JournalWork,
     ManagedAgentState, ManagedManager, ManagedQueueStatus, ManagedRuntimeError, ManagerBlock,
-    ManagerProgress, Poll, Retiring, VecDeque, WriteAfter, command, delivery, durability,
-    projection, waiting,
+    ManagerProgress, Poll, Retiring, VecDeque, WriteAfter, command, durability, projection,
+    waiting,
 };
 use admission::target_id;
 use futures_core::Stream;
@@ -101,29 +101,11 @@ impl ManagedManager {
                 self.finish_replay(outcome);
             }
             Active::Delivery(future) => {
-                let Poll::Ready(mut outcome) = future.as_mut().poll(cx) else {
+                let Poll::Ready(outcome) = future.as_mut().poll(cx) else {
                     self.active = Some(active);
                     return Ok(false);
                 };
-                if outcome.result.is_err() {
-                    for snapshot in outcome.snapshots.drain(..) {
-                        if let Some(child) = self
-                            .children
-                            .iter_mut()
-                            .find(|child| child.snapshot.head.id == snapshot.head.id)
-                        {
-                            child.snapshot = snapshot;
-                        }
-                    }
-                    self.active = Some(Active::Delivery(delivery::retry(
-                        self.journal.clone(),
-                        self.retry.clone(),
-                        outcome.context,
-                        outcome.delivery,
-                    )));
-                } else {
-                    self.finish_delivery(outcome)?;
-                }
+                self.finish_delivery(outcome)?;
             }
             Active::Command {
                 future, operation, ..
