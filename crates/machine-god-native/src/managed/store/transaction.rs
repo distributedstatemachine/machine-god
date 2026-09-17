@@ -310,6 +310,45 @@ fn bind_event_sequence(head: &mut JournalHead, records: &[JournalRecord]) -> Res
     Ok(())
 }
 
+fn encode_publication_page(
+    head: &mut JournalHead,
+    records: Vec<JournalRecord>,
+    limit: usize,
+) -> Result<Option<(JournalPageRef, Vec<u8>)>, Error> {
+    if records.is_empty() {
+        Ok(None)
+    } else {
+        validation::records(&records)?;
+        let sequence = head.next_sequence;
+        head.next_sequence = sequence.checked_add(1).ok_or(Error::Exhausted)?;
+        let page = StoredPage {
+            version: 1,
+            child_id: head.id.clone(),
+            owner: head.transcript.clone(),
+            generation: head.generation,
+            sequence,
+            previous: head.history_tail.clone(),
+            records,
+        };
+        let bytes = encode(&page, limit)?;
+        let reference = JournalPageRef {
+            child_id: head.id.clone(),
+            owner: head.transcript.clone(),
+            generation: head.generation,
+            sequence,
+            length: bytes.len(),
+            digest: fs::digest(&bytes),
+        };
+        for item in &mut head.queue {
+            if item.page.sequence == 0 {
+                item.page = reference.clone();
+            }
+        }
+        head.history_tail = Some(reference.clone());
+        Ok(Some((reference, bytes)))
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Exact source custody and admission class share one publication.
 fn publish(
     shared: &Arc<Shared>,
@@ -335,38 +374,7 @@ fn publish(
         parent_generation: head.parent_generation,
         notice_cursor: head.notice_cursor,
     }));
-    let page = if records.is_empty() {
-        None
-    } else {
-        validation::records(&records)?;
-        let sequence = head.next_sequence;
-        head.next_sequence = sequence.checked_add(1).ok_or(Error::Exhausted)?;
-        let page = StoredPage {
-            version: 1,
-            child_id: head.id.clone(),
-            owner: head.transcript.clone(),
-            generation: head.generation,
-            sequence,
-            previous: head.history_tail.clone(),
-            records,
-        };
-        let bytes = encode(&page, shared.limits.page_bytes)?;
-        let reference = JournalPageRef {
-            child_id: head.id.clone(),
-            owner: head.transcript.clone(),
-            generation: head.generation,
-            sequence,
-            length: bytes.len(),
-            digest: fs::digest(&bytes),
-        };
-        for item in &mut head.queue {
-            if item.page.sequence == 0 {
-                item.page = reference.clone();
-            }
-        }
-        head.history_tail = Some(reference.clone());
-        Some((reference, bytes))
-    };
+    let page = encode_publication_page(&mut head, records, shared.limits.page_bytes)?;
     validation::head(&head, shared.limits)?;
     // The fixed-size credit fields may change their decimal encoded length.
     // Reserve the full configured head staging bound before final serialization.
