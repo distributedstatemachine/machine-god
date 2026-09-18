@@ -1080,3 +1080,13 @@ The corrected fixture verifies consumption, no provider call after cleanup
 without resubmission, and an exact fresh prompt without the rejected input in
 provider history. Interactive/ACP owners separately retain pending admission
 and response identity; their four cleanup/capacity regressions passed.
+
+A broader managed diagnostic on the same rejected candidate exposed a second
+obsolete fixture assumption in
+`retiring_saved_owner_fences_close_and_reopen_but_not_inspect`: it withheld
+resource cleanup and synchronously awaited close success before releasing that
+same cleanup. The coordinator terminated only that owned diagnostic process
+after establishing this dependency in source. The fixture now retains the
+pending original response, checks competing close/reopen fencing and inspection,
+then releases cleanup before asserting the original success. The diagnostic is
+not a passing gate; no production deadline or close-settlement guarantee changed.

@@ -1120,13 +1120,15 @@ fn retiring_saved_owner_fences_close_and_reopen_but_not_inspect() {
         .ok
     );
     f.factory.cleanup.store(false, Ordering::Release);
-    assert!(
-        f.command(serde_json::json!({
-            "lifecycle": {"id": "child-1", "action": "close"}
-        }))
-        .ok
-    );
+    let (_close_admission, invocation) = f.invocation(serde_json::json!({
+        "lifecycle": {"id": "child-1", "action": "close"}
+    }));
+    let requester = f.requester.clone();
+    let mut original = requester.execute(invocation, CancellationToken::new());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(original.as_mut().poll(&mut cx).is_pending());
     f.drive(|f| !f.manager.retiring.is_empty() && f.manager.active.is_none());
+    assert!(original.as_mut().poll(&mut cx).is_pending());
     let prepared = f.factory.prepared.load(Ordering::Acquire);
     let mut results = Vec::new();
     for action in ["close", "reopen"] {
@@ -1171,6 +1173,7 @@ fn retiring_saved_owner_fences_close_and_reopen_but_not_inspect() {
     }
     f.factory.cleanup.store(true, Ordering::Release);
     f.drive(|f| f.manager.retiring.is_empty() && f.manager.active.is_none());
+    assert!(finish_response(&mut f, &mut original).ok);
     assert!(
         no_duplicate && rejected,
         "retiring owner was displaced: {results:?}"
