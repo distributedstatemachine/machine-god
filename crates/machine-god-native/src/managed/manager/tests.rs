@@ -1,6 +1,7 @@
 use super::super::store;
 use super::*;
 mod catalog;
+mod close;
 mod delivery;
 mod events;
 #[cfg(feature = "ai-gateway-http")]
