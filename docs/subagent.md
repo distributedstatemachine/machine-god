@@ -797,8 +797,8 @@ Confirmed source acknowledgements remove exact replayed originals before an
 outbox clear permits another snapshot. Parent registration restarts this bounded
 scan so an absent or retired target never requires an unbounded in-memory queue.
 Original and historical-parent validation share one resumable scan of the exact
-source snapshot, reading at most 100 records (and the journal's 512 KiB page
-budget) per admission. Every page releases the serialized journal lane for
+source snapshot, reading at most 100 records under the journal's bounded history
+page policy per admission. Every page releases the serialized journal lane for
 commands and cleanup. Read-only retry waits also release that lane; an uncertain
 recovery mutation retains its original publication custody. Source changes
 invalidate the validation frontier rather than admitting a stale original.
@@ -970,6 +970,12 @@ the configured operation reservation. Counts, identity/string bounds and bounded
 list deserialization cover structural overhead. Full 65,536-byte messages and
 32 milestones remain supported, including JSON escaping. Serialized size limits
 reject without truncation.
+History traversal normally returns at most 100 records totaling 512 KiB. An
+accepted record larger than that normal budget is returned alone, losslessly,
+within the configured immutable-page ceiling (1 MiB by default, at most 8 MiB).
+Its cursor advances normally; it cannot strand older history, replay or source
+acknowledgements. This internal singleton exception does not widen the model or
+navigation inspection result's separate 512 KiB encoded projection limit.
 Directory-entry admission reserves the new page and head staging entry before
 publication, with an additional slot kept for atomic owner-epoch replacement.
 That headroom survives an orphaned staging file so a full journal remains
@@ -1276,7 +1282,8 @@ evidence remains unchanged. It cannot settle a still-live uncertain prompt slot.
 The manager verifies each exact original source notice before durably recording
 its source acknowledgement. Ordinary delivery reconciliation retains one bounded
 source-validation frontier per parent and releases journal admission after at
-most one 100-record/512 KiB history page. Parent delivery lanes rotate between
+most one bounded history page (100 records/512 KiB normally, or one oversized
+accepted record within the immutable-page ceiling). Parent delivery lanes rotate between
 admissions; sibling commands and accepted child writes can progress between pages.
 An intervening source-head change restarts that source's validation rather than
 publishing an ACK against stale evidence. Failed read-only validation parks its

@@ -1042,3 +1042,15 @@ failure. Logs are `managed-close-red-f266e4ed.log` and
 acceptance. No feature push or remote gate was performed for rejected `8247ab74`.
 The correctness and resources reviewers subsequently became repair authors;
 they cannot serve as fresh reviewers of their replacement implementation.
+
+The repair series transfers the ordinary close observer and exact archived
+receipt into resource retirement (`b9b78936`), retains foreground admission and
+its cancellation/request identity across cleanup and cohort-capacity waits
+(`d999ee42`), and makes an oversized accepted journal record a bounded lossless
+singleton page (`ceda1102`). Tests cover close failure/shutdown/abandonment,
+interactive and ACP cleanup/capacity with cancellation and exactly-once
+execution, and skill-bearing acceptance through inspection, restart replay,
+parent checkpoint, source ACK and outbox clear. External inspection output
+bounds remain unchanged. These component commits require integrated green
+validation and a new independent review cycle; no acceptance is inferred from
+the earlier candidate's passing gate.
