@@ -4250,7 +4250,8 @@ mod production {
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "blocked-output child did not become ready"
+                    "blocked-output child {} did not become ready",
+                    child.id()
                 );
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -4412,6 +4413,7 @@ mod production {
                     .stdout(Stdio::null())
                     .stderr(Stdio::null());
                 let mut child = ScopedChild::spawn(&mut command);
+                eprintln!("blocked-output helper: mode={mode} pid={}", child.id());
 
                 wait_for_marker(&mut child, &markers.ready);
                 let kill_signals: &[&str] = if mode == "interrupt-repeated-write" {

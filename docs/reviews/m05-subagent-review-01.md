@@ -975,3 +975,28 @@ the actual `7cadf2f2` base. Seventeen `Ok(None)` observations, zero interrupted
 waits and no kill error precede quarantine; the outer PTY deadline had not
 expired. No source defect was established. An unchanged passing replacement
 gate cannot be represented as a causal fix for this intermittent observation.
+
+Candidate `dc2198859bd444248cb0a0c78c13df5dbde20214` passed replacement
+build/static/platform checks, the complete Linux gate (including 275 Python
+tests), and macOS focused tests. A CLI test-listing process waited in
+`_dyld_start`, then resumed unchanged; separate signature verification passed.
+The full macOS run subsequently failed with 612 CLI tests passed, one failed
+and six ignored in 1033.66 seconds. `blocked_output_signals_exit_after_terminal_drain`
+timed out waiting for its helper's readiness marker, before sending test signals.
+Remaining workspace stages were not reached. No review or push followed.
+
+The unchanged focused test passed in 0.82 seconds. Independent source tracing
+found its helper, guardian, scripted stream/output and dependencies unchanged
+from `7cadf2f2`; the helper does not compose a native host or DNS/PTY machinery.
+A sample from the later, eventually passing composed-session test located its
+wait in system DNS configuration's macOS bundle-directory enumeration. That
+sample and host-load observations do not establish the failed helper's cause.
+Both the original run and diagnostic sample completed without intervention.
+Logs are `managed-full-runtime-macos-dc219885.log` and
+`cli-ready-unchanged-dc219885.log`; the retained sample is
+`machine_god-f2107f13ee78d8d5_2026-09-18_094230_XBcg.sample.txt` under `/tmp`.
+
+The follow-up adds only the helper mode/PID to captured test diagnostics and
+the PID to the readiness assertion. It changes neither the ten-second window,
+helper behavior nor outcome assertions, and is not a causal fix. Its purpose
+is to identify the exact helper for observation if the failure recurs.
