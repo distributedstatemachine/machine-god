@@ -33,6 +33,7 @@ fn events(fixture: &mut Fixture) -> Vec<ManagedEvent> {
             panic!("inspection required");
         };
         assert!(!page.restart_required);
+        assert!(page.events_error.is_none());
         assert!(page.events.len() <= 1);
         events.extend(page.events);
         cursor = page.next_cursor;

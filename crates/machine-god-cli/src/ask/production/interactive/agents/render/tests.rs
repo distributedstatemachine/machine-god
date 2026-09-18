@@ -56,6 +56,7 @@ fn inspection() -> ManagedInspection {
         }],
         tool_activity_truncated: true,
         tool_activity_error: Some(ManagedInspectionSourceError::Invalid),
+        events_error: Some(ManagedInspectionSourceError::Unavailable),
         events: vec![ManagedEvent {
             sequence: 10,
             revision: 11,
@@ -103,6 +104,7 @@ fn details_include_selected_sources_failures_and_retained_gap_evidence() {
         "tool-work",
         "Tool history has a retained gap",
         "Tool history unavailable: Invalid",
+        "Event history unavailable: Unavailable",
         "Event #10",
         "revision 11",
         "milestone-name",

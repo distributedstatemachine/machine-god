@@ -677,6 +677,14 @@ paste or partial UTF-8 sequence keeps its original editor until decoding finishe
 retired input is drained, not reinterpreted as a new prompt or command. Human prompts
 invalidate the obscured frame and keep their exact multi-owner inbox tokens.
 
+Journal traversal failures are reported independently for every selected history
+source: `history_error`, `events_error`, and `tool_activity_error`. In particular,
+an events-only request cannot present an unreadable older page as complete empty
+history. The inspection may still carry other usable selected sources, but its
+source error is explicit in both the tool result and the native-detail renderer.
+The same rule applies to continuation pages. A source failure does not fabricate
+a continuation or claim a stale-cursor restart; retry is a fresh explicit read.
+
 Unsent child text and UTF-8 cursor offsets belong to the native navigation owner,
 keyed by the original manager allocation and child generation, not row position,
 journal revision or editor epoch. Sibling selection, Escape and Ctrl-X closure

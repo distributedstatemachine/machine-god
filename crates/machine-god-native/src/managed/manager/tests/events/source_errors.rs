@@ -10,6 +10,7 @@ fn unavailable_older_page(sections: &[&str], continuation: bool) {
         let pages = fixture.journal_pages();
         assert_eq!(pages.len(), 1, "one actual creation page");
         let original = std::fs::read(&pages[0]).unwrap();
+        let permissions = std::fs::metadata(&pages[0]).unwrap().permissions();
         receipt(fixture.command(serde_json::json!({
             "configure": {"id": "child-1", "name": "renamed"}
         })));
@@ -36,6 +37,7 @@ fn unavailable_older_page(sections: &[&str], continuation: bool) {
         assert!(block_on(fixture.journal.inspect("child-1".into())).is_ok());
         let result = fixture.command(serde_json::json!({"inspect": query}));
         std::fs::write(&pages[0], original).unwrap();
+        std::fs::set_permissions(&pages[0], permissions).unwrap();
         assert!(
             result.ok,
             "other selected sources remain usable: {result:?}"
@@ -45,8 +47,14 @@ fn unavailable_older_page(sections: &[&str], continuation: bool) {
             panic!("inspection required");
         };
         let wire = serde_json::to_value(&page).unwrap();
-        assert_eq!(wire["events_error"], "unavailable", "{wire}");
+        let expected = if sections.contains(&"events") {
+            serde_json::json!("unavailable")
+        } else {
+            serde_json::Value::Null
+        };
+        assert_eq!(wire["events_error"], expected, "{wire}");
         assert!(page.events.is_empty());
+        assert_eq!(page.status.is_some(), sections.contains(&"status"));
         assert_eq!(page.history_error.is_some(), sections.contains(&"messages"));
         assert_eq!(
             page.tool_activity_error.is_some(),
@@ -71,5 +79,10 @@ fn event_continuation_reports_unavailable_older_pages() {
 
 #[test]
 fn mixed_history_inspection_reports_each_selected_source_failure() {
-    unavailable_older_page(&["events", "messages", "tool_activity"], false);
+    unavailable_older_page(&["status", "events", "messages", "tool_activity"], false);
+}
+
+#[test]
+fn unselected_event_history_does_not_report_a_source_error() {
+    unavailable_older_page(&["status", "messages", "tool_activity"], false);
 }

@@ -107,6 +107,7 @@ fn inspect_through_original(fixture: &mut Fixture) {
             panic!("inspection receipt");
         };
         assert!(inspection.history_error.is_none());
+        assert!(inspection.events_error.is_none());
         assert!(inspection.tool_activity_error.is_none());
         assert!(!inspection.restart_required);
         created |= inspection

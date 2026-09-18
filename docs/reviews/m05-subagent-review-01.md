@@ -1094,3 +1094,53 @@ The first compile of the strengthened prompt-history assertion (`127ad716`)
 caught a testkit wrapper field error; the assertion now reads the recorded
 request's `request.messages`. Static and platform checks passed on that rejected
 candidate; runtime acceptance still requires the corrected candidate's gate.
+
+### R11 whole-feature review and event-source repair
+
+Candidate `7f0e1eea7853906db3c0293f129e51903f2ff16e` passed the complete
+replacement local gate: exact Rust 1.94.1 builds, warnings-denied Clippy, fresh
+release helpers, static/dependency/pinned-source and platform checks, full
+Linux/macOS workspace tests and doctests, and 275 Python tests. Linux reported
+611 CLI and 4111 native tests passed; macOS reported 613 CLI, 116 CLI integration
+and 4118 native tests passed. Logs use the `managed-*-7f0e1eea.log` suffix in
+`/tmp/mg-managed-implementation.V0ZGg1`.
+
+The original full macOS runtime log ended mid-native test when its tool session
+disappeared; the original shell and test processes were also absent. That log
+is incomplete, not a passing run. The unchanged replacement is retained as
+`managed-full-runtime-macos-7f0e1eea-recovery.log`; its final exact-SHA guard and
+`GATE_EXIT ... code=0` prove complete workspace/doctest termination. Earlier
+intermittent failures remain unresolved historical observations, not claims of
+a causal source fix.
+
+Three fresh read-only agents reviewed the entire feature against actual remote
+base `7cadf2f2ea13ef392797903ad190c0ce3ba92654` in isolated clean worktrees:
+
+- Correctness/API (`m65_r11_correctness`): one P2 finding. Events-only inspection
+  suppresses an older immutable journal page's read failure, returning successful
+  empty/end-of-history evidence. The current head/tail can remain valid while
+  history traversal fails. Message and tool-activity sources already report
+  errors, but the events source had no corresponding field or projection.
+- Lifecycle/platform (`m65_r11_lifecycle`): zero actionable introduced findings.
+- Performance/resources (`m65_r11_resources`): zero actionable introduced findings,
+  including the bounded Zig provisioning fallback changes.
+
+These are independent source/caller/test reviews, not Bugbot or additional
+runtime evidence. The finding rejects the candidate despite its passing gate.
+All three review worktrees were verified clean and removed; no feature push or
+remote candidate gate followed. Regression-only `6460591d` exercises events-only,
+continuation and mixed-source inspection with older fixture-owned pages missing
+or corrupt while leaving current head/tail intact.
+
+All three regressions failed as expected on Linux at `6460591d`: the wire
+inspection omitted `events_error` despite failed traversal. The retained log is
+`managed-r11-events-red-6460591d.log`; this is rejection evidence, not a green
+gate. The fresh release helper was selected before execution.
+
+The repair adds explicit `events_error` evidence alongside existing per-source
+errors and renders it in the thin CLI. Healthy reads and unselected sources do
+not invent errors. Other selected status data remains usable; no false history
+cursor or stale-cursor restart is synthesized. Regression fixtures restore their
+original page bytes and private permissions before postfailure validation.
+The replacement candidate still requires focused and complete local gates and
+three fresh whole-feature reviewers before remote acceptance.

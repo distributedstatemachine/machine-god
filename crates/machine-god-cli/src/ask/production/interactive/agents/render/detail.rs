@@ -96,6 +96,9 @@ fn inspect(value: &ManagedInspection, emit: &mut impl FnMut(&str)) {
         ));
         event_rows(&event.kind, emit);
     }
+    if let Some(error) = value.events_error {
+        emit(&format!("Event history unavailable: {error:?}"));
+    }
 }
 
 fn history_rows(value: &ManagedInspection, emit: &mut impl FnMut(&str)) {

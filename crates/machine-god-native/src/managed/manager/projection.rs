@@ -318,6 +318,8 @@ pub(super) async fn inspect(
         } else {
             projection.history_error = selected(ManagedInspectSection::Messages)
                 .then_some(ManagedInspectionSourceError::Unavailable);
+            projection.events_error = selected(ManagedInspectSection::Events)
+                .then_some(ManagedInspectionSourceError::Unavailable);
             projection.tool_activity_error = selected(ManagedInspectSection::ToolActivity)
                 .then_some(ManagedInspectionSourceError::Unavailable);
         }

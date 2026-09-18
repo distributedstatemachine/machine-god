@@ -210,6 +210,7 @@ pub struct ManagedInspection {
     pub history_truncated: bool,
     pub history_error: Option<ManagedInspectionSourceError>,
     pub events: Vec<ManagedEvent>,
+    pub events_error: Option<ManagedInspectionSourceError>,
     pub tool_activity_selected: bool,
     pub tool_activity: Vec<ManagedToolActivity>,
     pub tool_activity_truncated: bool,
