@@ -926,3 +926,14 @@ Logs are `managed-full-runtime-linux-240f992f.log` and
 `skill-picker-unchanged-240f992f.log` in the retained gate directory. The remaining
 gate stages and fresh whole-feature reviews were not reached. The failing
 observation needs an established cause and correction, not acceptance by retry.
+
+Fixture correction `afe8a6cde294298f173b97694e849fa311d1bfc1` establishes that UI
+submission can coexist with the previous idle projection and zero provider
+requests. It requires the exact `MessageQueued` receipt, then an authoritative
+settled inspection whose enqueue event and completed work transition identify
+that same message before asserting one provider request and the selected skill
+body. The draft and stale-frame assertions remain. No production behavior was
+changed. Linux all-feature Clippy rejected this first component's 123-line test;
+follow-up `fe282396691351bb6ecee5fb5f3e12c460caf8d5` extracts the cohesive receipt
+settlement helper without weakening assertions. Focused validation and the
+complete replacement gate remain required before fresh whole-feature reviews.
