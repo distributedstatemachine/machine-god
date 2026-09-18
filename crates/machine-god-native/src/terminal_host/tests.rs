@@ -7,6 +7,8 @@ use std::num::NonZeroU32;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "macos")]
+mod inventory_fixture;
 #[path = "../terminal_host_lifecycle/host_tests.rs"]
 mod lifecycle;
 #[path = "../terminal_permission_policy/host_tests.rs"]
@@ -35,11 +37,10 @@ fn write_cli_fixture_helper(root: &Path) -> PathBuf {
     let executable = std::env::current_exe().unwrap();
     let quoted = executable.to_str().unwrap().replace('\'', "'\\''");
     #[cfg(target_os = "macos")]
-    let inventory = format!(
-        "if [ \"$1\" = '{}' ]; then\nexec '{quoted}' --exact process_inventory_helper::tests::helper_entry --nocapture 2>&1 1>/dev/null\nfi\nif [ \"$1\" = '{}' ]; then\nexec '{quoted}' --exact process_inventory_protocol::tests::service_entry --nocapture 2>&1 1>/dev/null\nfi\n",
-        crate::PROCESS_INVENTORY_HELPER_ARGUMENT,
-        crate::PROCESS_INVENTORY_SERVICE_ARGUMENT,
-    );
+    let inventory = {
+        let selected = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY").map(PathBuf::from);
+        inventory_fixture::dispatch(&executable, selected.as_deref())
+    };
     #[cfg(not(target_os = "macos"))]
     let inventory = "";
     // Tmux's exact four-argument helper protocol uses the existing raw helper
@@ -48,9 +49,10 @@ fn write_cli_fixture_helper(root: &Path) -> PathBuf {
         "if [ \"$1\" = '{}' ]; then\n[ \"$#\" -eq 5 ] || exit 125\nexport MG_TMUX_KIND=\"$2\" MG_TMUX_SOCKET=\"$3\" MG_TMUX_NONCE=\"$4\" MG_TMUX_CWD=\"$5\"\nif [ \"$2\" = exec ]; then exec 2>&1; exec 1>/dev/null; fi\nexec '{quoted}' --exact terminal_tmux_startup::tests::helper_entry --nocapture\nfi\n",
         crate::TERMINAL_TMUX_HELPER_ARGUMENT,
     );
-    // Inventory is a raw pipe protocol: only the registered entrypoint's
-    // stderr reaches the collector, never libtest's stdout framing. Exec
-    // preserves direct-child ownership and the inherited original deadline.
+    // Inventory uses the explicitly selected production helper's raw stdout.
+    // Without that selection, only the registered test entrypoint's stderr
+    // reaches the collector, never libtest framing. Both exec paths preserve
+    // direct-child ownership and the inherited original deadline.
     std::fs::write(&script, format!("#!/bin/sh\n{tmux}[ \"$#\" -eq 1 ] || exit 125\n{inventory}export MACHINE_GOD_TEST_HOST_HELPER=\"$1\"\nexec '{quoted}' --exact terminal_host::tests::helper_child --ignored --nocapture --quiet\n")).unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     script

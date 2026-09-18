@@ -36,7 +36,7 @@ functionality merely because it shares an implementation with an older mode.
 - Main Benchmark evidence: `34954002729` (`GREEN`)
 - Active branch: `agent/m65-managed-subagents`
 - Active phase: `M05 complete managed-agent tool and CLI implementation`
-- Next gate: `validate integrated R12 bounded journal accounting and shipped-host recovery regressions, complete replacement local gates and three fresh whole-feature reviews, then exact feature/main artifact gates; retain unresolved macOS failure evidence`
+- Next gate: `validate explicit release-helper selection in the inventory fixture, complete replacement Linux/macOS local gates and three fresh whole-feature reviews, then exact feature/main artifact gates; retain earlier failure evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal, combined CLI, background, skills, MCP and ACP are delivered.

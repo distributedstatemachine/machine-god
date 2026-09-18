@@ -1337,3 +1337,51 @@ cases passed on that SHA: native owner, ACP retirement, one-shot settlement, raw
 Ctrl-R and raw EOF. Temporary trace output is absent. These scoped results justify
 integration, not feature delivery; the integrated candidate still requires the
 complete replacement local gate, three fresh reviews and exact remote gates.
+
+Integrated candidate `2d53c5a1` passed exact Linux/macOS build preparation,
+static/platform checks and the complete Linux runtime/Python gate. All five
+composed recovery regressions also passed on macOS. Its full macOS native run
+then failed seven terminal tests: the exact inventory-wrapper dispatch case
+and six PTY cases. Five PTY failures exhausted a direct `/bin/sh -c 'exit 0'`
+reap probe and its bounded cleanup; another exhausted inventory-service
+readiness. The inventory-wrapper case observed its first bytes at 248.77 ms,
+without EOF before the original 250 ms deadline. The remaining native result
+was 4,129 passed and 12 existing ignored fixture entries. This was not a
+successful full macOS gate.
+
+Unchanged focused diagnostics passed all 27 PTY tests and the inventory-wrapper
+case. A single unchanged full macOS rerun passed all six previously failing
+PTY cases but reproduced the inventory-wrapper failure: zero observed bytes or
+EOF before expiration at 252.61 ms, with the child still running at the last
+observation. That native result was 4,135 passed, one failed and 12 existing
+ignored fixture entries. The source audits found no demonstrated causal change
+in the probe, collector or helper dispatch; neither an isolated pass nor this
+partial full run establishes a source fix or acceptance.
+
+Diagnostic-only `9b518c7e` retained the same wrapper, test-executable entrypoint,
+arguments, protocol and deadline, adding opt-in bounded timing datagrams on a
+separate channel. Its three exact-case attempts passed, passed, then failed.
+Passing valid invocations reached helper entry after 87.49/151.57 ms, with
+process enumeration taking 2.46/4.15 ms. The failing invocation expired at
+252.73 ms with no protocol bytes or received helper-entry marker; the same
+receiver subsequently recorded the deliberately expired helper. These
+best-effort markers narrow the observed failing interval but do not prove that
+helper entry never ran or identify an operating-system cause. Instrumentation
+has observer overhead and is investigation evidence, not an acceptance result.
+The fixture re-executed the approximately 154 MiB native test binary even when
+the approximately 16 MiB production release helper was explicitly selected.
+The clean fixture repair must honor that selection without weakening exact
+argument validation, canonical output, original deadlines, EOF or positive reap.
+Diagnostic instrumentation is not part of that lasting repair.
+
+Clean worker candidate `3e2bcdf0`, based directly on `2d53c5a1`, changes only
+fixture helper selection and three pure selector regressions. When an explicit
+release helper is supplied, the wrapper executes that helper with the exact
+private flag and raw production stdout; absent selection retains the explicitly
+registered debug entrypoint. Invalid explicit selection does not generate a
+debug fallback. The original four-case runtime test body is unchanged, including
+the shared 250 ms deadline, canonical PID output, EOF and reap requirements.
+Exact Rust 1.94.1 native test compilation passed, the actual fixture passed on
+its first run in 0.10 seconds, and all three selector regressions passed.
+No timing instrumentation is carried into this clean patch. These focused
+results justify integration, not full feature or causal-root-cause acceptance.
