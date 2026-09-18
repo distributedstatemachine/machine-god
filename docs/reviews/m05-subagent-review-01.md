@@ -911,3 +911,18 @@ built Linux `06037517` release CLI. Logs are `reopen-observation-green-03cc3c5d.
 warnings-denied Clippy passed on exact `03cc3c5d` in 5m09s;
 `reopen-observation-clippy-03cc3c5d.log` retains the result. These component checks
 do not replace the complete integrated gate or three fresh whole-feature reviews.
+
+Integrated `240f992f79a01b0a68967b3aa5f09959d1755ce4` passed both platforms'
+warnings-denied all-feature Clippy, workspace/native test compilation and fresh
+locked release builds, plus static policy/audit and FreeBSD/WASI/Apple compilation.
+Linux focused filters passed, including 342 matching managed/skills tests. The
+full CLI suite passed 611 tests with six ignored, including the original actual
+release-process archive/reopen regression. The native suite then failed with
+4099 passed, one failed and eleven ignored in 47.94 seconds. The child skill-menu
+test indexed the first provider request while that collection was still empty
+(`reference_host/mcp/tests/managed_host/owner/interactive/skills.rs:303`). A
+standalone unchanged-binary run reproduced the same failure in 0.06 seconds.
+Logs are `managed-full-runtime-linux-240f992f.log` and
+`skill-picker-unchanged-240f992f.log` in the retained gate directory. The remaining
+gate stages and fresh whole-feature reviews were not reached. The failing
+observation needs an established cause and correction, not acceptance by retry.
