@@ -1385,3 +1385,40 @@ Exact Rust 1.94.1 native test compilation passed, the actual fixture passed on
 its first run in 0.10 seconds, and all three selector regressions passed.
 No timing instrumentation is carried into this clean patch. These focused
 results justify integration, not full feature or causal-root-cause acceptance.
+
+Integrated `03a2f49f` passed the exact build/static/platform gates and complete
+Linux workspace, doctest and 275-test Python gate. Its first macOS gate passed
+the three selector regressions but failed the valid inventory fixture with zero
+bytes and no EOF at 250.68 ms; the last observation still reported a running
+child. The deliberately expired helper also exhausted its collection window,
+while shell-side missing/extra argument rejection completed promptly. The full
+macOS suite had not started. Three unchanged, externally observed focused runs
+passed, but no child remained visible long enough for the observer to capture
+a stack. Observation overhead is acknowledged; these are diagnostics, not a fix.
+
+A read-only audit found that the selected release path, private flag, raw stdout
+and original deadline reach the wrapper's exec attempt without fallback. That
+does not prove entry into Rust `main`. The expired stamp is rejected before
+process enumeration, so enumeration alone cannot account for both stalls. No
+introduced collector, deadline codec or reaping change was established.
+
+One unchanged macOS gate attempt passed every focused check, including the
+inventory fixture, and passed that fixture again in the full native suite.
+CLI results were 617 unit tests and 116 integration tests passed, with six
+existing ignored unit fixture entries. Native results were 4,137 passed, two
+failed and 12 existing ignored fixture entries in 626.45 seconds. The failures
+were `durable_history_resize_matches_the_real_pty_and_survives_recovery` and
+`expired_eof_observation_cannot_hide_a_retained_running_child`. Both failed
+before PTY preparation: their direct `/bin/sh -c 'exit 0'` admission probes
+remained running through 16/17 non-interrupted wait observations and then
+exhausted the separate bounded kill/reap cleanup window. Both exact PIDs were
+absent when checked after the suite ended. This is another rejected local gate,
+not managed-agent acceptance or evidence of a causal source fix.
+
+Two unchanged externally observed focused runs each passed all 27 PTY tests.
+A separate Rust 1.94.1 diagnostic completed 64 direct shell probes without
+exhausting either observation window. Its polling is deliberately identified
+as a standalone diagnostic, not the product's cancellation/reaping machinery.
+These results do not distinguish whole-suite effects from intermittent host
+startup/exit delays. A passing retry must not erase either failed gate or be
+presented as explaining it.
