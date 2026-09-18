@@ -19,9 +19,18 @@ impl ManagedManager {
         }) {
             let mut child = self.children.remove(index);
             self.retire_child_notice(&mut child);
+            let completion = child.control.take().map(|job| {
+                let receipt = command::receipt(
+                    child.control_operation.as_deref().unwrap(),
+                    &child.snapshot,
+                    super::ManagedOutcome::LifecycleChanged,
+                );
+                (job, receipt)
+            });
             self.retiring.push(Retiring {
                 prepared: child.prepared,
                 settlement: child.settlement,
+                completion,
             });
             return true;
         }
@@ -294,6 +303,7 @@ impl ManagedManager {
         self.retiring.push(Retiring {
             prepared: child.prepared,
             settlement: child.settlement,
+            completion: None,
         });
         true
     }

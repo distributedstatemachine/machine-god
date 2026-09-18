@@ -70,6 +70,7 @@ pub(in crate::managed::manager) struct Factory {
     pub prepared: AtomicU64,
     pub prepared_modes: Mutex<Vec<ManagedPermissionMode>>,
     pub cleanup: Arc<AtomicBool>,
+    pub close_error: Arc<AtomicBool>,
     pub ambiguous: AtomicBool,
     pub reconcile: Arc<AtomicBool>,
     notices: Mutex<Option<Arc<super::super::super::notices::ManagedNotices>>>,
@@ -168,6 +169,7 @@ impl ManagedRuntimeFactory for Arc<Factory> {
                 owner,
                 resources: Box::new(Resources {
                     ready: this.cleanup.clone(),
+                    close_error: this.close_error.clone(),
                     _owner: request.journal_owner,
                 }),
             };
@@ -200,6 +202,7 @@ impl ManagedPreparationReceipt for Receipt {
 }
 struct Resources {
     ready: Arc<AtomicBool>,
+    close_error: Arc<AtomicBool>,
     _owner: JournalOwner,
 }
 impl ManagedRuntimeResources for Resources {
@@ -226,6 +229,9 @@ impl ManagedRuntimeResources for Resources {
     }
     fn begin_close(&mut self) {}
     fn poll_closed(&mut self, _: &mut Context<'_>) -> Poll<Result<(), ManagedRuntimeError>> {
+        if self.close_error.load(Ordering::Acquire) {
+            return Poll::Ready(Err(ManagedRuntimeError::Unavailable));
+        }
         if self.ready.load(Ordering::Acquire) {
             Poll::Ready(Ok(()))
         } else {
@@ -446,6 +452,7 @@ impl Fixture {
             prepared: AtomicU64::new(0),
             prepared_modes: Mutex::default(),
             cleanup: Arc::new(AtomicBool::new(true)),
+            close_error: Arc::new(AtomicBool::new(false)),
             ambiguous: AtomicBool::new(false),
             reconcile: Arc::new(AtomicBool::new(false)),
             notices: Mutex::default(),
@@ -711,6 +718,7 @@ fn capture_invocation(
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.factory.cleanup.store(true, Ordering::Release);
+        self.factory.close_error.store(false, Ordering::Release);
         self.factory.reconcile.store(true, Ordering::Release);
         self.manager.request_shutdown();
         block_on(std::future::poll_fn(|cx| {

@@ -290,6 +290,7 @@ impl ManagedManager {
                     self.retiring.push(Retiring {
                         prepared: old,
                         settlement: None,
+                        completion: None,
                     });
                     self.children[index].selection = Arc::new(projection::SelectionIdentity);
                 }
@@ -326,6 +327,7 @@ impl ManagedManager {
             self.retiring.push(Retiring {
                 prepared,
                 settlement: None,
+                completion: None,
             });
         }
         match outcome.action {
@@ -423,7 +425,13 @@ impl ManagedManager {
                     index += 1;
                     continue;
                 }
-                self.retiring.remove(index);
+                let retired = self.retiring.remove(index);
+                // Drop the retired principal before exposing successful close.
+                // Errors above retain both resources and the original observer.
+                drop(retired.prepared);
+                if let Some((job, result)) = retired.completion {
+                    job.complete(Ok(result));
+                }
                 self.retry.retry_capacity();
                 progress = true;
                 continue;

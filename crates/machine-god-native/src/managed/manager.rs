@@ -140,6 +140,7 @@ enum WriteAfter {
 struct Retiring {
     prepared: PreparedManagedRuntime,
     settlement: Option<(RunRef, RunSettlement)>,
+    completion: Option<(ManagedMailboxJob, machine_god_core::ManagedSubagentResult)>,
 }
 #[allow(clippy::large_enum_variant)] // Exactly one owned operation, never a resident-sized array.
 enum Active {

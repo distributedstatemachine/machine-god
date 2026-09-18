@@ -179,7 +179,12 @@ impl ManagedManager {
                 });
             } else {
                 child.control_requested = false;
-                if let Some(job) = child.control.take() {
+                // Archive publication is not actual principal/resource closure.
+                // Ordinary close retains its observer through retirement; only
+                // self-close has already received the confirmed-intent receipt.
+                if !child.closing
+                    && let Some(job) = child.control.take()
+                {
                     let result = command::receipt(
                         child.control_operation.as_deref().unwrap(),
                         &child.snapshot,
@@ -196,14 +201,6 @@ impl ManagedManager {
             && child.actual_settled
             && !child.prepared.runtime.notice_cleanup_pending()
         {
-            if let Some(job) = child.control.take() {
-                let result = command::receipt(
-                    child.control_operation.as_deref().unwrap(),
-                    &child.snapshot,
-                    ManagedOutcome::LifecycleChanged,
-                );
-                job.complete(Ok(result));
-            }
             child.prepared.resources.begin_close();
             // Removal is deferred to admit_next so the fair iteration's indices stay stable.
             child.closing = true;

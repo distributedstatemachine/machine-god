@@ -596,6 +596,11 @@ Ambiguity parks
 on explicit retry with its original proposal and resources; capacity becoming
 available does not automatically retry an uncertain publication. Cancellation
 intent precedes the signal, and ordinary lifecycle observers wait for settlement.
+An ordinary close receipt also waits for actual principal/resource closure and
+the original notice cleanup, not just durable archive publication or turn
+settlement. Retirement retains that exact observer and archived receipt across
+cleanup errors, shutdown and caller abandonment; an error cannot manufacture
+successful closure or undo the accepted archive.
 A child cancelling/closing itself receives the confirmed intent receipt before
 its own completion-wins tool returns, avoiding a dependency on its own terminal
 event; the manager retains the remaining settlement independently.
