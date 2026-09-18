@@ -42,7 +42,43 @@ async fn snapshot(
 }
 
 #[test]
-fn cancel_requested_before_first_admission_poll_signals_new_materializer_immediately() {
+fn cancel_before_first_admission_poll_consumes_input_without_materialization() {
+    executor().block_on(async {
+        let fixture = Fixture::new_with_skills();
+        let mut session = owner(&fixture).await;
+        let snapshot = snapshot(&mut session, &fixture).await;
+        let queued = session
+            .enqueue_with_skills("$chosen".into(), &snapshot, &[])
+            .unwrap();
+        let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = entered.clone();
+        session
+            .runtime()
+            .set_skill_queue_test_hook(queued.queued_id, move |_| {
+                entered.store(true, std::sync::atomic::Ordering::Release);
+            });
+        session.admission = Some(crate::interactive_session::driver::Admission::new(
+            session.runtime().clone(),
+            120,
+        ));
+        assert!(session.request_cancel());
+        assert!(matches!(
+            outcome(&mut session).await,
+            NativeInteractiveOutcome::Turn(Err(NativeInteractiveError::Runtime(
+                crate::NativeConversationRuntimeError::Resources(
+                    crate::acp::resources::NativeAcpResourceContextError::Cancelled
+                )
+            )))
+        ));
+        assert!(!observed.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(session.runtime().status().queued_jobs, 0);
+        assert!(fixture.transport.requests().is_empty());
+        close(session, fixture).await;
+    });
+}
+
+#[test]
+fn cancel_during_materialization_signals_original_worker_before_it_wakes() {
     executor().block_on(async {
         let fixture = Fixture::new_with_skills();
         let mut session = owner(&fixture).await;
@@ -58,11 +94,15 @@ fn cancel_requested_before_first_admission_poll_signals_new_materializer_immedia
                 entered.send(token.clone()).unwrap();
                 wait.recv_timeout(Duration::from_secs(10)).unwrap();
             });
-        let runtime = session.runtime().clone();
-        session.admission = Some(Box::pin(async move { runtime.start_next(120).await }));
-        assert!(session.request_cancel());
+        session.admission = Some(crate::interactive_session::driver::Admission::new(
+            session.runtime().clone(),
+            120,
+        ));
         let _ = session.poll_progress(&mut Context::from_waker(Waker::noop()), 120);
         let token = observe.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(!token.is_cancelled());
+        assert!(session.request_cancel());
+        let _ = session.poll_progress(&mut Context::from_waker(Waker::noop()), 120);
         assert!(
             token.is_cancelled(),
             "do not require a worker wake to deliver cancellation"

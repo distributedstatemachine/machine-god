@@ -21,6 +21,17 @@ pub(super) struct Admission {
     pub(super) cancellation: machine_god_core::CancellationToken,
 }
 
+impl Admission {
+    pub(super) fn new(runtime: Arc<NativeConversationRuntime>, now_ms: i64) -> Self {
+        let cancellation = machine_god_core::CancellationToken::new();
+        let token = cancellation.clone();
+        Self {
+            future: Box::pin(async move { runtime.start_next_cancellable(now_ms, token).await }),
+            cancellation,
+        }
+    }
+}
+
 impl NativeInteractiveSession {
     pub(super) fn drive(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
         self.wake = Some(cx.waker().clone());
@@ -122,15 +133,7 @@ impl NativeInteractiveSession {
             if self.current.status().queued_jobs == 0 {
                 return self.readiness();
             }
-            let runtime = Arc::clone(&self.current);
-            let cancellation = machine_god_core::CancellationToken::new();
-            let token = cancellation.clone();
-            self.admission = Some(Admission {
-                future: Box::pin(
-                    async move { runtime.start_next_cancellable(now_ms, token).await },
-                ),
-                cancellation,
-            });
+            self.admission = Some(Admission::new(Arc::clone(&self.current), now_ms));
         }
         cx.waker().wake_by_ref();
         self.readiness()
