@@ -37,10 +37,17 @@ fn recovery_gesture_survives_unacknowledged_navigation_and_graceful_shutdown() {
         .await
         .unwrap();
         assert!(harness.driver.owner.is_closed());
+        assert!(matches!(
+            harness.driver.in_flight,
+            Some(InFlight::Flush { .. })
+        ));
         assert_eq!(fixture.transport.requests().len(), providers);
         result
     });
     let mut tail = dispose(harness, fixture, result);
+    // hold_frame consumed this flush without acknowledging it. Host cleanup
+    // above must finish first; only the remaining presentation needs its ACK.
+    tail.ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
     runtime.block_on(finish_raw_tail(&mut tail));
 }
 
@@ -67,10 +74,17 @@ fn raw_eof_recovers_original_clear_while_stdout_remains_unacknowledged() {
         .await
         .unwrap();
         assert!(harness.driver.owner.is_closed());
+        assert!(matches!(
+            harness.driver.in_flight,
+            Some(InFlight::Flush { .. })
+        ));
         assert_eq!(fixture.transport.requests().len(), providers);
         result
     });
     let mut tail = dispose(harness, fixture, result);
+    // EOF settled native ownership with the original flush still unacknowledged.
+    // Release that one held ACK only after dispose has joined the host.
+    tail.ack.try_send(OutputAcknowledgement::Succeeded).unwrap();
     runtime.block_on(finish_raw_tail(&mut tail));
 }
 

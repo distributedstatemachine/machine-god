@@ -1289,3 +1289,51 @@ identity, nonempty source notices, unchanged retained outbox at the clear fence,
 and unchanged provider count. Failure diagnostics include runtime and manager
 state. This is a test-ordering repair, not a production recovery change; all five
 composed owner/ACP/one-shot/raw-input cases still require replacement execution.
+
+Candidate `86697a01` passed exact Linux/macOS build preparation and static/platform
+checks. Its Linux runtime gate again passed the 74 store/retry/shutdown tests,
+then failed immediately because the completed parent had no original notice
+outbox. This rejected the candidate and showed the completion barrier alone was
+insufficient. Diagnostic-only `94deddf8` traced the parent checkpoint, completed
+record and provider request: none contained notice context. The batch was absent
+at prompt admission, not cleared early.
+
+Diagnostic-only `56ca38e5` added one ordinary inspect command targeting the exact
+child before the single parent prompt. Command admission waits for that child's
+pending journal writes, and the manager stages notices before admitting commands.
+The trace then showed the original Started and Completed notices in the parent's
+model-visible context, followed by the exact retained outbox, real clear failure,
+bounded retry and successful shutdown. That focused Linux case passed; it does
+not establish full-gate acceptance. The lasting repair must retain inspection,
+notice identity and outbox assertions without the temporary trace output, and all
+five composed recovery cases still need verification on the clean replacement.
+
+Clean worker candidate `da135eb9` retained the receipt/source/model-context checks
+without trace output. Exact Linux test compilation and release preparation passed;
+the native-owner and ACP-retirement focused cases passed. The one-shot case then
+failed before the intended clear because its wall-clock-created session was driven
+with the shared fixture's fixed `100/101` timestamps, violating native session
+metadata ordering. Raw-input cases did not run after that failure. The helper must
+derive its test times from the actual session metadata and rerun all five cases;
+neither this partial run nor a different-owner pass establishes final acceptance.
+
+Worker candidate `0d148dd9` derives the helper's source timestamp from the actual
+session metadata and uses a checked increment for the parent prompt. Linux build
+preparation passed; native-owner, ACP-retirement and one-shot recovery cases
+passed. The raw Ctrl-R case reached native closure without provider replay, then
+timed out in final presentation cleanup: its fixture had consumed a deliberately
+held flush without ever acknowledging it. This is not a successful raw test or a
+reason to bypass output completion. The recovery-specific harness must acknowledge
+that original flush only after proving native/host cleanup while output remains
+blocked, then rerun all five focused cases on the clean replacement.
+
+The separate EOF diagnostic reproduced the same final held-flush timeout after
+native closure. Clean worker candidate `aca52045` fixes only the shared fixture
+and the two recovery-specific raw test bodies: exact-child inspection, actual
+session timestamps, matching model-visible and retained notice identities, and
+release of the original flush acknowledgment after host cleanup. Exact Linux
+workspace test compilation and locked release preparation passed. All five focused
+cases passed on that SHA: native owner, ACP retirement, one-shot settlement, raw
+Ctrl-R and raw EOF. Temporary trace output is absent. These scoped results justify
+integration, not feature delivery; the integrated candidate still requires the
+complete replacement local gate, three fresh reviews and exact remote gates.
