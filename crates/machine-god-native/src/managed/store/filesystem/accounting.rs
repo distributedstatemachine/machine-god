@@ -1,5 +1,8 @@
 //! Exact retained-file accounting under the exclusive journal owner.
-use super::*;
+use super::{
+    Dir, EPOCH, Error, FILE_OVERHEAD, JournalLimits, Mode, OFlags, OWNER, OwnedFd, READ, Shared,
+    directory_revision, head_name, read, validate_link, validate_private,
+};
 use crate::managed::store::{Accounting, JournalHead, transaction::capacity::Protection};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

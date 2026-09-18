@@ -2,38 +2,6 @@ use super::{Arc, BoxFuture, CancellationToken, NativeAcpSession, NativeReference
 use crate::NativeOwnedWorkerCompletion;
 use std::time::Duration;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::future::Future;
-
-    #[test]
-    fn managed_retirement_recovers_clear_failure_without_a_client_prompt() {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let (fixture, mut owner) =
-                    crate::interactive_session::tests::managed_recovery::prepared().await;
-                let blocked = fixture.fence_notice_clear(&mut owner).await;
-                let providers = fixture.transport.requests().len();
-                let session = NativeAcpSession::from_interactive(owner, false);
-                let operation = retire(fixture.host.clone(), Some(session), false, 102);
-                drop(fixture.host);
-                let mut operation = std::pin::pin!(operation);
-                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-                assert!(operation.as_mut().poll(&mut cx).is_pending());
-                drop(blocked);
-                let receipt = tokio::time::timeout(Duration::from_secs(10), operation)
-                    .await
-                    .unwrap();
-                assert!(receipt.complete);
-                assert_eq!(fixture.transport.requests().len(), providers);
-            });
-    }
-}
-
 pub(super) struct Receipt {
     pub complete: bool,
     pub workers: Vec<NativeOwnedWorkerCompletion>,
@@ -144,4 +112,36 @@ pub(super) fn retire(
             staged: None,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+
+    #[test]
+    fn managed_retirement_recovers_clear_failure_without_a_client_prompt() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (fixture, mut owner) =
+                    crate::interactive_session::tests::managed_recovery::prepared().await;
+                let blocked = fixture.fence_notice_clear(&mut owner).await;
+                let providers = fixture.transport.requests().len();
+                let session = NativeAcpSession::from_interactive(owner, false);
+                let operation = retire(fixture.host.clone(), Some(session), false, 102);
+                drop(fixture.host);
+                let mut operation = std::pin::pin!(operation);
+                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+                assert!(operation.as_mut().poll(&mut cx).is_pending());
+                drop(blocked);
+                let receipt = tokio::time::timeout(Duration::from_secs(10), operation)
+                    .await
+                    .unwrap();
+                assert!(receipt.complete);
+                assert_eq!(fixture.transport.requests().len(), providers);
+            });
+    }
 }
