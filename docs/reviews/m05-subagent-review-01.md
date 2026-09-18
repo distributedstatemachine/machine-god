@@ -1144,3 +1144,34 @@ cursor or stale-cursor restart is synthesized. Regression fixtures restore their
 original page bytes and private permissions before postfailure validation.
 The replacement candidate still requires focused and complete local gates and
 three fresh whole-feature reviewers before remote acceptance.
+
+### R11 replacement local acceptance
+
+Behavior candidate `e432242b5c17cfdc892cdefe2810a9b8939ab14e` passed the
+complete replacement local gate on exact Rust 1.94.1. Linux and macOS selected
+their freshly built locked release CLI/helper before runtime checks. Focused
+checks passed eight event-history tests (including four source-error cases),
+one oversized-history/replay/acknowledgement test and five CLI renderer tests
+on each platform. No deadline or assertion was relaxed.
+
+Linux passed 611 CLI and 4115 native tests, workspace integration tests,
+doctests and all 275 Python checks. macOS passed 613 CLI, 116 CLI integration
+and 4122 native tests, the remaining workspace integration tests and doctests.
+The Linux and macOS runtime logs both terminate with the exact candidate SHA
+and `GATE_EXIT ... code=0`, after clean-tree guards. Platform runtimes ran
+sequentially after owned builds completed. Warnings-denied Clippy, formatting,
+FreeBSD/WASI checks, Apple C bindings, dependency policy/audit, documentation,
+pinned upstream and generated Unicode checks also passed.
+
+Evidence is retained under `/tmp/mg-managed-implementation.V0ZGg1` in
+`managed-*-e432242b.log`. The macOS run remained live through quiet output
+intervals and completed without restart. These results do not explain away
+earlier intermittent failures or establish an M07 performance claim.
+
+Coordinator inspection also found that the unchanged security overview still
+described the removed foreground-only subagent API and deferred already
+implemented MCP/ACP ownership. A documentation-only correction aligns that
+overview with the normative contracts; it changes no product source or test
+behavior. Its bounded documentation checks are separate from the exact behavior
+gate above, under the repository's documentation-maintenance exemption. Fresh
+whole-feature review and remote acceptance remain required.
