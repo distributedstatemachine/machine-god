@@ -31,7 +31,13 @@ the outer assembly or revive its routes.
 journal descriptor and transfers the assembly once to `NativeManagedAgents`.
 Unpolled opening is inert; validation or journal-open failure preserves the
 original assembly. The outer owner exposes bounded resident projections,
-explicit reconciliation retry and caller-polled progress/shutdown. It uses the
+typed recovery-required status, explicit reconciliation retry and caller-polled
+progress/shutdown. One injected-clock timer retries retained recovery operations
+at intervals of at least one second, including during shutdown; ordinary capacity
+and pending-worker waits are not recovery fences. Persistent errors retain the
+original receipts/resources and cannot become successful cleanup. The
+[managed recovery contract](subagent.md) defines the exact-operation boundary:
+no fresh command, provider turn or implicit queued-work resume. It uses the
 same engine and worker scope, not another execution domain. Foreground streams
 must be co-polled independently of display output.
 

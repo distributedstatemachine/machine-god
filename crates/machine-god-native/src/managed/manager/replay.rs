@@ -138,7 +138,7 @@ impl ManagedManager {
             // retry separately so it cannot hide a queued cancel or shutdown.
             let gate = self.retry.clone();
             outcome.replay.retry = Some(Box::pin(async move {
-                gate.blocked(ManagerBlock::Journal).await;
+                gate.blocked(ManagerBlock::ReadValidation).await;
             }));
         }
         self.replay = outcome.replay;

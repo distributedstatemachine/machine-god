@@ -14,6 +14,8 @@ pub use crate::managed::manager::catalog::{
     NativeManagedCatalogRequest, NativeObservedManagedAgent,
 };
 pub(crate) use managed_agents::map_error as managed_error;
+#[cfg(test)]
+pub(crate) use managed_agents::recovery::Recovery as ManagedRecovery;
 #[cfg(any(test, feature = "ai-gateway-http"))]
 pub(crate) use managed_agents::{NativeManagedStagedFailure, NativeManagedStagedParent};
 mod managed_factory;
@@ -21,7 +23,7 @@ pub use managed_agents::{
     NativeManagedAgentSelection, NativeManagedAgentView, NativeManagedAgents,
     NativeManagedAgentsError, NativeManagedAgentsProgress, NativeManagedCommandResponse,
     NativeManagedHistoryError, NativeManagedHistoryOutcome, NativeManagedHistoryRequest,
-    NativeManagedHistorySnapshot,
+    NativeManagedHistorySnapshot, NativeManagedRecoveryReason,
 };
 mod managed_host;
 #[cfg(test)]

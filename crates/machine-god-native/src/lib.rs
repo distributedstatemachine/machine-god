@@ -1170,11 +1170,12 @@ pub use reference_host::{
     NativeManagedCatalogEntry, NativeManagedCatalogError, NativeManagedCatalogFilter,
     NativeManagedCatalogOutcome, NativeManagedCatalogPage, NativeManagedCatalogRequest,
     NativeManagedCommandResponse, NativeManagedHistoryError, NativeManagedHistoryOutcome,
-    NativeManagedHistoryRequest, NativeManagedHistorySnapshot, NativeObservedManagedAgent,
-    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
-    NativeReferenceHostConversationOptions, NativeReferenceHostManagedOptions,
-    NativeReferenceHostMcpEphemeralStartupOptions, NativeReferenceHostMcpOptions,
-    NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,
+    NativeManagedHistoryRequest, NativeManagedHistorySnapshot, NativeManagedRecoveryReason,
+    NativeObservedManagedAgent, NativeReferenceHost, NativeReferenceHostBuildError,
+    NativeReferenceHostBuildErrorKind, NativeReferenceHostConversationOptions,
+    NativeReferenceHostManagedOptions, NativeReferenceHostMcpEphemeralStartupOptions,
+    NativeReferenceHostMcpOptions, NativeReferenceHostPermissionOptions,
+    NativeReferenceHostTerminalOptions,
 };
 pub use rename_file::{
     MAX_RENAME_FILE_PATH_BYTES, MAX_RENAME_FILE_PATH_COMPONENTS,

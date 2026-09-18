@@ -1225,3 +1225,24 @@ runtime-suite acceptance. All three clean review worktrees were removed; no
 candidate push or remote acceptance followed. Repair work is separated into
 journal accounting and native/CLI/ACP recovery lanes. The replacement requires
 regressions, the complete local gate and three new whole-feature reviewers.
+
+### R12 repair implementation
+
+Journal repair `e7080f97` replaces publication inventory scans with exact
+before/after accounting for at most four touched names, preserving protected
+settlement/ACK credits and original ambiguous-receipt custody. Eight regressions
+cover constant accounting work, cached/inventory equivalence, staging/orphan reuse,
+failure after accounting, namespace invalidation, damaged references, bounded
+missing/restored history and independent low-head pressure. The default-feature
+native all-targets Rust 1.94.1 compilation passed; it is not the full local gate.
+
+The host recovery lane adds typed independent retry fences and one shared native
+one-second timer, including during shutdown. It retries only retained operations,
+never a new provider turn or implicit queued-work resume. Ctrl-R has recovery
+priority before ordinary navigation admission while recovery is required.
+Tests layer an exact committed-but-error notice-clear adapter and deterministic
+clock assertions with ordinary filesystem-failure composition through native,
+one-shot, ACP retirement and raw CLI owners. Raw cases retain an unacknowledged
+output frame and exercise recovery input or EOF; these are composed-driver tests,
+not claims of a live-provider production-executable fault injection.
+These implementation records do not establish runtime or replacement acceptance.

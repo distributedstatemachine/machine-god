@@ -13,6 +13,67 @@ mod selection_ack;
 #[path = "agents/skills.rs"]
 mod skills;
 
+#[test]
+fn recovery_gesture_survives_unacknowledged_navigation_and_graceful_shutdown() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        harness.input_writer.write_all(b"\x18").unwrap();
+        hold_frame(&mut harness).await;
+        let blocked = fixture.fence_notice_clear(&mut harness.driver.owner).await;
+        let providers = fixture.transport.requests().len();
+        harness.driver.shutdown();
+        assert!(!harness.driver.owner.is_closed());
+        assert!(harness.driver.in_flight.is_some());
+        drop(blocked);
+        harness.input_writer.write_all(b"\x12").unwrap();
+        // Poll only input here: no native timer poll can explain this release.
+        input_until(&mut harness, |driver| !driver.recovery_required()).await;
+        assert!(harness.driver.in_flight.is_some());
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| harness.driver.poll(cx, &mut harness.signals)),
+        )
+        .await
+        .unwrap();
+        assert!(harness.driver.owner.is_closed());
+        assert_eq!(fixture.transport.requests().len(), providers);
+        result
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
+#[test]
+fn raw_eof_recovers_original_clear_while_stdout_remains_unacknowledged() {
+    let runtime = executor();
+    let (fixture, mut harness) = runtime.block_on(prepared());
+    let result = runtime.block_on(async {
+        harness.input_writer.write_all(b"\x18").unwrap();
+        hold_frame(&mut harness).await;
+        let blocked = fixture.fence_notice_clear(&mut harness.driver.owner).await;
+        let providers = fixture.transport.requests().len();
+        let (unused, replacement) = std::io::pipe().unwrap();
+        drop(unused);
+        drop(std::mem::replace(&mut harness.input_writer, replacement));
+        until(&mut harness, |driver| driver.input_ended).await;
+        assert!(!harness.driver.owner.is_closed());
+        assert!(harness.driver.in_flight.is_some());
+        drop(blocked);
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| harness.driver.poll(cx, &mut harness.signals)),
+        )
+        .await
+        .unwrap();
+        assert!(harness.driver.owner.is_closed());
+        assert_eq!(fixture.transport.requests().len(), providers);
+        result
+    });
+    let mut tail = dispose(harness, fixture, result);
+    runtime.block_on(finish_raw_tail(&mut tail));
+}
+
 async fn prepared() -> (support::Fixture, Harness) {
     prepared_with_catalog(None).await
 }

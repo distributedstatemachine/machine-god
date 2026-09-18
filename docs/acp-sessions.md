@@ -91,6 +91,11 @@ command services from that owner's actual foreground. Where that owner includes
 managed agents, retaining the parent's prompt response does not suspend child
 execution, approval completion or cleanup. This background poll does not admit
 another foreground prompt or consume the retained parent response.
+The native managed owner also drives its shared rate-limited recovery timer while
+selected or retiring, including after EOF and with blocked output. Retries retain
+the original receipt, checkpoint or accepted cleanup operation; they never
+submit a new prompt or implicitly resume queued work. Persistent failures keep
+cleanup pending and charged under the [managed recovery contract](subagent.md).
 Selection quiescence uses the native managed foreground's original notice-drain
 route and waits for its actual run/admission cleanup as well as idle permits.
 After the outer selection has retired that exact runtime, final shutdown settles

@@ -23,6 +23,7 @@ mod undo;
 mod clipboard;
 
 mod browser_composition;
+pub(crate) mod managed_recovery;
 
 #[path = "../skills_queue/interactive_tests.rs"]
 mod skills_queue;

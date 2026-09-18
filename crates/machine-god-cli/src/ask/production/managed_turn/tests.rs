@@ -121,6 +121,46 @@ fn resume_executes_and_settles_the_actual_managed_owner() {
 }
 
 #[test]
+fn one_shot_settlement_retries_a_failed_original_clear_without_more_input() {
+    let runtime = runtime();
+    let mut fixture = fixture();
+    runtime.block_on(async {
+        let agents = agents(&mut fixture).await;
+        let options = NativeInteractiveSessionOptions::new(
+            fixture.workspace.clone(),
+            fixture.host.loaded_config().config().model_preferences(),
+        )
+        .unwrap();
+        let startup =
+            NativeManagedInteractiveStartup::new(fixture.host.clone(), options, agents).unwrap();
+        let (_signal, received) = tokio::sync::mpsc::channel(1);
+        let mut signals = AskSignals::new(received);
+        let mut owner = managed_startup::open(
+            startup,
+            NativeInteractiveInitialSession::Fresh,
+            &mut signals,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let blocked = fixture.fence_notice_clear(&mut owner).await;
+        let providers = fixture.transport.requests().len();
+        let mut settlement = Box::pin(settle(&mut owner, &mut signals));
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        assert!(settlement.as_mut().poll(&mut cx).is_pending());
+        drop(blocked);
+        tokio::time::timeout(Duration::from_secs(10), settlement)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(owner.is_closed());
+        assert_eq!(fixture.transport.requests().len(), providers);
+        drop(owner);
+    });
+    fixture.finish();
+}
+
+#[test]
 fn a_signal_before_first_admission_discards_the_queued_prompt_without_provider_work() {
     let runtime = runtime();
     let mut fixture = fixture();

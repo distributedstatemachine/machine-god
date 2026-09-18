@@ -9,6 +9,79 @@ use std::{
     task::{Poll, Waker},
 };
 
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+
+    #[test]
+    fn retry_classes_and_same_class_waiters_do_not_hide_each_other() {
+        let gate = RetryGate::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut capacity = Box::pin(gate.blocked(ManagerBlock::Capacity));
+        let mut first = Box::pin(gate.blocked(ManagerBlock::NoticeClear));
+        let mut second = Box::pin(gate.blocked(ManagerBlock::NoticeClear));
+        let mut manual = Box::pin(gate.blocked(ManagerBlock::Preparation));
+        assert!(capacity.as_mut().poll(&mut cx).is_pending());
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        assert!(second.as_mut().poll(&mut cx).is_pending());
+        assert!(manual.as_mut().poll(&mut cx).is_pending());
+        drop(second);
+        assert!(gate.recovery_issue().is_some());
+        gate.retry_automatic();
+        assert!(gate.recovery_issue().is_none());
+        assert!(first.as_mut().poll(&mut cx).is_ready());
+        assert!(capacity.as_mut().poll(&mut cx).is_pending());
+        assert!(manual.as_mut().poll(&mut cx).is_ready());
+        gate.retry_capacity();
+        assert!(capacity.as_mut().poll(&mut cx).is_ready());
+        gate.retry();
+        assert!(gate.issue().is_none());
+    }
+
+    #[test]
+    fn dropping_an_old_generation_cannot_clear_a_new_fence() {
+        let gate = RetryGate::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut old = Box::pin(gate.blocked(ManagerBlock::JournalReceipt));
+        assert!(old.as_mut().poll(&mut cx).is_pending());
+        gate.retry_automatic();
+        let mut new = Box::pin(gate.blocked(ManagerBlock::JournalReceipt));
+        assert!(new.as_mut().poll(&mut cx).is_pending());
+        drop(old);
+        assert!(gate.recovery_issue().is_some());
+        drop(new);
+        assert!(gate.recovery_issue().is_none());
+    }
+
+    #[test]
+    fn every_recovery_category_retries_without_releasing_capacity() {
+        let gate = RetryGate::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut capacity = Box::pin(gate.blocked(ManagerBlock::Capacity));
+        assert!(capacity.as_mut().poll(&mut cx).is_pending());
+        for issue in ManagerBlock::ALL
+            .into_iter()
+            .filter(|issue| issue.automatic())
+        {
+            let mut original = Box::pin(gate.blocked(issue));
+            assert!(original.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(gate.recovery_issue(), Some(issue));
+            for _ in 0..32 {
+                assert!(original.as_mut().poll(&mut cx).is_pending());
+            }
+            gate.retry_automatic();
+            assert!(original.as_mut().poll(&mut cx).is_ready());
+            assert!(capacity.as_mut().poll(&mut cx).is_pending());
+        }
+        assert!(gate.recovery_issue().is_none());
+        assert_eq!(gate.issue(), Some(ManagerBlock::Capacity));
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Failure {
     Rejected(JournalError),
@@ -19,24 +92,21 @@ pub(super) enum Failure {
 pub(super) struct RetryGate(Mutex<RetryState>);
 #[derive(Default)]
 struct RetryState {
-    generations: [Arc<()>; 4],
-    issue: Option<(ManagerBlock, Arc<()>)>,
+    generations: [Arc<()>; 9],
+    waiters: [usize; 9],
     waker: Option<Waker>,
 }
 struct IssueGuard<'a> {
     gate: &'a RetryGate,
-    owner: Arc<()>,
+    generation: Arc<()>,
+    index: usize,
 }
 impl Drop for IssueGuard<'_> {
     fn drop(&mut self) {
         let waker = {
             let mut state = self.gate.0.lock().unwrap();
-            if state
-                .issue
-                .as_ref()
-                .is_some_and(|(_, owner)| Arc::ptr_eq(owner, &self.owner))
-            {
-                state.issue = None;
+            if Arc::ptr_eq(&state.generations[self.index], &self.generation) {
+                state.waiters[self.index] -= 1;
                 state.waker.take()
             } else {
                 None
@@ -49,10 +119,20 @@ impl Drop for IssueGuard<'_> {
 }
 impl RetryGate {
     pub(super) fn retry(&self) {
+        self.retry_matching(|_| true);
+    }
+    pub(super) fn retry_automatic(&self) {
+        self.retry_matching(ManagerBlock::automatic);
+    }
+    fn retry_matching(&self, matches: impl Fn(ManagerBlock) -> bool) {
         let waker = {
             let mut state = self.0.lock().unwrap();
-            state.generations = std::array::from_fn(|_| Arc::new(()));
-            state.issue = None;
+            for (index, issue) in ManagerBlock::ALL.into_iter().enumerate() {
+                if matches(issue) && state.waiters[index] != 0 {
+                    state.generations[index] = Arc::new(());
+                    state.waiters[index] = 0;
+                }
+            }
             state.waker.take()
         };
         if let Some(waker) = waker {
@@ -60,41 +140,38 @@ impl RetryGate {
         }
     }
     pub(super) fn retry_capacity(&self) {
-        let wake = {
-            let mut state = self.0.lock().unwrap();
-            state.generations[0] = Arc::new(());
-            if matches!(state.issue, Some((ManagerBlock::Capacity, _))) {
-                state.issue = None;
-            }
-            state.waker.take()
-        };
-        if let Some(wake) = wake {
-            wake.wake();
-        }
+        self.retry_matching(|issue| issue == ManagerBlock::Capacity);
     }
     pub(super) fn issue(&self) -> Option<ManagerBlock> {
-        self.0
-            .lock()
-            .unwrap()
-            .issue
-            .as_ref()
-            .map(|(issue, _)| *issue)
+        let state = self.0.lock().unwrap();
+        ManagerBlock::ALL
+            .into_iter()
+            .enumerate()
+            .find_map(|(index, issue)| (state.waiters[index] != 0).then_some(issue))
+    }
+    pub(super) fn recovery_issue(&self) -> Option<ManagerBlock> {
+        let state = self.0.lock().unwrap();
+        ManagerBlock::ALL
+            .into_iter()
+            .enumerate()
+            .find_map(|(index, issue)| {
+                (issue.automatic() && state.waiters[index] != 0).then_some(issue)
+            })
     }
     pub(super) async fn blocked(&self, issue: ManagerBlock) {
-        let index = match issue {
-            ManagerBlock::Capacity => 0,
-            ManagerBlock::Journal => 1,
-            ManagerBlock::Preparation => 2,
-            ManagerBlock::Cleanup => 3,
+        let index = ManagerBlock::ALL
+            .iter()
+            .position(|value| *value == issue)
+            .unwrap();
+        let generation = {
+            let mut state = self.0.lock().unwrap();
+            state.waiters[index] += 1;
+            state.generations[index].clone()
         };
         let guard = IssueGuard {
             gate: self,
-            owner: Arc::new(()),
-        };
-        let generation = {
-            let mut state = self.0.lock().unwrap();
-            state.issue = Some((issue, guard.owner.clone()));
-            state.generations[index].clone()
+            generation: generation.clone(),
+            index,
         };
         poll_fn(|cx| {
             let waker = cx.waker().clone();
@@ -202,7 +279,7 @@ pub(super) async fn confirm(
             Ok(JournalPublication::Confirmed(snapshot)) => return Ok(*snapshot),
             Ok(JournalPublication::NotApplied) => return Err(Failure::NotApplied),
             Ok(JournalPublication::Ambiguous(_)) | Err(_) => {
-                gate.blocked(ManagerBlock::Journal).await;
+                gate.blocked(ManagerBlock::JournalReceipt).await;
             }
         }
     }

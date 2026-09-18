@@ -71,6 +71,28 @@ pub(crate) enum ManagerBlock {
     Journal,
     Preparation,
     Cleanup,
+    JournalReceipt,
+    NoticeClear,
+    NoticeRecovery,
+    PreparationReceipt,
+    ReadValidation,
+}
+impl ManagerBlock {
+    const ALL: [Self; 9] = [
+        Self::Capacity,
+        Self::Journal,
+        Self::Preparation,
+        Self::Cleanup,
+        Self::JournalReceipt,
+        Self::NoticeClear,
+        Self::NoticeRecovery,
+        Self::PreparationReceipt,
+        Self::ReadValidation,
+    ];
+
+    fn automatic(self) -> bool {
+        self != Self::Capacity
+    }
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ManagerProgress {
@@ -79,6 +101,7 @@ pub(crate) struct ManagerProgress {
     pub waiters: usize,
     pub closing: bool,
     pub blocked: Option<ManagerBlock>,
+    pub recovery_required: Option<ManagerBlock>,
 }
 
 #[allow(clippy::struct_excessive_bools)] // Independent admission, cleanup, intent and projection custody.
@@ -271,6 +294,9 @@ impl ManagedManager {
     pub(crate) fn retry_reconciliation(&self) {
         self.retry.retry();
     }
+    pub(crate) fn retry_automatic_reconciliation(&self) {
+        self.retry.retry_automatic();
+    }
     pub(crate) fn request_shutdown(&mut self) {
         if self.closing {
             return;
@@ -362,6 +388,7 @@ impl ManagedManager {
                     .count(),
             waiters: self.waiters.len(),
             closing: self.closing,
+            recovery_required: self.retry.recovery_issue(),
             blocked: self.retry.issue().or_else(|| {
                 if self.children.iter().any(|child| child.settlement.is_some())
                     || !self.retiring.is_empty()

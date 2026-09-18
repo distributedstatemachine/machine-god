@@ -46,10 +46,11 @@ impl Driver {
         // Accepted native saves, turn finalization, terminal handoff and shutdown
         // continue even when every presentation slot is occupied.
         let _ = self.owner.poll_progress(cx, now_ms);
+        self.observe_managed_recovery();
         self.observe_outcomes();
         self.sync_agents();
         self.poll_skills_refresh(now_ms);
-        if self.owner.shutdown_error().is_some() {
+        if self.owner.shutdown_error().is_some() || self.owner.managed_error().is_some() {
             self.native_failed = true;
             if !self.shutting_down {
                 self.shutdown();
@@ -61,13 +62,14 @@ impl Driver {
         if let Some(picker) = &mut self.picker {
             picker.poll(cx);
         }
-        if !self.shutting_down && !self.input_ended {
+        if !self.input_ended && (!self.shutting_down || self.recovery_required()) {
             self.poll_input(cx, now_ms);
         }
         self.poll_output(cx);
 
         let native_settled = self.owner.is_closed() || self.owner.shutdown_error().is_some();
         if self.shutting_down && native_settled && !self.owner.has_pending_copy() {
+            self.input.input.request_stop();
             return Poll::Ready(TurnDriveResult {
                 outcome: self.signal.map_or_else(
                     || {
@@ -85,6 +87,21 @@ impl Driver {
             });
         }
         Poll::Pending
+    }
+
+    fn recovery_required(&self) -> bool {
+        self.owner
+            .managed_progress()
+            .is_some_and(|progress| progress.recovery_required.is_some())
+    }
+
+    fn observe_managed_recovery(&mut self) {
+        if self.recovery_reported || !self.recovery_required() {
+            return;
+        }
+        // One bounded diagnostic, not one line per retry.
+        self.recovery_reported = true;
+        self.recovery_notice = true;
     }
 
     pub(super) fn into_presentation(mut self, result: TurnDriveResult) -> FinalPresentation {
@@ -346,6 +363,7 @@ impl Driver {
         let status = self.owner.runtime().status();
         super::composer::ComposerContext {
             active_response: status.active || status.queued_jobs != 0,
+            recovery_required: self.recovery_required(),
             session_picker: self.picker_open(),
             agents: self.owner.managed_navigation().is_some() && self.modal.is_none(),
             agent_history: self
@@ -480,6 +498,15 @@ impl Driver {
         frontend.dirty = true;
         if !matches!(event.0, ComposerEvent::CancelRequested) {
             frontend.cancel_armed = None;
+        }
+        // Recovery belongs to the native owner, not a displayed navigation frame.
+        // It remains available behind stale frames, output pressure and shutdown.
+        if matches!(event.0, ComposerEvent::FormRefreshRequested) && self.recovery_required() {
+            self.owner.retry_managed_reconciliation();
+            return;
+        }
+        if self.shutting_down {
+            return;
         }
         if self.agents_event(&event.0, &event.1) {
             return;
@@ -752,6 +779,8 @@ impl Driver {
             )
         } else if let Some(warning) = self.skills_warning.take() {
             (Ok(warning.to_vec()), None, None)
+        } else if std::mem::take(&mut self.recovery_notice) {
+            (Ok(b"\n[managed recovery pending; retrying retained operations every second; Ctrl-R retries now; shutdown waits for settlement]\n".to_vec()), None, None)
         } else if let Some(notice) = self.notice.take() {
             (Ok(notice), None, None)
         } else if let Some(confirmation) = &self.saved_rule {

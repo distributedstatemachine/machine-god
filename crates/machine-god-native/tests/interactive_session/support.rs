@@ -361,6 +361,98 @@ impl Fixture {
         fs::create_dir(&path).unwrap();
         PublicationBlock(path)
     }
+
+    /// Drive the production owner to a real outbox-clear filesystem error.
+    /// The initial checkpoint is already published before the save is blocked.
+    #[allow(dead_code)] // Shared fixture is compiled by non-managed scenarios too.
+    pub async fn fence_notice_clear(
+        &self,
+        owner: &mut super::native::NativeInteractiveSession,
+    ) -> PublicationBlock {
+        use machine_god_core::{ManagedAgentState, ManagedSubagentCommand};
+        use std::{future::poll_fn, task::Poll, time::Duration};
+        self.transport.push(answer());
+        let before = self.transport.requests().len();
+        let command = ManagedSubagentCommand::decode(json!({"command":{"create":{
+            "name":"recovery-source", "mode":"persistent", "prompt":"original work",
+            "notifications":{"started":true}
+        }}}))
+        .unwrap();
+        let mut response = owner
+            .request_managed_command(command, CancellationToken::new())
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            poll_fn(|cx| {
+                let _ = owner.poll_progress(cx, 100);
+                response.as_mut().poll(cx)
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            poll_fn(|cx| {
+                let progress = owner.poll_progress(cx, 100);
+                if self.transport.requests().len() == before + 1
+                    && owner.managed_agents().iter().any(|agent| {
+                        agent.name == "recovery-source" && agent.state == ManagedAgentState::Idle
+                    })
+                {
+                    return Poll::Ready(());
+                }
+                if progress.is_ready() {
+                    cx.waker().wake_by_ref();
+                }
+                Poll::Pending
+            }),
+        )
+        .await
+        .unwrap();
+        self.transport.push(answer());
+        owner.enqueue("consume original notice".into()).unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            poll_fn(|cx| {
+                let progress = owner.poll_progress(cx, 101);
+                if self.transport.requests().len() == before + 2 {
+                    return Poll::Ready(());
+                }
+                let _ = owner.take_presentation();
+                if progress.is_ready() {
+                    cx.waker().wake_by_ref();
+                }
+                Poll::Pending
+            }),
+        )
+        .await
+        .unwrap();
+        // The native owner polls the manager before admitting the foreground;
+        // the newly published delivery cannot have been cleared by that poll.
+        let blocked = self.block_publication(&owner.runtime().id());
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            poll_fn(|cx| {
+                let progress = owner.poll_progress(cx, 101);
+                let _ = owner.take_presentation();
+                let _ = owner.take_outcome();
+                if owner.managed_progress().is_some_and(|progress| {
+                    progress.recovery_required
+                        == Some(super::native::NativeManagedRecoveryReason::NoticeOutboxClear)
+                }) {
+                    return Poll::Ready(());
+                }
+                if progress.is_ready() {
+                    cx.waker().wake_by_ref();
+                }
+                Poll::Pending
+            }),
+        )
+        .await
+        .unwrap();
+        blocked
+    }
 }
 
 fn skills_service(state_root: &Path) -> Arc<super::native::NativeSkillsService> {

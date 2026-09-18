@@ -605,6 +605,8 @@ struct Driver {
     shutting_down: bool,
     input_ended: bool,
     native_failed: bool,
+    recovery_reported: bool,
+    recovery_notice: bool,
     output_failed: bool,
     signal: Option<AskSignal>,
     final_flush_sent: bool,
@@ -703,6 +705,8 @@ impl Driver {
             shutting_down: false,
             input_ended: false,
             native_failed: false,
+            recovery_reported: false,
+            recovery_notice: false,
             output_failed: false,
             signal: None,
             final_flush_sent: false,
@@ -790,7 +794,11 @@ impl Driver {
         self.inbox.close();
         self.scope_active = false;
         self.modal.take();
-        self.input.input.request_stop();
+        // Raw input retains its bounded lane until native settlement so an
+        // original recovery fence remains explicitly retryable during shutdown.
+        if self.frontend.is_none() {
+            self.input.input.request_stop();
+        }
         self.saved_rule.take();
         self.owner.request_shutdown();
     }

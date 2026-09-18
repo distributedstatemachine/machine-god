@@ -224,7 +224,7 @@ impl ManagedManager {
                 if outcome.result.is_err() {
                     let gate = self.retry.clone();
                     parent.retry = Some(Box::pin(async move {
-                        gate.blocked(ManagerBlock::Journal).await;
+                        gate.blocked(ManagerBlock::ReadValidation).await;
                     }));
                 }
                 self.parents.push(parent);
@@ -294,7 +294,7 @@ impl ManagedManager {
                         if let Some(runtime) = runtime {
                             let retry = self.retry.clone();
                             parent.clearing = Some(Box::pin(async move {
-                                retry.blocked(ManagerBlock::Journal).await;
+                                retry.blocked(ManagerBlock::NoticeClear).await;
                                 let result = runtime.clear(&delivery).await;
                                 (delivery, result)
                             }));

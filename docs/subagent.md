@@ -592,9 +592,9 @@ before command acceptance returns `ResourceLimit`; it cannot park an overflowing
 message behind the accepted work that must drain to free queue capacity.
 Already-accepted internal writes, including settlement after a durable cancel
 or close intent, retain their original custody on capacity pressure.
-Ambiguity parks
-on explicit retry with its original proposal and resources; capacity becoming
-available does not automatically retry an uncertain publication. Cancellation
+Ambiguity retains its original proposal and resources behind a recovery fence;
+capacity becoming available does not retry an uncertain publication. The native
+host's bounded recovery policy below drives exact reconciliation. Cancellation
 intent precedes the signal, and ordinary lifecycle observers wait for settlement.
 An ordinary close receipt also waits for actual principal/resource closure and
 the original notice cleanup, not just durable archive publication or turn
@@ -602,6 +602,26 @@ settlement. Retirement retains the exact accepted job and archived receipt acros
 cleanup errors, shutdown and caller abandonment. Shutdown rejects still-pending
 mailbox observers with `Unavailable`, but retains actual cleanup custody until
 settled; this rejection is not close success and cannot undo the accepted archive.
+
+Native progress exposes a typed `recovery_required` reason independently of
+ordinary capacity pressure or genuinely pending workers. Fixed per-category
+generations and live-waiter counts preserve simultaneous fences; dropping a
+superseded wait cannot clear another current waiter. One injected-clock timer
+retries retained recovery operations at intervals of at least one second in both
+normal progress and shutdown, without a timer or thread per child. Capacity waits
+remain event-driven. Explicit reconciliation can request an earlier retry.
+
+Recovery covers the original journal or preparation receipt, notice-outbox clear,
+notice-recovery checkpoint and read-validation frontier. It also retries the
+exact accepted child write after definite nonpublication, retained notice-context
+registration, already-admitted Restore-only saved-close preparation, and the same
+cleanup receipt. Each retains its original identity, captured policy, resources
+and capacity. It never submits a new command, replays a provider turn, implicitly
+resumes queued work, or republishes an ambiguous journal candidate. Persistent
+failure remains visible, pending and charged; shutdown cannot report settlement
+until the original obligations actually settle. Interactive, one-shot and ACP
+hosts share this native policy, independent of input or output availability.
+
 Foreground successor admission retains its original request and cancellation
 identity while previous actual cleanup or ordinary worker-cohort capacity is
 pending. Those waits are not terminal prompt failures. Once runtime admission
@@ -858,7 +878,8 @@ navigation's original target and exact displayed-frame checks.
 Child `/models` opens a separate native query/editor over the injected host
 catalog cache. Loading is owned and polled outside model turns and output flush;
 Ctrl-X restores the parent draft while the original load continues. Reopening
-uses cached results, without fetching once ready. Ctrl-R explicitly refreshes;
+uses cached results, without fetching once ready. Ctrl-R explicitly refreshes
+unless managed recovery is required, when the global recovery action takes priority;
 ordinary failed loads retain the cache cooldown. Query/paste limits are 256 UTF-8
 bytes, arrows or Ctrl-J/Ctrl-K move selection, and Escape returns to the child
 conversation. Enter preserves an unselected/rejected query; Ctrl-C clears the
@@ -906,7 +927,8 @@ After a queued command settles, its input epoch retires even on rejection.
 Ctrl-C clears the active text field without cancelling the selected child.
 Decoder-rejected input also invalidates the displayed frame, so a trailing
 Enter in the same received chunk cannot submit the retained earlier value.
-Configuration rejection retains the native draft; Ctrl-R explicitly refreshes
+Configuration rejection retains the native draft; absent required managed recovery,
+Ctrl-R explicitly refreshes
 the observed head without substituting another ID/generation. A replacement
 generation or absent target returns to the catalog instead of retargeting a form.
 

@@ -1,5 +1,6 @@
 //! Outer native driver ownership, deliberately excluded from shared engine services.
 pub(super) mod history;
+pub(super) mod recovery;
 mod staged;
 use super::{
     NativeReferenceHost,
@@ -83,12 +84,47 @@ pub struct NativeManagedAgentView {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeManagedRecoveryReason {
+    /// Retry the same already-accepted child write after definite nonpublication.
+    JournalMutation,
+    /// Restore the same saved cleanup transcript, or register its retained context.
+    SavedPreparation,
+    /// Observe the same cleanup receipt; a failed receipt is never success.
+    Cleanup,
+    JournalReceipt,
+    NoticeOutboxClear,
+    NoticeRecovery,
+    PreparationReceipt,
+    ReadValidation,
+}
+
+impl NativeManagedRecoveryReason {
+    fn from_block(block: crate::managed::manager::ManagerBlock) -> Option<Self> {
+        use crate::managed::manager::ManagerBlock;
+        Some(match block {
+            ManagerBlock::Capacity => return None,
+            ManagerBlock::Journal => Self::JournalMutation,
+            ManagerBlock::Preparation => Self::SavedPreparation,
+            ManagerBlock::Cleanup => Self::Cleanup,
+            ManagerBlock::JournalReceipt => Self::JournalReceipt,
+            ManagerBlock::NoticeClear => Self::NoticeOutboxClear,
+            ManagerBlock::NoticeRecovery => Self::NoticeRecovery,
+            ManagerBlock::PreparationReceipt => Self::PreparationReceipt,
+            ManagerBlock::ReadValidation => Self::ReadValidation,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeManagedAgentsProgress {
     pub residents: usize,
     pub executing: usize,
     pub waiters: usize,
     pub closing: bool,
     pub blocked: bool,
+    /// One current recovery reason, excluding capacity and merely pending workers.
+    /// Every parked original is retried at a bounded rate, including shutdown.
+    pub recovery_required: Option<NativeManagedRecoveryReason>,
 }
 impl From<crate::managed::manager::ManagerProgress> for NativeManagedAgentsProgress {
     fn from(progress: crate::managed::manager::ManagerProgress) -> Self {
@@ -98,6 +134,9 @@ impl From<crate::managed::manager::ManagerProgress> for NativeManagedAgentsProgr
             waiters: progress.waiters,
             closing: progress.closing,
             blocked: progress.blocked.is_some(),
+            recovery_required: progress
+                .recovery_required
+                .and_then(NativeManagedRecoveryReason::from_block),
         }
     }
 }
@@ -110,6 +149,7 @@ pub struct NativeManagedAgents {
     factory: Arc<SharedManagedRuntimeFactory>,
     parent_mcp: Arc<ManagedParentMcpSeed>,
     journal: ManagedJournal,
+    recovery: recovery::Recovery,
 }
 impl fmt::Debug for NativeManagedAgents {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -303,7 +343,7 @@ impl NativeReferenceHost {
                 factory.clone(),
                 assembly.relationships,
                 assembly.notices,
-                assembly.clock,
+                assembly.clock.clone(),
                 ManagerLimits::default(),
             )
             .map_err(map_error)?;
@@ -318,6 +358,7 @@ impl NativeReferenceHost {
                         .ok_or(NativeManagedAgentsError::Configuration)?,
                 ),
                 journal,
+                recovery: recovery::Recovery::new(assembly.clock),
             })
         })
     }
@@ -433,9 +474,12 @@ impl NativeManagedAgents {
         now_ms: i64,
     ) -> Poll<Result<NativeManagedAgentsProgress, NativeManagedAgentsError>> {
         self.history.poll(cx);
-        self.manager
+        let progress = self
+            .manager
             .poll_progress(cx, now_ms)
-            .map(|result| result.map(Into::into).map_err(map_error))
+            .map(|result| result.map(Into::into).map_err(map_error));
+        self.recovery.poll(&self.manager, cx);
+        progress
     }
 
     /// Explicitly retry retained reconciliation receipts, never blind creation.
@@ -462,6 +506,7 @@ impl NativeManagedAgents {
         }
         self.history.poll(cx);
         let settled = self.manager.poll_shutdown(cx, now_ms).map_err(map_error);
+        self.recovery.poll(&self.manager, cx);
         if !self.history.settled() {
             if let Poll::Ready(Err(error)) = settled {
                 return Poll::Ready(Err(error));

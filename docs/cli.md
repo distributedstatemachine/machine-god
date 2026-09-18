@@ -221,6 +221,13 @@ retains that owner without a provisional conversation; failed selection permits
 explicit retry, and signals settle the original opening before input/terminal
 teardown. The CLI uses native-owned principal registrations in its one shared
 prompt inbox, so foreground replacement does not retire hidden child approvals.
+When native managed recovery is required, the driver reports a bounded diagnostic
+and Ctrl-R requests immediate reconciliation before ordinary navigation admission,
+including during graceful shutdown and presentation backpressure. Otherwise
+Ctrl-R retains its normal model/form behavior. Native recovery also progresses
+without input, including EOF and one-shot execution, on its shared rate-limited
+timer. The [managed contract](subagent.md) defines retained-operation retries;
+persistent failures do not release custody or manufacture shutdown success.
 Both stdin and stdout must be TTYs for production interactive startup; failure
 exits `1` with a fixed diagnostic before configuration, credentials or sessions
 are acquired. The explicitly supplied native pipe adapter is not permission to

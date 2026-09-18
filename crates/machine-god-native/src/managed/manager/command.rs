@@ -380,7 +380,7 @@ async fn prepare(
             match std::future::poll_fn(|cx| receipt.poll_reconcile(cx)).await {
                 Ok(Some(value)) => break value,
                 Ok(None) => return Err(ManagedFailureCode::StoreFailure),
-                Err(_) => env.gate.blocked(ManagerBlock::Preparation).await,
+                Err(_) => env.gate.blocked(ManagerBlock::PreparationReceipt).await,
             }
         },
     };
@@ -391,7 +391,7 @@ async fn prepare(
         loop {
             match prepared.runtime.recover_notice_delivery().await {
                 Ok(_) => break,
-                Err(_) => env.gate.blocked(ManagerBlock::Journal).await,
+                Err(_) => env.gate.blocked(ManagerBlock::NoticeRecovery).await,
             }
         }
     }
