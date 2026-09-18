@@ -234,6 +234,48 @@ fn unavailable_child_skill_catalog_fails_only_its_accepted_work() {
     rejected_skill(false);
 }
 
+async fn settle_message_receipt(
+    owner: &mut NativeInteractiveSession,
+    child: &str,
+    receipt: machine_god_core::ManagedReceipt,
+) {
+    // A refreshed message receipt is still not a turn-completion witness.
+    // Wait through the manager's authoritative journal inspection, then bind
+    // completion to this receipt's exact enqueue event and work identity.
+    let settled = submit(
+        owner,
+        command(serde_json::json!({
+            "inspect":{
+                "id":child,
+                "sections":["status", "events"],
+                "limit":100,
+                "wait":{"until":"settled", "timeout_ms":30000}
+            }
+        })),
+    )
+    .await;
+    assert!(settled.ok, "{settled:?}");
+    assert_eq!(settled.status, ManagedResultStatus::Inspected);
+    let Some(machine_god_core::ManagedRequested::Inspection(inspection)) = settled.requested else {
+        panic!("settled wait must return an inspection");
+    };
+    assert_eq!(inspection.status, Some(ManagedAgentState::Idle));
+    let accepted = inspection
+        .events
+        .iter()
+        .find(|event| event.sequence == receipt.event_sequence)
+        .expect("the receipt's enqueue event must remain visible");
+    let machine_god_core::ManagedEventKind::MessageQueued { message_id } = &accepted.kind else {
+        panic!("the receipt must identify the submitted message's enqueue event");
+    };
+    assert!(inspection.events.iter().any(|event| matches!(
+        &event.kind,
+        machine_god_core::ManagedEventKind::WorkTransition {
+            work_item_id, current: machine_god_core::ManagedQueueStatus::Completed, ..
+        } if work_item_id == message_id
+    )));
+}
+
 #[test]
 fn child_menu_preserves_draft_binding_and_requires_new_ack_after_filter_edit() {
     use super::navigation_ui::ready;
@@ -320,43 +362,7 @@ fn child_menu_preserves_draft_binding_and_requires_new_ack_after_filter_edit() {
                 .text
                 .is_empty()
         );
-        // A refreshed message receipt is still not a turn-completion witness.
-        // Wait through the manager's authoritative journal inspection, then bind
-        // the completed conversation to this receipt's exact enqueue event.
-        let settled = submit(
-            &mut owner,
-            command(serde_json::json!({
-                "inspect":{
-                    "id":child,
-                    "sections":["status", "events"],
-                    "limit":100,
-                    "wait":{"until":"settled", "timeout_ms":30000}
-                }
-            })),
-        )
-        .await;
-        assert!(settled.ok, "{settled:?}");
-        assert_eq!(settled.status, ManagedResultStatus::Inspected);
-        let Some(machine_god_core::ManagedRequested::Inspection(inspection)) = settled.requested
-        else {
-            panic!("settled wait must return an inspection");
-        };
-        assert_eq!(inspection.status, Some(ManagedAgentState::Idle));
-        let accepted = inspection
-            .events
-            .iter()
-            .find(|event| event.sequence == receipt.event_sequence)
-            .expect("the receipt's enqueue event must remain visible");
-        let machine_god_core::ManagedEventKind::MessageQueued { message_id } = &accepted.kind
-        else {
-            panic!("the receipt must identify the submitted message's enqueue event");
-        };
-        assert!(inspection.events.iter().any(|event| matches!(
-            &event.kind,
-            machine_god_core::ManagedEventKind::WorkTransition {
-                work_item_id, current: machine_god_core::ManagedQueueStatus::Completed, ..
-            } if work_item_id == message_id
-        )));
+        settle_message_receipt(&mut owner, &child, receipt).await;
         {
             let requests = fixture.transport.requests.lock().unwrap();
             assert_eq!(requests.len(), 1);
