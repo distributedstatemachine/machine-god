@@ -937,3 +937,41 @@ changed. Linux all-feature Clippy rejected this first component's 123-line test;
 follow-up `fe282396691351bb6ecee5fb5f3e12c460caf8d5` extracts the cohesive receipt
 settlement helper without weakening assertions. Focused validation and the
 complete replacement gate remain required before fresh whole-feature reviews.
+
+Integrated `aa6d2c4716e7a22aea07ba52151bde66f40b01dc` passed the Linux full
+gate: 611 CLI tests, 4100 native tests, workspace integrations/doctests and all
+275 repository Python tests. Static policy/audit and FreeBSD/WASI/Apple
+compilation passed. macOS formatting, all-feature Clippy, workspace test
+compilation, fresh locked release and focused filters passed, including all four
+skill-picker cases. An extra native-only no-run compilation, not used by the
+canonical workspace runtime, was intentionally stopped after the required
+workspace compilation succeeded; its exit 101 is not reported as a passing
+command. The separately completed release build passed.
+
+The macOS full workspace runtime passed 613 CLI tests and 116 CLI integrations,
+then failed in the native suite: 4105 passed, two failed and twelve ignored in
+1054.50 seconds. Both `terminal_pty::tests::explicit_owned_signal_kills_shell_and_final_drain_preserves_bytes`
+and `terminal_pty::tests::full_command_boundary_executes_as_one_argument_and_reaps`
+failed during preparation's child-reaping admission, before their intended PTY
+assertions. The no-op child remained unobserved through the 500 ms probe window
+and the separate 500 ms cleanup window; neither yielded an exact reap receipt.
+The remaining workspace integration and doctest stages were not reached. No
+whole-feature review, push or full-gate acceptance followed this failure.
+
+Unchanged exact-binary diagnostic runs passed both tests individually (0.09 and
+0.42 seconds), then all 27 PTY module tests in serial order (6.67 seconds).
+These results do not establish a cause, source correction or full-gate success.
+A later host snapshot showed high unrelated CPU load, but does not prove what
+delayed the failed children; unrelated processes were not stopped. Logs are
+`managed-full-runtime-macos-aa6d2c47.log`,
+`pty-unchanged-focused-aa6d2c47.log` and `pty-unchanged-module-aa6d2c47.log` in
+the retained gate directory. The failed observation and exact cleanup outcome
+remain part of the candidate's evidence, without relaxed deadlines or assertions.
+
+Independent read-only tracing located the failure in the environment-cleared
+`/bin/sh -c 'exit 0'` probe, before PTY/inventory helper spawning. Admission,
+polling, settlement, cleanup and both failing test bodies are unchanged from
+the actual `7cadf2f2` base. Seventeen `Ok(None)` observations, zero interrupted
+waits and no kill error precede quarantine; the outer PTY deadline had not
+expired. No source defect was established. An unchanged passing replacement
+gate cannot be represented as a causal fix for this intermittent observation.
