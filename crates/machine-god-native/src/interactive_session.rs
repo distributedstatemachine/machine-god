@@ -305,12 +305,7 @@ pub struct NativeInteractiveSession {
     current: Arc<NativeConversationRuntime>,
     managed: Option<Box<managed::Owner>>,
     navigation: Option<Box<navigation::Navigation>>,
-    admission: Option<
-        BoxFuture<
-            'static,
-            Result<Option<NativeConversationRuntimeTurn>, NativeConversationRuntimeError>,
-        >,
-    >,
+    admission: Option<driver::Admission>,
     turn: Option<NativeConversationRuntimeTurn>,
     transition: Option<Transition>,
     pending: Option<Request>,

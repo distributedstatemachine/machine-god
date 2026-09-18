@@ -15,6 +15,33 @@ pub(crate) struct ManagedAdmission {
 
 impl ManagedConversationBinding {
     pub(crate) fn prepare_admission(&self) -> Result<ManagedAdmission> {
+        self.try_prepare_admission()?
+            .ok_or(NativeConversationError::ManagedAdmission)
+    }
+
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) async fn wait_for_admission(&self) -> Result<ManagedAdmission> {
+        loop {
+            if let Some(admission) = self.try_prepare_admission()? {
+                return Ok(admission);
+            }
+            let owner = self
+                .0
+                .upgrade()
+                .ok_or(NativeConversationError::ManagedAdmission)?;
+            let workers = owner
+                .workers
+                .get()
+                .ok_or(NativeConversationError::ManagedAdmission)?;
+            workers
+                .scope
+                .wait_for_run_capacity()
+                .await
+                .map_err(|_| NativeConversationError::ManagedAdmission)?;
+        }
+    }
+
+    fn try_prepare_admission(&self) -> Result<Option<ManagedAdmission>> {
         self.validate()?;
         let owner = self
             .0
@@ -31,23 +58,23 @@ impl ManagedConversationBinding {
         {
             return Err(NativeConversationError::ManagedAdmission);
         }
-        let cohort = owner
-            .workers
-            .get()
-            .map(|workers| {
-                workers
-                    .scope
-                    .begin_run_with_keepalive(workers.keepalive.clone())
-                    .map(Arc::new)
-                    .map_err(|_| NativeConversationError::ManagedAdmission)
-            })
-            .transpose()?;
+        let cohort = if let Some(workers) = owner.workers.get() {
+            let Ok(cohort) = workers
+                .scope
+                .begin_run_with_keepalive(workers.keepalive.clone())
+            else {
+                return Ok(None);
+            };
+            Some(Arc::new(cohort))
+        } else {
+            None
+        };
         active.admission.clone_from(&cohort);
         active.preparation_pending = true;
-        Ok(ManagedAdmission {
+        Ok(Some(ManagedAdmission {
             cohort,
             transferred: false,
-        })
+        }))
     }
 
     /// Actual most-recent admission, including one which never minted a `RunRef`.

@@ -963,12 +963,42 @@ impl NativeConversationRuntime {
         now_ms: i64,
     ) -> BoxFuture<'_, Result<Option<NativeConversationRuntimeTurn>, NativeConversationRuntimeError>>
     {
+        self.start_next_cancellable(now_ms, CancellationToken::new())
+    }
+
+    pub(crate) fn start_next_cancellable(
+        &self,
+        now_ms: i64,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<Option<NativeConversationRuntimeTurn>, NativeConversationRuntimeError>>
+    {
         Box::pin(async move {
-            let mut admission = self.conversation.prepare_managed_admission()?;
+            // Once admission is polled, every terminal result owns exactly one
+            // removed job. Transient cohort capacity retains that ownership.
+            let lease = self.acquire_idle(false)?;
+            let Some(taken) = self.take_job(&lease.permit, cancellation.clone())? else {
+                return Ok(None);
+            };
+            if lease.permit.was_quiesced() {
+                cancellation.cancel();
+            }
+            let mut admission = match futures_util::future::select(
+                cancellation.cancelled(),
+                Box::pin(self.conversation.wait_for_managed_admission()),
+            )
+            .await
+            {
+                futures_util::future::Either::Left(_) => {
+                    return Err(NativeConversationRuntimeError::Resources(
+                        crate::acp::resources::NativeAcpResourceContextError::Cancelled,
+                    ));
+                }
+                futures_util::future::Either::Right((result, _)) => result?,
+            };
             let cohort = admission
                 .as_ref()
                 .and_then(crate::managed::conversation::ManagedAdmission::cohort);
-            let future = self.start_next_inner(now_ms, cohort);
+            let future = self.start_next_inner(now_ms, cohort, lease, taken);
             let mut result = match &admission {
                 Some(admission) => admission.wrap(future).await,
                 None => future.await,
@@ -990,13 +1020,10 @@ impl NativeConversationRuntime {
         &self,
         now_ms: i64,
         cohort: Option<Arc<crate::owned_worker::NativeOwnedWorkerRun>>,
+        lease: RuntimeLease,
+        taken: TakenJob,
     ) -> Result<Option<NativeConversationRuntimeTurn>, NativeConversationRuntimeError> {
-        let lease = self.acquire_idle(false)?;
-        let Some((mut job, snapshot, generation, policy, workspace, cancellation)) =
-            self.take_job(&lease.permit)?
-        else {
-            return Ok(None);
-        };
+        let (mut job, snapshot, generation, policy, workspace, cancellation) = taken;
         if let Some(expected) = job.checkpoint
             && self
                 .conversation
@@ -1099,6 +1126,7 @@ impl NativeConversationRuntime {
     fn take_job(
         &self,
         permit: &LifecyclePermit,
+        cancellation: CancellationToken,
     ) -> Result<Option<TakenJob>, NativeConversationRuntimeError> {
         let mut state = self.state.lock().expect("runtime state poisoned");
         let Some(job) = state.queue.pop_front() else {
@@ -1123,7 +1151,6 @@ impl NativeConversationRuntime {
             Ok::<_, NativeConversationRuntimeError>((policy, workspace))
         })();
         let generation = state.generation;
-        let cancellation = CancellationToken::new();
         state.active_preparation = Some(cancellation.clone());
         drop(state);
         let (policy, workspace) = captured?;

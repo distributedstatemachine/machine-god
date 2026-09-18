@@ -127,6 +127,28 @@ impl NativeOwnedWorkerScope {
         self.begin_run_inner(Some(keepalive), RunClass::Ordinary)
     }
 
+    /// Waits for ordinary admission space without reserving it. The caller must
+    /// retry admission after waking because another principal can win the slot.
+    #[cfg(any(test, feature = "ai-gateway-http"))]
+    pub(crate) fn wait_for_run_capacity(
+        &self,
+    ) -> machine_god_core::BoxFuture<'_, Result<(), NativeOwnedWorkerSpawnError>> {
+        Box::pin(self.state.wait_until(|| {
+            let status = self
+                .state
+                .status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if status.closed {
+                Some(Err(NativeOwnedWorkerSpawnError))
+            } else if status.runs < MAX_RUNS {
+                Some(Ok(()))
+            } else {
+                None
+            }
+        }))
+    }
+
     /// Explicit trusted settlement reserve; ordinary runs cannot borrow it.
     /// This uses the same actual worker/keepalive custody, not another pool.
     pub(crate) fn begin_cleanup_run_with_keepalive(

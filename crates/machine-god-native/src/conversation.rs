@@ -1188,6 +1188,19 @@ impl NativeConversation {
             .transpose()
     }
 
+    pub(crate) async fn wait_for_managed_admission(
+        &self,
+    ) -> Result<Option<crate::managed::conversation::ManagedAdmission>, NativeConversationError>
+    {
+        #[cfg(any(test, feature = "ai-gateway-http"))]
+        match &self.managed {
+            Some(binding) => binding.wait_for_admission().await.map(Some),
+            None => Ok(None),
+        }
+        #[cfg(not(any(test, feature = "ai-gateway-http")))]
+        self.prepare_managed_admission()
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "Keep exact admission authority and rollback ownership in one linear scope."

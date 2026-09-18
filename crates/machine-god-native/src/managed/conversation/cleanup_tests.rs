@@ -267,7 +267,11 @@ fn failed_and_dropped_pre_turn_checkpoint_keep_actual_admission_cleanup() {
                 NativeConversationError::ManagedAdmission
             ))
         ));
-        assert_eq!(runtime.status().queued_jobs, 1);
+        assert_eq!(
+            runtime.status().queued_jobs,
+            0,
+            "failed admission is not replayable"
+        );
         release.send(()).unwrap();
         completion.wait_on_worker().unwrap();
         scope.close();

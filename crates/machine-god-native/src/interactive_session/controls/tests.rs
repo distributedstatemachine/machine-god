@@ -883,7 +883,10 @@ fn unread_receipt_does_not_first_poll_a_previously_retained_admission() {
         let runtime = session.current.clone();
         // Reproduce the owner's progress-budget boundary with its actual owned
         // admission future, not a fabricated active turn or publication stage.
-        session.admission = Some(Box::pin(async move { runtime.start_next(300).await }));
+        session.admission = Some(crate::interactive_session::driver::Admission {
+            future: Box::pin(async move { runtime.start_next(300).await }),
+            cancellation: machine_god_core::CancellationToken::new(),
+        });
         session
             .request_control(
                 Control::Rename {

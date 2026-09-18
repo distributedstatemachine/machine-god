@@ -13,6 +13,14 @@ use std::pin::Pin;
 
 const MAX_PROGRESS_STEPS: usize = 32;
 
+pub(super) struct Admission {
+    pub(super) future: BoxFuture<
+        'static,
+        Result<Option<crate::NativeConversationRuntimeTurn>, crate::NativeConversationRuntimeError>,
+    >,
+    pub(super) cancellation: machine_god_core::CancellationToken,
+}
+
 impl NativeInteractiveSession {
     pub(super) fn drive(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
         self.wake = Some(cx.waker().clone());
@@ -115,7 +123,14 @@ impl NativeInteractiveSession {
                 return self.readiness();
             }
             let runtime = Arc::clone(&self.current);
-            self.admission = Some(Box::pin(async move { runtime.start_next(now_ms).await }));
+            let cancellation = machine_god_core::CancellationToken::new();
+            let token = cancellation.clone();
+            self.admission = Some(Admission {
+                future: Box::pin(
+                    async move { runtime.start_next_cancellable(now_ms, token).await },
+                ),
+                cancellation,
+            });
         }
         cx.waker().wake_by_ref();
         self.readiness()
@@ -124,15 +139,26 @@ impl NativeInteractiveSession {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), crate::NativeConversationRuntimeError>> {
-        let Some(admission) = &mut self.admission else {
+        if self.admission.is_none() {
             return Poll::Ready(Ok(()));
-        };
+        }
+        // Keep the successor's admission owner (and cancellation identity) while
+        // the manager settles the predecessor's actual workers/resources. Do
+        // not mark the runtime active until that idle settlement can progress.
+        if !self.cancel_requested
+            && !self.current.status().active
+            && !self.foreground_turn_settled()
+        {
+            return Poll::Pending;
+        }
+        let admission = self.admission.as_mut().expect("retained admission");
         // Controls have settled. Signal pre-handle reads without losing the
         // later cancellation of a core handle still being reserved.
         if self.cancel_requested {
+            admission.cancellation.cancel();
             let _ = self.current.request_active_cancel();
         }
-        let result = match admission.as_mut().poll(cx) {
+        let result = match admission.future.as_mut().poll(cx) {
             Poll::Pending => {
                 // First poll may just have installed the taken job's token.
                 // Do not wait for the read worker to wake us to deliver cancel.

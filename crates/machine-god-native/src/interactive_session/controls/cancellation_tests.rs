@@ -125,10 +125,13 @@ fn background_cancel_survives_pending_admission_settlement() {
         let admission_gate = Arc::new(Gate::default());
         let gate = admission_gate.clone();
         let runtime = session.runtime().clone();
-        session.admission = Some(Box::pin(async move {
-            let result = runtime.start_next(200).await;
-            deferred(result, &gate).await
-        }));
+        session.admission = Some(crate::interactive_session::driver::Admission {
+            future: Box::pin(async move {
+                let result = runtime.start_next(200).await;
+                deferred(result, &gate).await
+            }),
+            cancellation: machine_god_core::CancellationToken::new(),
+        });
         tokio::time::timeout(
             Duration::from_secs(10),
             poll_fn(|cx| {
