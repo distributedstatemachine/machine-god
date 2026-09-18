@@ -56,6 +56,10 @@ UTF-8 `SKILL.md`, stages private copies, and atomically publishes one absent
 destination. Installed bytes remain untrusted and grant no execution or
 additional authority.
 
+The human [skills CLI](skills-cli.md) separately supports catalog discovery and
+local/Git installation. That authority does not widen these workspace-local
+`skill` and local-only `install_skill` model tools.
+
 The injected `mcp_features` tool uses no ambient MCP, process, network, or
 filesystem authority. Its sole host-interaction interface is an explicitly
 injected read-only `McpFeatureAuthority`. That trusted boundary must admit the
@@ -63,20 +67,29 @@ exact server-qualified action and identity before any underlying effect and
 revalidate the same live authority generation before returning. Resource and
 prompt content is marked untrusted with `authority: "none"`; it cannot grant a
 permission, authorize a later tool, or override user instructions. Production
-MCP transports and authentication remain deferred.
+[MCP transports](mcp-runtime.md) and [authentication](mcp-auth.md) separately
+require explicit native process, network, credential and consent authority.
+
+The native [ACP driver](acp-protocol.md) owns session, permission and continuation
+custody; the CLI is a thin transport host. Client capability flags and correlation
+labels grant no execution authority. [Session MCP selections](acp-mcp.md) are
+ephemeral, with no profile or saved-credential fallback.
 
 The provider-neutral `subagent` tool similarly uses no ambient child provider,
 executor, filesystem, process, network, permission, clock, task, or persistence
-authority. Its sole child-computation seam is an explicitly injected
-`SubagentAuthority`. The authority receives only a bounded name and prompt,
-the parent call's bounded structural session/incarnation/turn/call identifiers,
-and a cancellation token. Those identifiers support admission and attribution;
-they are not session, transcript, store, engine, or permission handles. The
-authority does not receive the parent transcript, grants,
-prepared capabilities, dynamic tools, tool catalog, recursive `subagent`
-visibility, or model/effort/permission/notification overrides. Completed text
-is stamped `trust: "untrusted_child"` and `authority: "none"`; it cannot grant
-permission or authority to a later call.
+authority. Its explicitly injected `ManagedSubagentAuthority` receives a bounded
+managed command bound to the actual admitted tool invocation. Public
+`ToolContext` IDs cannot forge this proof; direct structural execution fails
+closed. Native privately admits the actual principal/run after validating weak
+session/turn witnesses, a one-shot call claim, live generations, policy and
+resource budgets. Core identity alone is not a native authority grant.
+
+Children receive standalone prompts and same-or-stricter permission policy,
+never inherited parent transcripts or grants. Their conversation runtimes,
+workspace selections, undo histories and mutable permission/MCP state remain
+principal-local even under shared host services. Child content is untrusted
+data, not permission or authority. The [managed-agent contract](subagent.md)
+defines command, admission, isolation and durable ownership details.
 
 Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
@@ -230,11 +243,13 @@ implementation, or kernel performs no additional bounded or blocking work.
 The [performance overview](performance.md) distinguishes structural bounds from
 measured claims.
 
-Foreground subagent execution adds independent fail-fast limits of four active
-children globally and two for one parent turn. Exhaustion performs no authority
-call and creates no waiter or queue. The tool creates no task, thread, timer,
-watcher, persistent child, or detached cleanup tail; an injected implementation
-that does so is outside the core contract and remains trusted host code.
+Managed agents use native aggregate execution, residency, queue, byte and waiter
+budgets with fair shared scheduling, not core foreground counters. Live-resource
+admission is separate from pageable durable history, not a lifetime creation cap.
+Dependency waits reserve bounded waiters and reject cycles before releasing
+execution quota; ordinary provider pending states retain that quota. Actual
+worker settlement remains separately owned before resident capacity is reusable.
+See [native scheduling and settlement](subagent.md#native-scheduling-and-actual-settlement).
 
 ## Cancellation, drop, and panic
 
@@ -246,10 +261,16 @@ ambiguous, cancellation cannot truthfully report rollback; the tool completes
 its durability/cleanup boundary and returns success or a fixed commit-ambiguity
 error.
 
-For `subagent`, cancellation also races the injected authority future and wins
-over a ready success or failure observed in the same poll. The losing future is
-dropped before active-child capacity is released, and no partial child text is
-published.
+For managed agents, the outer native manager persists create/message acceptance
+before execution and owns accepted children beyond the creating future/turn.
+Mutating submissions use completion-wins-after-first-poll so cancellation cannot
+hide their real result; native retains irreversible settlement even if the
+observer is dropped. Submission/inspection cancellation and host teardown are
+not durable child cancellation. Only an admitted lifecycle cancel publishes
+durable intent before signalling. Persistent cancellation returns idle; one-off
+cancellation is terminal. Restart does not implicitly execute interrupted work,
+and close archives and settles rather than deletes. See
+[cancellation and durable ownership](subagent.md#cancellation-and-durable-ownership).
 
 Waker callbacks are arbitrary foreign code. Native adapters do not invoke them
 while holding internal locks, serialize callback delivery where required, and
@@ -283,13 +304,16 @@ The following remain explicit future work rather than implied guarantees:
 - grant lifetimes and delegation beyond the documented configured modes,
   saved exact-action rules and runtime permission decisions;
 - encrypted/authenticated persistence, key management, and secure erasure;
+- broader persistence and lifecycle concurrency hardening beyond the documented
+  subsystem guarantees;
 - hardened non-Unix workspace and store construction;
 - OS sandbox backends beyond the explicit macOS implementation, stronger
   isolation than its documented profile, and stronger descendant containment;
-- private/authenticated web destinations and redirect authorization; and
-- remote or packaged skill discovery/installation, production MCP transport
-  and authentication, extension/ACP authority, persistent/background subagent
-  management, and SDK authority models.
+- private/authenticated web destinations and redirect authorization;
+- model-facing skill discovery/location and filtered local/Git installation
+  through the native catalog/installer, beyond the narrow tools above; and
+- account/team selection and its authentication prerequisites, and SDK/advanced
+  product authority models.
 
 Each subsystem contract is normative for its exact platform, effect, limits,
 and race semantics.
