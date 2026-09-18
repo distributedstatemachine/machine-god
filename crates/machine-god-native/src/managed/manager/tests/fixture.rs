@@ -282,6 +282,20 @@ pub(super) fn preferences() -> NativeModelPreferences {
     NativeModelPreferences::new("model", NativeReasoningEffort::default(), false).unwrap()
 }
 impl Fixture {
+    pub(super) fn journal_pages(&self) -> Vec<PathBuf> {
+        std::fs::read_dir(self.path.join("journal"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("p-")
+            })
+            .collect()
+    }
+
     pub fn enable_child_notices(&self) {
         *self.factory.notices.lock().unwrap() = Some(self.manager.notices.clone());
     }

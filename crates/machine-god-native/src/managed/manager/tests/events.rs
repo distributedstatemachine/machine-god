@@ -1,4 +1,5 @@
 use super::*;
+mod source_errors;
 use machine_god_core::{
     Capability, FilesystemAccess, ManagedToolActivity, ManagedToolPhase, PermissionDecision,
     PermissionGrantScope, ToolCall, ToolCallId, ToolError, ToolErrorKind, ToolName, ToolOutput,
