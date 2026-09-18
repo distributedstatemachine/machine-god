@@ -1422,3 +1422,12 @@ as a standalone diagnostic, not the product's cancellation/reaping machinery.
 These results do not distinguish whole-suite effects from intermittent host
 startup/exit delays. A passing retry must not erase either failed gate or be
 presented as explaining it.
+
+A serial full-native diagnostic on the same product source then passed 4,139
+tests with zero failures and 12 existing ignored fixture entries in 815.63
+seconds. External observers watched owned children and exact probe-timeout
+messages; neither captured a stalled probe. A parent-process sample showed
+active terminal-host test execution, not a demonstrated deadlock. This run
+used `--nocapture` and external observation, so its timing includes diagnostic
+overhead. It is not a complete workspace gate and does not establish a cause
+or remediation for either earlier macOS failure.
