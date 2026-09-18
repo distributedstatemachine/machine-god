@@ -4,7 +4,7 @@ use crate::acp::{
     session::NativeAcpSession,
 };
 
-async fn open(fixture: &mut Fixture) -> (NativeAcpSession, Arc<NativeReferenceHost>) {
+pub(super) async fn open(fixture: &mut Fixture) -> (NativeAcpSession, Arc<NativeReferenceHost>) {
     let mut host = fixture.host.take().unwrap();
     let preferences = host.loaded_config().config().model_preferences();
     let agents = host

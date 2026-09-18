@@ -86,6 +86,29 @@ pub(in crate::reference_host) struct Transport {
     pub model_responses: Mutex<HashMap<String, VecDeque<Vec<u8>>>>,
     pub requests: Mutex<Vec<Value>>,
     pub reviews: AtomicUsize,
+    pub stream_drop: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+struct DropStream {
+    inner: AiGatewayByteStream,
+    on_drop: Option<Box<dyn FnOnce() + Send>>,
+}
+impl futures_core::Stream for DropStream {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+impl Drop for DropStream {
+    fn drop(&mut self) {
+        if let Some(on_drop) = self.on_drop.take() {
+            on_drop();
+        }
+    }
 }
 impl AiGatewayTransport for Transport {
     fn stream(
@@ -126,7 +149,10 @@ impl AiGatewayTransport for Transport {
                     .or_else(|| self.responses.lock().unwrap().pop_front())
                     .unwrap_or_else(answer)
             };
-            Ok(Box::pin(futures_util::stream::iter([Ok(bytes)])) as AiGatewayByteStream)
+            Ok(Box::pin(DropStream {
+                inner: Box::pin(futures_util::stream::iter([Ok(bytes)])),
+                on_drop: self.stream_drop.lock().unwrap().take(),
+            }) as AiGatewayByteStream)
         })
     }
 }
