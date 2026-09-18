@@ -1065,3 +1065,8 @@ settlement; production shutdown behavior is unchanged. Both oversized-history
 regressions passed, including composed inspection/restart replay/source ACK.
 Logs are `managed-r10-pure-focused-linux-ea9bae2c.log` (three passed, one fixture
 failure) and `managed-r10-history-focused-linux-ea9bae2c.log` (both passed).
+Follow-up `3e606231` passed the corrected shutdown assertion, but the cleanup-error
+fixture's direct journal inspection raced the manager's serialized replay read
+and returned `Busy`. The close fixtures now establish journal-lane idleness
+before direct inspection or fault injection; retired-child state alone is not
+that proof. Product behavior and resource gates are unchanged.

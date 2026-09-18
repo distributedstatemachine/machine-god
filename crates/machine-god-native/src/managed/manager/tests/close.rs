@@ -22,7 +22,9 @@ fn ordinary_close_waits_for_retired_resources_before_success() {
     let mut response = requester.execute(invocation, CancellationToken::new());
     let mut cx = Context::from_waker(Waker::noop());
     assert!(response.as_mut().poll(&mut cx).is_pending());
-    fixture.drive(|f| f.manager.children.is_empty() && f.manager.retiring.len() == 1);
+    fixture.drive(|f| {
+        f.manager.children.is_empty() && f.manager.retiring.len() == 1 && f.manager.active.is_none()
+    });
     let early = response.as_mut().poll(&mut cx);
     assert_eq!(
         block_on(fixture.journal.inspect("child-1".into()))
@@ -64,7 +66,11 @@ fn close_preserves_original_observer_and_archive_across_cleanup_error() {
     let mut response = requester.execute(invocation, CancellationToken::new());
     let mut cx = Context::from_waker(Waker::noop());
     assert!(response.as_mut().poll(&mut cx).is_pending());
-    fixture.drive(|f| f.manager.children.is_empty() && f.manager.retiring.len() == 1);
+    // Direct fixture reads must not race a replay read in the serialized
+    // journal lane. The retired child alone does not prove that lane is idle.
+    fixture.drive(|f| {
+        f.manager.children.is_empty() && f.manager.retiring.len() == 1 && f.manager.active.is_none()
+    });
     fixture.factory.close_error.store(true, Ordering::Release);
     assert!(matches!(
         fixture.manager.poll_progress(&mut cx, 100),
@@ -103,7 +109,9 @@ fn shutdown_rejects_close_observer_but_retains_actual_cleanup_custody() {
     let mut response = requester.execute(invocation, CancellationToken::new());
     let mut cx = Context::from_waker(Waker::noop());
     assert!(response.as_mut().poll(&mut cx).is_pending());
-    fixture.drive(|f| f.manager.children.is_empty() && f.manager.retiring.len() == 1);
+    fixture.drive(|f| {
+        f.manager.children.is_empty() && f.manager.retiring.len() == 1 && f.manager.active.is_none()
+    });
     assert!(fixture.manager.poll_shutdown(&mut cx, 100).is_pending());
     assert!(matches!(
         response.as_mut().poll(&mut cx),
@@ -145,7 +153,9 @@ fn abandoned_close_observer_does_not_release_actual_cleanup_custody() {
     let mut response = requester.execute(invocation, CancellationToken::new());
     let mut cx = Context::from_waker(Waker::noop());
     assert!(response.as_mut().poll(&mut cx).is_pending());
-    fixture.drive(|f| f.manager.children.is_empty() && f.manager.retiring.len() == 1);
+    fixture.drive(|f| {
+        f.manager.children.is_empty() && f.manager.retiring.len() == 1 && f.manager.active.is_none()
+    });
     drop(response);
     assert!(fixture.manager.poll_shutdown(&mut cx, 100).is_pending());
     assert_eq!(fixture.manager.retiring.len(), 1);
