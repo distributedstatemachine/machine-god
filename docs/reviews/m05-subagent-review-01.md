@@ -1261,3 +1261,31 @@ and save steps with observable failure diagnostics, preserving the original
 receipt and actual successful cleanup. It must not bypass automatic recovery by
 manually refreshing the session revision, or change production retry behavior to
 satisfy the incorrect expectation.
+
+Candidate `f5af0367` corrects that test to observe separate readback and save
+stages, defer assertions until settlement, and report bounded failure diagnostics.
+Its exact Rust 1.94.1 Linux and macOS formatting, warnings-denied Clippy, workspace
+test compilation and locked release preparation passed, as did static/platform
+checks. All 34 focused Linux regressions passed, including the repaired clock
+test. The old macOS `311ea3b6` release build completed, but its final SHA guard
+correctly rejected the changed checkout; the separate exact `f5af0367` build
+passed. That old guard failure is not current-candidate acceptance.
+
+The replacement Linux runtime gate then passed 54 store, three retry-gate and
+17 notice/shutdown tests before the composed native-owner recovery case timed
+out at `tests/interactive_session/support.rs:453`. A focused exact-candidate
+macOS diagnostic reproduced the same setup timeout. Both processes exited 101;
+neither complete runtime suite passed. The fixture blocked the foreground session
+publication after observing its provider request, before confirmed turn completion,
+and never observed its required `NoticeOutboxClear` fence. The repair must isolate
+the intended metadata-clear failure from foreground finalization, retain the
+original delivery evidence and successful cleanup assertions, and preserve the
+existing deadlines. No new reviewers or remote acceptance followed this failure.
+
+The shared-fixture repair waits for a successful foreground `Completed` outcome,
+which releases the runtime's active lease, then blocks the same parent session
+before the next manager poll. It checks the original outbox's parent/checkpoint
+identity, nonempty source notices, unchanged retained outbox at the clear fence,
+and unchanged provider count. Failure diagnostics include runtime and manager
+state. This is a test-ordering repair, not a production recovery change; all five
+composed owner/ACP/one-shot/raw-input cases still require replacement execution.

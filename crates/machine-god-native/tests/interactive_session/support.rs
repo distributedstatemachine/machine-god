@@ -363,14 +363,18 @@ impl Fixture {
     }
 
     /// Drive the production owner to a real outbox-clear filesystem error.
-    /// The initial checkpoint is already published before the save is blocked.
+    /// Both the notice checkpoint and final turn history are confirmed before
+    /// blocking the separate original-outbox-clear save.
     #[allow(dead_code)] // Shared fixture is compiled by non-managed scenarios too.
+    #[allow(clippy::too_many_lines)] // One exact delivery across acceptance, completion and its clear fence.
     pub async fn fence_notice_clear(
         &self,
         owner: &mut super::native::NativeInteractiveSession,
     ) -> PublicationBlock {
-        use machine_god_core::{ManagedAgentState, ManagedSubagentCommand};
+        use super::native::NativeInteractiveOutcome;
+        use machine_god_core::{ManagedAgentState, ManagedSubagentCommand, TurnEvent};
         use std::{future::poll_fn, task::Poll, time::Duration};
+        const OUTBOX: &str = "machine_god.managed_notice_delivery_outbox";
         self.transport.push(answer());
         let before = self.transport.requests().len();
         let command = ManagedSubagentCommand::decode(json!({"command":{"create":{
@@ -381,7 +385,7 @@ impl Fixture {
         let mut response = owner
             .request_managed_command(command, CancellationToken::new())
             .unwrap();
-        tokio::time::timeout(
+        let accepted = tokio::time::timeout(
             Duration::from_secs(20),
             poll_fn(|cx| {
                 let _ = owner.poll_progress(cx, 100);
@@ -391,6 +395,7 @@ impl Fixture {
         .await
         .unwrap()
         .unwrap();
+        assert!(accepted.ok, "original source creation must be accepted");
         tokio::time::timeout(
             Duration::from_secs(20),
             poll_fn(|cx| {
@@ -416,10 +421,19 @@ impl Fixture {
             Duration::from_secs(20),
             poll_fn(|cx| {
                 let progress = owner.poll_progress(cx, 101);
-                if self.transport.requests().len() == before + 2 {
-                    return Poll::Ready(());
-                }
                 let _ = owner.take_presentation();
+                if let Some(outcome) = owner.take_outcome() {
+                    return match outcome {
+                        NativeInteractiveOutcome::Turn(Ok(event))
+                            if matches!(event.payload, TurnEvent::Completed { .. }) =>
+                        {
+                            Poll::Ready(())
+                        }
+                        other => panic!(
+                            "parent must finalize successfully before blocking its clear: {other:?}"
+                        ),
+                    };
+                }
                 if progress.is_ready() {
                     cx.waker().wake_by_ref();
                 }
@@ -428,8 +442,30 @@ impl Fixture {
         )
         .await
         .unwrap();
-        // The native owner polls the manager before admitting the foreground;
-        // the newly published delivery cannot have been cleared by that poll.
+        assert_eq!(self.transport.requests().len(), before + 2);
+        assert!(!owner.runtime().status().active);
+        let original = owner
+            .runtime()
+            .record_snapshot()
+            .metadata
+            .get(OUTBOX)
+            .cloned()
+            .expect("completed parent retains its original delivery outbox");
+        assert_eq!(
+            original["checkpoint"]["session_id"],
+            json!(owner.runtime().id())
+        );
+        assert_eq!(original["parent"]["id"], json!(owner.runtime().id()));
+        assert!(
+            original["originals"]
+                .as_array()
+                .is_some_and(|notices| !notices.is_empty())
+        );
+        // The manager is polled BEFORE the foreground stream. RuntimeTurn
+        // releases its active lease while returning Completed, and the owner
+        // immediately returns that outcome. No manager clear can run between
+        // this completion barrier and installing the exact parent save blocker.
+        // Blocking at provider admission instead also breaks final history save.
         let blocked = self.block_publication(&owner.runtime().id());
         tokio::time::timeout(
             Duration::from_secs(20),
@@ -450,7 +486,15 @@ impl Fixture {
             }),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!(
+            "original parent clear did not reach its recovery fence: runtime={:?}, managed={:?}, error={:?}",
+            owner.runtime().status(), owner.managed_progress(), owner.managed_error()
+        ));
+        assert_eq!(
+            owner.runtime().record_snapshot().metadata.get(OUTBOX),
+            Some(&original)
+        );
+        assert_eq!(self.transport.requests().len(), before + 2);
         blocked
     }
 }
