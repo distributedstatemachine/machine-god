@@ -288,8 +288,29 @@ fn child_menu_preserves_draft_binding_and_requires_new_ack_after_filter_edit() {
         owner
             .submit_managed_frame(&frame, Action::Message(draft.clone()), &draft)
             .unwrap();
-        state(&mut owner, &child, ManagedAgentState::Idle).await;
+        // UI admission does not poll the manager: the original idle projection
+        // still exists while this message has not even reached the provider.
+        assert!(
+            owner
+                .managed_agents()
+                .iter()
+                .any(|agent| agent.id == child && agent.state == ManagedAgentState::Idle)
+        );
+        assert!(fixture.transport.requests.lock().unwrap().is_empty());
+        assert!(owner.managed_navigation().unwrap().busy);
         ready(&mut owner).await;
+        let receipt = {
+            let view = owner.managed_navigation().unwrap();
+            let result = view.result.unwrap();
+            assert!(result.ok, "{result:?}");
+            assert_eq!(result.status, ManagedResultStatus::MessageQueued);
+            assert_eq!(result.child_id.as_deref(), Some(child.as_str()));
+            let Some(machine_god_core::ManagedRequested::Receipt(receipt)) = &result.requested
+            else {
+                panic!("message acceptance must retain its durable receipt: {result:?}");
+            };
+            receipt.clone()
+        };
         assert!(
             owner
                 .managed_navigation()
@@ -299,11 +320,48 @@ fn child_menu_preserves_draft_binding_and_requires_new_ack_after_filter_edit() {
                 .text
                 .is_empty()
         );
-        assert!(
-            fixture.transport.requests.lock().unwrap()[0]
-                .to_string()
-                .contains("SELECTED_SKILL_BODY")
-        );
+        // A refreshed message receipt is still not a turn-completion witness.
+        // Wait through the manager's authoritative journal inspection, then bind
+        // the completed conversation to this receipt's exact enqueue event.
+        let settled = submit(
+            &mut owner,
+            command(serde_json::json!({
+                "inspect":{
+                    "id":child,
+                    "sections":["status", "events"],
+                    "limit":100,
+                    "wait":{"until":"settled", "timeout_ms":30000}
+                }
+            })),
+        )
+        .await;
+        assert!(settled.ok, "{settled:?}");
+        assert_eq!(settled.status, ManagedResultStatus::Inspected);
+        let Some(machine_god_core::ManagedRequested::Inspection(inspection)) = settled.requested
+        else {
+            panic!("settled wait must return an inspection");
+        };
+        assert_eq!(inspection.status, Some(ManagedAgentState::Idle));
+        let accepted = inspection
+            .events
+            .iter()
+            .find(|event| event.sequence == receipt.event_sequence)
+            .expect("the receipt's enqueue event must remain visible");
+        let machine_god_core::ManagedEventKind::MessageQueued { message_id } = &accepted.kind
+        else {
+            panic!("the receipt must identify the submitted message's enqueue event");
+        };
+        assert!(inspection.events.iter().any(|event| matches!(
+            &event.kind,
+            machine_god_core::ManagedEventKind::WorkTransition {
+                work_item_id, current: machine_god_core::ManagedQueueStatus::Completed, ..
+            } if work_item_id == message_id
+        )));
+        {
+            let requests = fixture.transport.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].to_string().contains("SELECTED_SKILL_BODY"));
+        }
         close(owner, completion).await;
     });
 }
