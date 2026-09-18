@@ -572,6 +572,7 @@ pub(super) fn history(
     after: Option<&JournalHistoryCursor>,
     limit: usize,
 ) -> Result<JournalHistoryPage, Error> {
+    const PAGE_BYTES: usize = 512 * 1024;
     if !(1..=100).contains(&limit) {
         return Err(Error::Limit);
     }
@@ -597,15 +598,19 @@ pub(super) fn history(
         let count = page.records.len();
         for record in page.records.into_iter().skip(offset) {
             let charge = encode(&record, shared.limits.page_bytes)?.len();
-            if records.len() == limit || bytes + charge > 512 * 1024 {
-                if records.is_empty() {
-                    return Err(Error::Limit);
-                }
+            if records.len() == limit || (!records.is_empty() && bytes + charge > PAGE_BYTES) {
                 break;
             }
+            // Publication bounds the complete immutable page, not each record
+            // to the smaller ordinary projection budget. Return a larger
+            // accepted record alone, losslessly, under that same page ceiling;
+            // otherwise the cursor could never pass its original evidence.
             bytes += charge;
             records.push(record);
             offset += 1;
+            if bytes > PAGE_BYTES {
+                break;
+            }
         }
         if offset < count {
             next = Some(reference);
@@ -613,7 +618,7 @@ pub(super) fn history(
         }
         next = page.previous;
         offset = 0;
-        if records.len() == limit {
+        if records.len() == limit || bytes > PAGE_BYTES {
             break;
         }
     }

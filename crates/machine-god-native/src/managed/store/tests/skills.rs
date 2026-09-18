@@ -97,14 +97,31 @@ fn accepted_escaped_skill_work_remains_losslessly_pageable_after_reopen() {
     drop((snapshot, journal));
     let journal = fixture.open();
     let snapshot = block_on(journal.inspect("escaped-skills".into())).unwrap();
+    for limit in [0, 101] {
+        assert!(matches!(
+            block_on(journal.history(snapshot.clone(), None, limit)),
+            Err(JournalError::Limit)
+        ));
+    }
+    for limit in [1, 100] {
+        assert_escaped_history(&journal, &snapshot, limit, [&second, &first]);
+    }
+}
+
+fn assert_escaped_history(
+    journal: &ManagedJournal,
+    snapshot: &JournalSnapshot,
+    limit: usize,
+    expected: [&JournalWork; 2],
+) {
     let mut cursor = None;
     let mut works = Vec::new();
     let mut controls = Vec::new();
     let mut complete = false;
     for _ in 0..10 {
-        let page = block_on(journal.history(snapshot.clone(), cursor, 100)).unwrap();
+        let page = block_on(journal.history(snapshot.clone(), cursor, limit)).unwrap();
         assert!(!page.records.is_empty());
-        assert!(page.records.len() <= 100);
+        assert!(page.records.len() <= limit);
         let bytes: usize = page
             .records
             .iter()
@@ -129,6 +146,6 @@ fn accepted_escaped_skill_work_remains_losslessly_pageable_after_reopen() {
         complete,
         "history cursor did not finish the accepted records"
     );
-    assert_eq!(works, vec![second, first]);
+    assert_eq!(works.iter().collect::<Vec<_>>(), expected);
     assert_eq!(controls, vec![2, 1]);
 }

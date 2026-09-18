@@ -8,6 +8,7 @@ mod events;
 mod execution_consent;
 mod fixture;
 mod foreground;
+mod history_capacity;
 mod limits;
 mod notice_cancel;
 mod notice_deadline;
