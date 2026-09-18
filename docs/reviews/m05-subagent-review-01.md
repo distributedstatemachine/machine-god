@@ -887,3 +887,27 @@ workspace tests, Rust doctests, Python suite and macOS runtime stages were not r
 no full-gate success or fresh review is claimed. The correction must preserve
 original observed admission while distinguishing owned lifecycle progress from
 external stale changes, then pass the complete replacement gate.
+
+A native observed-human regression reproduced the same `StaleGeneration` rejection
+after actual journal-owner restart: its valid reopen failed while an external
+recovery-before-admission negative passed (one failed, one passed, 0.19 seconds).
+`reopen-observation-red.log` retains this unchanged-production result. The later
+acknowledgement-provenance cases were not part of that two-test result and require
+their own fresh execution. The repair must retain the post-admission expected
+head without reapplying the historical UI revision after owned progress, while
+preventing an external mutation from being adopted through a later delivery ACK.
+
+Component `06037517dc7e282355f2b896ed578c82928d25b2` retains that expected-head
+fence and records exact before/after delivery publications. Three of its four
+native cases passed; the remaining test's direct journal read raced an admitted
+replay and returned Busy. Follow-up `03cc3c5d8c4db986859c5eeeb6b3ceeebb351d83`
+waits for journal-lane idleness and moves a test-only import into the test module,
+without changing production behavior. Its four regression cases passed in 0.52
+seconds, followed by all 108 manager tests in 46.62 seconds. The original process
+scenario also passed in 0.23 seconds using its unchanged harness and a freshly
+built Linux `06037517` release CLI. Logs are `reopen-observation-green-03cc3c5d.log`,
+`reopen-observation-manager-03cc3c5d.log` and
+`reopen-release-cli-green-06037517.log`. Native all-target/all-feature
+warnings-denied Clippy passed on exact `03cc3c5d` in 5m09s;
+`reopen-observation-clippy-03cc3c5d.log` retains the result. These component checks
+do not replace the complete integrated gate or three fresh whole-feature reviews.

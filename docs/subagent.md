@@ -766,7 +766,12 @@ transfers its durable intent into ordinary resident archive cleanup. Reopen
 registers the old owner only for cleanup: paged source reconciliation, exact
 outbox clear and actual resource closure complete before the old runtime drops.
 Its original operation then rejoins fair command admission and rechecks the
-exact head and caller authority before preparing the new generation. Competing
+exact head and caller authority before preparing the new generation. The initial
+UI observation is checked before owned recovery; that recovery must not make the
+same admitted command stale. Reopen retains the resulting expected head and
+advances it for delivery only through confirmed, matching before/after snapshots.
+An intervening external mutation cannot be absorbed by a later acknowledgement
+and instead invalidates the continuation. Competing
 mutations of a pending lifecycle target are rejected; inspection remains
 read-only. An exact transcript/incarnation still held by a retiring owner also
 fences saved close/reopen preparation until actual cleanup completes. Shutdown
