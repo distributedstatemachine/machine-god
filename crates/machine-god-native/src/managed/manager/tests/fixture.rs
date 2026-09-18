@@ -359,6 +359,7 @@ impl Fixture {
             owner,
             resources: Box::new(Resources {
                 ready: self.factory.cleanup.clone(),
+                close_error: self.factory.close_error.clone(),
                 _owner: self.journal.owner_lease(),
             }),
             notice_context: Some(context),

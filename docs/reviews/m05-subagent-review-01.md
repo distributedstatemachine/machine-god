@@ -1000,3 +1000,45 @@ The follow-up adds only the helper mode/PID to captured test diagnostics and
 the PID to the readiness assertion. It changes neither the ten-second window,
 helper behavior nor outcome assertions, and is not a causal fix. Its purpose
 is to identify the exact helper for observation if the failure recurs.
+
+### R10 whole-feature review and regression evidence
+
+Candidate `8247ab74939519c7374eb305e3a86411175110ce` passed the complete
+replacement local gate: exact Rust 1.94.1 formatting, all-target/all-feature
+Clippy, workspace test compilation and fresh locked release builds on Linux
+and macOS; static policy, dependency audit, pinned drift and platform checks;
+Linux focused/workspace/doctests and all 275 Python tests; macOS focused,
+serial workspace and doctests. Linux reported 611 CLI and 4100 native tests
+passed; macOS reported 613 CLI and 4107 native tests passed. All seven gate
+commands terminated with exit zero. Logs use the `managed-*-8247ab74.log`
+suffix in `/tmp/mg-managed-implementation.V0ZGg1`.
+
+The previously failing readiness and PTY cases passed in that exact full run.
+This is replacement-gate evidence, not a causal fix for the earlier failures.
+Separate samples observed temporary loader waits at `_dyld_start` and an
+eventually passing native HTTP-catalog test waiting in system DNS configuration's
+bundle-directory enumeration. Those processes resumed unchanged; no unrelated
+processes were terminated or deadlines relaxed.
+
+Three fresh independent agents reviewed that exact candidate against actual
+base `7cadf2f2ea13ef392797903ad190c0ce3ba92654`. Each reported one finding,
+rejecting the candidate despite the passing local gate:
+
+- Correctness/API (`m65_r10_correctness`, P1): a successor prompt can receive a
+  terminal admission error while actual prior cleanup or worker capacity is
+  pending, yet remain queued for later execution, losing interactive/ACP
+  cancellation and request correlation.
+- Lifecycle/platform (`m65_r10_lifecycle`, P2): ordinary resident close reports
+  success after archiving but before the retired runtime's resources close.
+- Performance/resources (`m65_r10_resources`, P2): escaped message and skill
+  reference text can form a valid accepted immutable record above 512 KiB,
+  which history pagination rejects without advancing its cursor.
+
+Regression-only `f266e4ed` reproduced early close success on Linux. Combined
+test-only `fcef25b26bced071a0a6031c12d5438b1649396f` compiled the workspace
+and reproduced both foreground/ACP admission failures and history's `Limit`
+failure. Logs are `managed-close-red-f266e4ed.log` and
+`managed-r10-red-fcef25b2.log`; these are expected failing regressions, not
+acceptance. No feature push or remote gate was performed for rejected `8247ab74`.
+The correctness and resources reviewers subsequently became repair authors;
+they cannot serve as fresh reviewers of their replacement implementation.

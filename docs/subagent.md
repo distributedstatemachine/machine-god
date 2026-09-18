@@ -601,6 +601,12 @@ the original notice cleanup, not just durable archive publication or turn
 settlement. Retirement retains that exact observer and archived receipt across
 cleanup errors, shutdown and caller abandonment; an error cannot manufacture
 successful closure or undo the accepted archive.
+Foreground successor admission retains its original request and cancellation
+identity while previous actual cleanup or ordinary worker-cohort capacity is
+pending. Those waits are not terminal prompt failures. Once runtime admission
+takes a queued input, a terminal error consumes that input; it cannot execute
+later without a new submission. Interactive and ACP owners retain their prompt
+response lane throughout the wait, including cancellation.
 A child cancelling/closing itself receives the confirmed intent receipt before
 its own completion-wins tool returns, avoiding a dependency on its own terminal
 event; the manager retains the remaining settlement independently.
