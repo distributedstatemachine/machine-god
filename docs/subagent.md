@@ -581,6 +581,8 @@ journal operation slot. Configuration changes affect future accepted work only.
 Each queued work retains its own model, effort, permission mode and normalized
 notification policy. Runtime preparation for messages/resume/reopen uses the
 current authenticated caller's captured origin and rejects policy escalation.
+Resume restores the exact authorized FIFO-head work configuration, not newer
+child defaults; those defaults remain available for future message acceptance.
 Closing a nonresident child only restores an owner for saved-delivery repair and
 retirement, never for execution. That temporary owner's permission mode is the
 stricter of the saved child mode and current caller mode. The durable child

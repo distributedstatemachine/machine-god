@@ -16,6 +16,7 @@ mod notice_parent;
 mod notice_shutdown;
 mod observation;
 mod relationship;
+mod resume;
 pub(super) use fixture::Fixture;
 use futures_executor::block_on;
 use machine_god_core::{ManagedFailureCode, ManagedRequested, ManagedSubagentAuthority};

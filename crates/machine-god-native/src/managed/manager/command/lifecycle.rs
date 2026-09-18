@@ -47,7 +47,15 @@ pub(super) async fn execute(
             if !permitted(job.lease(), work.configuration.permission_mode) {
                 return Outcome::reject(job, &env.operation, ManagedFailureCode::PermissionDenied);
             }
-            let prepared = match prepare_if_needed(&env, &snapshot, Some(origin(job.lease()))).await
+            // Restore under the exact work policy just authorized, not defaults
+            // configured later for future messages. Keep those defaults durable.
+            let prepared = match prepare_if_needed(
+                &env,
+                &snapshot,
+                &work.configuration,
+                Some(origin(job.lease())),
+            )
+            .await
             {
                 Ok(value) => value,
                 Err(code) => return Outcome::reject(job, &env.operation, code),

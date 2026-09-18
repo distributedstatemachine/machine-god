@@ -1449,3 +1449,65 @@ tests. This completes local regression acceptance for a fresh whole-feature
 review; it is not remote acceptance, a performance claim or a causal explanation
 for the retained macOS failures. No deadlines, test selections or product source
 were changed for the passing macOS retry; external observation adds overhead.
+
+### R13 whole-feature review
+
+Three fresh independent read-only agents reviewed candidate
+`73c37802867e4492741204336201cf23f1108bfc` against actual remote base
+`7cadf2f2ea13ef392797903ad190c0ce3ba92654`. The candidate adds only this
+historical gate record and the implementation-plan transition to the fully
+gated product/test source. The documentation checker, ten documentation-policy
+tests and whitespace checks passed before review.
+
+- Correctness/API (`m65_r13_correctness`): one P2 finding. Resume authorizes the
+  frozen FIFO-head work configuration, but nonresident runtime preparation uses
+  the mutable child-head configuration instead. An accepted Ask work interrupted
+  before a later authorized Yolo configuration change can be resumed by an Ask
+  caller while resident, but the same caller receives `HostUnavailable` after
+  restart/eviction because factory selection checks the newer Yolo configuration.
+  Restore the authorized work's exact frozen configuration without changing the
+  saved defaults for future accepted work or weakening caller-policy admission.
+- Lifecycle/platform (`m65_r13_lifecycle`): zero established actionable findings
+  after tracing admission/settlement, workers, principal/MCP leases, preparation,
+  recovery, blocked input/output and interactive/one-shot/ACP shutdown. A proposed
+  maximum-millisecond Instant overflow was not established on supported platforms;
+  pinned Rust uses signed 64-bit seconds for Linux and macOS monotonic instants.
+- Performance/resources (`m65_r13_resources`): zero established actionable
+  findings after scheduler/dependency, residency, mailbox, journal accounting,
+  paging, notices, undo/MCP ownership and blocked-output inspection.
+
+This is source and test inspection, not new runtime measurements or Bugbot.
+The correctness finding rejects the candidate; no feature push or remote
+acceptance followed. All three clean review worktrees were removed after the
+reviews completed. The retained intermittent macOS failures remain unexplained.
+
+The repair regression first ran against unchanged production behavior. Its
+resident case passed, then the nonresident case captured the newer child name,
+model, effort and Yolo mode with an Ask caller origin instead of the exact frozen
+Ask work configuration. The separate frozen-policy escalation-denial regression
+passed. This is a manager/factory-request mismatch reproduction, not a composed
+production `HostUnavailable` observation. The red run exited 101 with one passed
+and one failed test; its log remains under
+`/tmp/mg-m65-r13-repair.11HqeQ/frozen-resume-red.log`.
+
+The repair makes restoration configuration explicit: Resume supplies the
+authorized work configuration, while new messages supply the current child
+defaults. Captured caller origin, escalation checks, publication custody and
+durable defaults are unchanged.
+
+Worker repair `f4f645a3` passed exact Rust 1.94.1 native all-feature test Clippy
+with warnings denied, formatting, both resume regressions, the separate actual
+factory restore regression, all 116 manager tests and all 22 shared-factory tests.
+The latter runtime groups ran serially with the explicitly selected production
+helper. The manager tests cover resident/nonresident/journal-owner restart,
+preserved future-message defaults and frozen-policy escalation denial. The
+factory test separately checks actual restore selection, transcript identity,
+policy rejection and absence of provider execution; it does not turn the manager
+double into a composed `HostUnavailable` reproduction.
+
+Initial test-accessor compilation errors and a fixture constructor's one-line
+Clippy overrun were corrected before these passes. The latter repair extracts
+identical private-directory setup without suppressing lint or changing effects.
+Logs and diagnostic excerpts remain under `/tmp/mg-m65-r13-repair.11HqeQ/`.
+These focused results are not replacement feature acceptance: the complete local
+gate, three fresh whole-feature reviews and exact remote gates remain required.

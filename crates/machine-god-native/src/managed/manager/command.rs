@@ -203,11 +203,17 @@ pub(super) fn execute(job: ManagedMailboxJob, env: Environment) -> BoxFuture<'st
                             ManagedFailureCode::PermissionDenied,
                         );
                     }
-                    let prepared =
-                        match prepare_if_needed(&env, &snapshot, Some(origin(job.lease()))).await {
-                            Ok(value) => value,
-                            Err(code) => return Outcome::reject(job, &env.operation, code),
-                        };
+                    let prepared = match prepare_if_needed(
+                        &env,
+                        &snapshot,
+                        &snapshot.head.configuration,
+                        Some(origin(job.lease())),
+                    )
+                    .await
+                    {
+                        Ok(value) => value,
+                        Err(code) => return Outcome::reject(job, &env.operation, code),
+                    };
                     let Some(sequence) = snapshot.head.revision.checked_add(1) else {
                         return with_rejected_preparation(
                             job,
@@ -336,6 +342,7 @@ fn permitted(lease: &ManagedCommandActor, requested: ManagedPermissionMode) -> b
 async fn prepare_if_needed(
     env: &Environment,
     snapshot: &JournalSnapshot,
+    configuration: &ManagedConfiguration,
     origin: Option<ManagedRuntimeOrigin>,
 ) -> Result<Option<PreparedManagedRuntime>, ManagedFailureCode> {
     if env
@@ -356,7 +363,7 @@ async fn prepare_if_needed(
             generation: snapshot.head.generation,
             transcript: snapshot.head.transcript.clone(),
             journal_owner: env.owner.clone(),
-            configuration: snapshot.head.configuration.clone(),
+            configuration: configuration.clone(),
             origin,
             now_ms: env.now_ms,
         },

@@ -46,6 +46,52 @@ fn close(mut child: PreparedManagedRuntime) {
 }
 
 #[test]
+fn restore_applies_exact_frozen_selection_and_rejects_captured_policy_escalation() {
+    let f = FactoryFixture::new();
+    let mut request = f.request("frozen-resume");
+    request.configuration.model = Some("fixture/frozen".into());
+    request.configuration.effort = Some("low".into());
+    request.origin.as_mut().unwrap().policy = NativePermissionPolicySnapshot::new(
+        PermissionMode::Ask,
+        Arc::new(NativeConfiguredPermissionRules::default()),
+    );
+    let child = f.prepare(request.clone());
+    let original = child.runtime.record();
+    close(child);
+    request.kind = ManagedRuntimePreparationKind::Restore;
+    // A later child default cannot be restored under this admitted Ask caller.
+    // This checks the production factory boundary used by manager Resume.
+    let mut future_default = request.clone();
+    future_default.configuration.permission_mode = ManagedPermissionMode::Yolo;
+    future_default.configuration.model = Some("fixture/future".into());
+    future_default.configuration.effort = Some("high".into());
+    assert!(matches!(
+        block_on(f.factory.prepare(future_default, CancellationToken::new())),
+        Err(ManagedRuntimeError::Invalid)
+    ));
+    let restored = f.prepare(request);
+    assert_eq!(restored.runtime.record(), original);
+    assert_eq!(
+        restored.runtime.model_preferences().model(),
+        "fixture/frozen"
+    );
+    assert_eq!(restored.runtime.model_preferences().effort().label(), "low");
+    assert_eq!(
+        restored
+            .runtime
+            .permissions()
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .mode(),
+        PermissionMode::Ask
+    );
+    assert!(!restored.runtime.status().active);
+    assert!(f.host.transport.requests.lock().unwrap().is_empty());
+    close(restored);
+}
+
+#[test]
 fn restore_rejects_held_session_lock_without_blocking_or_replacing_transcript() {
     let f = FactoryFixture::new();
     let mut request = f.request("controlled-restore");

@@ -22,7 +22,7 @@ use machine_god_testkit::{
 };
 use std::{
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{
         Mutex,
@@ -69,6 +69,7 @@ pub(in crate::managed::manager) struct Factory {
     next: AtomicU64,
     pub prepared: AtomicU64,
     pub prepared_modes: Mutex<Vec<ManagedPermissionMode>>,
+    pub prepared_configurations: Mutex<Vec<(ManagedConfiguration, Option<PermissionMode>)>>,
     pub cleanup: Arc<AtomicBool>,
     pub close_error: Arc<AtomicBool>,
     pub ambiguous: AtomicBool,
@@ -97,6 +98,10 @@ impl ManagedRuntimeFactory for Arc<Factory> {
         let this = self.clone();
         Box::pin(async move {
             this.prepared.fetch_add(1, Ordering::Relaxed);
+            this.prepared_configurations.lock().unwrap().push((
+                request.configuration.clone(),
+                request.origin.as_ref().map(|origin| origin.policy.mode()),
+            ));
             this.prepared_modes
                 .lock()
                 .unwrap()
@@ -281,6 +286,10 @@ pub(in crate::managed::manager) struct Fixture {
 pub(super) fn preferences() -> NativeModelPreferences {
     NativeModelPreferences::new("model", NativeReasoningEffort::default(), false).unwrap()
 }
+fn private_directory(path: &Path) {
+    std::fs::create_dir(path).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
 impl Fixture {
     pub(super) fn journal_pages(&self) -> Vec<PathBuf> {
         std::fs::read_dir(self.path.join("journal"))
@@ -424,13 +433,10 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir(&path).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        private_directory(&path);
         let path = std::fs::canonicalize(path).unwrap();
         for name in ["workspace", "state", "journal", "archive"] {
-            std::fs::create_dir(path.join(name)).unwrap();
-            std::fs::set_permissions(path.join(name), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
+            private_directory(&path.join(name));
         }
         let workspace = NativeWorkspaceAuthority::open_blocking(
             std::fs::File::open(path.join("workspace")).unwrap().into(),
@@ -466,6 +472,7 @@ impl Fixture {
             next: AtomicU64::new(1),
             prepared: AtomicU64::new(0),
             prepared_modes: Mutex::default(),
+            prepared_configurations: Mutex::default(),
             cleanup: Arc::new(AtomicBool::new(true)),
             close_error: Arc::new(AtomicBool::new(false)),
             ambiguous: AtomicBool::new(false),
@@ -522,6 +529,13 @@ impl Fixture {
     pub(super) fn invocation(
         &self,
         command: serde_json::Value,
+    ) -> (Admission, ManagedSubagentInvocation) {
+        self.invocation_with_mode(command, PermissionMode::Ask)
+    }
+    fn invocation_with_mode(
+        &self,
+        command: serde_json::Value,
+        mode: PermissionMode,
     ) -> (Admission, ManagedSubagentInvocation) {
         let arguments =
             serde_json::Value::Object(serde_json::Map::from_iter([("command".into(), command)]));
@@ -586,7 +600,7 @@ impl Fixture {
             .begin_turn(
                 &turn,
                 NativePermissionPolicySnapshot::new(
-                    PermissionMode::Ask,
+                    mode,
                     Arc::new(NativeConfiguredPermissionRules::default()),
                 ),
                 preferences(),
@@ -618,7 +632,14 @@ impl Fixture {
         }));
     }
     pub fn command(&mut self, command: serde_json::Value) -> ManagedSubagentResult {
-        let (_admission, invocation) = self.invocation(command);
+        self.command_with_mode(command, PermissionMode::Ask)
+    }
+    pub fn command_with_mode(
+        &mut self,
+        command: serde_json::Value,
+        mode: PermissionMode,
+    ) -> ManagedSubagentResult {
+        let (_admission, invocation) = self.invocation_with_mode(command, mode);
         let requester = self.requester.clone();
         let mut response = requester.execute(invocation, CancellationToken::new());
         block_on(std::future::poll_fn(|cx| {
@@ -672,8 +693,7 @@ impl Fixture {
         // An empty stand-in lets the fixture release every original manager
         // and journal lease before reopening the same actual directory.
         let standby = self.path.join("journal-standby");
-        std::fs::create_dir(&standby).unwrap();
-        std::fs::set_permissions(&standby, std::fs::Permissions::from_mode(0o700)).unwrap();
+        private_directory(&standby);
         let standby = block_on(ManagedJournal::open(
             std::fs::File::open(standby).unwrap().into(),
             self.workers.clone(),
