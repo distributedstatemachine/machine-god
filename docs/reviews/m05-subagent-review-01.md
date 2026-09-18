@@ -1175,3 +1175,53 @@ overview with the normative contracts; it changes no product source or test
 behavior. Its bounded documentation checks are separate from the exact behavior
 gate above, under the repository's documentation-maintenance exemption. Fresh
 whole-feature review and remote acceptance remain required.
+
+### R12 whole-feature review
+
+Three fresh independent read-only agents reviewed candidate
+`741bcb0b808339370e155b4894ff2cf4168d59cc` against actual remote base
+`7cadf2f2ea13ef392797903ad190c0ce3ba92654`. The candidate differs from the
+fully gated `e432242b` only in the implementation plan, this review record and
+the security overview; an explicit non-documentation tree comparison was empty.
+The existing documentation checker, all ten documentation-policy tests and
+diff whitespace checks passed. No additional Rust gate was required for those
+documentation-only descendants.
+
+- Correctness/API (`m65_r12_correctness`): zero established actionable findings
+  after tracing commands/results, actual invocation and principal claims, FIFO,
+  lifecycle/recovery, frozen policy, relationships, inspection, notice delivery
+  and shared-host/CLI/ACP composition.
+- Lifecycle/platform (`m65_r12_lifecycle`): one P2 finding. A transient original
+  notice-outbox-clear failure parks its exact future behind the manager retry
+  fence. The existing `shutdown_clear_committed_error_requires_original_retry`
+  fixture demonstrates that shutdown cannot finish before explicit retry.
+  Production interactive, one-shot and ACP retirement loops neither consume the
+  blocked status nor invoke the native reconciliation retry API. Storage can
+  recover while EOF/quit still waits indefinitely. Repair must retain the
+  original receipt/owner, distinguish pending workers from recovery-required
+  fences, and provide usable interactive and deliberate headless recovery without
+  model-work replay or premature cleanup success.
+- Performance/resources (`m65_r12_resources`): one P2 finding.
+  `Reservation::refresh` in `managed/store/transaction.rs` rescans every retained
+  page and rereads every head after each confirmed journal publication, under
+  the exclusive operation slot. Repeated append cost grows with lifetime history,
+  delaying unrelated commands, tool observations and durable cancellation intents.
+  Repair must preserve exact byte/entry/orphan and settlement/ACK accounting while
+  removing full-history scans from ordinary successful publications.
+
+The resource reviewer ran an authorized standalone macOS diagnostic reproducing
+directory iteration and page `openat`, three `fstat`, `fstatat` and `close` calls.
+Private page stand-ins fit the accounting path; the scan does not read page
+payloads. At 1,000/8,000/32,000/64,000 entries, observed scan times were
+24–27 ms / 219–270 ms / 1.19–1.67 s / 2.64–3.34 s. These are not product
+benchmark measurements: ACL checks, head decoding, publication/sync and scheduling
+were omitted. Source and results remain in
+`/tmp/mg-r12-scan-diagnostic.dWNArv`; generated fixture files were removed after
+measurement and can be regenerated. No product files or build inputs changed.
+
+Both findings reject the candidate. These reviews were source/caller/test
+inspection, with the separately scoped diagnostic above, not Bugbot or new
+runtime-suite acceptance. All three clean review worktrees were removed; no
+candidate push or remote acceptance followed. Repair work is separated into
+journal accounting and native/CLI/ACP recovery lanes. The replacement requires
+regressions, the complete local gate and three new whole-feature reviewers.
