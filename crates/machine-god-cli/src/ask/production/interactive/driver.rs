@@ -363,7 +363,10 @@ impl Driver {
         let status = self.owner.runtime().status();
         super::composer::ComposerContext {
             active_response: status.active || status.queued_jobs != 0,
-            recovery_required: self.recovery_required(),
+            managed_recovery: self
+                .owner
+                .managed_progress()
+                .and_then(|progress| progress.recovery_required),
             session_picker: self.picker_open(),
             agents: self.owner.managed_navigation().is_some() && self.modal.is_none(),
             agent_history: self

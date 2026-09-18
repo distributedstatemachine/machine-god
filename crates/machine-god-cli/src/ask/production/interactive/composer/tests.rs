@@ -118,6 +118,28 @@ fn history_detail_keys_are_contextual_and_never_escape_atomic_paste() {
 }
 
 #[test]
+fn recovery_shortcut_requires_native_status_and_never_escapes_paste() {
+    let mut editor = Composer::default();
+    let normal = ComposerContext::default();
+    assert!(editor.feed(b"\x12", normal).1.is_none());
+    let recovery = ComposerContext {
+        managed_recovery: Some(machine_god_native::NativeManagedRecoveryReason::NoticeOutboxClear),
+        ..normal
+    };
+    assert!(matches!(
+        editor.feed(b"\x12", recovery).1,
+        Some(ComposerEvent::FormRefreshRequested)
+    ));
+    let mut input = b"\x1b[200~\x12\x1b[201~".as_slice();
+    while !input.is_empty() {
+        let (consumed, event) = editor.feed(input, recovery);
+        assert!(consumed > 0);
+        assert!(!matches!(event, Some(ComposerEvent::FormRefreshRequested)));
+        input = &input[consumed..];
+    }
+}
+
+#[test]
 fn agent_history_page_keys_do_not_escape_paste_or_change_drafts() {
     let mut editor = Composer::default();
     feed(&mut editor, b"draft", false);

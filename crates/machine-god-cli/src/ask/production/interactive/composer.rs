@@ -27,7 +27,7 @@ pub(super) enum AgentMenu {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct ComposerContext {
     pub active_response: bool,
-    pub recovery_required: bool,
+    pub managed_recovery: Option<machine_god_native::NativeManagedRecoveryReason>,
     pub session_picker: bool,
     pub agents: bool,
     pub agent_history: Option<machine_god_native::NativeManagedHistoryMode>,
@@ -414,7 +414,7 @@ impl Composer {
             15 if context.agents && context.agent_form.is_none() => {
                 Some(ComposerEvent::HistoryToggle)
             }
-            18 if context.recovery_required
+            18 if context.managed_recovery.is_some()
                 || context.agent_form.is_some()
                 || context.agent_menu == Some(AgentMenu::Models) =>
             {
