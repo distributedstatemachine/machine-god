@@ -1070,3 +1070,13 @@ fixture's direct journal inspection raced the manager's serialized replay read
 and returned `Busy`. The close fixtures now establish journal-lane idleness
 before direct inspection or fault injection; retired-child state alone is not
 that proof. Product behavior and resource gates are unchanged.
+
+Candidate `77316dc2` passed both platform builds, static/platform checks and the
+new R10 focused regressions. Its broader Linux focused run then rejected the
+older `foreground_next_turn_waits_for_original_run_settlement` fixture: it
+expected a failed raw-runtime admission to retain its input for later replay.
+The runtime contract already forbids requeuing failed or dropped admissions.
+The corrected fixture verifies consumption, no provider call after cleanup
+without resubmission, and an exact fresh prompt without the rejected input in
+provider history. Interactive/ACP owners separately retain pending admission
+and response identity; their four cleanup/capacity regressions passed.

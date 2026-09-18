@@ -315,7 +315,7 @@ fn foreground_retirement_is_allocation_bound_and_waits_for_actual_cleanup() {
 }
 
 #[test]
-fn foreground_next_turn_waits_for_original_run_settlement() {
+fn foreground_failed_admission_cannot_replay_after_original_run_settlement() {
     let mut f = Fixture::new(vec![completed(), completed()]);
     let prepared = prepare(&f, "foreground");
     let selected = enroll(&mut f, prepared);
@@ -332,14 +332,31 @@ fn foreground_next_turn_waits_for_original_run_settlement() {
     runtime.enqueue("second".into()).unwrap();
     assert!(block_on(runtime.start_next(3)).is_err());
     assert_eq!(f.factory.provider.requests().len(), 1);
-    assert_eq!(runtime.status().queued_jobs, 1);
+    assert_eq!(runtime.status().queued_jobs, 0);
     f.factory.cleanup.store(true, Ordering::Release);
     f.manager
         .poll_foregrounds(&mut Context::from_waker(Waker::noop()))
         .unwrap();
-    let turn = block_on(runtime.start_next(4)).unwrap().unwrap();
+    // The raw runtime rejects an unsettled owner. Unlike the interactive
+    // owner, it does not retain a response lane and must not replay that input.
+    assert!(block_on(runtime.start_next(4)).unwrap().is_none());
+    assert_eq!(f.factory.provider.requests().len(), 1);
+    runtime.enqueue("resubmitted".into()).unwrap();
+    let turn = block_on(runtime.start_next(5)).unwrap().unwrap();
     assert!(block_on(turn.collect::<Vec<_>>()).iter().all(Result::is_ok));
-    assert_eq!(f.factory.provider.requests().len(), 2);
+    let requests = f.factory.provider.requests();
+    assert_eq!(requests.len(), 2);
+    let user_messages: Vec<_> = requests[1]
+        .messages
+        .iter()
+        .filter(|message| message.role == machine_god_core::Role::User)
+        .cloned()
+        .collect();
+    assert_eq!(
+        user_messages,
+        ["first", "resubmitted"]
+            .map(|text| machine_god_core::Message::text(machine_god_core::Role::User, text))
+    );
 }
 
 #[test]
