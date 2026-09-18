@@ -598,9 +598,10 @@ available does not automatically retry an uncertain publication. Cancellation
 intent precedes the signal, and ordinary lifecycle observers wait for settlement.
 An ordinary close receipt also waits for actual principal/resource closure and
 the original notice cleanup, not just durable archive publication or turn
-settlement. Retirement retains that exact observer and archived receipt across
-cleanup errors, shutdown and caller abandonment; an error cannot manufacture
-successful closure or undo the accepted archive.
+settlement. Retirement retains the exact accepted job and archived receipt across
+cleanup errors, shutdown and caller abandonment. Shutdown rejects still-pending
+mailbox observers with `Unavailable`, but retains actual cleanup custody until
+settled; this rejection is not close success and cannot undo the accepted archive.
 Foreground successor admission retains its original request and cancellation
 identity while previous actual cleanup or ordinary worker-cohort capacity is
 pending. Those waits are not terminal prompt failures. Once runtime admission

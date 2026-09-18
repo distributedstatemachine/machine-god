@@ -86,7 +86,7 @@ fn close_preserves_original_observer_and_archive_across_cleanup_error() {
 }
 
 #[test]
-fn shutdown_retains_accepted_close_until_actual_resource_closure() {
+fn shutdown_rejects_close_observer_but_retains_actual_cleanup_custody() {
     let mut fixture = Fixture::new(vec![]);
     assert!(
         fixture
@@ -105,14 +105,26 @@ fn shutdown_retains_accepted_close_until_actual_resource_closure() {
     assert!(response.as_mut().poll(&mut cx).is_pending());
     fixture.drive(|f| f.manager.children.is_empty() && f.manager.retiring.len() == 1);
     assert!(fixture.manager.poll_shutdown(&mut cx, 100).is_pending());
-    assert!(response.as_mut().poll(&mut cx).is_pending());
+    assert!(matches!(
+        response.as_mut().poll(&mut cx),
+        Poll::Ready(Err(machine_god_core::ManagedSubagentError::Unavailable))
+    ));
+    // Mailbox closure rejects observation, not the already-accepted job or
+    // its resource ownership. In particular it never reports close success.
+    assert!(fixture.manager.retiring[0].completion.is_some());
     fixture.factory.cleanup.store(true, Ordering::Release);
     block_on(std::future::poll_fn(|cx| {
         fixture.manager.poll_shutdown(cx, 101)
     }))
     .unwrap();
-    assert!(block_on(response).unwrap().ok);
     assert!(fixture.manager.retiring.is_empty());
+    assert_eq!(
+        block_on(fixture.journal.inspect("child-1".into()))
+            .unwrap()
+            .head
+            .status,
+        ManagedAgentState::Archived
+    );
 }
 
 #[test]

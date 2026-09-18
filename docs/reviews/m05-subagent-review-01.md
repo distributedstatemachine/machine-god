@@ -1054,3 +1054,14 @@ parent checkpoint, source ACK and outbox clear. External inspection output
 bounds remain unchanged. These component commits require integrated green
 validation and a new independent review cycle; no acceptance is inferred from
 the earlier candidate's passing gate.
+
+On `ea9bae2c`, deterministic Linux close tests passed ordinary closure,
+cleanup-error retention and abandoned-observer custody. The new shutdown test
+incorrectly expected a pending observer after mailbox closure. Existing mailbox
+and saved-lifecycle contracts instead reject that observer with `Unavailable`
+while retaining the accepted job's actual cleanup custody. The fixture now
+asserts that rejection, retained job, pending shutdown and eventual archived
+settlement; production shutdown behavior is unchanged. Both oversized-history
+regressions passed, including composed inspection/restart replay/source ACK.
+Logs are `managed-r10-pure-focused-linux-ea9bae2c.log` (three passed, one fixture
+failure) and `managed-r10-history-focused-linux-ea9bae2c.log` (both passed).
