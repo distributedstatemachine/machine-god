@@ -347,6 +347,7 @@ fn foreground_failed_admission_cannot_replay_after_original_run_settlement() {
     let requests = f.factory.provider.requests();
     assert_eq!(requests.len(), 2);
     let user_messages: Vec<_> = requests[1]
+        .request
         .messages
         .iter()
         .filter(|message| message.role == machine_god_core::Role::User)

@@ -1090,3 +1090,7 @@ after establishing this dependency in source. The fixture now retains the
 pending original response, checks competing close/reopen fencing and inspection,
 then releases cleanup before asserting the original success. The diagnostic is
 not a passing gate; no production deadline or close-settlement guarantee changed.
+The first compile of the strengthened prompt-history assertion (`127ad716`)
+caught a testkit wrapper field error; the assertion now reads the recorded
+request's `request.messages`. Static and platform checks passed on that rejected
+candidate; runtime acceptance still requires the corrected candidate's gate.
