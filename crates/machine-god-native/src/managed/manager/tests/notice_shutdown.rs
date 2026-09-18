@@ -31,6 +31,7 @@ struct Control {
     error_next: AtomicBool,
     clear_started: AtomicUsize,
     saves: AtomicUsize,
+    loads: AtomicUsize,
     wake: AtomicWaker,
 }
 impl Control {
@@ -48,7 +49,10 @@ impl SessionStore for ControlledStore {
         &self,
         id: SessionId,
     ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
-        self.inner.load(id)
+        Box::pin(async move {
+            self.control.loads.fetch_add(1, Ordering::AcqRel);
+            self.inner.load(id).await
+        })
     }
     fn save(
         &self,
@@ -603,75 +607,13 @@ fn shutdown_clear_committed_error_requires_original_retry() {
 }
 
 #[cfg(feature = "ai-gateway-http")]
+#[path = "notice_shutdown/host_policy.rs"]
+mod host_policy;
+
+#[cfg(feature = "ai-gateway-http")]
 #[test]
 fn host_policy_retries_original_committed_clear_at_bounded_rate_during_shutdown() {
-    use crate::mcp::runtime::NativeMcpRuntimeClock;
-    use std::{
-        sync::Mutex,
-        time::{Duration, Instant},
-    };
-    struct Clock {
-        now: Mutex<Instant>,
-        wake: AtomicWaker,
-    }
-    impl NativeMcpRuntimeClock for Clock {
-        fn now(&self) -> Instant {
-            *self.now.lock().unwrap()
-        }
-        fn sleep_until(&self, deadline: Instant) -> BoxFuture<'_, ()> {
-            Box::pin(std::future::poll_fn(move |cx| {
-                self.wake.register(cx.waker());
-                if self.now() >= deadline {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            }))
-        }
-    }
-    let clock = Arc::new(Clock {
-        now: Mutex::new(Instant::now()),
-        wake: AtomicWaker::new(),
-    });
-    let mut recovery = crate::reference_host::ManagedRecovery::new(clock.clone());
-    let (mut f, store, control) = fixture();
-    control.error_clear.store(true, Ordering::Release);
-    send(&mut f);
-    f.drive(|f| f.manager.progress().recovery_required == Some(ManagerBlock::NoticeClear));
-    let receipt = context(&f).delivery().unwrap();
-    let prepared = f.factory.prepared.load(Ordering::Acquire);
-    let requests = f.factory.provider.requests().len();
-    assert!(!has_outbox(&store));
-    assert!(!receipt.is_cleared());
-    f.manager.request_shutdown();
-    let mut cx = Context::from_waker(Waker::noop());
-    // Persistent failures keep the same owner, receipt and residency reservation.
-    for _ in 0..3 {
-        let before = control.saves.load(Ordering::Acquire);
-        control.error_next.store(true, Ordering::Release);
-        recovery.poll(&f.manager, &mut cx);
-        *clock.now.lock().unwrap() += Duration::from_millis(999);
-        for _ in 0..64 {
-            assert!(f.manager.poll_shutdown(&mut cx, 101).is_pending());
-            recovery.poll(&f.manager, &mut cx);
-        }
-        assert_eq!(control.saves.load(Ordering::Acquire), before);
-        assert!(f.manager.progress().residents > 0);
-        *clock.now.lock().unwrap() += Duration::from_millis(1);
-        clock.wake.wake();
-        recovery.poll(&f.manager, &mut cx);
-        f.drive(|f| f.manager.progress().recovery_required == Some(ManagerBlock::NoticeClear));
-        assert_eq!(control.saves.load(Ordering::Acquire), before + 1);
-        assert!(!receipt.is_cleared());
-    }
-    recovery.poll(&f.manager, &mut cx);
-    *clock.now.lock().unwrap() += Duration::from_secs(1);
-    recovery.poll(&f.manager, &mut cx);
-    shutdown(&mut f);
-    assert!(receipt.is_cleared());
-    assert_eq!(f.factory.prepared.load(Ordering::Acquire), prepared);
-    assert_eq!(f.factory.provider.requests().len(), requests);
-    assert_eq!(f.manager.progress().residents, 0);
+    host_policy::run();
 }
 
 #[test]

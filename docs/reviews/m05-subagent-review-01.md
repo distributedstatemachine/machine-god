@@ -1246,3 +1246,18 @@ one-shot, ACP retirement and raw CLI owners. Raw cases retain an unacknowledged
 output frame and exercise recovery input or EOF; these are composed-driver tests,
 not claims of a live-provider production-executable fault injection.
 These implementation records do not establish runtime or replacement acceptance.
+
+Candidate `311ea3b6` passed exact Linux compilation/release preparation and 33
+focused accounting, capacity, retry-state, input, manual-recovery and event/history
+tests. Static and platform checks passed. Its new injected-clock test failed:
+after an already-committed clear returned an error, the first retry reconciles the
+newer stored revision and rejects the stale expected revision without saving.
+The test incorrectly expected a save on that first tick. An uncaptured diagnostic
+reported `saves: 6 != 7`; fixture shutdown then parked during panic unwinding.
+Both confirmed-failed test processes were explicitly terminated and their logs
+retained. This rejects the candidate; neither quiet waiting nor termination is a
+passing test result. Repair must exercise separate rate-limited revision-repair
+and save steps with observable failure diagnostics, preserving the original
+receipt and actual successful cleanup. It must not bypass automatic recovery by
+manually refreshing the session revision, or change production retry behavior to
+satisfy the incorrect expectation.
