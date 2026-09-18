@@ -991,6 +991,23 @@ That headroom survives an orphaned staging file so a full journal remains
 readable and can be reopened. Capacity rejection leaves the original head and
 receipt state untouched; orphan files remain charged after reconciliation.
 
+Confirmed publication updates accounting from only the touched head, immutable
+page and their deterministic staging names (at most four distinct names), before
+and after publication. It does not enumerate historical files or retain a
+lifetime-sized index. Exact deltas include physical bytes/entries, the old/new
+head's settlement and source-ACK credits, and the count of low-headroom heads.
+Reused orphan pages and staging names are charged once. Accounting uncertainty
+retains the original receipt; reconciliation reconstructs and replaces totals,
+including when a later inspection fails after the delta was already applied.
+
+An unexplained directory revision change fences new writes until exclusive
+reopen reconstructs the inventory. Read-only inspection and bounded history
+remain available, preserving missing-page errors and restored-page reads.
+This cached accounting is not a forensic audit of unrelated in-place changes by
+an equivalent-authority filesystem writer; touched files and referenced pages
+still receive their exact validation. Startup and uncertain reconciliation retain
+the bounded full inventory scan. No storage limit or protected credit is reduced.
+
 Acceptance also preserves the configured four-head/eight-page operation allowance
 and persisted byte/entry credits for already-accepted settlement. An active FIFO
 reserves ten bounded 256 KiB cleanup publications, four future source-ACK envelopes,

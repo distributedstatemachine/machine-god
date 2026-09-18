@@ -8,6 +8,7 @@ use rustix::fs::{Mode, OFlags};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::AtomicU64;
 
+mod accounting;
 mod byte_capacity;
 mod cancellation;
 mod directory_capacity;
@@ -29,7 +30,24 @@ pub(super) enum FailurePoint {
     AfterPageRename,
     BeforeHeadRename,
     AfterHeadRename,
+    AfterAccountingCommit,
     ReconcileSync,
+}
+
+thread_local! {
+    static ACCOUNTING_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+pub(super) fn accounting_entry_observed() {
+    ACCOUNTING_WORK.with(|work| {
+        let (scans, entries) = work.get();
+        work.set((scans, entries + 1));
+    });
+}
+pub(super) fn accounting_scan_started() {
+    ACCOUNTING_WORK.with(|work| {
+        let (scans, entries) = work.get();
+        work.set((scans + 1, entries));
+    });
 }
 pub(super) fn checkpoint(shared: &Shared, point: FailurePoint) -> Result<(), JournalError> {
     let mut fault = shared.failure.lock().unwrap();
@@ -648,6 +666,7 @@ fn every_publication_phase_retains_ambiguity_until_exact_durability_repair() {
         FailurePoint::AfterPageRename,
         FailurePoint::BeforeHeadRename,
         FailurePoint::AfterHeadRename,
+        FailurePoint::AfterAccountingCommit,
     ] {
         let fixture = Fixture::new();
         let journal = fixture.open();
@@ -671,14 +690,21 @@ fn every_publication_phase_retains_ambiguity_until_exact_durability_repair() {
         let repaired = block_on(journal.reconcile(receipt)).unwrap();
         assert_eq!(
             matches!(repaired, JournalPublication::Confirmed(_)),
-            phase == FailurePoint::AfterHeadRename
+            matches!(
+                phase,
+                FailurePoint::AfterHeadRename | FailurePoint::AfterAccountingCommit
+            )
         );
         assert_eq!(
             matches!(repaired, JournalPublication::NotApplied),
-            phase != FailurePoint::AfterHeadRename
+            !matches!(
+                phase,
+                FailurePoint::AfterHeadRename | FailurePoint::AfterAccountingCommit
+            )
         );
         assert!(journal.pending_receipt().is_none());
         assert_eq!(journal.shared.state.lock().unwrap().reserved, 0);
+        accounting::assert_matches_inventory(&journal);
     }
 }
 

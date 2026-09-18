@@ -146,6 +146,7 @@ fn exact_settlement_entry_credits_leave_exhausted_journal_readable() {
             .unwrap(),
         );
         originals.push(original);
+        accounting::assert_matches_inventory(&journal);
     }
     // Six other bounded owned writes use the rest of the ten-publication pool.
     for _ in 0..4 {
@@ -165,6 +166,7 @@ fn exact_settlement_entry_credits_leave_exhausted_journal_readable() {
     assert_eq!(snapshot.head.revision, interrupted_revision);
     snapshot = confirmed(block_on(journal.mutate(snapshot, JournalMutation::Recover)).unwrap());
     assert_eq!(snapshot.head.cleanup_entries, 0);
+    accounting::assert_matches_inventory(&journal);
     assert_eq!(snapshot.head.notice_reservations.len(), 4);
     for original in originals {
         snapshot = confirmed(
@@ -184,6 +186,7 @@ fn exact_settlement_entry_credits_leave_exhausted_journal_readable() {
             ))
             .unwrap(),
         );
+        accounting::assert_matches_inventory(&journal);
     }
     assert!(snapshot.head.notice_reservations.is_empty());
     assert_eq!(std::fs::read_dir(&fixture.path).unwrap().count(), 18);

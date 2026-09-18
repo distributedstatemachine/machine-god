@@ -214,7 +214,7 @@ pub(in crate::managed::store) fn ordinary_available(shared: &Shared) -> bool {
         + shared.limits.head_bytes
         + acknowledgement_unit(shared.limits)
         + 2 * FILE_OVERHEAD;
-    !state.headroom_low
+    state.headroom_low_heads == 0
         && state
             .used
             .checked_add(state.protected_bytes)

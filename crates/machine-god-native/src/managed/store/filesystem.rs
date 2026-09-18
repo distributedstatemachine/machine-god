@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::sync::Arc;
 
+mod accounting;
+pub(super) use accounting::{PublicationAccounting, Usage, scan_usage};
+
 const READ: OFlags = OFlags::RDONLY
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC)
@@ -69,6 +72,9 @@ fn revision(file: &impl rustix::fd::AsFd) -> Result<[i128; 11], Error> {
         i128::from(stat.st_gid),
     ])
 }
+pub(super) fn directory_revision(root: &OwnedFd) -> Result<[i128; 11], Error> {
+    revision(root)
+}
 pub(super) fn validate_source(root: &OwnedFd, name: &str, source: &Source) -> Result<(), Error> {
     validate_private(&source.file, false).map_err(|_| Error::Invalid)?;
     validate_link(root, name, &source.file).map_err(|_| Error::Conflict)?;
@@ -89,6 +95,9 @@ fn hex(bytes: &[u8]) -> String {
     }
     result
 }
+pub(super) fn temporary_name(bytes: &[u8]) -> String {
+    format!("t-{}.tmp", hex(&digest(bytes)))
+}
 pub(super) fn head_name(id: &str) -> String {
     format!("h-{}.json", hex(&digest(id.as_bytes())))
 }
@@ -105,7 +114,7 @@ pub(super) fn page_name(reference: &super::JournalPageRef) -> String {
 pub(super) fn acquire(
     root: &OwnedFd,
     limits: JournalLimits,
-) -> Result<(OwnedFd, Usage, u64), Error> {
+) -> Result<(OwnedFd, Usage, u64, [i128; 11]), Error> {
     validate_private(root, true).map_err(|_| Error::Invalid)?;
     let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
     let owner = match rustix::fs::openat(
@@ -144,8 +153,12 @@ pub(super) fn acquire(
         return Err(Error::Limit);
     }
     let epoch = advance_epoch(root, &owner)?;
+    let namespace_revision = directory_revision(root)?;
     let used = scan_usage(root, limits)?;
-    Ok((owner, used, epoch))
+    if directory_revision(root)? != namespace_revision {
+        return Err(Error::Conflict);
+    }
+    Ok((owner, used, epoch, namespace_revision))
 }
 
 fn advance_epoch(root: &OwnedFd, owner: &OwnedFd) -> Result<u64, Error> {
@@ -194,80 +207,6 @@ fn advance_epoch(root: &OwnedFd, owner: &OwnedFd) -> Result<u64, Error> {
 pub(super) fn validate_owner(shared: &Shared) -> Result<(), Error> {
     validate_private(&shared.root, true).map_err(|_| Error::Invalid)?;
     validate_link(&shared.root, OWNER, &shared.owner_lock).map_err(|_| Error::Conflict)
-}
-
-pub(super) struct Usage {
-    pub bytes: usize,
-    pub entries: usize,
-    pub protected_bytes: usize,
-    pub protected_entries: usize,
-    pub headroom_low: bool,
-}
-
-pub(super) fn scan_usage(root: &OwnedFd, limits: JournalLimits) -> Result<Usage, Error> {
-    let directory = rustix::fs::openat(root, ".", READ | OFlags::DIRECTORY, Mode::empty())
-        .map_err(|_| Error::Persistence)?;
-    let mut stream = Dir::new(directory).map_err(|_| Error::Persistence)?;
-    let mut count = 0;
-    let mut used = 0_usize;
-    let mut protected_bytes = 0_usize;
-    let mut protected_entries = 0_usize;
-    let mut headroom_low = false;
-    for entry in &mut stream {
-        let entry = entry.map_err(|_| Error::Persistence)?;
-        let name = entry.file_name();
-        let bytes = name.to_bytes();
-        if bytes == b"." || bytes == b".." {
-            continue;
-        }
-        count += 1;
-        if count > limits.directory_entries {
-            return Err(Error::Limit);
-        }
-        let name = std::str::from_utf8(bytes).map_err(|_| Error::Invalid)?;
-        if name != OWNER
-            && name != EPOCH
-            && !(name.starts_with("h-") || name.starts_with("p-") || name.starts_with("t-"))
-        {
-            return Err(Error::Invalid);
-        }
-        let fd = rustix::fs::openat(root, name, READ, Mode::empty()).map_err(|_| Error::Invalid)?;
-        validate_private(&fd, false).map_err(|_| Error::Invalid)?;
-        validate_link(root, name, &fd).map_err(|_| Error::Conflict)?;
-        let stat = rustix::fs::fstat(&fd).map_err(|_| Error::Persistence)?;
-        let length = usize::try_from(stat.st_size).map_err(|_| Error::Limit)?;
-        used = used
-            .checked_add(length)
-            .and_then(|n| n.checked_add(FILE_OVERHEAD))
-            .ok_or(Error::Limit)?;
-        if used > limits.aggregate_bytes {
-            return Err(Error::Limit);
-        }
-        if name.starts_with("h-") {
-            let bytes = read(root, name, limits.head_bytes)?.ok_or(Error::Conflict)?;
-            let head: super::JournalHead =
-                serde_json::from_slice(&bytes).map_err(|_| Error::Invalid)?;
-            if head_name(&head.id) != name {
-                return Err(Error::Invalid);
-            }
-            let protection = super::transaction::capacity::Protection::from_head(&head, limits)?;
-            protected_bytes = protected_bytes
-                .checked_add(protection.bytes)
-                .ok_or(Error::Limit)?;
-            protected_entries = protected_entries
-                .checked_add(protection.entries)
-                .ok_or(Error::Limit)?;
-            headroom_low |= bytes.len().saturating_add(4096) > limits.head_bytes
-                || head.notice_reservations.len() >= 4092;
-        }
-    }
-    Ok(Usage {
-        bytes: used,
-        entries: count,
-        protected_bytes,
-        protected_entries,
-        headroom_low,
-    })
 }
 
 pub(super) fn head_candidates(
@@ -375,7 +314,7 @@ pub(super) fn publish(
         }
         return durable(shared, name, bytes, shared.limits.page_bytes);
     }
-    let temp_name = format!("t-{}.tmp", hex(&digest(bytes)));
+    let temp_name = temporary_name(bytes);
     // Only a journal temporary name can be removed here; no head/page references
     // a temporary. The exact descriptor and private/link checks precede unlink.
     if let Ok(old) = rustix::fs::openat(&shared.root, &temp_name, READ, Mode::empty()) {

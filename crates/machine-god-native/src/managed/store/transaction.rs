@@ -59,14 +59,21 @@ impl Reservation {
             operation,
         })
     }
-    fn refresh(&self) -> Result<(), Error> {
-        let used = fs::scan_usage(&self.shared.root, self.shared.limits)?;
-        let mut state = self.shared.state.lock().map_err(|_| Error::Invalid)?;
-        state.used = used.bytes;
-        state.entries = used.entries;
-        state.protected_bytes = used.protected_bytes;
-        state.protected_entries = used.protected_entries;
-        state.headroom_low = used.headroom_low;
+    fn validate_namespace(&self) -> Result<(), Error> {
+        // Reads retain their bounded missing-page/error projections. Only new
+        // publication requires an unchanged exclusively owned inventory; reopen
+        // reconstructs unexplained namespace changes before accepting writes.
+        let namespace_revision = fs::directory_revision(&self.shared.root)?;
+        if namespace_revision
+            != self
+                .shared
+                .state
+                .lock()
+                .map_err(|_| Error::Invalid)?
+                .namespace_revision
+        {
+            return Err(Error::Conflict);
+        }
         Ok(())
     }
     fn reserve_entries(&self, new_page: bool) -> Result<(), Error> {
@@ -169,6 +176,7 @@ pub(super) fn create(
     create: JournalCreate,
 ) -> Result<JournalPublication, Error> {
     let reservation = Reservation::acquire(shared)?;
+    reservation.validate_namespace()?;
     validation::id(&create.id)?;
     validation::configuration(&create.configuration)?;
     if let Some(parent) = &create.parent_id {
@@ -236,6 +244,7 @@ pub(super) fn mutate(
     mutation: JournalMutation,
 ) -> Result<JournalPublication, Error> {
     let reservation = Reservation::acquire(shared)?;
+    reservation.validate_namespace()?;
     let source = check_snapshot(shared, &snapshot)?;
     if snapshot.head.owner_epoch != shared.epoch {
         if !matches!(mutation, JournalMutation::Recover)
@@ -388,6 +397,15 @@ fn publish(
     )?;
     let candidate = encode(&head, shared.limits.head_bytes)?;
     reservation.reserve_entries(page.is_some())?;
+    // The exclusive owner and operation slot serialize all journal effects.
+    // Only these four names can change; retained history is already charged by
+    // startup reconstruction or an earlier confirmed publication/reconciliation.
+    let mut names = vec![fs::head_name(&head.id), fs::temporary_name(&candidate)];
+    if let Some((reference, bytes)) = &page {
+        names.push(fs::page_name(reference));
+        names.push(fs::temporary_name(bytes));
+    }
+    let accounting = fs::PublicationAccounting::capture(shared, names)?;
     let receipt = JournalReceipt {
         identity: Arc::downgrade(shared),
         operation: reservation.operation,
@@ -425,9 +443,14 @@ fn publish(
             false,
             source.map(Arc::as_ref),
         )?;
-        reservation.refresh()
+        accounting.commit(shared)
     })();
     if result.is_err() {
+        return Ok(JournalPublication::Ambiguous(receipt));
+    }
+    #[cfg(test)]
+    if super::tests::checkpoint(shared, super::tests::FailurePoint::AfterAccountingCommit).is_err()
+    {
         return Ok(JournalPublication::Ambiguous(receipt));
     }
     let Ok(snapshot) = inspect_unreserved(shared, &head.id) else {
@@ -550,15 +573,20 @@ pub(super) fn reconcile(
     } else {
         return Err(Error::Conflict);
     };
+    let namespace_revision = fs::directory_revision(&shared.root)?;
     let used = fs::scan_usage(&shared.root, shared.limits)?;
     fs::validate_owner(shared)?;
+    if fs::directory_revision(&shared.root)? != namespace_revision {
+        return Err(Error::Conflict);
+    }
     let old = {
         let mut state = shared.state.lock().map_err(|_| Error::Invalid)?;
         state.used = used.bytes;
         state.entries = used.entries;
         state.protected_bytes = used.protected_bytes;
         state.protected_entries = used.protected_entries;
-        state.headroom_low = used.headroom_low;
+        state.headroom_low_heads = used.headroom_low_heads;
+        state.namespace_revision = namespace_revision;
         state.reserved = 0;
         state.pending.take()
     };

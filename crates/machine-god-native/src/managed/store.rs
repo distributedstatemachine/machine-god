@@ -105,11 +105,12 @@ struct Shared {
     failure: Mutex<Option<tests::FailurePoint>>,
 }
 struct Accounting {
+    namespace_revision: [i128; 11],
     used: usize,
     entries: usize,
     protected_bytes: usize,
     protected_entries: usize,
-    headroom_low: bool,
+    headroom_low_heads: usize,
     reserved: usize,
     pending: Option<transaction::PendingPublication>,
     next_operation: u64,
@@ -147,7 +148,8 @@ impl ManagedJournal {
             execution
                 .run(move || {
                     let limits = limits.validate()?;
-                    let (owner_lock, used, epoch) = filesystem::acquire(&root, limits)?;
+                    let (owner_lock, used, epoch, namespace_revision) =
+                        filesystem::acquire(&root, limits)?;
                     Ok(Self {
                         shared: Arc::new(Shared {
                             root,
@@ -156,11 +158,12 @@ impl ManagedJournal {
                             limits,
                             busy: AtomicBool::new(false),
                             state: Mutex::new(Accounting {
+                                namespace_revision,
                                 used: used.bytes,
                                 entries: used.entries,
                                 protected_bytes: used.protected_bytes,
                                 protected_entries: used.protected_entries,
-                                headroom_low: used.headroom_low,
+                                headroom_low_heads: used.headroom_low_heads,
                                 reserved: 0,
                                 pending: None,
                                 next_operation: 1,

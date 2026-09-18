@@ -17,7 +17,9 @@ fn publish(
     snapshot: JournalSnapshot,
     mutation: JournalMutation,
 ) -> JournalSnapshot {
-    confirmed(block_on(journal.mutate(snapshot, mutation)).unwrap())
+    let snapshot = confirmed(block_on(journal.mutate(snapshot, mutation)).unwrap());
+    accounting::assert_matches_inventory(journal);
+    snapshot
 }
 
 fn history(bytes: usize) -> JournalRecord {
