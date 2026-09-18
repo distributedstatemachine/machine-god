@@ -1431,3 +1431,21 @@ active terminal-host test execution, not a demonstrated deadlock. This run
 used `--nocapture` and external observation, so its timing includes diagnostic
 overhead. It is not a complete workspace gate and does not establish a cause
 or remediation for either earlier macOS failure.
+
+The complete externally observed macOS gate on documentation-only descendant
+`6cca5d49880f5f61ee05f363b32085a20be45905` then passed all focused checks,
+workspace tests and the separate workspace doctest command, including its final
+exact-SHA and clean-tree guards. The observer exited zero after 1,565.109 seconds;
+the full native suite passed 4,139 tests with 12 existing ignored fixture entries
+in 823.17 seconds. CLI unit and integration results were 617 and 116 passed,
+respectively, with six existing ignored unit fixtures. No stalled-child stack
+capture was produced. The complete log and external observations remain under
+`/tmp/mg-m65-pty-reap-observation.UVN13K/full-gate-6cca5d49/`.
+
+An explicit non-documentation comparison with `03a2f49f` was empty. Its previously
+passed exact Rust 1.94.1 Linux/macOS build, static/platform and full Linux runtime
+gates therefore apply to the same product/test source, including all 275 Python
+tests. This completes local regression acceptance for a fresh whole-feature
+review; it is not remote acceptance, a performance claim or a causal explanation
+for the retained macOS failures. No deadlines, test selections or product source
+were changed for the passing macOS retry; external observation adds overhead.
