@@ -2,7 +2,7 @@
 use super::super::{
     notices::{ManagedNotice, NoticeError, NoticeRelationship},
     prompt_context::ParentNoticeContext,
-    store::{JournalCatalogCursor, JournalHistoryCursor, JournalTranscript},
+    store::{JournalCatalogCursor, JournalError, JournalHistoryCursor, JournalTranscript},
 };
 use super::{
     Active, BoxFuture, Context, JournalMutation, JournalRecord, JournalSnapshot, ManagedAgentState,
@@ -19,10 +19,17 @@ pub(super) struct Replay {
     catalog: Option<JournalCatalogCursor>,
     source: Option<(JournalSnapshot, Option<JournalHistoryCursor>)>,
     catalog_done: bool,
-    pending: Option<(ManagedNotice, JournalTranscript)>,
+    pending: Option<Pending>,
     validation: Option<Validation>,
     retry: Option<BoxFuture<'static, ()>>,
+    rescan: bool,
     pub(super) done: bool,
+}
+struct Pending {
+    snapshot: JournalSnapshot,
+    original: ManagedNotice,
+    transcript: JournalTranscript,
+    fresh: bool,
 }
 // One resumable join against an exact source snapshot, never a history-sized
 // future holding the manager's serialized journal lane.
@@ -45,7 +52,19 @@ impl ManagedManager {
             return false;
         }
         if self.replay_reset {
-            self.replay = Replay::default();
+            // Coalesce writes and registrations into a subsequent sweep. A
+            // busy sibling must not repeatedly erase another source's progress.
+            if self.replay.done {
+                self.replay = Replay::default();
+            } else {
+                // Before the first catalog read, the upcoming sweep already
+                // includes every prior write and parent registration.
+                self.replay.rescan |= self.replay.catalog.is_some() || self.replay.catalog_done;
+                self.replay.retry = None;
+                if let Some(pending) = &mut self.replay.pending {
+                    pending.fresh = false;
+                }
+            }
             self.replay_reset = false;
         }
         if let Some(retry) = &mut self.replay.retry {
@@ -54,14 +73,46 @@ impl ManagedManager {
             }
             self.replay.retry = None;
         }
-        if let Some((notice, transcript)) = self.replay.pending.as_ref() {
+        if self
+            .replay
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.fresh)
+        {
+            return self.publish_replay();
+        }
+        if self.replay.done {
+            return false;
+        }
+        let targets = self
+            .parents
+            .iter()
+            .filter(|parent| parent.active)
+            .filter_map(|parent| parent.context.upgrade())
+            .filter(|context| !context.is_retired())
+            .map(|context| Arc::downgrade(&context))
+            .collect();
+        let state = std::mem::take(&mut self.replay);
+        self.active = Some(Active::Replay(advance(
+            self.journal.clone(),
+            self.retry.clone(),
+            state,
+            targets,
+        )));
+        true
+    }
+    fn publish_replay(&mut self) -> bool {
+        if let Some(pending) = self.replay.pending.as_ref() {
+            let notice = &pending.original;
+            let transcript = &pending.transcript;
             let eligible = self
                 .parents
                 .iter()
                 .filter(|parent| parent.active)
                 .filter_map(|parent| parent.context.upgrade())
                 .any(|context| {
-                    context.matches_transcript(transcript)
+                    !context.is_retired()
+                        && context.matches_transcript(transcript)
                         && context.principal() == &notice.target.parent
                         && context
                             .delivery()
@@ -104,25 +155,7 @@ impl ManagedManager {
             self.replay.pending.take();
             return true;
         }
-        if self.replay.done {
-            return false;
-        }
-        let targets = self
-            .parents
-            .iter()
-            .filter(|parent| parent.active)
-            .filter_map(|parent| parent.context.upgrade())
-            .filter(|context| !context.is_retired())
-            .map(|context| Arc::downgrade(&context))
-            .collect();
-        let state = std::mem::take(&mut self.replay);
-        self.active = Some(Active::Replay(advance(
-            self.journal.clone(),
-            self.retry.clone(),
-            state,
-            targets,
-        )));
-        true
+        false
     }
     pub(super) fn finish_replay(&mut self, mut outcome: Outcome) {
         if let Some(snapshot) = outcome.snapshot
@@ -142,6 +175,11 @@ impl ManagedManager {
             }));
         }
         self.replay = outcome.replay;
+        if !outcome.error && !self.closing {
+            // Publish before releasing this serialized admission. If capacity
+            // delays visibility, any intervening write requires a fresh read.
+            self.publish_replay();
+        }
     }
 }
 fn advance(
@@ -153,10 +191,21 @@ fn advance(
     Box::pin(async move {
         let mut snapshot = None;
         let result = step(&journal, &gate, &mut replay, &targets, &mut snapshot).await;
+        let stale = matches!(result, Err(JournalError::Conflict))
+            && (replay.source.is_some() || replay.validation.is_some() || replay.pending.is_some());
+        if stale {
+            // The exact source changed, not the catalog frontier. Visit other
+            // sources before revisiting this one in the next sweep; ordinary
+            // cursor staleness owns no uncertain mutation or manual retry fence.
+            replay.source = None;
+            replay.validation = None;
+            replay.pending = None;
+            replay.rescan = true;
+        }
         Outcome {
             replay,
             snapshot,
-            error: result.is_err(),
+            error: result.is_err() && !stale,
         }
     })
 }
@@ -166,21 +215,29 @@ async fn step(
     replay: &mut Replay,
     targets: &[Weak<ParentNoticeContext>],
     repaired: &mut Option<JournalSnapshot>,
-) -> Result<(), ()> {
+) -> Result<(), JournalError> {
+    if let Some(pending) = &mut replay.pending {
+        // One bounded exact-head read suffices: all original/ACK/lineage
+        // evidence was validated against this same immutable snapshot.
+        journal.history(pending.snapshot.clone(), None, 1).await?;
+        pending.fresh = true;
+        return Ok(());
+    }
     if replay.validation.is_some() {
         return validate_page(journal, replay, targets).await;
     }
     if replay.source.is_none() {
         if replay.catalog_done {
-            replay.done = true;
+            if replay.rescan {
+                *replay = Replay::default();
+            } else {
+                replay.done = true;
+            }
             return Ok(());
         }
-        let page = journal
-            .catalog(replay.catalog.clone(), 1)
-            .await
-            .map_err(|_| ())?;
+        let page = journal.catalog(replay.catalog.clone(), 1).await?;
         if let Some(entry) = page.entries.first() {
-            let mut snapshot = journal.inspect(entry.id.clone()).await.map_err(|_| ())?;
+            let mut snapshot = journal.inspect(entry.id.clone()).await?;
             if snapshot.recovery_required() && snapshot.head.recovery_changes_work() {
                 snapshot = durability::mutate(
                     journal.clone(),
@@ -189,7 +246,7 @@ async fn step(
                     JournalMutation::Recover,
                 )
                 .await
-                .map_err(|_| ())?;
+                .map_err(|_| JournalError::Persistence)?;
                 *repaired = Some(snapshot.clone());
             }
             if snapshot.head.status != ManagedAgentState::Archived {
@@ -201,10 +258,7 @@ async fn step(
         return Ok(());
     }
     let (snapshot, cursor) = replay.source.as_ref().unwrap();
-    let page = journal
-        .history(snapshot.clone(), cursor.clone(), 1)
-        .await
-        .map_err(|_| ())?;
+    let page = journal.history(snapshot.clone(), cursor.clone(), 1).await?;
     if let Some(JournalRecord::Notice(original)) = page.records.first()
         && original.source.source.generation.get() == snapshot.head.generation
         && targets
@@ -232,12 +286,11 @@ async fn validate_page(
     journal: &ManagedJournal,
     replay: &mut Replay,
     targets: &[Weak<ParentNoticeContext>],
-) -> Result<(), ()> {
+) -> Result<(), JournalError> {
     let validation = replay.validation.as_mut().unwrap();
     let page = journal
         .history(validation.snapshot.clone(), validation.cursor.clone(), 100)
-        .await
-        .map_err(|_| ())?;
+        .await?;
     let original = &validation.original;
     let mut acknowledged = false;
     for record in page.records {
@@ -268,7 +321,7 @@ async fn validate_page(
         replay.validation = None;
     } else if (validation.original_seen && validation.parent_checked) || page.next.is_none() {
         if !validation.original_seen {
-            return Err(());
+            return Err(JournalError::Invalid);
         }
         let validation = replay.validation.take().unwrap();
         if let Some(transcript) = validation.parent
@@ -279,7 +332,12 @@ async fn validate_page(
                     && context.matches_transcript(&transcript)
             })
         {
-            replay.pending = Some((validation.original, transcript));
+            replay.pending = Some(Pending {
+                snapshot: validation.snapshot,
+                original: validation.original,
+                transcript,
+                fresh: true,
+            });
         }
     } else {
         validation.cursor = page.next;

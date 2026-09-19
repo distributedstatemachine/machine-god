@@ -448,6 +448,88 @@ fn overlapping_lifecycle_keeps_the_first_accepted_control_until_actual_settlemen
 }
 
 #[test]
+fn replenished_sibling_writes_cannot_starve_original_notice_replay() {
+    let mut fixture = Fixture::new(vec![]);
+    let parent = fixture.notice_session();
+    let original = super::delivery::original(&mut fixture, &parent);
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "busy-sibling", "mode": "persistent"
+            }}))
+            .ok
+    );
+    fixture.restart_manager();
+    let context = Arc::new(crate::managed::prompt_context::ParentNoticeContext::new(
+        &parent,
+        original.target.parent.clone(),
+        &fixture.manager.notices,
+    ));
+    fixture.manager.register_parent_context(&context).unwrap();
+    fixture.manager.limits.work_per_poll = 1;
+    let requester = fixture.requester.clone();
+    let configure = || {
+        serde_json::json!({"configure": {
+            "id": "child-2", "name": "busy"
+        }})
+    };
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut traffic = Vec::new();
+    for _ in 0..4 {
+        let (admission, invocation) = fixture.invocation(configure());
+        let mut response = requester.execute(invocation, CancellationToken::new());
+        assert!(response.as_mut().poll(&mut cx).is_pending());
+        traffic.push((admission, response));
+    }
+    for _ in 0..64 {
+        let index = block_on(std::future::poll_fn(|cx| {
+            for (index, slot) in traffic.iter_mut().enumerate() {
+                if let Poll::Ready(result) = slot.1.as_mut().poll(cx) {
+                    assert!(result.unwrap().ok);
+                    return Poll::Ready(index);
+                }
+            }
+            let progress = fixture.manager.poll_progress(cx, 100);
+            assert!(!matches!(progress, Poll::Ready(Err(_))), "{progress:?}");
+            if progress.is_ready() {
+                cx.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }));
+        // Keep three other actual admitted mutations continuously queued.
+        let (admission, invocation) = fixture.invocation(configure());
+        let mut response = requester.execute(invocation, CancellationToken::new());
+        assert!(response.as_mut().poll(&mut cx).is_pending());
+        traffic[index] = (admission, response);
+    }
+    let replayed = fixture
+        .manager
+        .notices
+        .snapshot(&original.target.parent, 64, 64 * 1024)
+        .unwrap()
+        .entries()
+        .iter()
+        .any(|entry| entry.notice() == &original);
+    drop(traffic);
+    fixture.drive(|f| f.manager.replay.done && f.manager.active.is_none());
+    assert!(
+        fixture
+            .manager
+            .notices
+            .snapshot(&original.target.parent, 64, 64 * 1024)
+            .unwrap()
+            .entries()
+            .iter()
+            .any(|entry| entry.notice() == &original)
+    );
+    assert!(fixture.factory.provider.requests().is_empty());
+    assert!(
+        replayed,
+        "unrelated admitted writes repeatedly reset durable replay"
+    );
+}
+
+#[test]
 fn replenished_mailbox_traffic_cannot_starve_accepted_work_or_ready_waits() {
     let mut fixture = Fixture::new(vec![completed()]);
     assert!(

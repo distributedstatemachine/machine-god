@@ -18,7 +18,13 @@ fn append(
     else {
         panic!("confirmed test mutation");
     };
-    fixture.manager.children[0].snapshot = *snapshot.clone();
+    fixture
+        .manager
+        .children
+        .iter_mut()
+        .find(|child| child.snapshot.head.id == snapshot.head.id)
+        .unwrap()
+        .snapshot = *snapshot.clone();
     *snapshot
 }
 
@@ -157,7 +163,7 @@ fn historical_notice_validation_yields_before_scanning_an_entire_history() {
         "validation did not yield between bounded pages"
     );
     assert_eq!(
-        replay.pending.as_ref().map(|(notice, _)| notice),
+        replay.pending.as_ref().map(|pending| &pending.original),
         Some(&original)
     );
     assert!(repaired.is_none());
@@ -204,6 +210,421 @@ fn validation_rejects_a_changed_source_snapshot_between_admissions() {
         .is_err()
     );
     assert!(replay.pending.is_none());
+}
+
+// Retain a fully validated original behind an actual full notice inbox.
+fn capacity_fixture() -> (
+    Fixture,
+    Session,
+    Arc<ParentNoticeContext>,
+    ManagedNotice,
+    ManagedNotice,
+) {
+    use crate::managed::notices::{ManagedNotices, NoticeLimits};
+    let (mut fixture, session, _, snapshot, original) = history_fixture();
+    // Inject the smaller registry with a matching deadline subscription. The
+    // old weak subscription cannot observe this replacement allocation.
+    fixture.manager.deadline = None;
+    fixture.manager.notices = Arc::new(
+        ManagedNotices::new(
+            NoticeLimits {
+                records: 1,
+                ..NoticeLimits::default()
+            },
+            fixture.manager.clock.clone(),
+        )
+        .unwrap(),
+    );
+    let mut blocker = original.clone();
+    blocker.source.work_id = "capacity-blocker".into();
+    blocker.source_sequence = NonZeroU64::new(snapshot.head.next_sequence).unwrap();
+    let snapshot = append(
+        &mut fixture,
+        snapshot,
+        JournalMutation::AppendHistory(vec![JournalRecord::Notice(blocker.clone())]),
+    );
+    let work = fixture
+        .manager
+        .notices
+        .register_work(
+            &blocker.source,
+            ManagedNotifications::default(),
+            &NoticeRelationship {
+                generation: blocker.target.relationship_generation,
+                parent: Some(blocker.target.parent.clone()),
+                parent_incarnation: Some(blocker.target.parent_incarnation.clone()),
+            },
+            blocker.source_sequence.get(),
+        )
+        .unwrap();
+    fixture
+        .manager
+        .notices
+        .restore_notice(&work, &blocker)
+        .unwrap();
+    fixture.manager.notices.stop_work(&work).unwrap();
+    fixture.manager.notices.release_work(&work).unwrap();
+    let context = Arc::new(ParentNoticeContext::new(
+        &session,
+        original.target.parent.clone(),
+        &fixture.manager.notices,
+    ));
+    fixture.manager.register_parent_context(&context).unwrap();
+    let mut replay = Replay {
+        catalog_done: true,
+        validation: Some(Validation {
+            snapshot,
+            original: original.clone(),
+            cursor: None,
+            original_seen: false,
+            parent_checked: false,
+            parent: None,
+        }),
+        ..Replay::default()
+    };
+    for _ in 0..10 {
+        block_on(step(
+            &fixture.journal,
+            &fixture.manager.retry,
+            &mut replay,
+            &[Arc::downgrade(&context)],
+            &mut None,
+        ))
+        .unwrap();
+        if replay.pending.is_some() {
+            break;
+        }
+    }
+    assert!(replay.pending.is_some());
+    fixture.manager.replay = replay;
+    fixture.manager.replay_reset = false;
+    assert!(
+        !fixture
+            .manager
+            .begin_replay(&mut Context::from_waker(std::task::Waker::noop()))
+    );
+    assert!(fixture.manager.active.is_none());
+    assert!(fixture.manager.replay.pending.as_ref().unwrap().fresh);
+    (fixture, session, context, original, blocker)
+}
+
+#[test]
+fn capacity_delayed_original_revalidates_after_ack_or_archive() {
+    use crate::managed::{prompt_context::NoticeCheckpoint, store::JournalIntent};
+    for archive in [false, true] {
+        let (mut fixture, session, _context, original, blocker) = capacity_fixture();
+        let mut snapshot = block_on(fixture.journal.inspect("child-1".into())).unwrap();
+        if archive {
+            for mutation in [
+                JournalMutation::Intent(JournalIntent::Archive),
+                JournalMutation::Archive,
+            ] {
+                snapshot = append(&mut fixture, snapshot, mutation);
+            }
+        } else {
+            let record = session.record();
+            append(
+                &mut fixture,
+                snapshot,
+                JournalMutation::AppendHistory(vec![JournalRecord::NoticeAcknowledged {
+                    identity: original.identity(),
+                    target: original.target.clone(),
+                    checkpoint: NoticeCheckpoint {
+                        session_id: record.id.clone(),
+                        incarnation_id: record.incarnation_id.clone(),
+                        expected_revision: record.revision,
+                        turn_sequence: 1,
+                        first_user_message: 0,
+                    },
+                }]),
+            );
+        }
+        fixture.manager.replay_reset = true;
+        fixture
+            .manager
+            .notices
+            .acknowledge_recovered(&[blocker])
+            .unwrap();
+        assert!(
+            fixture
+                .manager
+                .begin_replay(&mut Context::from_waker(std::task::Waker::noop()))
+        );
+        let Some(Active::Replay(future)) = fixture.manager.active.take() else {
+            panic!("intervening write requires serialized exact-head validation");
+        };
+        fixture.manager.finish_replay(block_on(future));
+        assert!(fixture.manager.replay.pending.is_none());
+        assert!(fixture.manager.replay.retry.is_none());
+        fixture.drive(|f| f.manager.active.is_none() && f.manager.replay.done);
+        assert!(
+            !fixture
+                .manager
+                .notices
+                .snapshot(&original.target.parent, 64, 64 * 1024)
+                .unwrap()
+                .entries()
+                .iter()
+                .any(|entry| entry.notice() == &original)
+        );
+    }
+}
+
+#[test]
+fn unchanged_capacity_retry_checks_parent_retirement_without_restarting_history() {
+    for retired in [false, true] {
+        let (mut fixture, _session, context, original, blocker) = capacity_fixture();
+        if retired {
+            context.retire();
+        }
+        fixture
+            .manager
+            .notices
+            .acknowledge_recovered(&[blocker])
+            .unwrap();
+        assert!(
+            fixture
+                .manager
+                .begin_replay(&mut Context::from_waker(std::task::Waker::noop()))
+        );
+        assert!(
+            fixture.manager.active.is_none(),
+            "unchanged capacity retry reread history"
+        );
+        assert!(fixture.manager.replay.pending.is_none());
+        let batch = fixture
+            .manager
+            .notices
+            .snapshot(&original.target.parent, 64, 64 * 1024)
+            .unwrap();
+        assert_eq!(
+            batch
+                .entries()
+                .iter()
+                .any(|entry| entry.notice() == &original),
+            !retired
+        );
+    }
+}
+
+#[test]
+fn stale_source_preserves_catalog_frontier_and_requests_one_later_sweep() {
+    let (mut fixture, _session, context, _, original) = history_fixture();
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "sibling", "mode": "persistent"
+            }}))
+            .ok
+    );
+    fixture.drive(|f| f.manager.active.is_none());
+    let catalog = block_on(fixture.journal.catalog(None, 1)).unwrap();
+    assert!(catalog.next.is_some());
+    let snapshot = block_on(fixture.journal.inspect(catalog.entries[0].id.clone())).unwrap();
+    let replay = Replay {
+        catalog: catalog.next,
+        source: Some((snapshot.clone(), None)),
+        ..Replay::default()
+    };
+    let JournalPublication::Confirmed(_) = block_on(fixture.journal.mutate(
+        snapshot,
+        JournalMutation::AppendHistory(vec![JournalRecord::History(ManagedHistoryItem {
+            kind: ManagedHistoryKind::Conversation,
+            work_id: None,
+            user: None,
+            assistant: Some("intervening source write".into()),
+            user_truncated: false,
+            assistant_truncated: false,
+        })]),
+    ))
+    .unwrap() else {
+        panic!("confirmed source write");
+    };
+    let targets = vec![Arc::downgrade(&context)];
+    let outcome = block_on(advance(
+        fixture.journal.clone(),
+        fixture.manager.retry.clone(),
+        replay,
+        targets.clone(),
+    ));
+    assert!(!outcome.error);
+    assert!(outcome.replay.source.is_none());
+    assert!(
+        outcome.replay.catalog.is_some(),
+        "stale source erased sibling frontier"
+    );
+    assert!(outcome.replay.rescan);
+    let mut replay = outcome.replay;
+    block_on(step(
+        &fixture.journal,
+        &fixture.manager.retry,
+        &mut replay,
+        &targets,
+        &mut None,
+    ))
+    .unwrap();
+    assert_ne!(
+        replay.source.as_ref().unwrap().0.head.id,
+        catalog.entries[0].id
+    );
+    // The skipped source remains discoverable without a new external mutation.
+    fixture.manager.register_parent_context(&context).unwrap();
+    fixture.manager.replay = replay;
+    fixture.manager.replay_reset = false;
+    fixture.drive(|f| f.manager.active.is_none() && f.manager.replay.done);
+    assert!(
+        fixture
+            .manager
+            .notices
+            .snapshot(&original.target.parent, 64, 64 * 1024)
+            .unwrap()
+            .entries()
+            .iter()
+            .any(|entry| entry.notice() == &original)
+    );
+}
+
+fn sibling_original(
+    fixture: &mut Fixture,
+    session: &Session,
+    original: &ManagedNotice,
+) -> ManagedNotice {
+    assert!(
+        fixture
+            .command(serde_json::json!({"create": {
+                "name": "second-source", "mode": "persistent"
+            }}))
+            .ok
+    );
+    fixture.drive(|f| f.manager.active.is_none());
+    let snapshot = block_on(fixture.journal.inspect("child-2".into())).unwrap();
+    let snapshot = append(
+        fixture,
+        snapshot,
+        JournalMutation::Relationship {
+            parent_id: Some(original.target.parent.id.clone()),
+            parent_generation: Some(1),
+            parent_owner: Some(JournalTranscript {
+                session_id: session.id(),
+                incarnation: session.incarnation_id(),
+            }),
+        },
+    );
+    let mut second = original.clone();
+    second.source.source.id = "child-2".into();
+    second.source_sequence = NonZeroU64::new(snapshot.head.next_sequence).unwrap();
+    second.target.relationship_generation = NonZeroU64::new(snapshot.head.revision).unwrap();
+    append(
+        fixture,
+        snapshot,
+        JournalMutation::AppendHistory(vec![JournalRecord::Notice(second.clone())]),
+    );
+    second
+}
+
+#[test]
+fn initial_parent_registration_needs_only_one_catalog_sweep() {
+    let mut fixture = Fixture::new(vec![]);
+    let session = fixture.notice_session();
+    let context = Arc::new(ParentNoticeContext::new(
+        &session,
+        NoticePrincipal {
+            id: session.id().to_string(),
+            generation: NonZeroU64::new(1).unwrap(),
+        },
+        &fixture.manager.notices,
+    ));
+    fixture.manager.register_parent_context(&context).unwrap();
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    // One empty catalog read followed by its completion, not a second sweep
+    // caused by registration before there was any frontier to invalidate.
+    for _ in 0..2 {
+        assert!(fixture.manager.begin_replay(&mut cx));
+        let Some(Active::Replay(future)) = fixture.manager.active.take() else {
+            panic!("actual replay admission");
+        };
+        fixture.manager.finish_replay(block_on(future));
+    }
+    assert!(fixture.manager.replay.done);
+    assert!(!fixture.manager.begin_replay(&mut cx));
+    assert!(fixture.factory.provider.requests().is_empty());
+}
+
+#[test]
+fn queued_resweep_discovers_a_source_created_after_the_old_catalog_ended() {
+    let (mut fixture, session, context, snapshot, original) = history_fixture();
+    let catalog = block_on(fixture.journal.catalog(None, 1)).unwrap();
+    assert!(catalog.next.is_none());
+    assert_eq!(catalog.entries[0].id, snapshot.head.id);
+    // Retain the exact exhausted catalog frontier while its source history is
+    // still in progress. The subsequently created source is absent from it.
+    let frontier = Replay {
+        catalog_done: true,
+        source: Some((snapshot.clone(), None)),
+        ..Replay::default()
+    };
+    let second = sibling_original(&mut fixture, &session, &original);
+    // No stale-source Conflict can rescue a lost registration/write invalidation.
+    block_on(fixture.journal.history(snapshot, None, 1)).unwrap();
+    fixture.manager.replay = frontier;
+    fixture.manager.register_parent_context(&context).unwrap();
+    assert!(fixture.manager.replay_reset);
+    fixture.drive(|f| f.manager.active.is_none() && f.manager.replay.done);
+    assert!(
+        fixture
+            .manager
+            .notices
+            .snapshot(&second.target.parent, 64, 64 * 1024)
+            .unwrap()
+            .entries()
+            .iter()
+            .any(|entry| entry.notice() == &second)
+    );
+    assert!(fixture.factory.provider.requests().is_empty());
+}
+
+#[test]
+fn partial_parent_delivery_invalidates_replay_before_remaining_sources_finish() {
+    use crate::NativeConversation;
+    use futures_util::StreamExt;
+    let (mut fixture, session, context, _, original) = history_fixture();
+    sibling_original(&mut fixture, &session, &original);
+    fixture.manager.register_parent_context(&context).unwrap();
+    fixture.drive(|f| f.manager.active.is_none() && f.manager.replay.done);
+    let conversation = NativeConversation::from_session(session.clone())
+        .unwrap()
+        .with_notice_context(&context)
+        .unwrap();
+    // Publication precedes the deliberately unscripted provider failure. The
+    // receipt is from the real core checkpoint, not fabricated saved metadata.
+    let turn = block_on(conversation.prompt("explicit parent input".into(), 102)).unwrap();
+    let _events = block_on(turn.collect::<Vec<_>>());
+    let delivered = context.delivery().unwrap();
+    assert_eq!(delivered.originals().len(), 2);
+    let mut partial = false;
+    for _ in 0..10 {
+        fixture.manager.replay_reset = false;
+        assert!(
+            fixture
+                .manager
+                .begin_delivery(&mut Context::from_waker(std::task::Waker::noop()))
+        );
+        let Some(Active::Delivery(future)) = fixture.manager.active.take() else {
+            panic!("actual delivery admission");
+        };
+        fixture.manager.finish_delivery(block_on(future)).unwrap();
+        if fixture.manager.replay_reset {
+            partial = fixture.manager.parents[0].pending.is_some();
+            break;
+        }
+    }
+    // A failed assertion must not strand the actual parent's outbox at drop.
+    fixture.drive(|f| f.manager.active.is_none() && f.manager.parents[0].completed.is_some());
+    block_on(conversation.clear_notice_delivery(&delivered)).unwrap();
+    assert!(
+        partial,
+        "source ACK invalidation waited for every source in the receipt"
+    );
 }
 
 #[test]

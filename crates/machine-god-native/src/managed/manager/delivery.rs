@@ -199,6 +199,9 @@ impl ManagedManager {
             parent.in_flight = false;
         }
         for repair in outcome.snapshots {
+            // Each source ACK changes replay evidence, even while other
+            // originals in this same parent delivery still await validation.
+            self.replay_reset = true;
             for pending in &mut self.saved_lifetimes {
                 pending.refresh_snapshot(&repair);
             }

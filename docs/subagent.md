@@ -46,8 +46,11 @@ One notice publication occupies its own source sequence and advances the durable
 publication cursor; acknowledgements do not synthesize notices or timers.
 Suppressed start/milestone observations consume a control-only source checkpoint
 before a later occurrence can reuse the journal's next sequence; they create no
-visible notice. Confirmed manager writes invalidate replay's exact-head read
-cursor, without treating ordinary cursor staleness as ambiguous publication.
+visible notice. Confirmed manager writes coalesce with a pending or subsequent
+bounded replay sweep; unrelated writes do not discard the in-progress
+catalog/source frontier. An
+actually changed source invalidates its exact-head read cursor, without treating
+ordinary cursor staleness as ambiguous publication.
 The journal has no independent notice-cursor setter: cursor advancement belongs
 to confirmed notice history or an exact suppressed-occurrence mutation.
 Replay and source acknowledgements validate the parent transcript incarnation
@@ -825,14 +828,21 @@ nonresident histories, and admits only typed confirmed originals for an exact
 registered target. It checks source acknowledgement records, excludes archived
 or replaced source generations, and neither starts timers nor resumes execution.
 Confirmed source acknowledgements remove exact replayed originals before an
-outbox clear permits another snapshot. Parent registration restarts this bounded
-scan so an absent or retired target never requires an unbounded in-memory queue.
+outbox clear permits another snapshot. Parent registration requests a bounded
+sweep so an absent or retired target never requires an unbounded in-memory queue.
+Repeated invalidations coalesce without restarting an in-progress traversal;
+continuous writes to an unrelated sibling cannot starve an existing original.
 Original and historical-parent validation share one resumable scan of the exact
 source snapshot, reading at most 100 records under the journal's bounded history
 page policy per admission. Every page releases the serialized journal lane for
 commands and cleanup. Read-only retry waits also release that lane; an uncertain
 recovery mutation retains its original publication custody. Source changes
-invalidate the validation frontier rather than admitting a stale original.
+invalidate that source's validation frontier rather than admitting a stale
+original or discarding progress through unrelated sources. Publication follows
+the final exact-head validation within the serialized journal admission.
+Capacity-delayed originals are revalidated after intervening writes before
+visibility, preserving acknowledgement, archive, generation and parent-retirement
+checks without repeatedly rereading an unchanged full inbox.
 Discarding a superseded read retry clears only that wait's blocked-status
 observation; it neither clears a newer wait nor triggers mutation retries.
 This bounds work per admission, not total scans across an arbitrary history.

@@ -1549,3 +1549,69 @@ selections, source, power settings or operating-system protections were changed.
 These observations qualify wall time; they do not prove a causal fix for the
 retained intermittent failures. This is local regression evidence, not remote
 acceptance or an M07 performance claim.
+
+### R14 whole-feature review
+
+Three fresh independent agents reviewed frozen candidate
+`5b6bdcf22773acd9b96ffe4b25ca48cd807088da` against actual remote main
+`7cadf2f2ea13ef392797903ad190c0ce3ba92654`. Its non-documentation diff from
+fully gated `d22691a3` was empty; documentation checks and ten policy tests passed.
+
+- Correctness/API (`m65_r14_correctness`): zero actionable introduced findings
+  after command/schema/result, authentic admission, FIFO/recovery/frozen work,
+  relationship publication, paging and host/CLI/ACP integration inspection.
+- Lifecycle/platform (`m65_r14_lifecycle`): zero actionable introduced findings
+  after child/foreground settlement, factory/worker/reap custody, principal MCP
+  and prompt leases, startup/replacement/shutdown and frame/flush inspection.
+- Performance/resources (`m65_r14_resources`): one P2 finding. Replenished
+  successful configuration changes on an idle sibling set the global replay-reset
+  flag. With one admitted operation per poll, mailbox and replay admissions can
+  alternate, but every replay admission discards its previous catalog/source
+  frontier and performs only the initial catalog/inspect step. An unchanged
+  source's confirmed unacknowledged completion notice is never exposed during
+  that workload. Replay resumes after traffic stops or storage pressure rejects
+  writes; this is starvation during valid traffic, not irreversible loss.
+
+The proposed deterministic regression preserves an original through manager
+restart, registers its exact parent context, and continuously replenishes four
+admitted sibling configuration requests. The original must become visible before
+that traffic ends. Static inspection established the finding; reviewers ran no
+new builds or tests. The candidate is rejected and was not pushed.
+
+Both resource and lifecycle reviewers dismissed a separate cleanup-timeout
+hypothesis: cached terminal MCP cleanup failure is the explicitly documented and
+tested fence, not a retry that may reset its deadline. Reviews were ordinary local
+source/test reviews, not Bugbot or runtime/performance measurements.
+
+The actual admitted-mailbox regression reproduced the finding on unchanged
+production source: after 64 successful sibling configuration replies, the
+original was still absent; it became visible once that traffic was stopped.
+Exact Rust 1.94.1 reported zero passed, one failed and 4,154 filtered tests in
+1.57 seconds, with the expected starvation assertion. The red run exited 101.
+
+The repair coalesces invalidations into a later sweep without discarding current
+catalog progress. Exact-head conflicts discard only the changed source; final
+validation and visibility share serialized admission. Capacity-delayed originals
+are revalidated after intervening writes, including each confirmed source ACK
+within an unfinished multi-source delivery. Unchanged capacity waits remain inert.
+Invalidation before the first catalog read coalesces with that initial scan,
+instead of scheduling a redundant second sweep.
+
+Focused exact Rust 1.94.1 runtime checks passed all 138 manager tests in 92.81
+seconds, 31 notice tests and 25 prompt-context tests. New regressions cover the
+replenished admitted-write workload, capacity-delayed ACK/archive and parent
+retirement, changed-source traversal/revisit, late-created sources after an
+exhausted catalog, initial-registration coalescing, and actual partial two-source
+checkpoint acknowledgement.
+An initial new capacity-fixture failure retained a weak deadline subscription
+after replacing its notice registry. The corrected fixture releases that old
+subscription so normal pump setup subscribes to the replacement; production
+code and deadlines were not changed to fix the fixture. The first manager run
+had 135 passing tests and that one failure; its log is retained alongside the
+passing rerun under `/tmp/mg-m65-r14-repair.PPp71e/`.
+Worker commit `4b81ef885056ae49e63fdeba60d4415134cb1484` also passed final
+formatting and native all-feature test Clippy with warnings denied. The exact
+commands, retained log index and focused-check limits are in that directory's
+`evidence.md`. The repair worktree was clean with every execution handle closed
+before integration.
+These are focused repair results, not complete feature or remote acceptance.
