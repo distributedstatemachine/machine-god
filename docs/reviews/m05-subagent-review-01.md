@@ -1511,3 +1511,41 @@ identical private-directory setup without suppressing lint or changing effects.
 Logs and diagnostic excerpts remain under `/tmp/mg-m65-r13-repair.11HqeQ/`.
 These focused results are not replacement feature acceptance: the complete local
 gate, three fresh whole-feature reviews and exact remote gates remain required.
+
+### R13 repair replacement local gate
+
+Integrated repair `d22691a3c8b544ac9b336b673032b4674ac8fd1f` passed the
+exact Rust 1.94.1 Linux/macOS build, static and platform gates, complete Linux
+workspace and doctests, and all 275 Python tests. Linux native results were
+4,132 passed with 11 existing ignored fixtures; CLI results were 615 unit and
+121 integration tests passed, with six existing ignored unit fixtures.
+Stage logs remain under `/tmp/mg-managed-implementation.V0ZGg1/` as
+`managed-{stage}-d22691a3.log`.
+
+The first macOS attempt failed the focused inventory fixture before the full
+workspace suite: valid and expired-stamp launches produced no bytes or EOF
+within their original deadlines. Exact syspolicyd evidence records a concurrent
+680 ms XProtect scan of the selected release helper. This supports launch delay
+but does not establish where either failed process stopped before an entry
+marker. Read-only source inspection established no introduced dispatch defect.
+
+An unchanged full macOS retry passed every focused check, workspace tests and
+the separate doctest command, with the final exact-SHA/clean-tree guard and
+`GATE_EXIT` both successful. Native results were 4,142 passed and 12 existing
+ignored fixtures; CLI results were 617 unit and 116 integration tests passed,
+with six existing ignored unit fixtures. The observer ultimately returned zero.
+Logs and samples remain under
+`/tmp/mg-m65-pty-reap-observation.UVN13K/full-gate-repeat-d22691a3/`;
+the rejected attempt is retained in sibling `full-gate-d22691a3/`.
+
+Host power logs show repeated thermal-emergency and maintenance sleeps during
+the retry. Samples separately captured two test processes in `_dyld_start` and
+one CLI fixture in directory enumeration during system DNS initialization, not
+a demonstrated managed-runtime deadlock. The high-frequency external observer
+was paused without stopping the gate; a separate diagnostic watcher was stopped
+after native tests passed. Resuming the observer after gate completion reaped
+the finished gate process and returned its successful exit. No deadlines, test
+selections, source, power settings or operating-system protections were changed.
+These observations qualify wall time; they do not prove a causal fix for the
+retained intermittent failures. This is local regression evidence, not remote
+acceptance or an M07 performance claim.
