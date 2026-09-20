@@ -1615,3 +1615,49 @@ commands, retained log index and focused-check limits are in that directory's
 `evidence.md`. The repair worktree was clean with every execution handle closed
 before integration.
 These are focused repair results, not complete feature or remote acceptance.
+
+### R14 repair replacement local gate
+
+Integrated behavior candidate `4be2c822961706374014abd47de0f170ca478a7e`
+passed exact Rust 1.94.1 Linux/macOS formatting, workspace all-feature Clippy,
+fresh locked release builds, static checks and platform compilation. Both
+platforms passed focused replay and starvation regressions, retained focused
+checks, complete workspace tests and separate doctests. Linux additionally
+passed all 275 repository Python tests in 205.721 seconds under its unprivileged,
+capability-free, private-home, reaping-init fixture with default test concurrency.
+
+Linux results included 4,139 native unit tests (11 existing ignored fixtures),
+615 CLI unit tests (six existing ignored fixtures) and 121 CLI integration tests.
+macOS results included 4,149 native unit tests (12 existing ignored fixtures),
+617 CLI unit tests (six existing ignored fixtures) and 116 CLI integration tests.
+Native macOS unit execution reported 1,066.25 seconds. These are regression
+results, not M07 performance evidence.
+
+The first macOS runtime attempt stopped before the full workspace run at the
+inventory-dispatch fixture: valid and expired-stamp helper launches produced no
+bytes or EOF within their original 250 ms deadlines. Read-only system logs show
+the exact release binary's Gatekeeper scan from 08:18:02.293 to 08:18:03.010
+on 2026-09-19 (UTC+04:00), including XProtect analysis. Its approximately 717 ms
+window overlaps the failed fixture and supports startup delay, but does not
+establish the exact instruction reached by either killed helper or a source fix.
+The relevant dispatch and inventory code was unchanged from the earlier gated
+candidate. No deadlines, selections, protections or power settings were changed.
+
+An unchanged complete macOS retry passed the inventory fixture in 0.10 seconds
+and finished every remaining suite with the exact-SHA/clean-tree guard and
+`GATE_EXIT` code zero. During integration execution, a one-second diagnostic
+sample captured 802 observations of the conversation-runtime binary at
+`_dyld_start`, with no binary images loaded; that binary later passed all 39
+tests without intervention. This establishes a sampled startup wait, not a Rust
+test deadlock or a general causal explanation. An attempted earlier sample of
+the conversation-history binary found it already exited; all its 25 tests passed.
+
+Raw stage logs remain under `/tmp/mg-managed-implementation.V0ZGg1/` as
+`managed-{stage}-4be2c822.log`. The failed macOS attempt remains
+`managed-macos-runtime-4be2c822.log`; the successful unchanged retry is
+`managed-macos-runtime-repeat-4be2c822.log`. Diagnostic details and the completed
+sample remain under `/tmp/mg-m65-gate-recovery.bnTQmU/`. After execution-handle
+expiry, the retained final success marker, completed test summaries, clean exact
+checkout and absence of gate processes confirmed completion; no test was restarted
+merely because an observation handle expired. Fresh review and remote acceptance
+are separate requirements, not established by this local gate record.
