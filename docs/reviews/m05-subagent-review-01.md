@@ -1661,3 +1661,93 @@ expiry, the retained final success marker, completed test summaries, clean exact
 checkout and absence of gate processes confirmed completion; no test was restarted
 merely because an observation handle expired. Fresh review and remote acceptance
 are separate requirements, not established by this local gate record.
+
+### R15 whole-feature review
+
+After the replacement local gate, three fresh independent reviewers inspected
+`1c8f2e48ac2599aee823e436191ee106d3801f82` against actual main merge-base
+`7cadf2f2ea13ef392797903ad190c0ce3ba92654`. The reviewed candidate is a
+documentation-only descendant of gated behavior `4be2c822`; its non-documentation
+diff from that behavior candidate is empty. Reviews covered the complete managed
+feature, not only the R14 replay repair.
+
+- Correctness/API (`m65_r15_correctness`): zero actionable introduced findings.
+  Covered command/schema/results, opaque invocation and native claims, mailbox
+  authorization, configuration and relationships, FIFO work and recovery,
+  cancellation, paging and dependency waits, notification replay and source ACKs,
+  parent checkpoints, canonical history, runtime factory, archives and CLI/ACP.
+- Lifecycle/platform (`m65_r15_lifecycle`): zero actionable introduced findings.
+  Covered child and foreground admission, cancellation and settlement, worker/TLS
+  and process-reap custody, principal/MCP/permission/prompt isolation, host startup,
+  replacement and shutdown, input ownership, stale frames and flush ACKs,
+  blocked-output progress and Linux/macOS-specific behavior.
+- Performance/resources (`m65_r15_resources`): zero actionable introduced findings.
+  Covered aggregate residency/mailbox/byte/waiter bounds, fair admission and
+  scheduler reacquisition, journal capacity and ACK credits, history accounting,
+  replay and notice custody, deadlines/retries, owner-local shared-budget undo,
+  worker/service settlement, retained histories/drafts and output-independent
+  progress.
+
+Resource and lifecycle reviewers jointly examined cancellation-history traversal
+under journal admission. The traversal is finite under existing storage bounds;
+no concrete contract violation or demonstrated correctness consequence was found.
+This was not an accepted finding or a measured latency claim.
+
+These were ordinary local static adversarial reviews with targeted callers and
+test-source inspection, not Bugbot, exhaustive execution, or performance evidence.
+Reviewers performed no builds, tests, remote operations or product edits. All
+three isolated worktrees were clean at the exact candidate and had no retained
+process/tool handles before removal. Exact remote acceptance is a separate gate.
+
+### R15 feature-branch remote acceptance
+
+Exact reviewed commit `1c8f2e48ac2599aee823e436191ee106d3801f82` passed feature
+CI `35499779212` and Benchmark evidence `35499779189`. CI passed quality,
+documentation, FreeBSD/WASI compilation, all four Linux/macOS native architecture
+jobs and its aggregate gate. Dependency audit was correctly unselected by the
+unchanged dependency inputs; the complete local gate's audit remains recorded
+above. The Intel macOS job completed successfully in 50 minutes 30 seconds.
+The live run was observed without cancellation, restart or deadline changes.
+
+Benchmark classification selected both artifact-producing jobs despite the
+documentation-only tip, because the initial feature push covered the entire
+feature range. Both jobs and the aggregate passed. Artifacts `10602560080`
+(`bootstrap-benchmark-1c8f2e48ac2599aee823e436191ee106d3801f82`) and `10602375960`
+(`upstream-benchmark-1c8f2e48ac2599aee823e436191ee106d3801f82-ubuntu-24.04-x86_64`)
+were verified against the exact run/commit and were unexpired, with expiry
+2026-12-19 at 08:31:12 UTC. Downloaded JSON separately confirmed the embedded
+machine SHA, clean materialized source, pinned fx revision and expected runner.
+Full binary-bound validation ran in the successful workflow; inspecting the
+downloaded JSON did not reproduce that validation against different local binaries.
+The upstream record remains `claim_eligible=false`, not an M07 performance claim.
+
+After exact feature acceptance and an ancestry/remote-head recheck, main advanced
+normally from `7cadf2f2ea13ef392797903ad190c0ce3ba92654` to the reviewed commit.
+The push used no force. Main's own exact-SHA gates are separate acceptance evidence.
+
+### R15 main acceptance and delivery
+
+The same reviewed commit passed main CI `35502158799` and main Benchmark evidence
+`35502158811`. All selected jobs and both aggregates succeeded, including native
+Linux and macOS on x86_64 and aarch64. The Intel macOS job completed in 42 minutes
+31 seconds and ARM64 macOS in 27 minutes 2 seconds. These run durations establish
+completion only; they are not product performance measurements or a cause for
+earlier intermittent local failures. No main job was restarted or cancelled.
+
+Main artifacts `10602024705`
+(`bootstrap-benchmark-1c8f2e48ac2599aee823e436191ee106d3801f82`) and `10602822196`
+(`upstream-benchmark-1c8f2e48ac2599aee823e436191ee106d3801f82-ubuntu-24.04-x86_64`)
+were verified unexpired against the exact main run and commit; their retention
+expires 2026-12-19 at 09:23:05 UTC. Downloaded payloads confirmed the embedded
+machine SHA, clean source, pinned fx revision and expected runner, with upstream
+`claim_eligible=false`. Both feature and main payloads remain locally under
+`/tmp/mg-m65-delivery-docs.KnqtSw/`; binary-bound validation belongs to the
+successful workflows, not this separate payload identity inspection.
+
+The complete managed-agent feature is accepted as one delivery. All review and
+documentation-compaction worktrees were verified clean, integrated where needed,
+then removed and pruned; only the root checkout remains. The delivery seal changes
+only documentation, compacts the live plan and records the next full model-skills
+boundary. It adds no product behavior and requires bounded local documentation
+checks and exact lightweight feature/main aggregates, not another product review
+or new benchmark artifacts.
